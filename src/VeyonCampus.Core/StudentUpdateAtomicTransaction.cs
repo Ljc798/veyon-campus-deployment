@@ -656,6 +656,9 @@ public static class StudentUpdateAtomicTransaction
         try
         {
             CleanupStagingDirectory(configPath, record);
+            // Remove the recovery trigger before deleting its only rollback copy. If cleanup is
+            // interrupted, RecoverPending can safely retry from the committed journal.
+            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             var recoveryDirectory = GetRecoveryDirectory(record);
             if (Directory.Exists(recoveryDirectory))
             {
@@ -663,7 +666,6 @@ public static class StudentUpdateAtomicTransaction
                 EnsureNoReparsePointsInTree(recoveryDirectory);
                 Directory.Delete(recoveryDirectory, recursive: true);
             }
-            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -681,6 +683,9 @@ public static class StudentUpdateAtomicTransaction
         try
         {
             CleanupStagingDirectory(configPath, record);
+            // A stale recovery task must not outlive the backup it would restore. The terminal
+            // rollback journal remains available so interrupted cleanup is still idempotent.
+            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             var recoveryDirectory = GetRecoveryDirectory(record);
             if (Directory.Exists(recoveryDirectory))
             {
@@ -688,7 +693,6 @@ public static class StudentUpdateAtomicTransaction
                 EnsureNoReparsePointsInTree(recoveryDirectory);
                 Directory.Delete(recoveryDirectory, recursive: true);
             }
-            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasks(previousAgentPath, configPath);
             return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

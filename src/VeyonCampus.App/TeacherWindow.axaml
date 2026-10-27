@@ -59,7 +59,11 @@
             RecheckDeviceHealthAlertRequested="RecheckDeviceHealthAlert"
             RefreshLegacyEdgePolicyRequested="RefreshLegacyEdgePolicy"
             RefreshSelectedLegacyEdgePoliciesRequested="RefreshSelectedLegacyEdgePolicies"
-            RepairDeviceHealthAlertRequested="RepairDeviceHealthAlert" />
+            RepairDeviceHealthAlertRequested="RepairDeviceHealthAlert"
+            ReviewDeviceHealthIdentityRequested="ReviewDeviceHealthIdentity"
+            CopyDeviceHealthDiagnosticRequested="CopyDeviceHealthDiagnostic"
+            CopyDeviceHealthFingerprintRequested="CopyDeviceHealthFingerprint"
+            ToggleDeviceHealthFingerprintsRequested="ToggleDeviceHealthFingerprints" />
         <views:TeacherUpdatesView
             CheckTeacherUpdateRequested="CheckTeacherUpdate"
             DownloadTeacherUpdateRequested="DownloadTeacherUpdate"
@@ -68,7 +72,8 @@
             InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
             TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
             DeployStudentUpdateRequested="DeployStudentUpdate"
-            ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport" />
+            ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport"
+            RecheckStudentUpdateResultRequested="RecheckStudentUpdateResult" />
       </StackPanel>
     </DataTemplate>
     <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">
@@ -404,6 +409,7 @@
                               OpenFeedbackContactsRequested="OpenFeedbackContacts" />
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
       <views:TeacherHeaderView x:Name="TeacherHeader" Grid.Row="0"
+                               ClassroomSessionToggleRequested="ToggleClassroomSession"
                                ClassroomNoticeRequested="OpenClassroomNoticeDialog"
                                ClassroomChatToggleRequested="ToggleClassroomChatDrawer" />
       <Grid Grid.Row="1" RowDefinitions="Auto,*">

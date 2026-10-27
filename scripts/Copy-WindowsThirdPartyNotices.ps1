@@ -15,7 +15,7 @@ $ErrorActionPreference = 'Stop'
 $publishDirectory = [IO.Path]::GetFullPath($PublishDirectory)
 $repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
 $appRoot = Join-Path $repositoryRoot 'src/VeyonCampus.App'
-$lockFileName = if ($Role -eq 'StudentSetup') { 'packages.StudentSetup.lock.json' } else { 'packages.TeacherConsole.lock.json' }
+$lockFileName = if ($Role -eq 'StudentSetup') { 'packages.StudentSetup.lock.json' } else { 'packages.TeacherConsole.win-x64.lock.json' }
 $lockPath = Join-Path $appRoot $lockFileName
 $trustPath = Join-Path $repositoryRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
 $appName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup' } else { 'VeyonCampus.Teacher' }
@@ -67,7 +67,28 @@ if ($frameworks.Count -eq 0) {
 
 $globalPackagesPath = [Environment]::GetEnvironmentVariable('NUGET_PACKAGES')
 if ([string]::IsNullOrWhiteSpace($globalPackagesPath)) {
-    $globalPackagesPath = Join-Path $env:USERPROFILE '.nuget/packages'
+    $programFiles = [Environment]::GetFolderPath([Environment+SpecialFolder]::ProgramFiles)
+    $programFilesX86 = [Environment]::GetEnvironmentVariable('ProgramFiles(x86)')
+    $dotnetCandidates = @(
+        [Environment]::GetEnvironmentVariable('VEYONCAMPUS_DOTNET_PATH'),
+        (Join-Path $programFiles 'dotnet/dotnet.exe'),
+        $(if ($programFilesX86) { Join-Path $programFilesX86 'dotnet/dotnet.exe' }),
+        $(if (Get-Command dotnet -ErrorAction SilentlyContinue) { (Get-Command dotnet).Source })
+    ) | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique
+
+    foreach ($dotnetCandidate in $dotnetCandidates) {
+        if (-not (Test-Path -LiteralPath $dotnetCandidate -PathType Leaf)) { continue }
+        $globalPackagesOutput = & $dotnetCandidate nuget locals global-packages --list 2>&1
+        if ($LASTEXITCODE -ne 0) { continue }
+        $globalPackagesMatch = [regex]::Match(($globalPackagesOutput -join "`n"), '(?im)^global-packages:\s*(.+?)\s*$')
+        if ($globalPackagesMatch.Success) {
+            $globalPackagesPath = $globalPackagesMatch.Groups[1].Value
+            break
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($globalPackagesPath)) {
+        $globalPackagesPath = Join-Path $env:USERPROFILE '.nuget/packages'
+    }
 }
 $globalPackagesPath = [IO.Path]::GetFullPath($globalPackagesPath)
 $licenseOutput = Join-Path $publishDirectory 'licenses'

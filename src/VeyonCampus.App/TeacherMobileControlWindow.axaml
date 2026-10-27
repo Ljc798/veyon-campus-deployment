@@ -22,6 +22,14 @@
       <Setter Property="CornerRadius" Value="10" />
       <Setter Property="Padding" Value="12" />
     </Style>
+    <Style Selector="Border.mobile-paired-row">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.Surface}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Border}" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="10" />
+      <Setter Property="Padding" Value="12,9" />
+      <Setter Property="Margin" Value="0,3" />
+    </Style>
   </Window.Styles>
   <Grid RowDefinitions="Auto,*" Margin="22" RowSpacing="14">
     <Grid ColumnDefinitions="*,Auto" ColumnSpacing="16">
@@ -145,7 +153,9 @@
             </Grid>
             <ListBox ItemsSource="{Binding PendingPairings}"
                      SelectedItem="{Binding SelectedPairing, Mode=TwoWay}"
-                     MaxHeight="220" IsVisible="{Binding HasPendingPairings}">
+                     MaxHeight="220" IsVisible="{Binding HasPendingPairings}"
+                     Background="Transparent" BorderThickness="0" Padding="0"
+                     ItemContainerTheme="{StaticResource Teacher.DeviceListItem}">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="app:MobilePendingPairingView">
                   <Border Classes="mobile-pending-row" Margin="0,3">
@@ -193,10 +203,12 @@
             </Grid>
             <ListBox ItemsSource="{Binding Devices}"
                      SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
-                     MaxHeight="260" IsVisible="{Binding HasPairedDevices}">
+                     MaxHeight="260" IsVisible="{Binding HasPairedDevices}"
+                     Background="Transparent" BorderThickness="0" Padding="0"
+                     ItemContainerTheme="{StaticResource Teacher.DeviceListItem}">
               <ListBox.ItemTemplate>
                 <DataTemplate x:DataType="core:MobilePairedDeviceView">
-                  <Border Classes="device-row">
+                  <Border Classes="device-row mobile-paired-row">
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="12">
                       <Border Classes="stat-icon info">
                         <Path Data="M8,2 L16,2 L18,4 L18,20 L6,20 L6,4 Z M9,5 L15,5 M10,17 L14,17"

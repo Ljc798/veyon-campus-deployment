@@ -13,42 +13,32 @@
           <Border Classes="card">
             <StackPanel Spacing="12">
               <TextBlock Text="课堂概览" Classes="section-title" />
-              <Border>
-                <Border.Styles>
-                  <floweryTheme:DaisyUITheme />
-                </Border.Styles>
-                <flowery:DaisyStats>
-                  <flowery:DaisyStat Title="课堂模式" Value="{Binding ClassroomSessionActionText}"
-                                     Description="{Binding ClassroomRoomContextSummary}" Variant="Info">
-                    <flowery:DaisyStat.Figure>
-                      <StackPanel>
-                        <flowery:DaisyStatusIndicator Color="Success" Size="Small" AccessibleText="课堂已开启"
-                                                       IsVisible="{Binding HasActiveClassroomSession}" />
-                        <flowery:DaisyStatusIndicator Color="Warning" Size="Small" AccessibleText="课堂尚未开启"
-                                                       IsVisible="{Binding HasNoActiveClassroomSession}" />
-                      </StackPanel>
-                    </flowery:DaisyStat.Figure>
-                  </flowery:DaisyStat>
-                  <flowery:DaisyStat Title="学生电脑" Value="{Binding ClassroomOverviewDeviceCount}"
-                                     Description="当前课堂范围" Variant="Info">
-                    <flowery:DaisyStat.Figure>
-                      <flowery:DaisyStatusIndicator Color="Info" Size="Small" AccessibleText="学生电脑数量" />
-                    </flowery:DaisyStat.Figure>
-                  </flowery:DaisyStat>
-                  <flowery:DaisyStat Title="已回执 / 核验" Value="{Binding ClassroomOverviewReceiptCount}"
-                                     Description="最近一次签名确认" Variant="Success">
-                    <flowery:DaisyStat.Figure>
-                      <flowery:DaisyStatusIndicator Color="Success" Size="Small" AccessibleText="已确认" />
-                    </flowery:DaisyStat.Figure>
-                  </flowery:DaisyStat>
-                  <flowery:DaisyStat Title="待处理 / 核对" Value="{Binding ClassroomOverviewPendingCount}"
-                                     Description="未确认的目标" Variant="Warning">
-                    <flowery:DaisyStat.Figure>
-                      <flowery:DaisyStatusIndicator Color="Warning" Size="Small" AccessibleText="待处理" />
-                    </flowery:DaisyStat.Figure>
-                  </flowery:DaisyStat>
-                </flowery:DaisyStats>
-              </Border>
+              <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+                <Border Background="{DynamicResource Teacher.Color.InfoSubtle}" CornerRadius="10" Padding="14">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="学生电脑" Classes="muted" FontSize="12" />
+                    <TextBlock Text="{Binding ClassroomOverviewDeviceCount}" Foreground="{DynamicResource Teacher.Color.Info}"
+                               FontSize="25" FontWeight="Bold" />
+                    <TextBlock Text="当前课堂范围" Classes="muted" FontSize="12" />
+                  </StackPanel>
+                </Border>
+                <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.SuccessSubtle}" CornerRadius="10" Padding="14">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="已回执 / 核验" Classes="muted" FontSize="12" />
+                    <TextBlock Text="{Binding ClassroomOverviewReceiptCount}" Foreground="{DynamicResource Teacher.Color.Success}"
+                               FontSize="25" FontWeight="Bold" />
+                    <TextBlock Text="最近一次签名确认" Classes="muted" FontSize="12" />
+                  </StackPanel>
+                </Border>
+                <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="10" Padding="14">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="待处理 / 核对" Classes="muted" FontSize="12" />
+                    <TextBlock Text="{Binding ClassroomOverviewPendingCount}" Foreground="{DynamicResource Teacher.Color.Warning}"
+                               FontSize="25" FontWeight="Bold" />
+                    <TextBlock Text="未确认的目标" Classes="muted" FontSize="12" />
+                  </StackPanel>
+                </Border>
+              </Grid>
             </StackPanel>
           </Border>
 

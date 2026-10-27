@@ -54,6 +54,14 @@ let activeClassroomSessionId = null;
 let classroomQuickControlSnapshot = null;
 let classroomQuickControlUnavailable = false;
 let classroomQuickControlBusy = false;
+let classroomStatePollTimer = 0;
+let classroomStatePollVersion = 0;
+let classroomStatePollInFlight = false;
+let directoryStatusPollTimer = 0;
+let directoryStatusPollVersion = 0;
+let directoryStatusPollInFlight = false;
+let directoryStatusReadInFlight = false;
+let directoryStatusReadGeneration = 0;
 let activeClassroomSeatLocations = new Map();
 let activeClassroomScreenTargets = [];
 let activeClassroomCountdownDeadline = null;
@@ -135,6 +143,8 @@ function setActiveControlTab(tab) {
     singleTargetPreviewStartController?.abort();
     if (classroomScreenPreviewLease) void stopClassroomScreenPreview(false);
   }
+  if (selected === "policy" && policyPageMode === "directory") startDirectoryStatusPolling();
+  else stopDirectoryStatusPolling();
 }
 
 function isClassroomMonitorVisible() {
@@ -152,7 +162,10 @@ function setControlVisibility(visible) {
   controlView.classList.toggle("hidden", !visible);
   controlTabs.classList.toggle("hidden", !visible);
   $("mobile-messages-open").disabled = !visible || !activeClassroomSessionId;
-  if (!visible) closeMobileMessages();
+  if (!visible) {
+    closeMobileMessages();
+    stopDirectoryStatusPolling();
+  }
 }
 
 function openTokenDatabase() {
@@ -1329,6 +1342,86 @@ function renderComputerDirectory() {
   }
 }
 
+function isMobileDirectoryStatusViewVisible() {
+  return !document.hidden && accessToken && !controlView.classList.contains("hidden") &&
+    $("policy-tab-button").getAttribute("aria-selected") === "true" &&
+    policyPageMode === "directory" && !$("computer-directory-panel").classList.contains("hidden");
+}
+
+function getVisibleDirectoryStatusTargets() {
+  const cards = Array.from($("computer-directory-grid").querySelectorAll(".computer-directory-card[data-target]:not(:disabled)"));
+  const seen = new Set();
+  return cards.map(card => card.dataset.target).filter(target => {
+    const normalized = normalizeTarget(target);
+    if (!normalized || seen.has(normalized)) return false;
+    seen.add(normalized);
+    return true;
+  });
+}
+
+async function refreshVisibleDirectoryStatuses(backgroundRefresh = true) {
+  if (!isMobileDirectoryStatusViewVisible() || directoryStatusReadInFlight) return;
+  const targets = getVisibleDirectoryStatusTargets();
+  if (!targets.length) return;
+  const requestGeneration = ++directoryStatusReadGeneration;
+  directoryStatusReadInFlight = true;
+  try {
+    for (let offset = 0; offset < targets.length; offset += 30) {
+      const batch = targets.slice(offset, offset + 30);
+      const statuses = await api("/api/status", {
+        method: "POST",
+        body: { targets: batch, backgroundRefresh }
+      });
+      if (requestGeneration !== directoryStatusReadGeneration || !isMobileDirectoryStatusViewVisible()) return;
+      if (!Array.isArray(statuses)) throw new Error("学生电脑状态响应无效。");
+      const requested = new Set(batch.map(normalizeTarget));
+      for (const status of statuses) {
+        const key = normalizeTarget(status?.target);
+        if (key && requested.has(key)) latestStatusByTarget.set(key, status);
+      }
+    }
+    if (requestGeneration === directoryStatusReadGeneration) renderComputerDirectory();
+  } catch {
+    // Keep the last verified status visible; the next poll will retry automatically.
+  } finally {
+    directoryStatusReadInFlight = false;
+  }
+}
+
+function directoryStatusPollDelay(targetCount) {
+  if (targetCount <= 18) return 20_000;
+  if (targetCount <= 60) return 45_000;
+  return 90_000;
+}
+
+function startDirectoryStatusPolling() {
+  if (directoryStatusPollTimer || directoryStatusPollInFlight || !accessToken) return;
+  const version = ++directoryStatusPollVersion;
+  const poll = async () => {
+    directoryStatusPollTimer = 0;
+    if (version !== directoryStatusPollVersion || !accessToken) return;
+    const targetCount = getVisibleDirectoryStatusTargets().length;
+    directoryStatusPollInFlight = true;
+    try {
+      if (isMobileDirectoryStatusViewVisible() && !directoryStatusReadInFlight)
+        await refreshVisibleDirectoryStatuses();
+    } finally {
+      directoryStatusPollInFlight = false;
+      if (version === directoryStatusPollVersion && accessToken)
+        directoryStatusPollTimer = setTimeout(poll, directoryStatusPollDelay(targetCount));
+      else if (isMobileDirectoryStatusViewVisible()) startDirectoryStatusPolling();
+    }
+  };
+  void poll();
+}
+
+function stopDirectoryStatusPolling() {
+  directoryStatusPollVersion++;
+  clearTimeout(directoryStatusPollTimer);
+  directoryStatusPollTimer = 0;
+  directoryStatusReadGeneration++;
+}
+
 function setPolicyPageMode(mode) {
   policyPageMode = mode;
   $("computer-directory-panel").classList.toggle("hidden", mode !== "directory");
@@ -1338,6 +1431,9 @@ function setPolicyPageMode(mode) {
   if (mode === "single") $("target-picker").open = false;
   if (mode === "bulk") $("target-picker").open = true;
   updateSelectionCount();
+  if (mode === "directory" && $("policy-tab-button").getAttribute("aria-selected") === "true")
+    startDirectoryStatusPolling();
+  else stopDirectoryStatusPolling();
 }
 
 function openSingleComputer(target, room) {
@@ -2203,6 +2299,7 @@ async function loadDashboard() {
     : "";
   warning.classList.toggle("hidden", loadWarnings.length === 0);
   startClassroomEventPolling();
+  startClassroomStatePolling();
 }
 
 async function connectDashboard() {
@@ -2260,6 +2357,7 @@ function applyClassroomSession(session) {
   }
   activeClassroomTargets = nextTargets;
   activeClassroomSessionId = nextSessionId;
+  $("mobile-messages-open").disabled = !activeClassroomSessionId;
   activeClassroomSeatLocations = new Map();
   const rawLocations = session?.activeClassroomSeatLocations;
   if (Array.isArray(rawLocations) && rawLocations.length <= 150) {
@@ -2640,6 +2738,44 @@ async function retryClassroomRestores() {
   }
 }
 
+async function refreshMobileClassroomState(version = classroomStatePollVersion) {
+  if (!accessToken || document.hidden || controlView.classList.contains("hidden") || classroomStatePollInFlight) return;
+  classroomStatePollInFlight = true;
+  try {
+    const session = await api("/api/session");
+    if (accessToken && version === classroomStatePollVersion) applyClassroomSession(session);
+  } catch {
+    // The existing connection indicator and event poll report connection failures.
+  } finally {
+    classroomStatePollInFlight = false;
+  }
+}
+
+function startClassroomStatePolling() {
+  if (classroomStatePollTimer || !accessToken) return;
+  const version = ++classroomStatePollVersion;
+  const poll = async () => {
+    classroomStatePollTimer = 0;
+    if (version !== classroomStatePollVersion || !accessToken) return;
+    await refreshMobileClassroomState(version);
+    if (version === classroomStatePollVersion && accessToken)
+      classroomStatePollTimer = setTimeout(poll, 10_000);
+  };
+  classroomStatePollTimer = setTimeout(poll, 10_000);
+}
+
+function stopClassroomStatePolling() {
+  classroomStatePollVersion++;
+  clearTimeout(classroomStatePollTimer);
+  classroomStatePollTimer = 0;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden || !accessToken || controlView.classList.contains("hidden")) return;
+  void refreshMobileClassroomState();
+  if (isMobileDirectoryStatusViewVisible()) void refreshVisibleDirectoryStatuses();
+});
+
 function startClassroomEventPolling() {
   if (classroomEventPollTask || !accessToken) return;
   const version = ++classroomEventPollVersion;
@@ -2649,6 +2785,7 @@ function startClassroomEventPolling() {
 }
 
 function stopClassroomEventPolling() {
+  stopClassroomStatePolling();
   classroomEventPollVersion++;
   classroomEventPollController?.abort();
   classroomEventPollController = null;
@@ -2664,6 +2801,7 @@ function stopClassroomEventPolling() {
   activeClassroomScreenTargets = [];
   activeClassroomChatTargets = [];
   resetClassroomChatState("");
+  $("mobile-messages-open").disabled = true;
   renderClassroomEvents();
 }
 
@@ -2728,7 +2866,6 @@ async function pollClassroomEvents(version) {
       if (classroomEventPollController === controller) classroomEventPollController = null;
     }
     await delay(5000);
-    if (activeClassroomSessionId) await loadClassroomQuickControlSnapshot();
   }
 }
 
@@ -3237,6 +3374,7 @@ async function refreshStatusIfSelected() {
     });
     if (requestId !== statusReadGeneration || !sameTargets(requestedTargets, selectedTargets())) return;
     renderStatuses(statuses);
+    renderComputerDirectory();
   } catch (error) {
     if (requestId !== statusReadGeneration || !sameTargets(requestedTargets, selectedTargets())) return;
     statusList.replaceChildren();
@@ -3627,6 +3765,7 @@ $("refresh-computer-directory").addEventListener("click", async () => {
   try {
     rooms = await api("/api/rooms");
     renderRooms(true);
+    if (policyPageMode === "directory") await refreshVisibleDirectoryStatuses(false);
     const targetStillListed = !selectedComputerTarget || rooms.some(room =>
       (room.targets || []).some(target => normalizeTarget(target) === normalizeTarget(selectedComputerTarget)));
     const targetIsDuplicate = selectedComputerTarget &&
@@ -3661,6 +3800,7 @@ $("directory-room-select").addEventListener("change", () => {
   statusReadGeneration++;
   latestStatusByTarget.clear();
   renderComputerDirectory();
+  void refreshVisibleDirectoryStatuses(false);
 });
 $("open-bulk-policy").addEventListener("click", () => {
   computerDirectoryScrollY = window.scrollY;

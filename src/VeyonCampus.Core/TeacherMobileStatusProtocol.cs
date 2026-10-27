@@ -234,7 +234,7 @@ public static class WebsitePolicyStatusTransport
 
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
-        bool includeHealthSnapshot = false)
+        bool includeHealthSnapshot = false, Guid? updateCommandId = null)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
@@ -242,7 +242,7 @@ public static class WebsitePolicyStatusTransport
         var outgoing = validated.Select(target =>
         {
             var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
-                campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
+                campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, updateCommandId);
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
         }).ToArray();
@@ -262,6 +262,10 @@ public static class WebsitePolicyStatusTransport
                 var body = Encoding.UTF8.GetString(reply.Body);
                 if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                 {
+                    if (updateCommandId is not null)
+                        return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
+                            "此学生 Agent 不支持按命令 ID 读取签名更新事务；请升级 Agent 后重新核对。",
+                            NeedsReview: true);
                     request = new WebsitePolicyStatusRequest(3, WebsitePolicyStatusCryptography.RequestPurposeV3,
                         campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
                     var signedFallback = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);

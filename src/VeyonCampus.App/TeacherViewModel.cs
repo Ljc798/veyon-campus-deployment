@@ -231,6 +231,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly Dictionary<string, StudentApplicationUpdateTargetProgressItem> _studentUpdateRowsByTarget =
         new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _studentUpdateTargetsByAddress = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, StudentApplicationUpdateSourceVersions> _studentUpdateSourcesByTarget =
+        new(StringComparer.OrdinalIgnoreCase);
+    private string? _studentUpdateTargetVersion;
     private StudentUpdatePerformanceReport? _lastStudentUpdatePerformanceReport;
     private readonly List<StudentUpdatePerformanceBatchObservation> _studentUpdatePerformanceBatchHistory = [];
     private IReadOnlyList<string> _roomNames = Array.Empty<string>();
@@ -661,6 +664,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomTargetSummary => $"策略目标 · { (string.IsNullOrWhiteSpace(CampusId) ? "未选择校区" : CampusId.Trim()) } · " +
         $"已选 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
     public bool HasActiveClassroomSession => _activeClassroomSession is not null;
+    public Guid? ActiveClassroomSessionId => _activeClassroomSession?.SessionId;
     public bool HasNoActiveClassroomSession => !HasActiveClassroomSession;
     public bool HasPendingClassroomScopeChange => _activeClassroomSession is { } active &&
         (SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus ||
@@ -677,6 +681,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal);
     public string ClassroomOverviewDeviceCount => (_activeClassroomSession?.Targets.Length ??
         SelectedRoomProfile?.ComputerCount ?? 0).ToString(CultureInfo.CurrentCulture);
+    public int ActiveClassroomTargetCount => _activeClassroomSession?.Targets.Length ?? 0;
     public string ClassroomOverviewReceiptCount => (_classroomQuickControlSnapshot?.Devices.Count(item =>
         item.Phase is ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.WebsiteApplied or
             ClassroomQuickControlPhase.InputLockedVerified) ?? 0).ToString(CultureInfo.CurrentCulture);
@@ -687,7 +692,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
             ClassroomQuickControlPhase.Unsupported) ?? 0).ToString(CultureInfo.CurrentCulture);
     public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
-        HasActiveClassroomSession && !_isClassroomQuickControlBusy && HasValidClassroomQuickControlDeadline;
+        (HasActiveClassroomSession || CanToggleClassroomSession) && !_isClassroomQuickControlBusy &&
+        HasValidClassroomQuickControlDeadline;
     public bool IsClassroomQuickControlPilotDisabled => HasActiveClassroomSession &&
         !TeacherClassroomQuickControlBuildFeatures.PilotEnabled;
     public bool CanStartClassroomWebsiteControl => CanStartClassroomQuickControl;
@@ -724,8 +730,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ? $"已锁定 {ActiveClassroomInputLockCount} 台 · 点击解除"
         : HasUnverifiedClassroomInputLease ? "重新读取状态后安全解除"
         : "断线后自动释放";
-    public bool CanToggleClassroomInputControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy &&
-        (IsClassroomInputControlActive || HasUnverifiedClassroomInputLease || CanStartClassroomInputLock);
+    public bool CanToggleClassroomInputControl => !_isClassroomQuickControlBusy &&
+        (HasActiveClassroomSession
+            ? IsClassroomInputControlActive || HasUnverifiedClassroomInputLease || CanStartClassroomInputLock
+            : CanStartClassroomInputLock);
     public bool CanReleaseClassroomQuickControl => HasActiveClassroomSession && !_isClassroomQuickControlBusy;
     public bool IsClassroomQuickControlBusy => _isClassroomQuickControlBusy;
     public string ClassroomQuickControlActivityText => _isClassroomQuickControlBusy
@@ -794,7 +802,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public decimal CurrentClassroomQuickControlCountdownHours => _classroomQuickControlCountdownHours;
     public decimal CurrentClassroomQuickControlCountdownMinutes => _classroomQuickControlCountdownMinutes;
     public decimal CurrentClassroomQuickControlCountdownSeconds => _classroomQuickControlCountdownSeconds;
-    public string ClassroomSessionActionText => HasActiveClassroomSession ? "课堂模式已开启" : "等待教室配置";
+    public string ClassroomSessionActionText => HasActiveClassroomSession ? "课堂模式已开启" :
+        SelectedRoomProfile is { ComputerCount: > 0 } ? "课堂已关闭" : "等待教室配置";
+    public string ClassroomSessionToggleText => HasActiveClassroomSession ? "结束课堂" : "开始课堂";
 
     private long GetClassroomQuickControlRemainingSeconds()
     {
@@ -2827,23 +2837,34 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campus = SelectedCampusProfile ?? throw new InvalidDataException("请先选择一个校区模板。");
             var room = SelectedRoomProfile ?? throw new InvalidDataException("请先选择一个地点模板。");
             var now = DateTimeOffset.UtcNow;
-            _activeClassroomSession = _classroomSessionStore.StartSession(campus, room.RoomId, now);
-            LoadActiveClassroomCountdown();
-            LoadActiveClassroomTaskProgress();
-            try
+            var campusId = CampusId;
+            var started = await Task.Run(() =>
             {
-                _classroomModeStateStore.Save(new ClassroomModeSessionState(
-                    ClassroomModeStateStore.CurrentSchemaVersion, _activeClassroomSession.SessionId,
-                    ClassroomMode.Normal, true, now, []));
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                var session = _classroomSessionStore.StartSession(campus, room.RoomId, now);
+                string? ledgerWarning = null;
+                try
+                {
+                    _classroomModeStateStore.Save(new ClassroomModeSessionState(
+                        ClassroomModeStateStore.CurrentSchemaVersion, session.SessionId,
+                        ClassroomMode.Normal, true, now, []));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    ledgerWarning = "课堂持续会话已保存；旧版策略账本暂不可用。" + exception.Message;
+                }
+                _classroomSigningContextStore.Save(session.SessionId, campusId);
+                return (Session: session, LedgerWarning: ledgerWarning);
+            }).ConfigureAwait(true);
+            _activeClassroomSession = started.Session;
+            if (started.LedgerWarning is { } ledgerWarning)
             {
-                RefreshClassroomRestoreLedger("课堂持续会话已保存；旧版策略账本暂不可用。");
+                RefreshClassroomRestoreLedger(ledgerWarning);
             }
-            SaveClassroomSigningContext(_activeClassroomSession.SessionId, CampusId);
+            await LoadClassroomSessionProgressAsync(started.Session.SessionId).ConfigureAwait(true);
             RefreshClassroomSessionProperties();
             ClassroomDeliveryStatus = "课堂保持进行中；正在通知当前学生电脑。";
-            await PublishClassroomStatusAsync(_activeClassroomSession, _activeClassroomSession);
+            await PublishClassroomStatusAsync(started.Session, started.Session);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -2860,6 +2881,110 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
             Changed(nameof(CanSendClassroomNotice));
+        }
+    }
+
+    private async Task LoadClassroomSessionProgressAsync(Guid sessionId)
+    {
+        var loaded = await Task.Run(() =>
+        {
+            ClassroomCountdown? countdown = null;
+            var countdownStatus = "";
+            try { countdown = _classroomCountdownStore.Read(sessionId); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException)
+            {
+                countdownStatus = "无法读取本机倒计时；原文件已保留。";
+            }
+
+            ClassroomTaskProgress? taskProgress = null;
+            var taskStatus = "";
+            try { taskProgress = _classroomTaskProgressStore.Read(sessionId); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException)
+            {
+                taskStatus = "课堂任务进度无法读取；原文件已保留。";
+            }
+            return (Countdown: countdown, CountdownStatus: countdownStatus,
+                TaskProgress: taskProgress, TaskStatus: taskStatus);
+        }).ConfigureAwait(true);
+        if (_activeClassroomSession?.SessionId != sessionId) return;
+        _activeClassroomCountdown = loaded.Countdown;
+        ClassroomCountdownStatus = loaded.CountdownStatus;
+        RefreshClassroomCountdownDisplay();
+        Changed(nameof(HasClassroomCountdown));
+        Changed(nameof(IsClassroomCountdownRunning));
+        Changed(nameof(CanStartClassroomCountdown));
+        Changed(nameof(CanEndClassroomCountdown));
+        _activeClassroomTaskProgress = loaded.TaskProgress;
+        ClassroomTaskProgressStatus = loaded.TaskStatus;
+        RefreshClassroomTaskProgressItems();
+    }
+
+    public async Task<bool> EndClassroomSessionAsync(Guid expectedSessionId)
+    {
+        if (expectedSessionId == Guid.Empty || _activeClassroomSession is not { } active ||
+            active.SessionId != expectedSessionId || _isClassroomTransitioning ||
+            IsClassroomCountdownRunning ||
+            ClassroomTaskProgressCompletedCount < ClassroomTaskProgressTotalCount)
+            return false;
+
+        _isClassroomTransitioning = true;
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSwitchClassroomScope));
+        try
+        {
+            var closeResult = await Task.Run(() =>
+            {
+                var modeState = _classroomModeStateStore.Read(expectedSessionId);
+                if (modeState?.OwnedPolicies.Count > 0) return (Ended: false, LedgerWarning: (string?)null);
+                var ended = _classroomSessionStore.EndSession(expectedSessionId, DateTimeOffset.UtcNow);
+                if (ended is null) return (Ended: false, LedgerWarning: (string?)null);
+                try
+                {
+                    _classroomModeStateStore.Save(modeState is null
+                        ? new ClassroomModeSessionState(ClassroomModeStateStore.CurrentSchemaVersion,
+                            expectedSessionId, ClassroomMode.Normal, false, DateTimeOffset.UtcNow, [])
+                        : modeState with { Active = false, UpdatedUtc = DateTimeOffset.UtcNow });
+                    return (Ended: true, LedgerWarning: (string?)null);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    return (Ended: true,
+                        LedgerWarning: "课堂已关闭；旧版课堂恢复记录尚未更新。" + exception.Message);
+                }
+            }).ConfigureAwait(true);
+            if (!closeResult.Ended) return false;
+
+            _activeClassroomSession = null;
+            if (closeResult.LedgerWarning is { } warning) RefreshClassroomRestoreLedger(warning);
+
+            RefreshClassroomSessionProperties();
+            try
+            {
+                await PublishClassroomStatusAsync(null, active);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException)
+            {
+                ClassroomDeliveryStatus = "课堂已在教师端关闭；部分学生电脑尚未收到结束通知，设备本地安全到期仍有效。";
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            ClassroomDeliveryStatus = "课堂状态未能关闭；请刷新后核对。" + exception.Message;
+            return false;
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            RefreshClassroomRestoreLedger();
+            Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanSwitchClassroomScope));
         }
     }
 
@@ -3149,6 +3274,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanReleaseClassroomQuickControl));
         Changed(nameof(HasActiveClassroomEventStatus));
         Changed(nameof(ClassroomSessionActionText));
+        Changed(nameof(ClassroomSessionToggleText));
         Changed(nameof(ClassroomSessionSummary));
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSwitchClassroomScope));
@@ -5053,6 +5179,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomCampusName = value?.DisplayName ?? "本机校区";
             CampusDirectoryError = "";
             Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomSessionActionText));
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
@@ -5087,6 +5214,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasSingleRoomProfile));
             Changed(nameof(HasNoRoomProfiles));
             Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomSessionActionText));
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
@@ -6435,29 +6563,40 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         .Where(item => item.IsSelected).Select(item => item.StudentName).ToArray();
     public string WebsitePolicyConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: true);
     public string WebsitePolicyDisableConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: false);
+    public IReadOnlyList<string> WebsitePolicyConfirmationDomains => BuildWebsitePolicyConfirmationDomains();
 
     private string BuildWebsitePolicyTargetSummary(bool includePolicy)
     {
         var selected = WebsitePolicyTargetChoices.Where(item => item.IsSelected).ToArray();
-        var lines = new List<string> { "将对以下学生电脑操作：" };
-        lines.AddRange(selected.Select(item => $"• {item.StudentName}"));
+        var lines = new List<string> { $"将对已选择的 {selected.Length} 台学生电脑操作。" };
         if (!includePolicy) return string.Join(Environment.NewLine, lines);
         var cutoff = GetWebsiteDeadlineUtc(DateTimeOffset.UtcNow).ToLocalTime()
             .ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
-        lines.AddRange(BuildWebsitePolicyListSummary(SelectedWebsiteMode));
+        var blockedCount = CountWebsiteDomains(WebsiteBlockDomains);
+        var allowedCount = CountWebsiteDomains(WebsiteAllowDomains);
+        lines.Add("访问方式：" + GetWebsitePolicyModeLabel(SelectedWebsiteMode));
+        lines.Add($"名单数量：阻止 {blockedCount} 个 · 允许 {allowedCount} 个");
         lines.Add("截止时间：" + cutoff);
         return string.Join(Environment.NewLine, lines);
     }
 
-    private IReadOnlyList<string> BuildWebsitePolicyListSummary(WebsitePolicyMode mode)
+    private IReadOnlyList<string> BuildWebsitePolicyConfirmationDomains()
     {
-        var lines = new List<string> { "访问方式：" + GetWebsitePolicyModeLabel(mode) };
+        var mode = SelectedWebsiteMode;
+        var domains = new List<string>();
         if (mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined)
-            lines.Add("要阻止的网站：" + FormatWebsiteDomainList(WebsiteBlockDomains));
+            domains.AddRange(ReadWebsiteDomainLines(WebsiteBlockDomains).Select(domain => "阻止 · " + domain));
         if (mode is WebsitePolicyMode.Allowlist or WebsitePolicyMode.Combined)
-            lines.Add("允许的网站：" + FormatWebsiteDomainList(WebsiteAllowDomains));
-        return lines;
+            domains.AddRange(ReadWebsiteDomainLines(WebsiteAllowDomains).Select(domain => "允许 · " + domain));
+        return Array.AsReadOnly(domains.ToArray());
     }
+
+    private static int CountWebsiteDomains(string raw) => ReadWebsiteDomainLines(raw).Count;
+
+    private static IReadOnlyList<string> ReadWebsiteDomainLines(string raw) => Array.AsReadOnly(
+        raw.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(value => value.Trim()).Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
 
     private static string GetWebsitePolicyModeLabel(WebsitePolicyMode mode) => mode switch
     {
@@ -9772,6 +9911,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
         ClearStudentUpdateResults();
         ClearStudentUpdateTargetRows();
+        _studentUpdateSourcesByTarget.Clear();
+        _studentUpdateTargetVersion = null;
         _lastStudentUpdatePerformanceReport = null;
         Changed(nameof(HasStudentUpdatePerformanceReport));
         StudentUpdatePerformanceReportExportStatus = "";
@@ -9823,6 +9964,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
             targetVersion = release.Manifest.Version;
+            _studentUpdateTargetVersion = targetVersion;
             artifactSizeBytes = release.Manifest.SizeBytes;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
                 applicationPolicyRequired: true, studentSystemPolicyRequired: true);
@@ -9891,8 +10033,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
                 row?.SetCheckingVersions($"当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；需要更新到 {release.Manifest.Version}。");
                 rolloutTargetsToUpdate.Add(target);
-                updateSourceVersions[target] = new StudentApplicationUpdateSourceVersions(
+                var sourceVersions = new StudentApplicationUpdateSourceVersions(
                     status.StudentSetupVersion, status.AgentVersion, status.StudentUpdateProtocolVersion.Value);
+                updateSourceVersions[target] = sourceVersions;
+                _studentUpdateSourcesByTarget[NormalizeTargetKey(target)] = sourceVersions;
             }
 
             if (rolloutTargetsToUpdate.Count == 0)
@@ -9971,7 +10115,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (!string.IsNullOrWhiteSpace(value.Target))
                 {
                     var row = FindStudentUpdateTargetRow(value.Target);
-                    row?.SetTransportProgress(value.Stage);
+                    row?.SetTransportProgress(value.Stage, value.CommandId);
                     if (value.PhaseTimings is { Count: > 0 } timings)
                         row?.SetPhaseTimings(timings);
                 }
@@ -9995,6 +10139,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var command = new StudentApplicationUpdateCommand(1, campus, commandId, issuedUtc,
                     expiresUtc, release,
                     downloadUri.AbsoluteUri);
+                progressCollector.Report(new StudentApplicationUpdateProgress(target,
+                    Volatile.Read(ref reportedCompletedTargets), rolloutTargetsToUpdate.Count,
+                    "已发送签名更新命令，正在连接学生 Agent", CommandId: command.CommandId));
                 lock (signingKey.PrivateKey)
                     return (command.CommandId, StudentApplicationUpdateCryptography.Sign(command,
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
@@ -10081,6 +10228,102 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    public async Task RecheckStudentUpdateResultAsync(StudentApplicationUpdateTargetProgressItem row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (!row.CanRequery || !TryBeginExclusiveTask()) return;
+        row.BeginRequery();
+        try
+        {
+            var commandId = row.CommandId;
+            var campus = CampusId.Trim();
+            if (commandId is null || _studentUpdateTargetVersion is not { Length: > 0 } expectedVersion ||
+                !_studentUpdateSourcesByTarget.TryGetValue(NormalizeTargetKey(row.Target), out var source))
+            {
+                row.SetResult(false, true, "缺少本次更新的命令或更新前版本记录；不能安全判断其他事务的状态。");
+                return;
+            }
+
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var results = await WebsitePolicyStatusTransport.ReadAsync([row.Target], campus,
+                signingKey.PrivateKey, updateCommandId: commandId.Value);
+            var result = results.FirstOrDefault();
+            if (result is not { Succeeded: true, Status: not null })
+            {
+                row.SetResult(false, true,
+                    "暂时无法重新连接并验证学生 Agent 的签名状态。" +
+                    (string.IsNullOrWhiteSpace(result?.Detail) ? "" : " " + result.Detail));
+                return;
+            }
+
+            var status = result.Status;
+            var transaction = status.UpdateTransaction;
+            if (transaction is null || transaction.CommandId != commandId.Value)
+            {
+                row.SetResult(false, true,
+                    "已重新连接，但学生端尚未提供与本次命令匹配的签名事务终态；可稍后重试。" +
+                    (transaction is null ? "" : $" 当前记录属于命令 {transaction.CommandId:N}。"));
+                return;
+            }
+
+            switch (transaction.State)
+            {
+                case "committed":
+                {
+                    var expectedAgentVersion = ApplicationReleaseClient.CompareVersions(source.AgentVersion,
+                        expectedVersion) > 0 ? source.AgentVersion : expectedVersion;
+                    var versionsMatch = string.Equals(transaction.TargetSetupVersion, expectedVersion,
+                                           StringComparison.Ordinal) &&
+                                       string.Equals(transaction.TargetAgentVersion, expectedAgentVersion,
+                                           StringComparison.Ordinal) &&
+                                       string.Equals(status.StudentSetupVersion, transaction.TargetSetupVersion,
+                                           StringComparison.Ordinal) &&
+                                       string.Equals(status.AgentVersion, transaction.TargetAgentVersion,
+                                           StringComparison.Ordinal);
+                    row.SetResult(versionsMatch, !versionsMatch,
+                        versionsMatch
+                            ? $"本次签名事务已提交；StudentSetup {status.StudentSetupVersion}，SYSTEM Agent {status.AgentVersion}。"
+                            : "事务签名有效且属于本次命令，但最终安装版本与本次目标不一致；需要人工核对。");
+                    break;
+                }
+                case "rolledBack":
+                {
+                    var restored = string.Equals(transaction.PreviousSetupVersion, source.StudentSetupVersion,
+                                         StringComparison.Ordinal) &&
+                                   string.Equals(transaction.PreviousAgentVersion, source.AgentVersion,
+                                       StringComparison.Ordinal) &&
+                                   string.Equals(status.StudentSetupVersion, source.StudentSetupVersion,
+                                       StringComparison.Ordinal) &&
+                                   string.Equals(status.AgentVersion, source.AgentVersion,
+                                       StringComparison.Ordinal);
+                    row.SetResult(false, !restored,
+                        restored
+                            ? $"本次事务已回滚；StudentSetup {source.StudentSetupVersion} 与 SYSTEM Agent {source.AgentVersion} 均恢复到更新前版本。"
+                            : "事务报告已回滚，但恢复版本与更新前读回不一致；需要人工核对。",
+                        rolledBack: restored);
+                    break;
+                }
+                case "needsReview":
+                    row.SetResult(false, true,
+                        "学生端原子更新事务需要人工核对；恢复材料已保留。请检查学生机更新和服务日志。");
+                    break;
+                default:
+                    row.SetResult(false, true,
+                        "学生端仍报告事务进行中或未知状态；尚未确认提交或回滚，可稍后再次查询。");
+                    break;
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or HttpRequestException or
+                                          TaskCanceledException or UriFormatException or ArgumentException or
+                                          FormatException)
+        {
+            row.SetResult(false, true, "重新查询失败，更新结果仍待核对：" + exception.Message);
+        }
+        finally { EndExclusiveTask(); }
+    }
+
     private static IReadOnlyList<StudentUpdatePerformanceSample> BuildStudentUpdatePerformanceSamples(
         IReadOnlyList<StudentApplicationUpdatePushResult> preflightResults,
         IReadOnlyList<StudentApplicationUpdatePushResult> deliveryResults,
@@ -10141,7 +10384,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         StudentUpdateTargetProgressItems.Clear();
         foreach (var target in targets)
         {
-            var row = new StudentApplicationUpdateTargetProgressItem(GetStudentUpdateDisplayName(target, displayNames));
+            var row = new StudentApplicationUpdateTargetProgressItem(target,
+                GetStudentUpdateDisplayName(target, displayNames));
             _studentUpdateRowsByTarget[NormalizeTargetKey(target)] = row;
             AddStudentUpdateAddressAlias(target, target);
             if (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) continue;
@@ -11233,6 +11477,76 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string StudentAgentIdentityDetailsToggleText =>
         ShowStudentAgentIdentityDetails ? "收起逐台结果" : "查看逐台结果";
 
+    public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>>
+        DiscoverStudentAgentIdentityAsync(string target)
+    {
+        if (!IsCampusIdValid() || !TryBeginExclusiveTask())
+        {
+            StudentAgentIdentityStatus = "请填写有效校区，并等待当前操作完成。";
+            Changed(nameof(StudentAgentIdentityStatus));
+            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
+        }
+        try
+        {
+            var campus = CampusId.Trim();
+            var targets = WebsitePolicyTransport.NormalizeTargets([target]);
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var discoveries = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(targets, campus,
+                signingKey.PrivateKey);
+            StudentAgentIdentityStatus = discoveries.SingleOrDefault() is { } result
+                ? result.Candidate is null ? $"{target}：{result.Detail}" :
+                    result.MatchesPinnedKey ? $"{target}：身份与已固定指纹一致。" :
+                    $"{target}：发现待核对的 Agent 身份。"
+                : "未取得学生电脑身份。";
+            Changed(nameof(StudentAgentIdentityStatus));
+            return discoveries;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+            HttpRequestException or SocketException or PlatformNotSupportedException or ArgumentException)
+        {
+            StudentAgentIdentityStatus = "学生电脑身份读取失败：" + exception.Message;
+            Changed(nameof(StudentAgentIdentityStatus));
+            return Array.Empty<StudentAgentIdentityDiscoveryResult>();
+        }
+        finally { EndExclusiveTask(); }
+    }
+
+    public async Task<bool> ReadDeviceHealthRowAsync(TeacherDeviceHealthRow row)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        if (!IsCampusIdValid() || !TryBeginExclusiveTask()) return false;
+        try
+        {
+            var campus = CampusId.Trim();
+            WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            var targets = WebsitePolicyTransport.NormalizeTargets([row.Target]);
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                signingKey.PrivateKey, includeHealthSnapshot: true);
+            if (results.Count != 1) return false;
+            row.Apply(results[0]);
+            row.SetIdentityReviewStatus(results[0].Succeeded
+                ? "已读取最新签名状态。"
+                : "最新状态读取未完成：" + results[0].Detail);
+            ReconcileDeviceHealthAlerts();
+            RefreshDeviceHealthView();
+            NotifyDeviceHealthBatchProperties();
+            ScheduleNextDeviceHealthFreshnessUpdate();
+            SaveDeviceHealthCache(campus);
+            return results[0].Succeeded && results[0].Status is not null;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+            HttpRequestException or SocketException or PlatformNotSupportedException or ArgumentException or
+            System.Text.Json.JsonException)
+        {
+            row.SetIdentityReviewStatus("最新状态读取失败：" + exception.Message);
+            return false;
+        }
+        finally { EndExclusiveTask(); }
+    }
+
     public async Task<IReadOnlyList<StudentAgentIdentityDiscoveryResult>> DiscoverStudentAgentIdentitiesAsync()
     {
         if (!CanTrustStudentAgentIdentities || !TryBeginExclusiveTask())
@@ -12068,6 +12382,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private string _collectedText = "";
     private string _detail = "";
     private string _repairStatus = "";
+    private string _copyStatus = "";
     private string _issueCode = "";
     private string _issueTitle = "";
     private IReadOnlyList<TeacherDeviceHealthIssue> _issues = Array.Empty<TeacherDeviceHealthIssue>();
@@ -12080,6 +12395,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private readonly Dictionary<string, (DateTimeOffset CollectedUtc, int Count)> _issueResolutionConfirmations =
         new(StringComparer.Ordinal);
     private StudentAgentRuntimeSummary? _runtimeSummary;
+    private StudentAgentIdentityTrustCandidate? _identityCandidate;
     private TeacherDeviceRuntimeFreshness _runtimeFreshness;
     private int _runtimeFailureCount;
     private Guid? _batchOperationId;
@@ -12090,6 +12406,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     private bool _isRepairing;
     private bool _isLocalCache;
     private bool _isDetailsExpanded;
+    private bool _showFullIdentityFingerprints;
+    private string _identityReviewStatus = "";
     private StudentAgentStatusResponse? _status;
     private string _studentName = studentName;
     private string? _lastObservedBootId;
@@ -12101,11 +12419,96 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     public string StudentName => _studentName;
     public string ComputerLabel { get; } = computerLabel;
     public string IdentitySummary => $"学生：{StudentName}";
-    public string CompactSummary => (_runtimeSummary is not null
-        ? $"{ServiceSummary} · {RuntimeFreshnessLabel}"
-        : _status is not null ? ServiceSummary : AgentSummary)
-        .Replace("Agent", "学生端", StringComparison.Ordinal)
-        .Replace("VeyonService", "屏幕服务", StringComparison.Ordinal);
+    public string DeviceListIdentifier => ComputerLabel.Length > 0 ? ComputerLabel : Target;
+    public string DeviceIdentifierSummary => string.Equals(DeviceListIdentifier, Target, StringComparison.OrdinalIgnoreCase)
+        ? $"设备编号：{DeviceListIdentifier}"
+        : $"设备编号：{DeviceListIdentifier} · 地址：{Target}";
+    public string LastSeenSummary => LastCollectedUtc is { } collected
+        ? $"最后在线：{collected.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+        : _isLocalCache ? "最后在线：仅有本机历史记录" : "最后在线：尚无可信回执";
+    public string AgentVersionSummary => _status?.AgentVersion is { Length: > 0 } statusAgent
+        ? $"Agent 版本：{statusAgent}"
+        : _runtimeSummary?.AgentVersion is { Length: > 0 } summaryAgent
+            ? $"Agent 版本：{summaryAgent}"
+            : "Agent 版本：尚未获取";
+    public string StudentSetupVersionSummary => _status?.StudentSetupVersion is { Length: > 0 } statusSetup
+        ? $"StudentSetup 版本：{statusSetup}"
+        : _runtimeSummary?.StudentSetupVersion is { Length: > 0 } summarySetup
+            ? $"StudentSetup 版本：{summarySetup}"
+            : _status is not null || _runtimeSummary is not null
+                ? "StudentSetup 版本：此 Agent 未提供"
+                : "StudentSetup 版本：尚未获取";
+    public string WebsitePolicyDetailSummary => _status is { } status
+        ? $"网站策略：{PolicyModeLabel(status.Website.Mode)} · 已读回 r{status.Website.Revision}"
+        : _runtimeSummary is { } summary
+            ? $"网站策略：{PolicyModeLabel(summary.WebsiteMode)} · 已读回 r{summary.WebsiteRevision}"
+            : "网站策略：尚未读取";
+    public string ApplicationPolicyDetailSummary => _status?.Application is { Supported: true } application
+        ? $"应用策略：{application.Mode?.ToString() ?? "已读回"} · r{application.Revision?.ToString() ?? "?"}"
+        : _runtimeSummary is { ApplicationSupported: true } runtimeApplication
+            ? $"应用策略：{runtimeApplication.ApplicationMode?.ToString() ?? "已读回"} · r{runtimeApplication.ApplicationRevision?.ToString() ?? "?"}"
+            : "应用策略：未启用或尚未读取";
+    public string PolicyRevisionSummary => _status is { } status
+        ? $"Agent 已读回版本：网站 r{status.Website.Revision}" +
+          (status.Application is { Supported: true } application ? $" · 应用 r{application.Revision?.ToString() ?? "?"}" : "")
+        : _runtimeSummary is { } summary
+            ? $"Agent 已读回版本：网站 r{summary.WebsiteRevision}" +
+              (summary.ApplicationSupported ? $" · 应用 r{summary.ApplicationRevision?.ToString() ?? "?"}" : "")
+            : "Agent 已读回版本：尚未读取";
+    public string LastAcknowledgementSummary => LastCollectedUtc is { } collected
+        ? $"最后回执：{collected.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+        : "最后回执：无可用记录";
+    public string IdentityVerificationSummary => _status is not null || _runtimeSummary is not null
+        ? _identityCandidate is { } candidate
+            ? IdentityMatchesPinnedKey(candidate)
+                ? "Agent 签名：有效 · 身份已固定"
+                : candidate.PreviouslyPinnedFingerprint is null
+                    ? "Agent 签名：有效 · 身份等待教师核对"
+                    : "Agent 签名：有效 · 指纹变化，等待教师核对"
+            : "Agent 签名：状态回执已验证 · 未提供身份指纹"
+        : _identityCandidate is not null
+            ? "本轮未取得有效回执；指纹为最近一次有效签名记录"
+            : _isLocalCache ? "Agent 签名：当前未验证（仅有本机缓存）" : "Agent 签名：尚未获取";
+    public string CurrentFingerprintSummary => _identityCandidate is { } candidate
+        ? "当前提交指纹：" + ShortFingerprint(candidate.Fingerprint)
+        : "当前提交指纹：尚未获取";
+    public string PinnedFingerprintSummary => _identityCandidate?.PreviouslyPinnedFingerprint is { } fingerprint
+        ? "已固定指纹：" + ShortFingerprint(fingerprint)
+        : "已固定指纹：尚未固定";
+    public string FullIdentityFingerprints => _identityCandidate is { } candidate
+        ? "当前提交指纹：" + candidate.Fingerprint + Environment.NewLine +
+          "已固定指纹：" + (candidate.PreviouslyPinnedFingerprint ?? "尚未固定")
+        : "";
+    public bool HasIdentityCandidate => _identityCandidate is not null;
+    public bool CanReviewIdentity => _identityCandidate is { } candidate && !IdentityMatchesPinnedKey(candidate);
+    public bool ShowFullIdentityFingerprints
+    {
+        get => _showFullIdentityFingerprints;
+        set
+        {
+            if (!Set(ref _showFullIdentityFingerprints, value)) return;
+            Raise(nameof(FullIdentityFingerprints));
+            Raise(nameof(IdentityFingerprintToggleText));
+        }
+    }
+    public string IdentityFingerprintToggleText => ShowFullIdentityFingerprints
+        ? "收起完整指纹" : "查看完整指纹";
+    public string IdentityReviewStatus { get => _identityReviewStatus; private set
+        { if (Set(ref _identityReviewStatus, value)) Raise(nameof(HasIdentityReviewStatus)); } }
+    public bool HasIdentityReviewStatus => IdentityReviewStatus.Length > 0;
+    public void SetIdentityReviewStatus(string message) => IdentityReviewStatus = message;
+    public string DiagnosticsSummary => BuildDiagnosticsSummary();
+    public bool HasDiagnosticsSummary => DiagnosticsSummary.Length > 0;
+    public string PolicyReadbackSummary => _status is { } status
+        ? $"策略回执：网站 r{status.Website.Revision}" +
+          (status.Application is { Supported: true } application ? $" · 应用 r{application.Revision?.ToString() ?? "?"}" : "")
+        : _runtimeSummary is { } summary
+            ? $"策略回执：网站 r{summary.WebsiteRevision}" +
+              (summary.ApplicationSupported ? $" · 应用 r{summary.ApplicationRevision?.ToString() ?? "?"}" : "")
+            : "策略回执：尚未读取";
+    public string CompactSummary =>
+        $"{(IsRecentlyReachable ? "Agent 在线" : LastCollectedUtc is null ? "等待 Agent 回执" : "Agent 未确认在线")} · " +
+        PolicyReadbackSummary.Replace("策略回执：", "", StringComparison.Ordinal);
     public TeacherDeviceHealthCategory Category
     {
         get => _category;
@@ -12116,7 +12519,15 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Raise(nameof(CategoryBackground));
         }
     }
-    public string CategoryLabel { get => _categoryLabel; private set => Set(ref _categoryLabel, value); }
+    public string CategoryLabel
+    {
+        get => _categoryLabel;
+        private set
+        {
+            if (!Set(ref _categoryLabel, value)) return;
+            Raise(nameof(DiagnosticsSummary));
+        }
+    }
     public IBrush CategoryForeground => Category switch
     {
         TeacherDeviceHealthCategory.Healthy => HealthyForegroundBrush,
@@ -12147,12 +12558,32 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         _ => InputGuardUnknownForegroundBrush
     };
     public string UpdateSummary { get => _updateSummary; private set => Set(ref _updateSummary, value); }
-    public string CollectedText { get => _collectedText; private set => Set(ref _collectedText, value); }
+    public string CollectedText
+    {
+        get => _collectedText;
+        private set
+        {
+            if (!Set(ref _collectedText, value)) return;
+            Raise(nameof(DiagnosticsSummary));
+        }
+    }
     public bool IsLocalCache => _isLocalCache;
-    public string Detail { get => _detail; private set { if (Set(ref _detail, value)) Raise(nameof(HasDetail)); } }
+    public string Detail
+    {
+        get => _detail;
+        private set
+        {
+            if (!Set(ref _detail, value)) return;
+            Raise(nameof(HasDetail));
+            Raise(nameof(DiagnosticsSummary));
+            Raise(nameof(HasDiagnosticsSummary));
+        }
+    }
     public bool HasDetail => Detail.Length > 0;
-    public string IssueCode { get => _issueCode; private set => Set(ref _issueCode, value); }
-    public string IssueTitle { get => _issueTitle; private set => Set(ref _issueTitle, value); }
+    public string IssueCode { get => _issueCode; private set
+        { if (Set(ref _issueCode, value)) Raise(nameof(DiagnosticsSummary)); } }
+    public string IssueTitle { get => _issueTitle; private set
+        { if (Set(ref _issueTitle, value)) Raise(nameof(DiagnosticsSummary)); } }
     public IReadOnlyList<TeacherDeviceHealthIssue> Issues => _issues;
     internal IReadOnlyList<TeacherDeviceHealthCachedIssue> CachedIssueSummaries => _cachedIssueSummaries;
     public DateTimeOffset CacheSavedUtc => _cacheSavedUtc;
@@ -12182,9 +12613,18 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     public string RepairStatus
     {
         get => _repairStatus;
-        set { if (Set(ref _repairStatus, value)) Raise(nameof(HasRepairStatus)); }
+        set
+        {
+            if (!Set(ref _repairStatus, value)) return;
+            Raise(nameof(HasRepairStatus));
+            Raise(nameof(DiagnosticsSummary));
+        }
     }
     public bool HasRepairStatus => RepairStatus.Length > 0;
+    public string CopyStatus { get => _copyStatus; private set
+        { if (Set(ref _copyStatus, value)) Raise(nameof(HasCopyStatus)); } }
+    public bool HasCopyStatus => CopyStatus.Length > 0;
+    public void SetCopyStatus(string message) => CopyStatus = message;
     public bool IsRepairing
     {
         get => _isRepairing;
@@ -12290,6 +12730,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         Raise(nameof(InputGuardForeground));
         Raise(nameof(CompactSummary));
         Raise(nameof(IsLocalCache));
+        RaiseHealthDetailProperties();
         NotifyRepairActionAvailability();
     }
 
@@ -12460,6 +12901,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     public void ApplyRuntimeSummary(StudentAgentRuntimeSummaryDeliveryResult result, int consecutiveFailures)
     {
         ArgumentNullException.ThrowIfNull(result);
+        SetIdentityCandidate(result.IdentityCandidate);
         _runtimeFailureCount = consecutiveFailures;
         if (!result.Succeeded || result.Summary is not { } summary)
         {
@@ -12519,6 +12961,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
 
         _runtimeSummary = summary;
+        SetIdentityCandidate(result.IdentityCandidate);
         ResolveDetailedIssuesFromRuntimeSummary(summary);
         SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.Current);
         Raise(nameof(RuntimeSummary));
@@ -12618,6 +13061,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         SetRuntimeIssues(RetainRuntimeIssuesWhenSummaryIsIncomplete(issues, summary));
         SetCachedIssueSummaries(RetainCachedIssuesUntilConfirmed(issues, summary));
         MarkLiveStatusReceived();
+        RaiseHealthDetailProperties();
     }
 
     public void AcknowledgeBootChange()
@@ -12698,6 +13142,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         if (!result.Succeeded || result.Status is not { } status)
         {
             _status = null;
+            SetIdentityCandidate(result.IdentityCandidate);
             NotifyRepairActionAvailability();
             var identityProblem = result.IdentityCandidate is not null ||
                 (result.Detail.Contains("签名", StringComparison.Ordinal) &&
@@ -12723,10 +13168,12 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Detail = identityProblem
                 ? "Agent 身份或签名需要现场核对；暂不执行修复。"
                 : "未收到有效回执；这不能说明电脑已关机。确认电脑地址、Agent 和网络后重新读取。";
+            RaiseHealthDetailProperties();
             return;
         }
 
         _status = status;
+        SetIdentityCandidate(result.IdentityCandidate);
         // A complete status response does not contain every field in the lightweight runtime
         // summary (for example, InputGuard). Keep those issues until signed summaries confirm
         // resolution; their reconciliation already requires two distinct confirmations.
@@ -12806,6 +13253,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         ResolveCachedIssuesFromDetailedStatus(status);
         MarkLiveStatusReceived();
         NotifyRepairActionAvailability();
+        RaiseHealthDetailProperties();
     }
 
     public void SetRepairResult(StudentAgentHealthRepairDeliveryResult result)
@@ -12918,6 +13366,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         RememberIssueSummaries(next);
         _detailedIssues = Array.AsReadOnly(next);
         RefreshCombinedIssues();
+        Raise(nameof(DiagnosticsSummary));
+        Raise(nameof(HasDiagnosticsSummary));
     }
 
     private void SetRuntimeIssues(IEnumerable<TeacherDeviceHealthIssue> issues)
@@ -12930,6 +13380,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             old.Severity != issue.Severity || !string.Equals(old.Detail, issue.Detail, StringComparison.Ordinal)));
         _runtimeIssues = Array.AsReadOnly(next);
         RefreshCombinedIssues();
+        Raise(nameof(DiagnosticsSummary));
+        Raise(nameof(HasDiagnosticsSummary));
     }
 
     private void RememberIssueSummaries(IEnumerable<TeacherDeviceHealthIssue> issues)
@@ -13132,6 +13584,82 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             ? $"Edge 扩展已读回 {edgeState.Profiles.Count(profile => profile.Status == "applied")} / {edgeState.Profiles.Count} 个 Profile"
             : "Edge 扩展回执未提供";
         return $"网站 r{status.Website.Revision}：{websiteMode} · {application} · {system} · {edge}";
+    }
+
+    private static string PolicyModeLabel(WebsitePolicyMode mode) => mode switch
+    {
+        WebsitePolicyMode.Disabled => "已解除",
+        WebsitePolicyMode.Blocklist => "阻止名单",
+        WebsitePolicyMode.Allowlist => "允许名单",
+        WebsitePolicyMode.Combined => "阻止名单与例外",
+        _ => "未知"
+    };
+
+    private static string ShortFingerprint(string fingerprint) => fingerprint.Length <= 24
+        ? fingerprint
+        : $"{fingerprint[..12]}…{fingerprint[^8..]}";
+
+    private static bool IdentityMatchesPinnedKey(StudentAgentIdentityTrustCandidate candidate) =>
+        candidate.PreviouslyPinnedFingerprint is { } pinned &&
+        string.Equals(candidate.Fingerprint, pinned, StringComparison.OrdinalIgnoreCase);
+
+    private string BuildDiagnosticsSummary()
+    {
+        var lines = new List<string>
+        {
+            $"学生：{StudentName}",
+            $"设备编号：{Target}",
+            $"当前状态：{CategoryLabel}",
+            "Agent 健康：" + AgentSummary,
+            "Veyon 服务：" + ServiceSummary,
+            "策略回执：" + PolicySummary,
+            "更新状态：" + UpdateSummary,
+            InputGuardSummary
+        };
+        if (!string.IsNullOrWhiteSpace(CollectedText)) lines.Add(CollectedText);
+        if (!string.IsNullOrWhiteSpace(IssueCode)) lines.Add($"错误代码：{IssueCode}");
+        if (!string.IsNullOrWhiteSpace(IssueTitle)) lines.Add($"问题：{IssueTitle}");
+        foreach (var issue in Issues.Take(8))
+            lines.Add($"{issue.Code} · {issue.Title}：{issue.Detail}");
+        if (!string.IsNullOrWhiteSpace(Detail) && !lines.Any(line => line.EndsWith(Detail, StringComparison.Ordinal)))
+            lines.Add("详细信息：" + Detail);
+        if (!string.IsNullOrWhiteSpace(RepairStatus)) lines.Add("最近修复：" + RepairStatus);
+        var text = string.Join(Environment.NewLine, lines);
+        return text.Length <= 16_000 ? text : text[..16_000] + Environment.NewLine + "（诊断内容已截断）";
+    }
+
+    public void SetIdentityCandidate(StudentAgentIdentityTrustCandidate? candidate)
+    {
+        if (candidate is null || _identityCandidate == candidate) return;
+        _identityCandidate = candidate;
+        Raise(nameof(IdentityVerificationSummary));
+        Raise(nameof(CurrentFingerprintSummary));
+        Raise(nameof(PinnedFingerprintSummary));
+        Raise(nameof(FullIdentityFingerprints));
+        Raise(nameof(HasIdentityCandidate));
+        Raise(nameof(CanReviewIdentity));
+        Raise(nameof(IdentityFingerprintToggleText));
+    }
+
+    private void RaiseHealthDetailProperties()
+    {
+        Raise(nameof(LastSeenSummary));
+        Raise(nameof(PolicyReadbackSummary));
+        Raise(nameof(CompactSummary));
+        Raise(nameof(AgentVersionSummary));
+        Raise(nameof(StudentSetupVersionSummary));
+        Raise(nameof(WebsitePolicyDetailSummary));
+        Raise(nameof(ApplicationPolicyDetailSummary));
+        Raise(nameof(PolicyRevisionSummary));
+        Raise(nameof(LastAcknowledgementSummary));
+        Raise(nameof(IdentityVerificationSummary));
+        Raise(nameof(CurrentFingerprintSummary));
+        Raise(nameof(PinnedFingerprintSummary));
+        Raise(nameof(FullIdentityFingerprints));
+        Raise(nameof(HasIdentityCandidate));
+        Raise(nameof(CanReviewIdentity));
+        Raise(nameof(DiagnosticsSummary));
+        Raise(nameof(HasDiagnosticsSummary));
     }
 
     private static string FormatInputGuardSummary(StudentInputGuardRuntimeSnapshot? guard, int schemaVersion)
@@ -13470,7 +13998,7 @@ public sealed class TeacherDeviceHealthAlert(string issueCode, string title,
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
-public sealed class StudentApplicationUpdateTargetProgressItem(string displayName) : INotifyPropertyChanged
+public sealed class StudentApplicationUpdateTargetProgressItem(string target, string displayName) : INotifyPropertyChanged
 {
     private static readonly IBrush SuccessForeground = Brush.Parse("#18794E");
     private static readonly IBrush SuccessBackground = Brush.Parse("#E8F5EC");
@@ -13488,12 +14016,17 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
     private bool _isIndeterminate;
     private int _phase;
     private int _priority = 2;
+    private Guid? _commandId;
+    private bool _isRechecking;
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public ObservableCollection<StudentUpdatePhaseTimingDisplayItem> PhaseTimings { get; } = [];
     public IReadOnlyList<StudentUpdatePhaseTiming> RawPhaseTimings { get; private set; } =
         Array.Empty<StudentUpdatePhaseTiming>();
+    public string Target { get; } = target;
     public string DisplayName { get; } = displayName;
+    public Guid? CommandId => _commandId;
+    public bool CanRequery => CommandId is not null && StatusText == "待核对" && !_isRechecking;
     public string StatusText
     {
         get => _statusText;
@@ -13502,6 +14035,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
             if (!Set(ref _statusText, value)) return;
             Raise(nameof(StatusForeground));
             Raise(nameof(StatusBackground));
+            Raise(nameof(CanRequery));
         }
     }
     public IBrush StatusForeground => StatusText switch
@@ -13563,18 +14097,40 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
         Detail = detail;
     }
 
-    public void SetTransportProgress(string stage)
+    public void SetTransportProgress(string stage, Guid? commandId = null)
     {
+        if (commandId is { } id && _commandId != id)
+        {
+            _commandId = id;
+            Raise(nameof(CommandId));
+            Raise(nameof(CanRequery));
+        }
         var (phase, status) = stage.Contains("已完成此电脑处理", StringComparison.Ordinal)
             ? (4, "正在核对更新结果")
+            : stage.Contains("更新处理中", StringComparison.Ordinal)
+                ? (3, "学生端更新中，正在读取签名阶段")
             : stage.Contains("安装并重启", StringComparison.Ordinal)
-                ? (3, "正在安装，等待学生 Agent 回执")
-                : (1, "正在连接学生 Agent");
+                ? (3, "学生端更新中，等待签名回执")
+                : stage.Contains("核对提交或回滚状态", StringComparison.Ordinal) ||
+                  stage.Contains("核对教师端签名回执", StringComparison.Ordinal)
+                    ? (3, "学生端更新中，正在核对签名状态")
+                    : (1, "正在连接学生 Agent");
         if (phase < _phase) return;
         _phase = phase;
         IsIndeterminate = phase is 1 or 3 or 4;
         StatusText = status;
         if (phase == 1 && ProgressPercent == 0) Detail = "";
+    }
+
+    public void BeginRequery()
+    {
+        if (!CanRequery) return;
+        _isRechecking = true;
+        _phase = 4;
+        IsIndeterminate = true;
+        StatusText = "正在重新核对终态";
+        Detail = "正在读取此命令对应的签名更新事务。";
+        Raise(nameof(CanRequery));
     }
 
     public void SetPhaseTimings(IReadOnlyList<StudentUpdatePhaseTiming> timings)
@@ -13612,6 +14168,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
 
     public void SetResult(bool succeeded, bool needsReview, string detail, bool rolledBack = false)
     {
+        _isRechecking = false;
         _phase = 5;
         _priority = succeeded ? 3 : rolledBack ? 2 : needsReview ? 1 : 0;
         Raise(nameof(Priority));
@@ -13619,6 +14176,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string displayNam
         if (succeeded || rolledBack) ProgressPercent = 100;
         StatusText = succeeded ? "成功" : rolledBack ? "已回滚" : needsReview ? "待核对" : "失败";
         Detail = detail;
+        Raise(nameof(CanRequery));
     }
 
     private static string Format(long bytes) =>

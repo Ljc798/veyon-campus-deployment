@@ -1241,17 +1241,49 @@ public static class StudentApplicationUpdateTransport
                 var uri = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port, "/v1/update").Uri;
                 using var content = new StringContent(command.SignedCommand, Encoding.UTF8, "application/json");
                 HttpResponseMessage responseMessage;
+                using var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                using var postCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var postTask = client.PostAsync(uri, content, postCancellation.Token);
+                var progressMonitor = MonitorUpdateProgressWhilePostPendingAsync(client, target, campusId,
+                    campusPrivateKey, pinnedKey, command.CommandId, progress,
+                    () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                    monitorCancellation.Token);
+                var postDeadline = Task.Delay(TimeSpan.FromMinutes(15), cancellationToken);
                 try
                 {
-                    responseMessage = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+                    var completedTask = await Task.WhenAny(postTask, postDeadline).ConfigureAwait(false);
+                    if (completedTask == postDeadline && !postTask.IsCompleted)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        postCancellation.Cancel();
+                        await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
+                            .ConfigureAwait(false);
+                        _ = ObservePostResponseAsync(postTask);
+                        return new StudentApplicationUpdatePushResult(target, false,
+                            "学生端更新请求超过 15 分钟仍未返回；本次已停止等待，更新事务可重新读取核对。",
+                            NeedsReview: true);
+                    }
+                    await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
+                        .ConfigureAwait(false);
+                    responseMessage = await postTask.ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    postCancellation.Cancel();
+                    await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
+                        .ConfigureAwait(false);
+                    _ = ObservePostResponseAsync(postTask);
+                    throw;
+                }
                 catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
                 {
+                    await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
+                        .ConfigureAwait(false);
                     var uncertainReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
                         campusPrivateKey, pinnedKey, command.CommandId, waitForProgress: true,
                         cancellationToken, progress, () => Volatile.Read(ref completedTargets),
-                        validatedTargets.Count, maxWait: TimeSpan.FromSeconds(20)).ConfigureAwait(false);
+                        validatedTargets.Count, maxWait: TimeSpan.FromSeconds(20),
+                        allowStatusPolling: false).ConfigureAwait(false);
                     return ResolveUncertainUpdateResult(target, uncertainReadback, source,
                         expectedAgentVersion,
                         exception is TaskCanceledException
@@ -1392,12 +1424,12 @@ public static class StudentApplicationUpdateTransport
             catch (Exception exception) when (exception is SocketException or IOException or
                                               InvalidDataException or
                                               UnauthorizedAccessException or CryptographicException or
-                                              InvalidOperationException or JsonException)
+                                              InvalidOperationException or ArgumentException or JsonException)
             {
                 var detail = exception switch
                 {
                     SocketException => "无法解析或选择校区内网目标地址：" + exception.Message,
-                    InvalidDataException => "学生更新请求或回执校验失败：" + exception.Message,
+                    InvalidDataException or ArgumentException => "学生更新命令或回执输入无效：" + exception.Message,
                     _ => "学生更新目标处理失败：" + exception.Message
                 };
                 return new StudentApplicationUpdatePushResult(target, false, detail, NeedsReview: true);
@@ -1440,14 +1472,31 @@ public static class StudentApplicationUpdateTransport
         return verified.Payload.DownloadRequestProtocolVersion;
     }
 
+    private static async Task MonitorUpdateProgressWhilePostPendingAsync(HttpClient client, string target,
+        string campusId, RSA campusPrivateKey, string pinnedAgentPublicKeyPem, Guid commandId,
+        IProgress<StudentApplicationUpdateProgress>? progress, Func<int> getCompletedTargets, int totalTargets,
+        CancellationToken cancellationToken)
+    {
+        if (progress is null) return;
+        var startedUtc = DateTimeOffset.UtcNow;
+        var timer = Stopwatch.StartNew();
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                campusPrivateKey, commandId, startedUtc, timer, "inProgress", progress,
+                getCompletedTargets(), totalTargets, cancellationToken,
+                $"学生端更新处理中；已等待 {timer.Elapsed.TotalSeconds:0} 秒").ConfigureAwait(false);
+        }
+    }
+
     private static async Task<UpdateTerminalReadback?> WaitForUpdateTerminalAsync(HttpClient client, string target,
         string campusId, RSA campusPrivateKey, string pinnedAgentPublicKeyPem, Guid commandId,
         bool waitForProgress,
         CancellationToken cancellationToken, IProgress<StudentApplicationUpdateProgress>? progress,
-        Func<int> getCompletedTargets, int totalTargets, TimeSpan? maxWait = null)
+        Func<int> getCompletedTargets, int totalTargets, TimeSpan? maxWait = null,
+        bool allowStatusPolling = true)
     {
-        var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
-            WebsitePolicyAgent.StatusPathV4).Uri;
         var deadline = DateTimeOffset.UtcNow + (maxWait ?? TimeSpan.FromSeconds(100));
         var receiptStartedUtc = DateTimeOffset.UtcNow;
         var waitTimer = Stopwatch.StartNew();
@@ -1455,44 +1504,20 @@ public static class StudentApplicationUpdateTransport
         var lastTimingAt = TimeSpan.Zero;
         while (DateTimeOffset.UtcNow < deadline)
         {
-            using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            attempt.CancelAfter(TimeSpan.FromSeconds(2));
-            try
+            if (allowStatusPolling)
             {
-                var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
-                    campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
-                var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
-                using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
-                using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
-                if (response.StatusCode == HttpStatusCode.NotFound)
+                var readback = await TryReadUpdateTerminalOnceAsync(client, target, campusId,
+                    campusPrivateKey, pinnedAgentPublicKeyPem, commandId, cancellationToken)
+                    .ConfigureAwait(false);
+                if (readback is not null && (!waitForProgress || readback.State is
+                        "committed" or "rolledBack" or "needsReview"))
                 {
                     await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
-                        campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "failed", progress,
+                        campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "succeeded", progress,
                         getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
-                    return null;
-                }
-                if (!response.IsSuccessStatusCode) throw new HttpRequestException("学生 Agent 原子更新状态端点尚未就绪。");
-                var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
-                var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(resultText,
-                    pinnedAgentPublicKeyPem);
-                WebsitePolicyStatusCryptography.ValidateResponse(verified.Payload, request, DateTimeOffset.UtcNow);
-                var transaction = verified.Payload.UpdateTransaction
-                                  ?? throw new InvalidDataException("学生 Agent 缺少本次更新事务回执。");
-                var readback = new UpdateTerminalReadback(transaction.State, verified.MatchesPinnedKey,
-                    verified.Payload, CreateIdentityCandidate(target, campusId, verified, pinnedAgentPublicKeyPem));
-                if (!waitForProgress || transaction.State is "committed" or "rolledBack" or "needsReview")
-                {
-                    await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
-                        campusPrivateKey, commandId, receiptStartedUtc, waitTimer,
-                        "succeeded", progress,
-                        getCompletedTargets(), totalTargets, cancellationToken)
-                        .ConfigureAwait(false);
                     return readback;
                 }
             }
-            catch (HttpRequestException) { }
-            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { }
-            catch (Exception exception) when (exception is InvalidDataException or JsonException or CryptographicException) { }
             if (cancellationToken.IsCancellationRequested) cancellationToken.ThrowIfCancellationRequested();
             await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken).ConfigureAwait(false);
             if (waitTimer.Elapsed - lastProgressAt >= TimeSpan.FromSeconds(5))
@@ -1510,17 +1535,62 @@ public static class StudentApplicationUpdateTransport
                 lastTimingAt = waitTimer.Elapsed;
             }
         }
+        if (!allowStatusPolling)
+        {
+            var finalReadback = await TryReadUpdateTerminalOnceAsync(client, target, campusId,
+                campusPrivateKey, pinnedAgentPublicKeyPem, commandId, cancellationToken).ConfigureAwait(false);
+            if (finalReadback is { State: "committed" or "rolledBack" or "needsReview" })
+            {
+                await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                    campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "succeeded", progress,
+                    getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
+                return finalReadback;
+            }
+        }
         await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
             campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "failed", progress,
             getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
         return null;
     }
 
+    private static async Task<UpdateTerminalReadback?> TryReadUpdateTerminalOnceAsync(HttpClient client,
+        string target, string campusId, RSA campusPrivateKey, string pinnedAgentPublicKeyPem, Guid commandId,
+        CancellationToken cancellationToken)
+    {
+        var address = new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StatusPathV4).Uri;
+        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        attempt.CancelAfter(TimeSpan.FromSeconds(2));
+        try
+        {
+            var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+                campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
+            var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
+            using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
+            using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
+            if (!response.IsSuccessStatusCode) return null;
+            var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(resultText,
+                pinnedAgentPublicKeyPem);
+            WebsitePolicyStatusCryptography.ValidateResponse(verified.Payload, request, DateTimeOffset.UtcNow);
+            var transaction = verified.Payload.UpdateTransaction
+                              ?? throw new InvalidDataException("学生 Agent 缺少本次更新事务回执。");
+            return new UpdateTerminalReadback(transaction.State, verified.MatchesPinnedKey,
+                verified.Payload, CreateIdentityCandidate(target, campusId, verified, pinnedAgentPublicKeyPem));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+            InvalidDataException or JsonException or CryptographicException or IOException or UriFormatException)
+        {
+            return null;
+        }
+    }
+
     private static async Task ReportUpdatePhaseTimingsAsync(HttpClient client, string target, string campusId,
         string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId, DateTimeOffset receiptStartedUtc,
         Stopwatch receiptTimer, string outcome,
         IProgress<StudentApplicationUpdateProgress>? progress, int completedTargets, int totalTargets,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken, string stage = "正在核对教师端签名回执")
     {
         if (progress is null) return;
         var snapshot = await TryReadUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
@@ -1532,7 +1602,7 @@ public static class StudentApplicationUpdateTransport
             .Where(phase => phase.Phase != StudentUpdatePhase.TeacherReceipt)
             .Append(receiptTiming).ToArray();
         progress.Report(new StudentApplicationUpdateProgress(target, completedTargets, totalTargets,
-            "正在核对教师端签名回执", phases, commandId, snapshot?.Environment));
+            stage, phases, commandId, snapshot?.Environment));
     }
 
     private static async Task<StudentUpdatePhaseTimingSnapshot?> TryReadUpdatePhaseTimingsAsync(HttpClient client,
@@ -1693,6 +1763,23 @@ public static class StudentApplicationUpdateTransport
                 ? "学生端更新事务需要人工核对；恢复材料已保留。"
                 : $"{failureDetail} 没有取得可验证的事务终态回执。",
             NeedsReview: true, IdentityCandidate: readback?.IdentityCandidate);
+    }
+
+    private static async Task ObservePostResponseAsync(Task<HttpResponseMessage> pendingPost)
+    {
+        try
+        {
+            using var response = await pendingPost.ConfigureAwait(false);
+        }
+        catch (Exception) { /* A signed terminal readback already resolved the operation. */ }
+    }
+
+    private static async Task StopAndObserveProgressMonitorAsync(CancellationTokenSource cancellation,
+        Task pendingMonitor)
+    {
+        cancellation.Cancel();
+        try { await pendingMonitor.ConfigureAwait(false); }
+        catch (Exception) { /* Cancellation or a transient phase-read error must not mask the update result. */ }
     }
 
     private sealed record UpdateTerminalReadback(string State, bool MatchesPinnedKey,

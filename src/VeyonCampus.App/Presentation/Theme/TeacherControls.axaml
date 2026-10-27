@@ -12,16 +12,10 @@
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
         <Setter Property="Template">
           <ControlTemplate>
-            <Border x:Name="RowSurface" Background="Transparent" CornerRadius="8">
-              <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
-                                HorizontalAlignment="Stretch" />
-            </Border>
+            <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                              HorizontalAlignment="Stretch" />
           </ControlTemplate>
         </Setter>
-        <Style Selector="^:focus-visible /template/ Border#RowSurface">
-          <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
-          <Setter Property="BorderThickness" Value="2" />
-        </Style>
       </ControlTheme>
     </ResourceDictionary>
   </Styles.Resources>
@@ -49,6 +43,26 @@
     <Setter Property="FontSize" Value="{StaticResource Teacher.Type.Supporting}" />
     <Setter Property="Foreground" Value="{StaticResource Teacher.Color.TextSecondary}" />
     <Setter Property="TextWrapping" Value="Wrap" />
+  </Style>
+  <Style Selector="ListBoxItem:focus-visible Border.device-health-row">
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+    <Setter Property="BorderThickness" Value="2" />
+  </Style>
+  <Style Selector="ListBoxItem:selected Border.mobile-paired-row">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Primary}" />
+  </Style>
+  <Style Selector="ListBoxItem:focus-visible Border.mobile-paired-row">
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+    <Setter Property="BorderThickness" Value="2" />
+  </Style>
+  <Style Selector="ListBoxItem:selected Border.mobile-pending-row">
+    <Setter Property="Background" Value="{StaticResource Teacher.Color.InfoSubtle}" />
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Primary}" />
+  </Style>
+  <Style Selector="ListBoxItem:focus-visible Border.mobile-pending-row">
+    <Setter Property="BorderBrush" Value="{StaticResource Teacher.Color.Focus}" />
+    <Setter Property="BorderThickness" Value="2" />
   </Style>
 
   <Style Selector="Border.section-card">

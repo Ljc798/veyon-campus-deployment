@@ -8,7 +8,10 @@ public partial class TeacherHealthView : UserControl
 {
     public TeacherHealthView() => InitializeComponent();
 
-    public void ScrollToRow(TeacherDeviceHealthRow row) => DeviceHealthRowsList.ScrollIntoView(row);
+    public void ScrollToRow(TeacherDeviceHealthRow row)
+    {
+        DeviceHealthRowsList.ContainerFromItem(row)?.BringIntoView();
+    }
 
     public event EventHandler<RoutedEventArgs>? AcknowledgeDeviceHealthAlertRequested;
     public event EventHandler<RoutedEventArgs>? OpenStudentRosterRequested;
@@ -23,6 +26,10 @@ public partial class TeacherHealthView : UserControl
     public event EventHandler<RoutedEventArgs>? RefreshLegacyEdgePolicyRequested;
     public event EventHandler<RoutedEventArgs>? RefreshSelectedLegacyEdgePoliciesRequested;
     public event EventHandler<RoutedEventArgs>? RepairDeviceHealthAlertRequested;
+    public event EventHandler<RoutedEventArgs>? ReviewDeviceHealthIdentityRequested;
+    public event EventHandler<RoutedEventArgs>? CopyDeviceHealthDiagnosticRequested;
+    public event EventHandler<RoutedEventArgs>? CopyDeviceHealthFingerprintRequested;
+    public event EventHandler<RoutedEventArgs>? ToggleDeviceHealthFingerprintsRequested;
 
     private void RequestAcknowledgeDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
         AcknowledgeDeviceHealthAlertRequested?.Invoke(sender, e);
@@ -62,4 +69,16 @@ public partial class TeacherHealthView : UserControl
 
     private void RequestRepairDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
         RepairDeviceHealthAlertRequested?.Invoke(sender, e);
+
+    private void RequestReviewDeviceHealthIdentity(object? sender, RoutedEventArgs e) =>
+        ReviewDeviceHealthIdentityRequested?.Invoke(sender, e);
+
+    private void RequestCopyDeviceHealthDiagnostic(object? sender, RoutedEventArgs e) =>
+        CopyDeviceHealthDiagnosticRequested?.Invoke(sender, e);
+
+    private void RequestCopyDeviceHealthFingerprint(object? sender, RoutedEventArgs e) =>
+        CopyDeviceHealthFingerprintRequested?.Invoke(sender, e);
+
+    private void RequestToggleDeviceHealthFingerprints(object? sender, RoutedEventArgs e) =>
+        ToggleDeviceHealthFingerprintsRequested?.Invoke(sender, e);
 }

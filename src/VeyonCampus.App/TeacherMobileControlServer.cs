@@ -65,7 +65,8 @@ internal sealed record MobilePairPollResponse(string State, string? AccessToken 
 internal sealed record MobileResumeResponse(string AccessToken);
 internal sealed record MobileWebsitePolicyListsUpdateRequest(string BlockedDomains, string AllowedDomains,
     DateTimeOffset? ExpectedUpdatedUtc, string? Mode = null);
-internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null);
+internal sealed record MobileStatusRequest(IReadOnlyList<string> Targets, Guid? ProfileId = null,
+    bool BackgroundRefresh = false);
 internal sealed record MobilePolicyRequest(Guid ProfileId, IReadOnlyList<string> Targets, bool Enabled,
     string? ReviewToken = null,
     IReadOnlyDictionary<string, long>? ExpectedWebsiteRevisions = null,
@@ -957,6 +958,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly ConcurrentDictionary<Guid, RequestRateWindow> _screenPreviewRequestRates = new();
     private readonly ConcurrentDictionary<string, RequestRateWindow> _studentEventRates = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, RequestRateWindow> _teacherChatRates = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _backgroundStatusAuditGate = new();
+    private readonly Dictionary<Guid, DateTimeOffset> _lastBackgroundStatusAuditUtc = new();
     private readonly ClassroomEventBuffer _classroomEvents = new();
     private readonly ClassroomChatTranscriptBuffer _classroomChatTranscripts = new();
     private readonly Dictionary<string, StudentEventAccessGrant> _studentEventGrants = new(StringComparer.Ordinal);
@@ -3286,10 +3289,13 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
         var statusAudit = states.Select(item => new MobileControlAuditTargetResult(item.Target,
             item.Online ? "signature-verified" : item.NeedsReview ? "needs-review" : "unknown")).ToArray();
-        var statusAuditSaved = TryAppendAudit(new MobileControlAuditEntry(DateTimeOffset.UtcNow, device.Id,
-            "status-read", null, targets, Summarize(states.Select(item => item.Online)), statusAudit));
-        _stateChanged();
-        if (!statusAuditSaved)
+        var auditUtc = DateTimeOffset.UtcNow;
+        var shouldAuditStatusRead = !request.BackgroundRefresh || ShouldAppendBackgroundStatusAudit(device.Id, auditUtc);
+        var statusAuditSaved = !shouldAuditStatusRead || TryAppendAudit(new MobileControlAuditEntry(auditUtc, device.Id,
+            request.BackgroundRefresh ? "status-refresh" : "status-read", null, targets,
+            Summarize(states.Select(item => item.Online)), statusAudit));
+        if (shouldAuditStatusRead) _stateChanged();
+        if (shouldAuditStatusRead && !statusAuditSaved)
             states = states.Select(item => item with
             {
                 State = item.State + " · 本机操作日志未保存",
@@ -4256,6 +4262,20 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                                           JsonException or ArgumentException)
         {
             return false;
+        }
+    }
+
+    private bool ShouldAppendBackgroundStatusAudit(Guid deviceId, DateTimeOffset nowUtc)
+    {
+        lock (_backgroundStatusAuditGate)
+        {
+            if (_lastBackgroundStatusAuditUtc.TryGetValue(deviceId, out var previousUtc))
+            {
+                var elapsed = nowUtc - previousUtc;
+                if (elapsed >= TimeSpan.Zero && elapsed < TimeSpan.FromMinutes(5)) return false;
+            }
+            _lastBackgroundStatusAuditUtc[deviceId] = nowUtc;
+            return true;
         }
     }
 

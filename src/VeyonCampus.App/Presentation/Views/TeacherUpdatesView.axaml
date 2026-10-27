@@ -93,6 +93,9 @@
                                        IsIndeterminate="{Binding IsIndeterminate}" Height="7" />
                           <TextBlock Text="{Binding Detail}" Classes="device-row-detail" TextWrapping="Wrap"
                                      IsVisible="{Binding HasDetail}" />
+                          <Button Classes="tertiary" Content="重新查询更新结果"
+                                  Click="RequestRecheckStudentUpdateResult"
+                                  IsVisible="{Binding CanRequery}" HorizontalAlignment="Left" />
                           <Expander Header="更新阶段耗时" Theme="{StaticResource App.DetailExpander}"
                                     IsVisible="{Binding HasPhaseTimings}">
                             <ItemsControl ItemsSource="{Binding PhaseTimings}">

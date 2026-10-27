@@ -36,6 +36,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     private sealed record TargetBinding(Guid TargetId, string Target, string DisplayName);
     private sealed record CatchUpContext(TeacherClassroomEventContext Context, bool IsEndedRestore);
+    private sealed record CatchUpRetry(int FailureCount, DateTimeOffset RetryAfterUtc);
     private sealed record QuickReadback(StudentAgentStatusDeliveryResult Website,
         StudentInputGuardStatusDeliveryResult Guard);
 
@@ -44,6 +45,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private readonly ClassroomQuickControlStateStore _stateStore;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _targetGates = new();
     private readonly ConcurrentDictionary<(Guid SessionId, Guid TargetId), string> _websiteObservations = new();
+    private readonly ConcurrentDictionary<(Guid SessionId, Guid TargetId), CatchUpRetry> _catchUpRetries = new();
     private readonly HashSet<(Guid TargetId, Guid LeaseId)> _renewableLeases = [];
     private readonly Dictionary<Guid, TeacherClassroomEventContext> _endedRestoreContexts = [];
     private readonly CancellationTokenSource _shutdown = new();
@@ -51,6 +53,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private Task? _renewalTask;
     private Task? _websiteCatchUpTask;
     private Task? _controlExpiryTask;
+    private bool _websiteCatchUpRequested;
     private bool _disposed;
 
     public TeacherClassroomQuickControlService(Func<string> activeCampusId, string? storageDirectory = null)
@@ -180,7 +183,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     public async Task<ClassroomQuickControlOperationResult> ExecuteAsync(Guid expectedSessionId,
         ClassroomQuickControlAction action, IReadOnlyList<Guid>? selectedTargetIds = null,
-        DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default)
+        DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default,
+        DateTimeOffset? expectedControlExpiresUtc = null)
     {
         if (!Enum.IsDefined(action)) throw new InvalidDataException("快捷管控操作无效。");
         if (!TeacherClassroomQuickControlBuildFeatures.PilotEnabled && action is not
@@ -215,6 +219,17 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 await targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    if (expectedControlExpiresUtc is { } expectedExpiry &&
+                        _stateStore.Read(context.SessionId)?.ControlExpiresUtc != expectedExpiry)
+                    {
+                        var current = TryReadDevice(context.SessionId, binding.TargetId);
+                        var mode = current?.Mode ?? DeviceControlMode.None;
+                        return new ClassroomQuickControlTargetResult(binding.TargetId, binding.DisplayName,
+                            mode, DeviceControlMode.None, mode, current?.Phase ?? ClassroomQuickControlPhase.NotStarted,
+                            true, false, current?.WebsiteRevision ?? current?.PendingWebsiteRevision,
+                            current?.InputLeaseId, "已跳过旧的到期任务；课堂管控截止时间已经更新。");
+                    }
+                    ClearCatchUpRetry(context.SessionId, binding.TargetId);
                     return await ExecuteTargetAsync(context, binding, action, cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -223,7 +238,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             finally { limit.Release(); }
         }).ToArray();
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-        if (action == ClassroomQuickControlAction.Release)
+        var expiryStillMatches = expectedControlExpiresUtc is null ||
+            _stateStore.Read(context.SessionId)?.ControlExpiresUtc == expectedControlExpiresUtc;
+        if (action == ClassroomQuickControlAction.Release && expiryStillMatches)
             SaveControlExpiry(context.SessionId, null);
         else if (action == ClassroomQuickControlAction.ClearWebsiteRestrictions &&
                  _stateStore.Read(context.SessionId) is { } afterClear &&
@@ -307,7 +324,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                     try
                     {
                         _ = await ExecuteAsync(context.SessionId, ClassroomQuickControlAction.Release,
-                            cancellationToken: _shutdown.Token).ConfigureAwait(false);
+                            cancellationToken: _shutdown.Token, expectedControlExpiresUtc: expires.Value)
+                            .ConfigureAwait(false);
                     }
                     catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { return; }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -315,7 +333,11 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                         PlatformNotSupportedException or ArgumentException or System.Security.SecurityException)
                     {
                         // Persisted ownership remains available for the normal agent catch-up loop.
-                        try { SaveControlExpiry(context.SessionId, null); }
+                        try
+                        {
+                            if (_stateStore.Read(context.SessionId)?.ControlExpiresUtc == expires)
+                                SaveControlExpiry(context.SessionId, null);
+                        }
                         catch (Exception) { }
                     }
                     return;
@@ -1381,9 +1403,12 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     private static bool NeedsWebsiteCatchUp(ClassroomQuickControlDeviceState device) =>
         device.Phase == ClassroomQuickControlPhase.ReleasePending ||
-        TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
-        (device.WebsitePhase == ClassroomQuickControlPhase.WaitingForAgent ||
-         device.Phase == ClassroomQuickControlPhase.WaitingForAgent || HasWebsiteOwnership(device));
+        device.WebsitePhase is ClassroomQuickControlPhase.ReleasePending or
+            ClassroomQuickControlPhase.WaitingForAgent or ClassroomQuickControlPhase.WebsiteApplying or
+            ClassroomQuickControlPhase.Switching || device.PendingWebsiteRevision is not null ||
+        HasWebsiteOwnership(device) &&
+            (device.WebsitePhase == ClassroomQuickControlPhase.Unknown ||
+             device.WebsitePhase is null && device.Phase == ClassroomQuickControlPhase.Unknown);
 
     private async Task RefreshWebsiteStateAsync(TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState device, CancellationToken cancellationToken)
@@ -1544,12 +1569,13 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         lock (_contextGate)
         {
             if (_disposed || _shutdown.IsCancellationRequested) return;
-            var hasActiveWork = _context is not null;
-            var hasRestoreWork = _endedRestoreContexts.Keys.Any(sessionId =>
-                _stateStore.Read(sessionId)?.Devices.Any(device =>
-                    device.Phase == ClassroomQuickControlPhase.ReleasePending) == true);
-            if (!hasActiveWork && !hasRestoreWork) return;
-            if (_websiteCatchUpTask is { IsCompleted: false }) return;
+            if (_context is null && _endedRestoreContexts.Count == 0) return;
+            if (_websiteCatchUpTask is { IsCompleted: false })
+            {
+                _websiteCatchUpRequested = true;
+                return;
+            }
+            _websiteCatchUpRequested = false;
             _websiteCatchUpTask = Task.Run(WebsiteCatchUpLoopAsync);
         }
     }
@@ -1569,26 +1595,34 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 }
                 if (contexts.Length == 0) return;
 
-                var work = contexts.SelectMany(item =>
+                var candidates = contexts.SelectMany(item =>
                 {
                     var state = _stateStore.Read(item.Context.SessionId);
                     if (state is null || item.IsEndedRestore && state.Active ||
                         !item.IsEndedRestore && !state.Active)
                         return Enumerable.Empty<(CatchUpContext Context, Guid TargetId,
                             ClassroomQuickControlAction Action)>();
-                    return state.Devices.Where(device =>
-                            item.IsEndedRestore
-                                ? device.Phase == ClassroomQuickControlPhase.ReleasePending
-                                : true)
+                    return state.Devices.Where(device => item.IsEndedRestore
+                            ? device.Phase == ClassroomQuickControlPhase.ReleasePending
+                            : NeedsWebsiteCatchUp(device))
                         .Select(device => (Context: item, device.TargetId,
                             Action: device.Phase == ClassroomQuickControlPhase.ReleasePending
                                 ? ClassroomQuickControlAction.Release
                                 : ClassroomQuickControlAction.EnableWebsiteRestriction));
                 }).ToArray();
-                if (work.Length == 0)
+                if (candidates.Length == 0)
                 {
                     RemoveCompletedEndedRestoreContexts();
                     return;
+                }
+
+                var nowUtc = DateTimeOffset.UtcNow;
+                var work = candidates.Where(item => IsCatchUpDue(item.Context.Context.SessionId,
+                    item.TargetId, nowUtc)).ToArray();
+                if (work.Length == 0)
+                {
+                    await Task.Delay(WebsiteCatchUpInterval, _shutdown.Token).ConfigureAwait(false);
+                    continue;
                 }
 
                 using var limit = new SemaphoreSlim(MaximumOperationConcurrency, MaximumOperationConcurrency);
@@ -1605,19 +1639,37 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                             var current = TryReadDevice(context.SessionId, item.TargetId);
                             if (current is null ||
                                 item.Action == ClassroomQuickControlAction.Release &&
-                                current.Phase != ClassroomQuickControlPhase.ReleasePending) return;
+                                current.Phase != ClassroomQuickControlPhase.ReleasePending ||
+                                item.Action == ClassroomQuickControlAction.EnableWebsiteRestriction &&
+                                !NeedsWebsiteCatchUp(current))
+                            {
+                                ClearCatchUpRetry(context.SessionId, item.TargetId);
+                                return;
+                            }
                             if (!item.Context.IsEndedRestore && !IsCurrentTarget(context, item.TargetId)) return;
                             var binding = SelectTargets(context, [item.TargetId]).Single();
                             if (item.Action == ClassroomQuickControlAction.EnableWebsiteRestriction &&
-                                current.WebsitePhase != ClassroomQuickControlPhase.WaitingForAgent &&
-                                current.Phase != ClassroomQuickControlPhase.WaitingForAgent)
+                                current.WebsitePhase is not (ClassroomQuickControlPhase.WaitingForAgent or
+                                    ClassroomQuickControlPhase.WebsiteApplying or
+                                    ClassroomQuickControlPhase.Switching) &&
+                                current.PendingWebsiteRevision is null)
                             {
                                 await RefreshWebsiteStateAsync(context, binding, current, _shutdown.Token)
                                     .ConfigureAwait(false);
+                                var refreshed = TryReadDevice(context.SessionId, item.TargetId);
+                                if (refreshed is not null && !NeedsWebsiteCatchUp(refreshed))
+                                    ClearCatchUpRetry(context.SessionId, item.TargetId);
+                                else
+                                    RecordCatchUpFailure(context.SessionId, item.TargetId);
                                 return;
                             }
                             _ = await ExecuteTargetAsync(context, binding, item.Action, _shutdown.Token,
                                 item.Context.IsEndedRestore).ConfigureAwait(false);
+                            if (!NeedsWebsiteCatchUp(
+                                    TryReadDevice(context.SessionId, item.TargetId) ?? current))
+                                ClearCatchUpRetry(context.SessionId, item.TargetId);
+                            else
+                                RecordCatchUpFailure(context.SessionId, item.TargetId);
                         }
                         finally { targetGate.Release(); }
                     }
@@ -1628,6 +1680,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                         TaskCanceledException)
                     {
                         // The persisted waiting state remains visible; the next bounded pass will retry it.
+                        RecordCatchUpFailure(item.Context.Context.SessionId, item.TargetId);
                     }
                     finally { limit.Release(); }
                 }).ToArray();
@@ -1645,10 +1698,34 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         }
         finally
         {
-            lock (_contextGate) _websiteCatchUpTask = null;
-            if (!_shutdown.IsCancellationRequested) EnsureWebsiteCatchUpLoop();
+            lock (_contextGate)
+            {
+                _websiteCatchUpTask = null;
+                if (_websiteCatchUpRequested && !_disposed && !_shutdown.IsCancellationRequested &&
+                    (_context is not null || _endedRestoreContexts.Count > 0))
+                {
+                    _websiteCatchUpRequested = false;
+                    _websiteCatchUpTask = Task.Run(WebsiteCatchUpLoopAsync);
+                }
+            }
         }
     }
+
+    private bool IsCatchUpDue(Guid sessionId, Guid targetId, DateTimeOffset nowUtc) =>
+        !_catchUpRetries.TryGetValue((sessionId, targetId), out var retry) || retry.RetryAfterUtc <= nowUtc;
+
+    private void RecordCatchUpFailure(Guid sessionId, Guid targetId)
+    {
+        var key = (sessionId, targetId);
+        var failureCount = _catchUpRetries.TryGetValue(key, out var previous)
+            ? Math.Min(previous.FailureCount + 1, 7)
+            : 1;
+        var seconds = Math.Min(5 * (1 << Math.Max(0, failureCount - 1)), 300);
+        _catchUpRetries[key] = new CatchUpRetry(failureCount, DateTimeOffset.UtcNow.AddSeconds(seconds));
+    }
+
+    private void ClearCatchUpRetry(Guid sessionId, Guid targetId) =>
+        _catchUpRetries.TryRemove((sessionId, targetId), out _);
 
     private void RemoveCompletedEndedRestoreContexts()
     {

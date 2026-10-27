@@ -1,6 +1,7 @@
 ﻿using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Platform;
@@ -128,7 +129,6 @@ public partial class TeacherWindow : Window
                 await _model.ReadClassroomLocationsAsync();
             else if (_model.IsClassroomPage && string.IsNullOrWhiteSpace(_model.WebsiteTargets))
                 await _model.ReadWebsiteLocationsAsync();
-            await _model.EnsureClassroomSessionAsync();
             if (_model.HasActiveClassroomSession)
             {
                 await SyncClassroomEventChannelAsync();
@@ -137,6 +137,21 @@ public partial class TeacherWindow : Window
                 await _model.RefreshActiveClassroomStatusAsync();
                 await SyncClassroomEventChannelAsync();
                 RefreshClassroomEvents(this, EventArgs.Empty);
+                if (OperatingSystem.IsWindows() && _model.HasActiveClassroomSession)
+                {
+                    try
+                    {
+                        var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                        _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                        InvalidDataException or InvalidOperationException or CryptographicException or
+                        PlatformNotSupportedException or SocketException)
+                    {
+                        _model.SetClassroomQuickControlSessionNotice(
+                            "启动时无法确认课堂管控状态；课堂保持进行中，请稍后重新读取。" + exception.Message);
+                    }
+                }
             }
             _isOpeningWindow = false;
             _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
@@ -368,7 +383,9 @@ public partial class TeacherWindow : Window
         {
             var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
             if (_model.HasActiveClassroomSession)
+            {
                 _model.UpdateClassroomQuickControlSnapshot(snapshot);
+            }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -442,10 +459,8 @@ public partial class TeacherWindow : Window
         {
             if (!_model.HasActiveClassroomSession)
             {
-                await _model.EnsureClassroomSessionAsync();
-                if (_model.HasActiveClassroomSession) await SyncClassroomEventChannelAsync();
-                if (_model.HasActiveClassroomSession) RefreshClassroomEvents(this, EventArgs.Empty);
                 _classroomScopeDirty = false;
+                _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
                 return;
             }
 
@@ -527,28 +542,39 @@ public partial class TeacherWindow : Window
     private async Task RunClassroomQuickControlAsync(ClassroomQuickControlAction action, string title,
         string description)
     {
-        if (!_model.HasActiveClassroomSession) return;
-        ClassroomQuickControlSnapshot snapshot;
-        try { snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException or CryptographicException or
-                                          PlatformNotSupportedException)
-        {
-            _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
+        var startsSessionForPolicy = !_model.HasActiveClassroomSession;
+        var startsPolicy = action is ClassroomQuickControlAction.EnableWebsiteRestriction or
+            ClassroomQuickControlAction.LockInput;
+        if (startsSessionForPolicy && (!startsPolicy || !TeacherClassroomQuickControlBuildFeatures.PilotEnabled))
             return;
+
+        ClassroomQuickControlSnapshot? snapshot = null;
+        if (!startsSessionForPolicy)
+        {
+            try { snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or CryptographicException or
+                                              PlatformNotSupportedException)
+            {
+                _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
+                return;
+            }
         }
         if (action is not (ClassroomQuickControlAction.Release or
             ClassroomQuickControlAction.ClearWebsiteRestrictions or ClassroomQuickControlAction.UnlockInput) &&
-            !snapshot.PilotFeatureEnabled)
+            !TeacherClassroomQuickControlBuildFeatures.PilotEnabled)
         {
             return;
         }
 
-        var names = snapshot.Devices.Select(item => item.DisplayName).Where(item => !string.IsNullOrWhiteSpace(item))
+        var names = snapshot?.Devices.Select(item => item.DisplayName).Where(item => !string.IsNullOrWhiteSpace(item))
             .Take(6).ToArray();
-        var targetText = names.Length == 0 ? $"当前课堂的 {snapshot.Devices.Count} 台电脑" :
-            string.Join("、", names) + (snapshot.Devices.Count > names.Length
-                ? $" 等 {snapshot.Devices.Count} 台电脑" : "");
+        var targetText = startsSessionForPolicy
+            ? _model.ClassroomTargetSummary
+            : names is not { Length: > 0 }
+                ? $"当前课堂的 {snapshot!.Devices.Count} 台电脑"
+                : string.Join("、", names) + (snapshot!.Devices.Count > names.Length
+                    ? $" 等 {snapshot.Devices.Count} 台电脑" : "");
         var verb = action switch
         {
             ClassroomQuickControlAction.EnableWebsiteRestriction => "网站限制",
@@ -581,6 +607,14 @@ public partial class TeacherWindow : Window
         SetClassroomQuickControlBusy(true);
         try
         {
+            if (startsSessionForPolicy)
+            {
+                await _model.EnsureClassroomSessionAsync();
+                if (!_model.HasActiveClassroomSession) return;
+                await SyncClassroomEventChannelAsync();
+                if (!_model.HasActiveClassroomSession) return;
+            }
+
             var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
                 action, controlExpiresUtc));
             _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(result);
@@ -607,6 +641,58 @@ public partial class TeacherWindow : Window
     private static string FormatClassroomQuickControlResult(ClassroomQuickControlOperationResult result)
     {
         return result.Message;
+    }
+
+    private static bool IsQuickControlLifecycleIdle(ClassroomQuickControlSnapshot snapshot,
+        Guid expectedSessionId, int expectedTargetCount) => snapshot.SessionId == expectedSessionId &&
+        snapshot.Devices.Count == expectedTargetCount && expectedTargetCount > 0 &&
+        snapshot.ControlExpiresUtc is null && snapshot.Devices.All(device =>
+            device.Mode == DeviceControlMode.None && (device.Phase is
+                ClassroomQuickControlPhase.NotStarted or ClassroomQuickControlPhase.NoneVerified));
+
+    private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
+    {
+        if (!_model.CanToggleClassroomSession) return;
+        try
+        {
+            if (_model.ActiveClassroomSessionId is { } sessionId)
+            {
+                if (OperatingSystem.IsWindows())
+                {
+                    var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                    _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                    if (!IsQuickControlLifecycleIdle(snapshot, sessionId, _model.ActiveClassroomTargetCount))
+                    {
+                        _model.SetClassroomQuickControlSessionNotice(
+                            "尚有快捷管控未确认解除；先恢复全部学生电脑，再结束课堂。");
+                        return;
+                    }
+                }
+
+                if (!await _model.EndClassroomSessionAsync(sessionId))
+                {
+                    _model.SetClassroomQuickControlSessionNotice(
+                        "课堂仍有未解除的策略、运行中的倒计时或未完成的课堂任务；请先处理后再结束。");
+                    return;
+                }
+            }
+            else
+            {
+                await _model.EnsureClassroomSessionAsync();
+                if (!_model.HasActiveClassroomSession) return;
+            }
+
+            await SyncClassroomEventChannelAsync();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          SocketException or ArgumentException)
+        {
+            _model.SetClassroomQuickControlSessionNotice(
+                "课堂状态切换失败；请刷新设备和课堂状态后核对。" + exception.Message);
+        }
+        finally { SyncClassroomVisualTimers(); }
     }
 
     private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
@@ -1294,6 +1380,111 @@ public partial class TeacherWindow : Window
         return await dialog.ShowDialog<bool>(this);
     }
 
+    private async Task<bool> ConfirmWebsitePolicyPushAsync()
+    {
+        var domains = _model.WebsitePolicyConfirmationDomains;
+        var screen = Screens.ScreenFromWindow(this);
+        var scaling = screen is { Scaling: > 0 } ? screen.Scaling : 1d;
+        var availableHeight = screen is null ? Math.Max(360d, Bounds.Height) : screen.WorkingArea.Height / scaling;
+        var availableWidth = screen is null ? Math.Max(360d, Bounds.Width) : screen.WorkingArea.Width / scaling;
+        var maximumHeight = Math.Max(1d, Math.Min(680d, availableHeight - 32d));
+        var maximumWidth = Math.Max(1d, Math.Min(760d, availableWidth - 40d));
+        var domainListHeight = Math.Max(24d, Math.Min(240d, maximumHeight - 280d));
+        var dialog = new Window
+        {
+            Title = "确认推送网站限制",
+            Width = Math.Min(620d, maximumWidth),
+            MaxWidth = maximumWidth,
+            MaxHeight = maximumHeight,
+            SizeToContent = SizeToContent.Height,
+            CanResize = true,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+
+        var content = new StackPanel { Spacing = 12 };
+        content.Children.Add(new TextBlock
+        {
+            Text = _model.WebsitePolicyConfirmationSummary,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
+
+        var showDomains = new Button
+        {
+            Content = $"查看完整名单（{domains.Count} 个域名）",
+            HorizontalAlignment = HorizontalAlignment.Left,
+            IsEnabled = domains.Count > 0
+        };
+        var search = new TextBox { PlaceholderText = "搜索域名", IsVisible = false };
+        var matches = new TextBlock { Classes = { "supporting-copy" }, IsVisible = false };
+        var domainText = new TextBox
+        {
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Height = domainListHeight,
+            IsVisible = false
+        };
+        void UpdateDomainText()
+        {
+            var query = search.Text?.Trim() ?? "";
+            var filtered = domains.Where(domain => query.Length == 0 ||
+                domain.Contains(query, StringComparison.CurrentCultureIgnoreCase)).ToArray();
+            domainText.Text = string.Join(Environment.NewLine, filtered);
+            matches.Text = query.Length == 0
+                ? $"共 {domains.Count} 个域名"
+                : $"找到 {filtered.Length} / {domains.Count} 个域名";
+        }
+
+        showDomains.Click += (_, _) =>
+        {
+            var expanded = !search.IsVisible;
+            search.IsVisible = expanded;
+            matches.IsVisible = expanded;
+            domainText.IsVisible = expanded;
+            showDomains.Content = expanded
+                ? "收起完整名单"
+                : $"查看完整名单（{domains.Count} 个域名）";
+            UpdateDomainText();
+        };
+        search.TextChanged += (_, _) => UpdateDomainText();
+        content.Children.Add(showDomains);
+        content.Children.Add(search);
+        content.Children.Add(matches);
+        content.Children.Add(domainText);
+
+        var layout = new Grid
+        {
+            RowDefinitions = new RowDefinitions("Auto,Auto"),
+            Margin = new Avalonia.Thickness(20)
+        };
+        layout.Children.Add(new ScrollViewer
+        {
+            Content = content,
+            MaxHeight = Math.Max(1d, maximumHeight - 130d),
+            VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto
+        });
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 10,
+            Margin = new Avalonia.Thickness(0, 14, 0, 0)
+        };
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
+        var confirm = new Button { Content = "确认推送", IsDefault = true, MinWidth = 100 };
+        confirm.Classes.Add("primary");
+        cancel.Click += (_, _) => dialog.Close(false);
+        confirm.Click += (_, _) => dialog.Close(true);
+        actions.Children.Add(cancel);
+        actions.Children.Add(confirm);
+        Grid.SetRow(actions, 1);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        return await dialog.ShowDialog<bool>(this);
+    }
+
     private async void FillWebsiteTargets(object? sender, RoutedEventArgs e) => await _model.ReadWebsiteLocationsAsync();
     private void FillWebsiteTargetsFromRoom(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromRoom();
     private void FillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => _model.FillWebsiteTargetsFromSelectedLocation();
@@ -1305,8 +1496,7 @@ public partial class TeacherWindow : Window
     private void UseSelectedClassroomLocation(object? sender, RoutedEventArgs e) => _model.UseSelectedClassroomLocation();
     private async void PushWebsitePolicy(object? sender, RoutedEventArgs e)
     {
-        if (!await ConfirmProfileActionAsync("确认推送网站限制",
-                _model.WebsitePolicyConfirmationSummary, "确认推送")) return;
+        if (!await ConfirmWebsitePolicyPushAsync()) return;
         await _model.PushWebsitePolicyAsync();
     }
     private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e)
@@ -1392,6 +1582,81 @@ public partial class TeacherWindow : Window
             !row.CanRefreshLegacyEdgePolicy)
             return;
         await _model.RefreshLegacyEdgePolicyAsync(row);
+    }
+
+    private async void ReviewDeviceHealthIdentity(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: TeacherDeviceHealthRow row } || !row.CanReviewIdentity) return;
+        row.SetIdentityReviewStatus("正在重新读取签名身份……");
+        var discoveries = await _model.DiscoverStudentAgentIdentityAsync(row.Target);
+        var discovery = discoveries.SingleOrDefault();
+        if (discovery is null || discovery.Candidate is not { } candidate)
+        {
+            row.SetIdentityReviewStatus(discovery?.Detail ?? "未取得可验证的 Agent 身份；尚未更改信任记录。");
+            return;
+        }
+
+        row.SetIdentityCandidate(candidate);
+        if (discovery.MatchesPinnedKey)
+        {
+            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: false);
+        }
+        else
+        {
+            row.SetIdentityReviewStatus("Agent 签名有效；教师现场核对前不会固定或轮换身份。");
+            if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return;
+            try
+            {
+                _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);
+            }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or
+                UnauthorizedAccessException or InvalidOperationException or CryptographicException)
+            {
+                row.SetIdentityReviewStatus("身份固定失败：" + exception.Message);
+                await ShowStudentAgentTrustErrorAsync(exception.Message);
+                return;
+            }
+        }
+
+        row.SetIdentityReviewStatus("身份已由教师确认，正在读取新的签名状态……");
+        await _model.ReadDeviceHealthRowAsync(row);
+    }
+
+    private async void CopyDeviceHealthDiagnostic(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthRow row })
+            await CopyDeviceHealthTextAsync(row, row.DiagnosticsSummary, "诊断信息已复制。");
+    }
+
+    private async void CopyDeviceHealthFingerprint(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthRow row } && row.HasIdentityCandidate)
+            await CopyDeviceHealthTextAsync(row, row.FullIdentityFingerprints, "完整指纹已复制。");
+    }
+
+    private static void ToggleDeviceHealthFingerprints(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: TeacherDeviceHealthRow row })
+            row.ShowFullIdentityFingerprints = !row.ShowFullIdentityFingerprints;
+    }
+
+    private async Task CopyDeviceHealthTextAsync(TeacherDeviceHealthRow row, string text, string successMessage)
+    {
+        try
+        {
+            var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+            if (clipboard is null)
+            {
+                row.SetCopyStatus("无法访问剪贴板；可选中文本手动复制。");
+                return;
+            }
+            await clipboard.SetTextAsync(text);
+            row.SetCopyStatus(successMessage);
+        }
+        catch (Exception)
+        {
+            row.SetCopyStatus("复制失败；可选中文本手动复制。");
+        }
     }
 
     private async Task<bool> ConfirmHealthRepairAsync(string title, string message)
@@ -1768,6 +2033,12 @@ public partial class TeacherWindow : Window
     }
 
     private async void DeployStudentUpdate(object? sender, RoutedEventArgs e) => await _model.DeployStudentUpdateAsync();
+
+    private async void RecheckStudentUpdateResult(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is StudentApplicationUpdateTargetProgressItem row)
+            await _model.RecheckStudentUpdateResultAsync(row);
+    }
     private async void GeneratePackage(object? sender, RoutedEventArgs e) => await _model.GenerateStudentPackageAsync();
     private void CancelPackageGeneration(object? sender, RoutedEventArgs e) => _model.CancelStudentPackageGeneration();
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>

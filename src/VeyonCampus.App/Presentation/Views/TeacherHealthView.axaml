@@ -37,31 +37,38 @@
                   Click="RequestReadStudentDeviceHealth" IsEnabled="{Binding CanReadDeviceHealth}"
                   ToolTip.Tip="刷新学生电脑状态；需要处理的问题会显示在下方。" />
         </Grid>
-        <Border>
-          <Border.Styles>
-            <floweryTheme:DaisyUITheme />
-          </Border.Styles>
-          <flowery:DaisyStats>
-            <flowery:DaisyStat Title="正常" Value="{Binding DeviceHealthHealthyCount}"
-                               Description="最近状态已确认" Variant="Success">
-              <flowery:DaisyStat.Figure>
-                <flowery:DaisyStatusIndicator Color="Success" Size="Small" AccessibleText="正常" />
-              </flowery:DaisyStat.Figure>
-            </flowery:DaisyStat>
-            <flowery:DaisyStat Title="需处理" Value="{Binding DeviceHealthNeedsActionCount}"
-                               Description="包含需人工核对的设备" Variant="Warning">
-              <flowery:DaisyStat.Figure>
-                <flowery:DaisyStatusIndicator Color="Warning" Size="Small" AccessibleText="需要处理" />
-              </flowery:DaisyStat.Figure>
-            </flowery:DaisyStat>
-            <flowery:DaisyStat Title="待确认" Value="{Binding DeviceHealthUnconfirmedCount}"
-                               Description="无回执不等于离线" Variant="Info">
-              <flowery:DaisyStat.Figure>
-                <flowery:DaisyStatusIndicator Color="Info" Size="Small" AccessibleText="状态待确认" />
-              </flowery:DaisyStat.Figure>
-            </flowery:DaisyStat>
-          </flowery:DaisyStats>
-        </Border>
+        <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+          <Border Background="{DynamicResource Teacher.Color.SuccessSubtle}" CornerRadius="10" Padding="12">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+              <TextBlock Text="正常" Classes="muted" FontSize="12" />
+              <TextBlock Grid.Row="1" Text="{Binding DeviceHealthHealthyCount}"
+                         Foreground="{DynamicResource Teacher.Color.Success}" FontSize="23" FontWeight="Bold" />
+              <Ellipse Grid.Row="1" Grid.Column="1" Width="8" Height="8"
+                       Fill="{DynamicResource Teacher.Color.Success}" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="2" Text="最近状态已确认" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+          <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="10" Padding="12">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+              <TextBlock Text="需处理" Classes="muted" FontSize="12" />
+              <TextBlock Grid.Row="1" Text="{Binding DeviceHealthNeedsActionCount}"
+                         Foreground="{DynamicResource Teacher.Color.Warning}" FontSize="23" FontWeight="Bold" />
+              <Ellipse Grid.Row="1" Grid.Column="1" Width="8" Height="8"
+                       Fill="{DynamicResource Teacher.Color.Warning}" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="2" Text="包含需人工核对的设备" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+          <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.InfoSubtle}" CornerRadius="10" Padding="12">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+              <TextBlock Text="待确认" Classes="muted" FontSize="12" />
+              <TextBlock Grid.Row="1" Text="{Binding DeviceHealthUnconfirmedCount}"
+                         Foreground="{DynamicResource Teacher.Color.Info}" FontSize="23" FontWeight="Bold" />
+              <Ellipse Grid.Row="1" Grid.Column="1" Width="8" Height="8"
+                       Fill="{DynamicResource Teacher.Color.Info}" VerticalAlignment="Center" />
+              <TextBlock Grid.Row="2" Text="无回执不等于离线" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            </Grid>
+          </Border>
+        </Grid>
         <suki:InfoBar Message="{Binding DeviceRuntimeSummaryStatus}" Severity="Information"
                       IsOpen="{Binding HasDeviceHealthTargets}" IsClosable="False" IsOpaque="False" />
         <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
@@ -106,7 +113,8 @@
                       </StackPanel>
                     </Grid>
                   </Expander.Header>
-                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="12" Margin="12,0,12,8">
+                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="12" Margin="0,0,0,8"
+                          HorizontalAlignment="Stretch">
                     <StackPanel Spacing="10">
                       <WrapPanel>
                         <Button Classes="secondary" Content="重新检测" Click="RequestRecheckDeviceHealthAlert"
@@ -149,14 +157,13 @@
         </Border>
         <TextBlock Text="没有符合条件的电脑，请调整搜索内容或状态筛选。" Classes="supporting-copy"
                    IsVisible="{Binding HasDeviceHealthFilterEmpty}" Margin="12,16" />
-        <ListBox x:Name="DeviceHealthRowsList" ItemsSource="{Binding DeviceHealthPageRows}" MaxHeight="480"
-                 Background="Transparent" BorderThickness="0" Padding="0"
-                 ItemContainerTheme="{StaticResource Teacher.DeviceListItem}"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                 IsVisible="{Binding HasDeviceHealthFilteredRows}">
-          <ListBox.ItemTemplate>
+        <ItemsControl x:Name="DeviceHealthRowsList" ItemsSource="{Binding DeviceHealthPageRows}"
+                      IsVisible="{Binding HasDeviceHealthFilteredRows}">
+          <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:TeacherDeviceHealthRow">
-              <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1" Padding="0,3">
+              <Border Classes="device-health-row" BorderBrush="{DynamicResource Teacher.Color.Border}"
+                      BorderThickness="1" CornerRadius="10" Background="{DynamicResource Teacher.Color.Surface}"
+                      Margin="0,3">
                 <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsDetailsExpanded, Mode=TwoWay}">
                   <Expander.Header>
                     <Grid ColumnDefinitions="32,*,Auto" ColumnSpacing="12">
@@ -166,6 +173,7 @@
                       </Border>
                       <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
                         <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding DeviceListIdentifier}" Classes="supporting-copy" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding CompactSummary}" Classes="supporting-copy" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                       </StackPanel>
                       <Border Grid.Column="2" Background="{Binding CategoryBackground}" CornerRadius="12" Padding="9,4" VerticalAlignment="Center">
@@ -173,16 +181,54 @@
                       </Border>
                     </Grid>
                   </Expander.Header>
-                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="14" Margin="12,0,12,8">
-                    <StackPanel Spacing="8">
-                      <TextBlock Text="{Binding IdentitySummary}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                      <TextBlock Text="{Binding AgentSummary}" Classes="supporting-copy" />
-                      <TextBlock Text="{Binding ServiceSummary}" Classes="supporting-copy" />
-                      <TextBlock Text="{Binding InputGuardSummary}" Classes="supporting-copy" Foreground="{Binding InputGuardForeground}" />
-                      <TextBlock Text="{Binding PolicySummary}" Classes="supporting-copy" />
-                      <TextBlock Text="{Binding UpdateSummary}" Classes="supporting-copy" />
-                      <TextBlock Text="{Binding CollectedText}" Classes="supporting-copy" />
-                      <TextBlock Text="{Binding Detail}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" IsVisible="{Binding HasDetail}" />
+                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" Padding="14">
+                    <StackPanel Spacing="10">
+                      <StackPanel Spacing="5">
+                        <TextBlock Text="设备信息" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding DeviceIdentifierSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding LastSeenSummary}" Classes="supporting-copy" />
+                        <WrapPanel>
+                          <TextBlock Text="{Binding AgentVersionSummary}" Classes="supporting-copy" Margin="0,0,12,0" />
+                          <TextBlock Text="{Binding StudentSetupVersionSummary}" Classes="supporting-copy" Margin="0,0,12,0" />
+                          <TextBlock Text="{Binding ServiceSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        </WrapPanel>
+                      </StackPanel>
+                      <StackPanel Spacing="5">
+                        <TextBlock Text="策略状态" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding WebsitePolicyDetailSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding ApplicationPolicyDetailSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding InputGuardSummary}" Classes="supporting-copy" Foreground="{Binding InputGuardForeground}" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding LastAcknowledgementSummary}" Classes="supporting-copy" />
+                      </StackPanel>
+                      <StackPanel Spacing="5">
+                        <TextBlock Text="安全与身份" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding IdentityVerificationSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        <TextBox Text="{Binding FullIdentityFingerprints}" IsReadOnly="True" AcceptsReturn="True"
+                                 TextWrapping="Wrap" Height="72" IsVisible="{Binding ShowFullIdentityFingerprints}" />
+                        <WrapPanel>
+                          <Button Classes="secondary" Content="{Binding IdentityFingerprintToggleText}"
+                                  Click="RequestToggleDeviceHealthFingerprints"
+                                  IsVisible="{Binding HasIdentityCandidate}" Margin="0,0,8,4" />
+                          <Button Classes="tertiary" Content="复制完整指纹"
+                                  Click="RequestCopyDeviceHealthFingerprint"
+                                  IsVisible="{Binding HasIdentityCandidate}" Margin="0,0,8,4" />
+                          <Button Classes="primary" Content="核对并固定身份"
+                                  Click="RequestReviewDeviceHealthIdentity"
+                                  IsVisible="{Binding CanReviewIdentity}" Margin="0,0,8,4" />
+                        </WrapPanel>
+                        <TextBlock Text="{Binding IdentityReviewStatus}" Classes="supporting-copy" TextWrapping="Wrap"
+                                   IsVisible="{Binding HasIdentityReviewStatus}" />
+                        <TextBlock Text="{Binding CopyStatus}" Classes="supporting-copy" IsVisible="{Binding HasCopyStatus}" />
+                      </StackPanel>
+                      <Expander Header="诊断信息" IsExpanded="False" IsVisible="{Binding HasDiagnosticsSummary}">
+                        <StackPanel Spacing="8">
+                          <TextBlock Text="{Binding UpdateSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+                          <TextBox Text="{Binding DiagnosticsSummary}" IsReadOnly="True" AcceptsReturn="True"
+                                   TextWrapping="Wrap" Height="128" />
+                          <Button Classes="tertiary" Content="复制诊断信息"
+                                  Click="RequestCopyDeviceHealthDiagnostic" HorizontalAlignment="Left" />
+                        </StackPanel>
+                      </Expander>
                       <WrapPanel>
                         <Button Classes="secondary" Content="启动 Veyon 服务" Click="RequestEnsureVeyonServiceRunning"
                                 IsVisible="{Binding CanEnsureVeyonServiceRunning}" IsEnabled="{Binding CanEnsureVeyonServiceRunning}" Margin="0,0,8,4" />
@@ -197,8 +243,8 @@
                 </Expander>
               </Border>
             </DataTemplate>
-          </ListBox.ItemTemplate>
-        </ListBox>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
         <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Right" IsVisible="{Binding HasMultipleDeviceHealthPages}">
           <Button Classes="secondary" Content="上一页" Click="RequestPreviousDeviceHealthPage" IsEnabled="{Binding CanPreviousDeviceHealthPage}" />
           <TextBlock Text="{Binding DeviceHealthPageLabel}" Classes="supporting-copy" VerticalAlignment="Center" />

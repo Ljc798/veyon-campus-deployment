@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using VeyonCampus.App;
 using VeyonCampus.Core;
 
 internal static class StudentApplicationUpdateChecks
@@ -9,6 +10,7 @@ internal static class StudentApplicationUpdateChecks
     {
         CheckSignedCommand();
         CheckSignedAgentResponses();
+        CheckCommandBoundStatusRequeryAndProgress();
         CheckDownloadCapabilityResponse();
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
@@ -274,6 +276,32 @@ internal static class StudentApplicationUpdateChecks
             Payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(body))
         });
         Reject(() => StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(tampered, publicKey));
+    }
+
+    private static void CheckCommandBoundStatusRequeryAndProgress()
+    {
+        using var campusKey = RSA.Create(2048);
+        var now = DateTimeOffset.UtcNow;
+        var commandId = Guid.NewGuid();
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            "ExampleCampus", Guid.NewGuid(), now, commandId);
+        var signed = WebsitePolicyStatusCryptography.SignRequest(request, campusKey);
+        var verified = WebsitePolicyStatusCryptography.VerifyRequest(signed,
+            campusKey.ExportSubjectPublicKeyInfoPem(), "ExampleCampus", now);
+        Expect(verified.UpdateCommandId == commandId);
+        Reject(() => WebsitePolicyStatusCryptography.VerifyRequest(signed,
+            campusKey.ExportSubjectPublicKeyInfoPem(), "OtherCampus", now));
+
+        var row = new StudentApplicationUpdateTargetProgressItem("PC-01", "学生 01");
+        row.SetTransportProgress("已发送签名更新命令，正在连接学生 Agent", commandId);
+        row.SetTransportProgress("学生端更新处理中；已等待 5 秒", commandId);
+        Expect(row.CommandId == commandId && row.StatusText.Contains("正在读取签名阶段", StringComparison.Ordinal));
+        row.SetResult(false, needsReview: true, detail: "更新请求超时；需要重新查询。");
+        Expect(row.CanRequery);
+        row.BeginRequery();
+        Expect(!row.CanRequery && row.StatusText == "正在重新核对终态");
+        row.SetResult(false, needsReview: true, detail: "Agent 暂时不可用；请稍后重试。");
+        Expect(row.CanRequery);
     }
 
     private static void CheckDownloadCapabilityResponse()

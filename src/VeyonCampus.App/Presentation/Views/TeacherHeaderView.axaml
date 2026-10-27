@@ -6,7 +6,7 @@
              x:Class="VeyonCampus.App.Presentation.Views.TeacherHeaderView"
              x:DataType="vm:TeacherViewModel">
   <Border Classes="teacher-page-header">
-    <Grid ColumnDefinitions="*,Auto,Auto,Auto" ColumnSpacing="8">
+    <Grid ColumnDefinitions="*,Auto,Auto,Auto,Auto" ColumnSpacing="8">
       <StackPanel Spacing="3" VerticalAlignment="Center">
         <TextBlock Classes="page-title" Text="课堂控制" IsVisible="{Binding IsClassroomExperiencePage}" />
         <TextBlock Classes="page-title" Text="策略与预设" IsVisible="{Binding IsClassroomPage}" />
@@ -20,10 +20,24 @@
         <TextBlock Text="{Binding ClassroomTargetSummary}" Classes="supporting-copy"
                    IsVisible="{Binding IsClassroomPage}" />
       </StackPanel>
-      <Button Grid.Column="1" Classes="secondary" Content="全班通知"
+      <Grid Grid.Column="1" IsVisible="{Binding IsClassroomExperiencePage}">
+        <Border Classes="status-chip success" IsVisible="{Binding HasActiveClassroomSession}"
+                VerticalAlignment="Center">
+          <TextBlock Text="课堂进行中" />
+        </Border>
+        <Border Classes="status-chip warning" IsVisible="{Binding HasNoActiveClassroomSession}"
+                VerticalAlignment="Center">
+          <TextBlock Text="{Binding ClassroomSessionActionText}" />
+        </Border>
+      </Grid>
+      <Button Grid.Column="2" Classes="secondary" Content="{Binding ClassroomSessionToggleText}"
+              IsVisible="{Binding IsClassroomExperiencePage}" IsEnabled="{Binding CanToggleClassroomSession}"
+              Click="RequestClassroomSessionToggle"
+              ToolTip.Tip="课堂状态保持到手动结束；结束前请先解除快捷管控并完成课堂倒计时和任务。" />
+      <Button Grid.Column="3" Classes="secondary" Content="全班通知"
               IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomNotice"
               ToolTip.Tip="发送给当前课堂目标；两分钟后失效。" />
-      <Button x:Name="ClassroomChatDrawerToggle" Grid.Column="2" Classes="secondary"
+      <Button x:Name="ClassroomChatDrawerToggle" Grid.Column="4" Classes="secondary"
               IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomChatToggle"
               ToolTip.Tip="打开学生消息">
         <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="6">
@@ -38,19 +52,6 @@
           </Border>
         </Grid>
       </Button>
-      <Border Grid.Column="3" Classes="status-chip success"
-              IsVisible="{Binding HasActiveClassroomSession}" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal" Spacing="7">
-          <Border VerticalAlignment="Center" Background="Transparent">
-            <Border.Styles>
-              <floweryTheme:DaisyUITheme />
-            </Border.Styles>
-            <flowery:DaisyStatusIndicator Color="Success" Size="ExtraSmall"
-                                           AccessibleText="课堂进行中" />
-          </Border>
-          <TextBlock Text="课堂进行中" />
-        </StackPanel>
-      </Border>
     </Grid>
   </Border>
 </UserControl>
