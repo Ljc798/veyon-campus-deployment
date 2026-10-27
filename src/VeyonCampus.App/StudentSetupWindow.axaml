@@ -678,7 +678,9 @@
                            VerticalAlignment="Center" IsVisible="{Binding IsExecuting}"
                            AutomationProperties.Name="正在部署" ToolTip.Tip="正在部署，请稍候" />
               </Grid>
-              <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExecutionProgressPercent}" Height="8" />
+              <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExecutionProgressPercent}" Height="8"
+                           AutomationProperties.Name="{Binding ExecutionProgressText}"
+                           AutomationProperties.HelpText="{Binding ExecutionOverallStatusText}" />
             </StackPanel>
           </Border>
           <Border Classes="card" Grid.Row="1" Padding="16">
