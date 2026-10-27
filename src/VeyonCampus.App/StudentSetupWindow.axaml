@@ -595,6 +595,9 @@
             </ScrollViewer>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPreflight}" Grid.Row="1" Padding="12">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
             <Grid RowDefinitions="36,*">
               <Grid ColumnDefinitions="*" ColumnSpacing="12">
                 <TextBlock Text="检查结果" FontSize="18" FontWeight="SemiBold" />
@@ -616,22 +619,14 @@
                           <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="2">
                             <TextBlock Text="{Binding Name}" FontWeight="SemiBold" VerticalAlignment="Top" TextWrapping="Wrap" />
                             <TextBlock Grid.Row="1" Text="{Binding Hint}" Classes="muted" FontSize="12" TextWrapping="Wrap" IsVisible="{Binding ShowHint}" />
-                            <StackPanel Grid.Column="1" Grid.RowSpan="2" VerticalAlignment="Center">
-                              <Border Classes="status-pill success" IsVisible="{Binding IsPass}" ToolTip.Tip="已通过" AutomationProperties.Name="已通过">
-                                <Path Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                              </Border>
-                              <Border Classes="status-pill warning" IsVisible="{Binding IsWarning}" ToolTip.Tip="提示（非错误）" AutomationProperties.Name="提示（非错误）">
-                                <Path Data="M12,3 L23,22 H1 Z M12,9 V15 M12,18 V20" Stroke="#B96B12" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                              </Border>
-                              <Border Classes="status-pill error" IsVisible="{Binding IsBlocked}" ToolTip.Tip="未通过" AutomationProperties.Name="未通过">
-                                <Path Data="M5,5 L19,19 M19,5 L5,19" Stroke="#C63636" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                              </Border>
-                              <Border Classes="status-pill info" IsVisible="{Binding IsUnknown}" ToolTip.Tip="进行中或需要核对" AutomationProperties.Name="进行中或需要核对">
-                                <Path Data="M21,12 A9,9 0 1 1 12,3 M12,7 V12 L16,14" Stroke="#1479F5" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                              </Border>
-                              <Border Classes="status-pill neutral" IsVisible="{Binding IsNotApplicable}" ToolTip.Tip="等待或不适用" AutomationProperties.Name="等待或不适用">
-                                <Path Data="M4,5 L14,12 L4,19 Z M20,5 V19" Stroke="#64748B" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                              </Border>
+                            <StackPanel Grid.Column="1" Grid.RowSpan="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                              <flowery:DaisyStatusIndicator Color="Success" Size="Small" IsVisible="{Binding IsPass}" />
+                              <flowery:DaisyStatusIndicator Color="Warning" Size="Small" IsVisible="{Binding IsWarning}" />
+                              <flowery:DaisyStatusIndicator Color="Error" Size="Small" IsVisible="{Binding IsBlocked}" />
+                              <flowery:DaisyStatusIndicator Color="Info" Size="Small" IsVisible="{Binding IsUnknown}" />
+                              <flowery:DaisyStatusIndicator Color="Neutral" Size="Small" IsVisible="{Binding IsNotApplicable}" />
+                              <TextBlock Text="{Binding Status}" FontSize="12" FontWeight="SemiBold"
+                                         TextWrapping="Wrap" MaxWidth="132" VerticalAlignment="Center" />
                             </StackPanel>
                           </Grid>
                         </Border>
@@ -691,6 +686,9 @@
             </StackPanel>
           </Border>
           <Border Classes="card" Grid.Row="1" Padding="16">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="10">
                 <TextBlock Text="逐项执行" FontSize="18" FontWeight="SemiBold" />
@@ -700,22 +698,14 @@
                       <Border Classes="execution-row" Classes.active="{Binding IsRunning}" Padding="14,12">
                         <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="5">
                           <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
-                          <StackPanel Grid.Column="1">
-                            <Border Classes="status-pill success" IsVisible="{Binding IsSuccess}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
-                              <Path Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                            </Border>
-                            <Border Classes="status-pill info" IsVisible="{Binding IsRunning}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
-                              <Path Data="M21,12 A9,9 0 1 1 12,3 M12,7 V12 L16,14" Stroke="#1479F5" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                            </Border>
-                            <Border Classes="status-pill error" IsVisible="{Binding IsError}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
-                              <Path Data="M5,5 L19,19 M19,5 L5,19" Stroke="#C63636" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                            </Border>
-                            <Border Classes="status-pill warning" IsVisible="{Binding IsWarning}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
-                              <Path Data="M12,3 L23,22 H1 Z M12,9 V15 M12,18 V20" Stroke="#B96B12" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                            </Border>
-                            <Border Classes="status-pill neutral" IsVisible="{Binding IsNeutral}" ToolTip.Tip="{Binding Status}" AutomationProperties.Name="{Binding Status}">
-                              <Path Data="M4,5 L14,12 L4,19 Z M20,5 V19" Stroke="#64748B" StrokeThickness="2" Width="20" Height="20" Stretch="Uniform" />
-                            </Border>
+                          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                            <flowery:DaisyStatusIndicator Color="Success" Size="Small" IsVisible="{Binding IsSuccess}" />
+                            <flowery:DaisyStatusIndicator Color="Info" Size="Small" IsVisible="{Binding IsRunning}" />
+                            <flowery:DaisyStatusIndicator Color="Error" Size="Small" IsVisible="{Binding IsError}" />
+                            <flowery:DaisyStatusIndicator Color="Warning" Size="Small" IsVisible="{Binding IsWarning}" />
+                            <flowery:DaisyStatusIndicator Color="Neutral" Size="Small" IsVisible="{Binding IsNeutral}" />
+                            <TextBlock Text="{Binding Status}" FontSize="12" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" MaxWidth="132" VerticalAlignment="Center" />
                           </StackPanel>
                           <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Detail}" Classes="muted"
                                      FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
@@ -752,6 +742,9 @@
             </Grid>
           </Border>
           <Border Classes="card" IsVisible="{Binding HasExecutionStepStatuses}" Grid.Row="1">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
             <ScrollViewer VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
               <StackPanel Spacing="10">
                 <TextBlock Text="{Binding ExecutionResultsHeading}" FontSize="17" FontWeight="SemiBold" />
@@ -760,7 +753,14 @@
                     <DataTemplate x:DataType="vm:StudentExecutionStepStatus">
                       <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12" RowSpacing="5" Margin="0,8,0,16">
                         <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextWrapping="Wrap" />
-                        <TextBlock Grid.Column="1" Text="{Binding Status}" FontWeight="SemiBold" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                          <flowery:DaisyStatusIndicator Color="Success" Size="Small" IsVisible="{Binding IsSuccess}" />
+                          <flowery:DaisyStatusIndicator Color="Info" Size="Small" IsVisible="{Binding IsRunning}" />
+                          <flowery:DaisyStatusIndicator Color="Error" Size="Small" IsVisible="{Binding IsError}" />
+                          <flowery:DaisyStatusIndicator Color="Warning" Size="Small" IsVisible="{Binding IsWarning}" />
+                          <flowery:DaisyStatusIndicator Color="Neutral" Size="Small" IsVisible="{Binding IsNeutral}" />
+                          <TextBlock Text="{Binding Status}" FontWeight="SemiBold" />
+                        </StackPanel>
                         <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Detail}" Classes="muted"
                                    FontSize="12" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis"
                                    IsVisible="{Binding ShowDetail}" />
