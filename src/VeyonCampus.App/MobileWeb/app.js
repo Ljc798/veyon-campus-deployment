@@ -73,6 +73,8 @@ const classroomScreenPreviewVisibleTargets = new Set();
 const classroomScreenPreviewControllers = new Map();
 const classroomScreenPreviewTimers = new Map();
 const classroomScreenPreviewObjectUrls = new Map();
+const mobileScreenPreviewCacheBudgetBytes = 8 * 1024 * 1024;
+let mobileScreenPreviewCacheBytes = 0;
 let classroomTargetDefaultState = "unavailable";
 let policyOperationInFlight = false;
 let toastTimer = 0;
@@ -408,8 +410,10 @@ async function pauseClassroomScreenPreview() {
   for (const controller of classroomScreenPreviewControllers.values()) controller.abort();
   classroomScreenPreviewControllers.clear();
   for (const tile of $("classroom-screen-preview-grid").querySelectorAll(".classroom-screen-preview-tile")) {
-    const hasFrame = tile.querySelector("img")?.hasAttribute("src");
+    const image = tile.querySelector("img");
+    const hasFrame = image?.hasAttribute("src");
     const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
+    if (hasFrame) image.classList.add("is-stale");
     if (frameStatus) frameStatus.textContent = hasFrame ? "已暂停，保留最近画面。" : "已暂停查看。";
     tile.querySelector(".monitor-tile-retry-button")?.classList.add("hidden");
   }
@@ -720,6 +724,13 @@ function renderClassroomScreenPreviewTiles(targets) {
     image.height = 180;
     image.loading = "lazy";
     image.decoding = "async";
+    const frame = document.createElement("div");
+    frame.className = "classroom-screen-preview-frame";
+    const placeholder = document.createElement("span");
+    placeholder.className = "classroom-screen-preview-placeholder";
+    placeholder.textContent = "暂无画面";
+    placeholder.setAttribute("aria-hidden", "true");
+    frame.append(placeholder, image);
 
     const frameStatus = document.createElement("p");
     frameStatus.className = "classroom-screen-preview-frame-status";
@@ -742,7 +753,7 @@ function renderClassroomScreenPreviewTiles(targets) {
     liveButton.disabled = singleTargetPreviewPending;
     liveButton.setAttribute("aria-label", `${isLiveTarget ? "停止" : "打开"}${screenTargetDisplayName(target)}的实时画面`);
     liveButton.addEventListener("click", () => void openSingleTargetScreenPreview(target.targetId));
-    tile.append(heading, position, image, frameStatus, retryButton, liveButton);
+    tile.append(heading, position, frame, frameStatus, retryButton, liveButton);
     grid.append(tile);
   }
   grid.classList.remove("hidden");
@@ -779,13 +790,14 @@ function makeClassroomScreenPreviewHidden(tile) {
   classroomScreenPreviewTimers.delete(target);
   classroomScreenPreviewControllers.get(target)?.abort();
   classroomScreenPreviewControllers.delete(target);
-  releaseClassroomScreenPreviewUrl(target);
-  tile.querySelector("img")?.removeAttribute("src");
+  const image = tile.querySelector("img");
+  const hasFrame = image?.hasAttribute("src");
+  if (hasFrame) image.classList.add("is-stale");
   const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
-  if (frameStatus) frameStatus.textContent = "查看时自动更新画面。";
+  if (frameStatus) frameStatus.textContent = hasFrame
+    ? "保留最近画面；回到此卡片时自动更新。"
+    : "查看时自动更新画面。";
   tile.querySelector(".monitor-tile-retry-button")?.classList.add("hidden");
-  const timestamp = tile.querySelector("small");
-  if (timestamp) timestamp.textContent = "等待画面";
 }
 
 async function refreshClassroomScreenPreviewFrame(tile) {
@@ -817,8 +829,12 @@ async function refreshClassroomScreenPreviewFrame(tile) {
       return;
     }
     releaseClassroomScreenPreviewUrl(target);
-    classroomScreenPreviewObjectUrls.set(target, objectUrl);
+    classroomScreenPreviewObjectUrls.set(target, { url: objectUrl, bytes: frame.blob.size });
+    mobileScreenPreviewCacheBytes += frame.blob.size;
     if (image) image.src = objectUrl;
+    image?.closest(".classroom-screen-preview-frame")?.classList.add("has-frame");
+    image?.classList.remove("is-stale");
+    trimMobileScreenPreviewCache(target);
     const captured = Date.parse(frame.capturedUtc || "");
     const time = Number.isFinite(captured) ? formatTimeOfDay(new Date(captured)) : "刚刚";
     const timestamp = tile.querySelector("small");
@@ -929,9 +945,34 @@ async function stopClassroomScreenPreview(showStatus) {
 }
 
 function releaseClassroomScreenPreviewUrl(target) {
-  const url = classroomScreenPreviewObjectUrls.get(target);
-  if (url) URL.revokeObjectURL(url);
+  const cached = classroomScreenPreviewObjectUrls.get(target);
+  if (cached) {
+    URL.revokeObjectURL(cached.url);
+    mobileScreenPreviewCacheBytes = Math.max(0, mobileScreenPreviewCacheBytes - cached.bytes);
+  }
   classroomScreenPreviewObjectUrls.delete(target);
+}
+
+function trimMobileScreenPreviewCache(currentTarget) {
+  while (mobileScreenPreviewCacheBytes > mobileScreenPreviewCacheBudgetBytes) {
+    const oldestOffscreenTarget = [...classroomScreenPreviewObjectUrls.keys()]
+      .find(target => target !== currentTarget && !classroomScreenPreviewVisibleTargets.has(target));
+    if (!oldestOffscreenTarget) return;
+
+    releaseClassroomScreenPreviewUrl(oldestOffscreenTarget);
+    const tile = [...$("classroom-screen-preview-grid").children]
+      .find(item => item.dataset.target === oldestOffscreenTarget);
+    if (!tile) continue;
+
+    const image = tile.querySelector("img");
+    image?.removeAttribute("src");
+    image?.classList.remove("is-stale");
+    image?.closest(".classroom-screen-preview-frame")?.classList.remove("has-frame");
+    const timestamp = tile.querySelector("small");
+    if (timestamp) timestamp.textContent = "等待画面";
+    const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
+    if (frameStatus) frameStatus.textContent = "较早画面已释放；停留在此卡片时会重新读取。";
+  }
 }
 
 function customWebsitePolicyInput() {
