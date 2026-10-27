@@ -656,6 +656,8 @@ input:focus-visible, textarea:focus-visible { outline-offset: 3px; }
   .control-tab span { font-size: 11px; }
 }
 @media (max-width: 360px) {
+  .saved-policy-picker { grid-template-columns: minmax(0, 1fr); }
+  .saved-policy-picker > button { width: 100%; }
   .classroom-control-actions { grid-template-columns: 1fr; }
   .classroom-control-actions button:last-child { grid-column: auto; }
   .control-tab span { font-size: 10px; }
