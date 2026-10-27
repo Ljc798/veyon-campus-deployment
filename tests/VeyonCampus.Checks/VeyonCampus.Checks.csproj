@@ -25,6 +25,8 @@
     <Compile Include="../../src/VeyonCampus.App/ApplicationCatalogProductChoice.cs" Link="ApplicationCatalogProductChoice.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlServiceStartupPreferenceStore.cs" Link="MobileControlServiceStartupPreferenceStore.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlServer.cs" Link="TeacherMobileControlServer.cs" />
+    <Compile Include="../../src/VeyonCampus.App/TeacherNetworkDirectory.cs" Link="TeacherNetworkDirectory.cs" />
+    <Compile Include="../../src/VeyonCampus.App/TeacherMobileControlIdentityProvider.cs" Link="TeacherMobileControlIdentityProvider.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherClassroomQuickControlService.cs" Link="TeacherClassroomQuickControlService.cs" />
     <Compile Include="../../src/VeyonCampus.App/ClassroomChatTranscriptBuffer.cs" Link="ClassroomChatTranscriptBuffer.cs" />
     <Compile Include="../../src/VeyonCampus.App/LocalDateTimeDisplayConverter.cs" Link="LocalDateTimeDisplayConverter.cs" />

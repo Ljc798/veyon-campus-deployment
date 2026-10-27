@@ -40,6 +40,7 @@
 - [x] 4.1 定义仅执行单目标 Screenshot 的本机调用：TeacherConsole 先校验活动课堂绑定，再通过固定 Docker `exec` 参数调用固定脚本；不接收任意命令或路径，不开放 helper 网络端口。
 - [ ] 4.2 管理 Mac 上 Ubuntu ARM64 helper 生命周期和健康状态；TeacherConsole 设备健康页现可检查 Docker/镜像/容器/版本/校区私钥，并一键构建或启动 helper；本轮也在首次设置页加入同一准备/恢复入口并显示实际健康状态；应用启动和采集时可恢复已构建容器。Mac `.app` 打包 helper 脚本；可从原教师端导出匹配的 Veyon 私钥并保存到 macOS 用户钥匙串，再注入 helper tmpfs；注入通过管道传输，不落到宿主机普通文件，DER 与临时 PEM 缓冲区在使用后清零。本轮启动脚本与 TeacherConsole 健康/采集路径会拒绝特权容器、非 bridge 网络、发布端口或不匹配的私有 tmpfs；Mac Release 构建及本机启动脚本执行通过。2026-10-27 重新生成了 `1.1.38` 本机预览 `.app`，确认 helper 脚本已打入资源目录且与源码逐字节一致；该包未签名。当前容器使用固定 `veyon-campus-helper:4.11.4`；2026-10-27 从已停止状态恢复后确认运行中、非特权 bridge、无发布端口、96 MiB 私有 tmpfs、目录权限 700，Veyon CLI 为 4.11.4 且密钥文件认证已启用。当前钥匙清单为空，尚无校区私钥，也未验证真实认证、学生截图、应用重启恢复和校园 LAN。
 - [ ] 4.3 Mac `ClassroomScreenPreviewCapture` 已注入 helper provider，PNG 会复用既有尺寸校验、JPEG 缩放、短期内存缓存和 no-store 响应；TeacherConsole `osx-arm64` Release 编译通过（0 警告、0 错误）。2026-10-27 合成 Veyon 学生端经完整 helper 返回有效 640×480 PNG，采集目录无残留；实际手机接口、真实学生画面和逐台展示仍待验证。
+  - 2026-10-27 运行当前源码的 `--mobile-control-api-fixtures`：本机 HTTPS 服务、已授权手机请求、巡视租约、合成 JPEG 响应（含 `no-store`）和停止后的拒绝行为均通过。该 fixture 用合成采集回调，没有调用 Mac Veyon helper；当前 Docker daemon 未运行，所以本轮未串接 helper 与手机 API，真实学生画面仍待验证。检查项目此前漏链接教师网络目录和手机身份适配器，本轮已补齐。
 - [ ] 4.4 保留 Windows 本地 CLI 采集实现；两平台共用配对、租约、可见卡片调度、速率限制和审计规则。
 - [ ] 4.5 在真实课堂验证全部座位缩略图、单台大图、暂停/切页/后台/撤销/改座位/断线取消和 10–70 台资源预算。
 
