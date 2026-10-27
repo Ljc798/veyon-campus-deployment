@@ -1093,7 +1093,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture(captureScreenAsync);
-        _screenPreviewCaptureAvailable = OperatingSystem.IsWindows() || captureScreenAsync is not null;
+        _screenPreviewCaptureAvailable = captureScreenAsync is not null;
         _setClassroomSession = setClassroomSession;
         _websitePolicyListsSaved = websitePolicyListsSaved;
         _readRuntimeSummaries = readRuntimeSummaries;
@@ -1154,7 +1154,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _agentTrustStore = new StudentAgentIdentityTrustStore();
         _openTeacherSigningKey = OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture();
-        _screenPreviewCaptureAvailable = OperatingSystem.IsWindows();
+        _screenPreviewCaptureAvailable = false;
         _classroomModeStateStore = new ClassroomModeStateStore();
         _classroomSessionStore = new ClassroomSessionStore();
         _classroomSeatLayoutStore = new ClassroomSeatLayoutStore();

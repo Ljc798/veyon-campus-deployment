@@ -49,13 +49,14 @@ public partial class TeacherWindow : Window
 
     public TeacherWindow()
     {
+        var veyonControlPlane = TeacherVeyonControlPlaneFactory.CreateForCurrentPlatform();
         _mobileControl = new TeacherMobileControlManager(() => _model.CampusId,
             action => Dispatcher.UIThread.Post(action), SetClassroomSessionFromMobileAsync,
             _model.ApplyMobileWebsitePolicyLists, _model.ReadMobileRuntimeSummariesAsync,
             _model.AddStudentNamesToVeyonLocations,
-            OperatingSystem.IsMacOS()
-                ? (target, token) => MacVeyonScreenshotCapture.CaptureAsync(_model.CampusId, target, token)
-                : null);
+            veyonControlPlane is null
+                ? null
+                : (target, token) => veyonControlPlane.CaptureScreenAsync(_model.CampusId, target, token));
         InitializeComponent();
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
