@@ -648,10 +648,10 @@
                   <Path IsVisible="{Binding CheckAllPassed}" Data="M4,12 L10,18 L21,5" Stroke="#16834A" StrokeThickness="2" Width="44" Height="44" Stretch="Uniform" HorizontalAlignment="Center" />
                   <Path IsVisible="{Binding CheckHasBlocker}" Data="M5,5 L19,19 M19,5 L5,19" Stroke="#C63636" StrokeThickness="2" Width="40" Height="40" Stretch="Uniform" HorizontalAlignment="Center" />
                   <Path IsVisible="{Binding CheckNeedsAttention}" Data="M12,3 L23,22 H1 Z M12,9 V15 M12,18 V20" Stroke="#B96B12" StrokeThickness="2" Width="44" Height="44" Stretch="Uniform" HorizontalAlignment="Center" />
-                  <TextBlock x:Name="PreflightSpinner" Text="◴" FontSize="25" FontWeight="Bold"
-                             HorizontalAlignment="Center" VerticalAlignment="Center"
-                             IsVisible="{Binding IsPreparingDeployment}"
-                             AutomationProperties.Name="正在检查电脑环境" ToolTip.Tip="正在检查，请稍候" />
+                  <flowery:DaisyLoading Variant="Ring" Width="36" Height="36"
+                                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                                        IsVisible="{Binding IsPreparingDeployment}"
+                                        AccessibleText="正在检查电脑环境" ToolTip.Tip="正在检查，请稍候" />
                 </Grid>
                 <TextBlock Text="{Binding CheckConclusionTitle}" FontSize="21" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
                 <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap"
@@ -662,6 +662,9 @@
         </Grid>
         <Grid IsVisible="{Binding IsDeployPage}" RowSpacing="12" RowDefinitions="100,*,40">
           <Border Classes="card" Grid.Row="0" Padding="18,14">
+            <Border.Styles>
+              <floweryTheme:DaisyUITheme />
+            </Border.Styles>
             <StackPanel Spacing="12">
               <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="14">
                 <StackPanel Spacing="3">
@@ -669,9 +672,9 @@
                   <TextBlock Text="{Binding ExecutionOverallStatusText}" Classes="muted" />
                 </StackPanel>
                 <TextBlock Grid.Column="1" Text="{Binding ExecutionProgressText}" FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock x:Name="ExecutionSpinner" Grid.Column="2" Text="◴" FontSize="21" FontWeight="Bold"
-                           VerticalAlignment="Center" IsVisible="{Binding IsExecuting}"
-                           AutomationProperties.Name="正在部署" ToolTip.Tip="正在部署，请稍候" />
+                <flowery:DaisyLoading Grid.Column="2" Variant="Ring" Width="22" Height="22"
+                                      VerticalAlignment="Center" IsVisible="{Binding IsExecuting}"
+                                      AccessibleText="正在部署" ToolTip.Tip="正在部署，请稍候" />
               </Grid>
               <Border Height="8" ClipToBounds="True" CornerRadius="4">
                 <Border.Styles>

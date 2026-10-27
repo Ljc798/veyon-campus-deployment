@@ -5,7 +5,6 @@ using Avalonia.Interactivity;
 using Avalonia.LogicalTree;
 using Avalonia.Platform;
 using Avalonia.Platform.Storage;
-using Avalonia.Threading;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -15,11 +14,8 @@ public partial class StudentSetupWindow : Window
     private const int MaintenanceDetailsIndex = 9;
     private const int StateBackupDetailsIndex = 10;
     private const int HelpDetailsIndex = 11;
-    private static readonly string[] SpinnerFrames = ["◴", "◷", "◶", "◵"];
     private readonly MainViewModel _model = new();
-    private readonly DispatcherTimer _executionSpinnerTimer;
     private int _selectedOperation;
-    private int _spinnerFrame;
 
     public StudentSetupWindow()
     {
@@ -27,28 +23,15 @@ public partial class StudentSetupWindow : Window
         Icon = new WindowIcon(AssetLoader.Open(new Uri(
             $"avares://{typeof(App).Assembly.GetName().Name}/Assets/veyon-campus.ico")));
         DataContext = _model;
-        _executionSpinnerTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
-        _executionSpinnerTimer.Tick += (_, _) =>
-        {
-            _spinnerFrame = (_spinnerFrame + 1) % SpinnerFrames.Length;
-            ExecutionSpinner.Text = SpinnerFrames[_spinnerFrame];
-            PreflightSpinner.Text = SpinnerFrames[_spinnerFrame];
-        };
         Closing += (_, e) =>
         {
             if (!_model.CanExitSetup) e.Cancel = true;
         };
-        Closed += (_, _) => _executionSpinnerTimer.Stop();
         _model.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(MainViewModel.WizardPage))
             {
                 DetailsDrawer.IsVisible = false;
-            }
-            if (e.PropertyName is nameof(MainViewModel.IsExecuting) or nameof(MainViewModel.IsPreparingDeployment))
-            {
-                if (_model.IsExecuting || _model.IsPreparingDeployment) _executionSpinnerTimer.Start();
-                else _executionSpinnerTimer.Stop();
             }
             UpdateWizardStepper();
         };

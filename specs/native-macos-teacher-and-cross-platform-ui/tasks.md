@@ -46,9 +46,9 @@
 ## 阶段 5：SukiUI / Flowery 界面改进
 
 - [ ] 5.1 统一 StudentSetup 和 TeacherConsole 的 SukiUI 主题、基础控件、空/加载/错误/未知状态和键盘焦点。TeacherConsole 首次设置和健康页沿用 Suki `InfoBar`；StudentSetup 当前配置载入与部署错误已换为 Suki `InfoBar`。本轮新增应用级统一焦点色与 Button、TextBox、ComboBox、RadioButton、CheckBox 的键盘焦点边框；学生向导的步骤和自定义操作选项模板新增焦点框，教师侧栏焦点边框增强。Windows StudentSetup 与 macOS TeacherConsole Release 构建通过；运行时键盘导航、视觉对比度及屏幕阅读器核验待完成。
-- [ ] 5.2 在适合的教师页面引入 Flowery `DaisyStat`、`DaisyStatusIndicator`、`DaisyAlert`、`DaisyProgress`；保留座位长列表虚拟化和现有 tokens。设备健康页已使用四种 Flowery 控件；课堂概览已改为四项 `DaisyStat`，展示课堂状态、电脑、回执和待处理数；教师首次设置向导与学生部署页的整体进度均使用 `DaisyProgress`，并保留当前进度的自动化名称。StudentSetup 的环境检查、执行和结果列表使用 `DaisyStatusIndicator`，并显示状态文字，避免仅凭颜色或图标判断。Windows StudentSetup x64 Release 编译通过；macOS ARM64 TeacherConsole 编译通过。运行截图、屏幕阅读器及跨平台显示检查待完成。
+- [ ] 5.2 在适合的教师页面引入 Flowery `DaisyStat`、`DaisyStatusIndicator`、`DaisyAlert`、`DaisyProgress`；保留座位长列表虚拟化和现有 tokens。设备健康页已使用四种 Flowery 控件；课堂概览已改为四项 `DaisyStat`，展示课堂状态、电脑、回执和待处理数；教师首次设置向导与学生部署页的整体进度均使用 `DaisyProgress`，并保留当前进度的自动化名称。StudentSetup 的环境检查、执行和结果列表使用 `DaisyStatusIndicator`，加载动画使用 Flowery `DaisyLoading`，并显示可读状态文字。Windows StudentSetup x64 Release 编译通过；macOS ARM64 TeacherConsole 编译通过。运行截图、屏幕阅读器及跨平台显示检查待完成。
 - [ ] 5.3 完善 TeacherConsole 首页、课堂/地点座位、策略、设备健康和首次设置页面；保持既有业务绑定及安全确认。课堂试点不可用提示已改用 Suki `InfoBar`；本轮将网站、应用和系统策略的成功/错误反馈统一为 `InfoBar`；具体页面的整体视觉检查和布局一致性待完成。
-- [ ] 5.4 改善 StudentSetup 五步部署向导，突出目标、风险、准备进度和逐项结果，不改变安装/更新协议。配置载入、全局部署错误、配置建议及密码替换风险已使用 Suki `InfoBar`；当前步骤新增目标说明和进度文本，五个导航项提供屏幕阅读器名称与操作提示；本轮为自定义步骤导航和操作选择模板补上键盘焦点框，整体部署进度使用 Flowery `DaisyProgress`，并朗读当前完成项、百分比和结果状态。Windows x64 Release 构建通过；整体视觉、键盘焦点及逐步操作验收待完成。
+- [ ] 5.4 改善 StudentSetup 五步部署向导，突出目标、风险、准备进度和逐项结果，不改变安装/更新协议。配置载入、全局部署错误、配置建议及密码替换风险已使用 Suki `InfoBar`；当前步骤新增目标说明和进度文本，五个导航项提供屏幕阅读器名称与操作提示；本轮为自定义步骤导航和操作选择模板补上键盘焦点框，整体部署进度使用 Flowery `DaisyProgress`，预检与部署加载态使用 Flowery `DaisyLoading`，并朗读当前进度、步骤和结果状态。Windows x64 Release 构建通过；整体视觉、键盘焦点及逐步操作验收待完成。
 - [ ] 5.5 提供 Windows 1366×768、Mac 桌面缩放和长中文文本的运行截图；检查状态文本、焦点、对比度和窗口边界。本机自动化会话的 CoreGraphics 探测返回 `activeDisplays=0`；直接启动刚打包的 Mac 预览应用时，Avalonia.Native 12.1.3 因无法启动 RenderTimer（错误码 `-6661`）退出，屏幕截图为黑屏。此错误与 [Avalonia 在 macOS 无活动显示器时的上游记录](https://github.com/AvaloniaUI/Avalonia/issues/18895)吻合，不能作为正常桌面运行失败或视觉通过的证据。仍需在有活动显示器的 macOS 图形会话中截图，并补齐 Windows 1366×768 检查。
 
 ## 阶段 6：手机页面
@@ -67,5 +67,6 @@
   - 2026-10-27 补充：本轮手机巡视卡片改动已通过 macOS `osx-arm64` Release locked restore 与 `.app` 重新打包，生成的 1.1.38 应用仍未签名，仅限本机预览；本轮未启动该包做原生窗口验收。学生部署页新增 Flowery `DaisyProgress` 后，Windows `StudentSetup` x64 Release 构建通过（0 警告、0 错误）；未在 Windows 桌面运行该向导做视觉或屏幕阅读器验收。
   - 2026-10-27 补充：StudentSetup 环境检查、部署执行及结果列表新增 Flowery 状态点和可见状态文字；Windows `StudentSetup` x64 与 macOS `TeacherConsole` ARM64 Release build 均通过（0 警告、0 错误）。未在 Windows 桌面或活动显示器的 Mac 图形会话中检查实际布局或屏幕阅读器朗读。
   - 2026-10-27 补充：手机首次取帧增加骨架光带与读取文字；隔离 Chrome 合成课堂模拟确认 320×740 视口无溢出、减少动态效果时关闭光带，延迟返回 JPEG 后两张可见卡片加载成功且光带清除。Mac 1.1.38 .app 已重打包，嵌入的 PWA HTML、CSS 与 Service Worker 使用 v53；发布成功但未签名，仅限本机预览。未验证真实手机、学生采集或原生窗口。
+  - 2026-10-27 补充：StudentSetup 的预检与部署加载态改为 Flowery DaisyLoading，移除 120 ms Unicode 帧轮换计时器。Windows StudentSetup x64 locked restore/Release build 通过（0 警告、0 错误）；Mac TeacherConsole ARM64 发布成功并重打包 1.1.38 .app（未签名）。Windows/Mac 实际窗口布局和读屏验收待完成。
 - [ ] 7.3 使用真实 Mac 教师机、Windows 学生机和配对手机走完整课堂、策略、座位编辑及屏幕巡视路径。
 - [ ] 7.4 记录构建、UI 截图、网络/性能和安全恢复证据；未现场验证的项目继续标记待验收。
