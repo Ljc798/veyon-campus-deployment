@@ -164,8 +164,26 @@
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
               <TextBox Text="{Binding TrustMigrationSourcePackageDirectory}" IsReadOnly="True"
                        PlaceholderText="选择含 manifest.json 和 campus.json 的原配置包" HorizontalAlignment="Stretch" />
-              <Button Grid.Column="1" Content="选择原配置包" Click="RequestChooseTrustMigrationSource" />
+              <Button Grid.Column="1" Content="选择原配置包" Click="RequestChooseTrustMigrationSource"
+                      IsEnabled="{Binding CanChooseTrustMigrationSourcePackage}" />
             </Grid>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10">
+              <flowery:DaisyStatusIndicator Color="Success" Size="Small"
+                                            AccessibleText="原学生配置包已验证" VerticalAlignment="Top"
+                                            IsVisible="{Binding IsTrustMigrationSourcePackageReady}" />
+              <flowery:DaisyStatusIndicator Color="Info" Size="Small"
+                                            AccessibleText="正在验证原学生配置包" VerticalAlignment="Top"
+                                            IsVisible="{Binding IsValidatingTrustMigrationSourcePackage}" />
+              <flowery:DaisyStatusIndicator Color="Warning" Size="Small"
+                                            AccessibleText="原学生配置包未就绪" VerticalAlignment="Top"
+                                            IsVisible="{Binding IsTrustMigrationSourcePackageNotReady}" />
+              <TextBlock Grid.Column="1" Text="{Binding TrustMigrationSourcePackageValidationStatus}"
+                         Classes="muted" TextWrapping="Wrap" />
+            </Grid>
+            <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                   AccessibleText="正在验证原学生配置包"
+                                   IsVisible="{Binding IsValidatingTrustMigrationSourcePackage}"
+                                   Height="6" />
             <suki:InfoBar Message="{Binding MacVeyonPrivateKeyImportInstructions}"
                           Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">

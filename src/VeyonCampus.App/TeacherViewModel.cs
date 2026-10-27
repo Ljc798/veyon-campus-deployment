@@ -304,6 +304,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _roomCreateResult = "", _roomCreateError = "", _roomCreateStatus = "", _roomConflictStatus = "", _roomConflictResults = "", _roomSkippedResults = "";
     private string _campusId = DefaultCampusNamePrefix, _roomOutputDir = "", _packageOutput = "", _packageOutputError = "";
     private string _trustMigrationSourcePackageDirectory = "";
+    private string _trustMigrationSourcePackageValidationStatus = "尚未选择原学生配置包。";
+    private bool _isValidatingTrustMigrationSourcePackage, _trustMigrationSourcePackageValidated;
+    private long _trustMigrationSourcePackageValidationGeneration;
     private string _macVeyonKeyImportStatus = "尚未导入 Veyon 教师私钥。";
     private string _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
     private bool _isImportingMacVeyonKey;
@@ -583,6 +586,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanEditRoomProfileNumbering));
             Changed(nameof(CanInstallTeacherVeyon));
             Changed(nameof(CanGenerateStudentPackage));
+            Changed(nameof(CanChooseTrustMigrationSourcePackage));
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(CanDisableWebsitePolicy));
@@ -2363,7 +2367,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string MacVeyonPrivateKeyImportInstructions => _macVeyonPrivateKeyImportInstructions;
     public bool IsImportingMacVeyonKey => _isImportingMacVeyonKey;
     public bool CanImportMacVeyonPrivateKey => IsMacTeacherHost && HasTrustMigrationSourcePackageDirectory &&
-                                               !_isImportingMacVeyonKey;
+                                               _trustMigrationSourcePackageValidated &&
+                                               !_isValidatingTrustMigrationSourcePackage && !_isImportingMacVeyonKey;
+    public bool CanChooseTrustMigrationSourcePackage => IsMacTeacherHost && !IsExecuting &&
+        !_isValidatingTrustMigrationSourcePackage && !_isImportingMacVeyonKey;
+    public string TrustMigrationSourcePackageValidationStatus =>
+        _trustMigrationSourcePackageValidationStatus;
+    public bool IsValidatingTrustMigrationSourcePackage => _isValidatingTrustMigrationSourcePackage;
+    public bool IsTrustMigrationSourcePackageReady => _trustMigrationSourcePackageValidated;
+    public bool IsTrustMigrationSourcePackageNotReady =>
+        !_trustMigrationSourcePackageValidated && !_isValidatingTrustMigrationSourcePackage;
     public string MacVeyonHelperStatus => _macVeyonHelperStatus;
     public bool IsMacVeyonHelperReady => MacVeyonHelperStatus.StartsWith(
         "Veyon helper 本机组件已就绪", StringComparison.Ordinal);
@@ -2610,7 +2623,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             PackageOutput = "";
             PackageOutputError = "";
             SetMacVeyonKeyImportStatus("尚未导入与当前学生配置包匹配的 Veyon 教师私钥。");
-            UpdateMacVeyonPrivateKeyImportInstructions();
+            _ = ValidateTrustMigrationSourcePackageAsync(path);
             Changed();
             Changed(nameof(HasTrustMigrationSourcePackageDirectory));
             Changed(nameof(CanImportMacVeyonPrivateKey));
@@ -2626,9 +2639,97 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public string TrustMigrationPackageGuidance => !IsMacTeacherHost
         ? "首次部署时生成配置包，并与最新 StudentSetup 一起交给部署人员。"
-        : HasTrustMigrationSourcePackageDirectory
+        : _isValidatingTrustMigrationSourcePackage
+            ? "正在验证原学生配置包；通过校验后才能生成策略密钥更新包。"
+            : HasTrustMigrationSourcePackageDirectory && !_trustMigrationSourcePackageValidated
+                ? "原学生配置包未通过校验；请根据下方原因重新选择完整配置包。"
+            : _trustMigrationSourcePackageValidated
             ? "将保留原配置包中的 Veyon 公钥和电脑前缀，仅替换为此 Mac 钥匙串中的策略公钥。请先更新 StudentSetup，再在每台学生机以管理员身份重新应用此配置包；旧策略会先按原流程恢复。"
             : "选择最初由 Windows 教师端生成的学生配置包。Mac 会保留其中的 Veyon 公钥，使用本机钥匙串中的新策略密钥生成更新包；随后需在每台学生机运行最新 StudentSetup。";
+
+    private async Task ValidateTrustMigrationSourcePackageAsync(string path)
+    {
+        var generation = Interlocked.Increment(ref _trustMigrationSourcePackageValidationGeneration);
+        _trustMigrationSourcePackageValidated = false;
+        _isValidatingTrustMigrationSourcePackage = false;
+
+        if (!IsMacTeacherHost)
+        {
+            _trustMigrationSourcePackageValidationStatus = "";
+            _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
+            NotifyTrustMigrationSourcePackageValidationChanged();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            _trustMigrationSourcePackageValidationStatus = "尚未选择原学生配置包。";
+            _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
+            NotifyTrustMigrationSourcePackageValidationChanged();
+            return;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            _trustMigrationSourcePackageValidationStatus = "所选文件夹不可访问；请重新选择完整的原学生配置包。";
+            _macVeyonPrivateKeyImportInstructions = "原配置包不可访问；校验通过后才会显示匹配的私钥导出命令。";
+            NotifyTrustMigrationSourcePackageValidationChanged();
+            return;
+        }
+
+        _isValidatingTrustMigrationSourcePackage = true;
+        _trustMigrationSourcePackageValidationStatus = "正在读取并校验原配置包清单和公钥……";
+        _macVeyonPrivateKeyImportInstructions = "配置包校验完成后会显示匹配的 Veyon 私钥导出命令。";
+        NotifyTrustMigrationSourcePackageValidationChanged();
+        try
+        {
+            var result = await Task.Run(() =>
+            {
+                var package = PackageContext.Load(path);
+                package.VerifyUnchanged();
+                if (package.WebsitePolicyPublicKeyPath is null || package.SchemaVersion < 3)
+                    throw new InvalidDataException("来源包没有网站策略信任公钥；请使用当前 Windows 教师端生成的完整学生配置包。");
+                var keyId = VeyonAuthKeyId.ForCampus(package.Campus);
+                return (package.Campus, package.ComputerPrefix, KeyId: keyId);
+            });
+
+            if (generation != Interlocked.Read(ref _trustMigrationSourcePackageValidationGeneration)) return;
+            _trustMigrationSourcePackageValidated = true;
+            _trustMigrationSourcePackageValidationStatus =
+                $"已验证来源包：校区“{result.Campus}” · 电脑前缀“{result.ComputerPrefix}”。生成时会再次检查文件是否变化。";
+            _macVeyonPrivateKeyImportInstructions =
+                $"在原 Windows 教师机执行：veyon-cli authkeys export {result.KeyId}/private <临时 PEM 文件>。选择该 PEM 后，应用会核对它是否与所选配置包公钥匹配，并将私钥写入当前用户钥匙串。不要通过聊天或邮件传输 PEM。";
+        }
+        catch (Exception exception)
+        {
+            if (generation != Interlocked.Read(ref _trustMigrationSourcePackageValidationGeneration)) return;
+            _trustMigrationSourcePackageValidated = false;
+            _trustMigrationSourcePackageValidationStatus = "来源包校验失败：" + exception.Message;
+            _macVeyonPrivateKeyImportInstructions =
+                "原配置包未通过校验；不会读取或保存 Veyon 私钥。请重新选择完整的学生配置包。";
+        }
+        finally
+        {
+            if (generation == Interlocked.Read(ref _trustMigrationSourcePackageValidationGeneration))
+            {
+                _isValidatingTrustMigrationSourcePackage = false;
+                NotifyTrustMigrationSourcePackageValidationChanged();
+            }
+        }
+    }
+
+    private void NotifyTrustMigrationSourcePackageValidationChanged()
+    {
+        Changed(nameof(TrustMigrationSourcePackageValidationStatus));
+        Changed(nameof(IsValidatingTrustMigrationSourcePackage));
+        Changed(nameof(IsTrustMigrationSourcePackageReady));
+        Changed(nameof(IsTrustMigrationSourcePackageNotReady));
+        Changed(nameof(CanGenerateStudentPackage));
+        Changed(nameof(CanChooseTrustMigrationSourcePackage));
+        Changed(nameof(CanImportMacVeyonPrivateKey));
+        Changed(nameof(MacVeyonPrivateKeyImportInstructions));
+        Changed(nameof(TrustMigrationPackageGuidance));
+    }
 
     public async Task ImportMacVeyonPrivateKeyAsync(string privateKeyPath)
     {
@@ -2639,6 +2740,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         char[]? publicKeyCharacters = null;
         _isImportingMacVeyonKey = true;
         Changed(nameof(IsImportingMacVeyonKey));
+        Changed(nameof(CanChooseTrustMigrationSourcePackage));
         Changed(nameof(CanImportMacVeyonPrivateKey));
         SetMacVeyonKeyImportStatus("正在验证私钥与原学生配置包的公钥……");
         try
@@ -2696,31 +2798,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (publicKeyCharacters is not null) Array.Clear(publicKeyCharacters);
             _isImportingMacVeyonKey = false;
             Changed(nameof(IsImportingMacVeyonKey));
+            Changed(nameof(CanChooseTrustMigrationSourcePackage));
             Changed(nameof(CanImportMacVeyonPrivateKey));
         }
     }
 
     internal void ReportMacVeyonPrivateKeyImportError(string message) =>
         SetMacVeyonKeyImportStatus(message);
-
-    private void UpdateMacVeyonPrivateKeyImportInstructions()
-    {
-        if (!HasTrustMigrationSourcePackageDirectory)
-        {
-            _macVeyonPrivateKeyImportInstructions = "先选择原有学生配置包，再按提示从原教师端导出匹配的私钥。";
-            return;
-        }
-        try
-        {
-            var package = PackageContext.Load(TrustMigrationSourcePackageDirectory);
-            _macVeyonPrivateKeyImportInstructions =
-                $"在原 Windows 教师机执行：veyon-cli authkeys export {VeyonAuthKeyId.ForCampus(package.Campus)}/private <临时 PEM 文件>。选择该 PEM 后，应用会核对它是否与所选配置包公钥匹配，并将私钥写入当前用户钥匙串。不要通过聊天或邮件传输 PEM。";
-        }
-        catch (Exception)
-        {
-            _macVeyonPrivateKeyImportInstructions = "原配置包尚未通过校验；不会读取或保存 Veyon 私钥。请重新选择完整的学生配置包。";
-        }
-    }
 
     private void SetMacVeyonKeyImportStatus(string status)
     {
@@ -3857,7 +3941,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { if (_operationsTelemetryStatus == value) return; _operationsTelemetryStatus = value; Changed(); }
     }
     public bool CanGenerateStudentPackage => !IsExecuting &&
-        (OperatingSystem.IsWindows() || (OperatingSystem.IsMacOS() && HasTrustMigrationSourcePackageDirectory));
+        (OperatingSystem.IsWindows() || (OperatingSystem.IsMacOS() &&
+            _trustMigrationSourcePackageValidated && !_isValidatingTrustMigrationSourcePackage));
     public bool CanPublishStudentPackage => OperatingSystem.IsWindows() && !IsExecuting &&
         IsPackagePublisherDetailsValid() && Directory.Exists(PublishPackageDirectory);
     public bool CanPushWebsitePolicy => !IsExecuting && !IsReadingWebsiteLocations &&
@@ -11327,7 +11412,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task GenerateStudentPackageAsync(bool replaceUnavailableSigningKey = false)
     {
-        if (!TryBeginExclusiveTask()) return;
+        if (!CanGenerateStudentPackage || !TryBeginExclusiveTask()) return;
         PackageOutput = "";
         PackageOutputError = "";
         CanReplaceWebsiteSigningKey = false;
