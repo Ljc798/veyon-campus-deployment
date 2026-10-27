@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.Win32;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
@@ -51,7 +52,7 @@ internal static class MobileControlTlsIdentityStore
     private const int KeySize = 3072;
     private const int MaximumPortableStateBytes = 4096;
     private static readonly string PortableStatePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "MobileControl", "tls-identity.json");
     private static readonly CngProvider Provider = CngProvider.MicrosoftSoftwareKeyStorageProvider;
 

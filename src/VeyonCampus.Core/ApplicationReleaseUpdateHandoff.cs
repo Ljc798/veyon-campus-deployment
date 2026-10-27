@@ -22,7 +22,7 @@ public static class ApplicationReleaseUpdateHandoff
 
         _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
         var fullInstallerPath = Path.GetFullPath(installerPath);
-        var updatesDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        var updatesDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
             "VeyonCampus", "Updates");
         EnsureSamePath(Path.GetDirectoryName(fullInstallerPath) ?? "", updatesDirectory,
             "暂存安装器必须位于当前用户的 VeyonCampus 更新目录。");
@@ -174,7 +174,7 @@ public static class ApplicationReleaseUpdateHandoff
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
         _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
         var fullInstallerPath = Path.GetFullPath(installerPath);
-        var updatesDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        var updatesDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
             "VeyonCampus", "Updates");
         EnsureSamePath(Path.GetDirectoryName(fullInstallerPath) ?? "", updatesDirectory,
             "暂存安装器路径无效。");
@@ -571,7 +571,7 @@ public static class ApplicationReleaseUpdateHandoff
     {
         try
         {
-            var logDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var logDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             Directory.CreateDirectory(logDirectory);
             var logPath = Path.Combine(logDirectory, "update-helper.log");

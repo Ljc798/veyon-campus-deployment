@@ -115,7 +115,7 @@ public sealed class WindowsVeyonAdapter
             return new("veyon-key", ExecutionPlan.Failed, "当前不是 Windows；Veyon 配置仅支持 Windows。");
         package.VerifyUnchanged();
         using var snapshot = PackageResourceSnapshot.Create(
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "snapshots"), package);
         return ConfigureVeyonOnly(package, snapshot, isTeacher);
     }

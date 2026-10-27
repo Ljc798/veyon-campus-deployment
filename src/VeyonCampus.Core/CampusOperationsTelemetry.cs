@@ -187,7 +187,7 @@ public sealed class CampusOperationsTelemetryStore
 
     public CampusOperationsTelemetryStore(string? path = null)
     {
-        var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var localData = VeyonCampusPaths.GetLocalApplicationDataDirectory();
         _path = Path.GetFullPath(path ?? Path.Combine(
             string.IsNullOrWhiteSpace(localData) ? Path.GetTempPath() : localData,
             "VeyonCampus", "Telemetry", "operations-reporting.json"));

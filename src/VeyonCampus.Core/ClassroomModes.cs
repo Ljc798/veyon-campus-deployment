@@ -49,7 +49,7 @@ public sealed class ClassroomModeStateStore
     public ClassroomModeStateStore(string? path = null) => _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-mode-state.json");
 
     public IReadOnlyList<ClassroomModeSessionState> ReadAll()

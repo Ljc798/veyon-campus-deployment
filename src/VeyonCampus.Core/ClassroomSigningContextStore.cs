@@ -25,7 +25,7 @@ public sealed class ClassroomSigningContextStore
     }
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-signing-context.json");
 
     public void Save(Guid sessionId, string campusId)

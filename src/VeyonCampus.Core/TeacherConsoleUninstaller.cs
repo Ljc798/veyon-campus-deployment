@@ -54,7 +54,7 @@ public static class TeacherConsoleUninstaller
             WebsitePolicySigningKeyStore.RemoveProductOwnedKeys();
             MobileControlIdentityCleanup.RemoveOwnedIdentity();
             VeyonCampusUninstallDataCleanup.RemoveAllUserProductData(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+                VeyonCampusPaths.GetLocalApplicationDataDirectory());
             VeyonCampusUninstallDataCleanup.RemoveAllMachineProductData(
                 Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData));
             VeyonCampusProductRegistryCleanup.RemoveAll();

@@ -23,7 +23,7 @@ public sealed class VeyonInstallerStore
     public VeyonInstallerStore(string? cacheDirectory = null)
     {
         _cacheDirectory = cacheDirectory is null
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            ? Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "installers")
             : Path.GetFullPath(cacheDirectory);
     }

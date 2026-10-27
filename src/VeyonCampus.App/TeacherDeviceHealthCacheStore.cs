@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
 
@@ -57,7 +58,7 @@ internal sealed class TeacherDeviceHealthCacheStore
         _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "device-health-cache.json");
 
     public IReadOnlyList<TeacherDeviceHealthCacheEntry> Load()

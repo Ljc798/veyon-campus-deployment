@@ -238,7 +238,7 @@ public sealed class StudentAgentIdentityTrustStore
     public StudentAgentIdentityTrustStore(string? path = null) => _path = path ?? DefaultPath;
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "StudentAgentTrust", "agents.json");
 
     public string? FindTrustedPublicKey(string campusId, string target)

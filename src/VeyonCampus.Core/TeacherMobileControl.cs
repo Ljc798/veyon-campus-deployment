@@ -402,7 +402,7 @@ public static class MobilePolicyProfileStore
     private static readonly JsonSerializerOptions Options = MobilePolicyProfileCompiler.JsonOptions;
 
     public static string DefaultDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VeyonCampus", "MobileControl");
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(), "VeyonCampus", "MobileControl");
 
     public static IReadOnlyList<MobilePolicyProfile> ReadAll(string? directory = null)
     {

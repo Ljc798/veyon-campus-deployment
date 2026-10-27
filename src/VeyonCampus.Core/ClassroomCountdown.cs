@@ -70,7 +70,7 @@ public sealed class ClassroomCountdownStore
         _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-countdown.json");
 
     public ClassroomCountdown? Read(Guid sessionId)

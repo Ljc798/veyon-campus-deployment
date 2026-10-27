@@ -410,7 +410,7 @@ public static class VeyonComputerRenameService
     private static string SaveEncryptedBackup(byte[] originalConfig, string fingerprint,
         IReadOnlyList<VeyonComputerRenameTargetPlan> targets)
     {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var localAppData = VeyonCampusPaths.GetLocalApplicationDataDirectory();
         if (string.IsNullOrWhiteSpace(localAppData) || !Path.IsPathFullyQualified(localAppData))
             throw new InvalidDataException("无法确定教师本机备份目录；没有修改 Veyon。");
         var directory = Path.Combine(localAppData, "VeyonCampus", "Teacher", "VeyonRenameBackups");

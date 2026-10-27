@@ -28,7 +28,7 @@ public sealed class TeacherRoomSelectionStore
         _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "recent-room-selection.json");
 
     public IReadOnlyDictionary<Guid, Guid> Load()

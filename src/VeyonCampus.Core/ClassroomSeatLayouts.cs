@@ -36,7 +36,7 @@ public sealed class ClassroomSeatLayoutStore
     public ClassroomSeatLayoutStore(string? path = null) => _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-seat-layouts.json");
 
     public ClassroomSeatLayout GetLayout(Guid campusProfileId, Guid roomId, IReadOnlyList<string> targets)

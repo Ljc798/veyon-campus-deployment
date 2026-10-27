@@ -226,7 +226,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly Dictionary<string, TeacherDeviceHealthCacheEntry> _deviceHealthCache =
         new(StringComparer.OrdinalIgnoreCase);
     private static readonly string WebsiteObservedAddressPath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "website-observed-address.txt");
     private readonly Dictionary<string, StudentApplicationUpdateTargetProgressItem> _studentUpdateRowsByTarget =
         new(StringComparer.OrdinalIgnoreCase);
@@ -4100,7 +4100,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var releaseClient = _releaseClient ?? throw new InvalidOperationException("此版本没有固定的 Developer Release 公钥。");
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-            var stagingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var stagingDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             var verified = await Task.Run(() =>
             {
@@ -4186,7 +4186,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var release = _teacherUpdateRelease;
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             var downloadedPath = await _releaseClient.DownloadAsync(release,
                 ApplicationReleaseRole.TeacherConsole, updateDirectory);
@@ -4229,7 +4229,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var handoffStarted = false;
         try
         {
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             var installerPath = await _releaseClient.DownloadAsync(release,
                 ApplicationReleaseRole.TeacherConsole, updateDirectory,
@@ -9915,7 +9915,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 return;
             }
 
-            var updateDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{rolloutTargetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0,

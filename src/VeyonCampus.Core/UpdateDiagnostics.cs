@@ -130,7 +130,7 @@ public sealed class UpdateDiagnosticsStore
 
     public UpdateDiagnosticsStore(string? directory = null)
     {
-        var localData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var localData = VeyonCampusPaths.GetLocalApplicationDataDirectory();
         _directory = Path.GetFullPath(directory ?? Path.Combine(
             string.IsNullOrWhiteSpace(localData) ? Path.GetTempPath() : localData,
             "VeyonCampus", "Diagnostics", "updates"));

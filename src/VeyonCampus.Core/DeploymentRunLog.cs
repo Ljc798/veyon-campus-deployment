@@ -153,7 +153,7 @@ public sealed class DeploymentRunLog
 
     /// <summary>Returns the per-user deployment log directory used by the App.</summary>
     public static string GetDefaultRoot() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "runs");
 
     /// <summary>

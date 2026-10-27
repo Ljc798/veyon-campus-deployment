@@ -367,7 +367,7 @@ public static class ApplicationPolicyPushHistoryStore
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
-    public static string DefaultDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    public static string DefaultDirectory => Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "ApplicationPolicy");
 
     public static ApplicationPolicyPushHistoryEntry? ReadLatest(string? directory = null)

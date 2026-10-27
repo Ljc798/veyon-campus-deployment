@@ -10,7 +10,7 @@ internal static class MobileControlServiceStartupPreferenceStore
     private const string AutoStartValue = "AutoStartService";
     private const string TlsRootThumbprintValue = "TlsRootCertificateThumbprint";
     private static readonly string PortablePreferencePath = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "MobileControl", "startup-preference.json");
 
     public static bool IsEnabled()

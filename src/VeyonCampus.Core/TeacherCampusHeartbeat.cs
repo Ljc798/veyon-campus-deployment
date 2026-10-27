@@ -28,7 +28,7 @@ public static class TeacherCampusHeartbeatStateStore
     };
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Telemetry", "teacher-heartbeat.json");
 
     public static TeacherCampusHeartbeatState LoadOrCreate(string? path = null)

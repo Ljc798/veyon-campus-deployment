@@ -534,7 +534,7 @@ public static class WebsitePolicySigningKeyStore
     }
 
     private static string PortableStateDirectory => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VeyonCampus", "WebsitePolicy");
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(), "VeyonCampus", "WebsitePolicy");
 
     private static string PortableStatePath(string campusId) => Path.Combine(PortableStateDirectory,
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId))).ToLowerInvariant() + ".json");
@@ -3512,7 +3512,7 @@ public static class WebsitePolicyPushHistoryStore
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
     };
 
-    public static string DefaultDirectory => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+    public static string DefaultDirectory => Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "WebsitePolicy");
 
     public static WebsitePolicyPushHistoryEntry? ReadLatest(string? directory = null)

@@ -111,7 +111,7 @@ public sealed class ClassroomQuickControlStateStore
         _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-quick-control.json");
 
     public IReadOnlyList<ClassroomQuickControlSessionState> ReadAll()

@@ -83,7 +83,7 @@ public sealed class ClassroomSeatGridStore
     }
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-seat-grid.json");
 
     public ClassroomSeatGridLayout GetLayout(Guid campusProfileId, Guid roomId, int legacyComputerNumberStart = 1)

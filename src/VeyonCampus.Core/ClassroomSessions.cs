@@ -209,7 +209,7 @@ public sealed class ClassroomSessionStore
     }
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-sessions.json");
 
     public IReadOnlyList<ClassroomSession> ReadRecent()

@@ -788,7 +788,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 SetBusy(true);
                 busy = true;
                 PackageStatus = "正在将共享文件夹中的配置复制到本机并核对内容……";
-                var store = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                var store = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                     "VeyonCampus", "deployment-packages", "local-imports");
                 loaded = PackageSource.CreateLocalSnapshot(directory, store);
                 directory = loaded.Root;
@@ -882,7 +882,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         try
         {
             var archive = await _deploymentPackageCatalog.DownloadAsync(selected.PackageId, GetCloudPackageTeacherPhoneLast4());
-            var storageRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            var storageRoot = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "deployment-packages");
             var context = CampusConfigurationArchive.ExtractToStore(archive, storageRoot);
             await LoadPackageAsync(context.Root, "云端目录");
@@ -1721,7 +1721,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             Changed(nameof(HasExecutionStepStatuses));
             ExecutionOverallStatus = ExecutionPlan.Running;
             using var snapshot = PackageResourceSnapshot.Create(
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                     "VeyonCampus", "snapshots"), frozenPackage);
             snapshot.VerifyUnchanged();
             if (_deploymentInstallerPath != deploymentInstallerPath)
@@ -1910,7 +1910,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             // consume; only plans that include Veyon carry a package context.
             using var snapshot = frozenPackage is not null
                 ? PackageResourceSnapshot.Create(
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                         "VeyonCampus", "snapshots"), frozenPackage)
                 : null;
 

@@ -333,7 +333,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         ApplicationReleaseCompatibility.SupportsStudentSystemPolicy(manifest);
 
     private static string GetUpdateDirectory() => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "VeyonCampus", "Updates");
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(), "VeyonCampus", "Updates");
 
     private void NotifyActions()
     {

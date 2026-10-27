@@ -65,7 +65,7 @@ public sealed class ClassroomTaskProgressStore
         _path = Path.GetFullPath(path ?? DefaultPath);
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "classroom-task-progress.json");
 
     public ClassroomTaskProgress? Read(Guid sessionId)

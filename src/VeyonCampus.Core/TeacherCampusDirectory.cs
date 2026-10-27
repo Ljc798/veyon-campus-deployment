@@ -173,7 +173,7 @@ public sealed class TeacherCampusDirectoryStore
     }
 
     public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "Teacher", "campus-directory.json");
 
     public IReadOnlyList<TeacherCampusProfile> Load()
