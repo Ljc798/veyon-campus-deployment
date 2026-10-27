@@ -919,9 +919,7 @@ internal static class MobileControlApiChecks
                    systemSummary.GetProperty("systemSettings").GetProperty("lockWallpaper").GetBoolean() &&
                    !systemSummary.TryGetProperty("studentSids", out _));
 
-            var expectedProtectedStatus = OperatingSystem.IsWindows()
-                ? HttpStatusCode.Unauthorized
-                : HttpStatusCode.NotImplemented;
+            var expectedProtectedStatus = HttpStatusCode.Unauthorized;
             using (var unauthenticatedStatus = await PostJsonAsync(client, "/api/status", "{}", origin))
                 Expect(unauthenticatedStatus.StatusCode == expectedProtectedStatus);
             using (var unauthenticatedPolicy = await PostJsonAsync(client, "/api/policy", "{}", origin))
