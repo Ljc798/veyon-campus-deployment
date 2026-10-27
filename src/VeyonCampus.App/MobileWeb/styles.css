@@ -439,7 +439,19 @@ button:disabled { opacity: .48; cursor: not-allowed; }
   overflow: hidden;
   background: #102a3b;
 }
-.classroom-screen-preview-placeholder { padding: 12px; color: #b7c5cc; font-size: 12px; text-align: center; }
+.classroom-screen-preview-frame.is-loading::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 28%, #ffffff16 48%, transparent 68%);
+  transform: translateX(-100%);
+  animation: screen-preview-shimmer 1.6s ease-in-out infinite;
+}
+.classroom-screen-preview-placeholder { z-index: 1; padding: 12px; color: #b7c5cc; font-size: 12px; text-align: center; }
+@keyframes screen-preview-shimmer {
+  to { transform: translateX(100%); }
+}
 .classroom-screen-preview-frame.has-frame .classroom-screen-preview-placeholder { display: none; }
 .classroom-screen-preview-image {
   position: absolute;
@@ -688,6 +700,7 @@ input:focus-visible, textarea:focus-visible { outline-offset: 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+  .classroom-screen-preview-frame.is-loading::after { animation: none; transform: none; opacity: .16; }
 }
 
 /* Mobile teacher UI: shared desktop tokens, compact rows and a global message sheet. */

@@ -810,6 +810,8 @@ async function refreshClassroomScreenPreviewFrame(tile) {
   classroomScreenPreviewControllers.set(target, controller);
   const frameStatus = tile.querySelector(".classroom-screen-preview-frame-status");
   const image = tile.querySelector("img");
+  const previewFrame = image?.closest(".classroom-screen-preview-frame");
+  const placeholder = previewFrame?.querySelector(".classroom-screen-preview-placeholder");
   const retryButton = tile.querySelector(".monitor-tile-retry-button");
   let timedOut = false;
   let capturedSuccessfully = false;
@@ -818,6 +820,10 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     controller.abort();
   }, 50_000);
   if (retryButton) retryButton.classList.add("hidden");
+  if (!image?.hasAttribute("src")) {
+    previewFrame?.classList.add("is-loading");
+    if (placeholder) placeholder.textContent = "正在读取画面…";
+  }
   if (frameStatus) frameStatus.textContent = image?.hasAttribute("src")
     ? "正在更新画面…" : "正在读取画面…";
   try {
@@ -857,6 +863,10 @@ async function refreshClassroomScreenPreviewFrame(tile) {
     if (error.status === 401 || error.status === 403) void stopClassroomScreenPreview(false);
   } finally {
     clearTimeout(requestTimeout);
+    previewFrame?.classList.remove("is-loading");
+    if (!image?.hasAttribute("src")) {
+      if (placeholder) placeholder.textContent = "暂无画面";
+    }
     if (classroomScreenPreviewControllers.get(target) === controller)
       classroomScreenPreviewControllers.delete(target);
     if (classroomScreenPreviewLease?.id === lease.id && !classroomScreenPreviewPaused &&
