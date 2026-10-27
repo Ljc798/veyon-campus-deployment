@@ -163,6 +163,11 @@ main { width: min(100% - 28px, 680px); margin: 20px auto 42px; }
 .policy-status[open] > summary { margin-bottom: 10px; }
 .policy-status[open] > summary::after { transform: rotate(180deg); }
 .custom-website-policy { padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.saved-policy-config { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: #f8fafb; }
+.saved-policy-picker { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 8px; min-width: 0; }
+.saved-policy-picker label { display: grid; gap: 6px; min-width: 0; }
+.saved-policy-picker select { width: 100%; min-width: 0; }
+.saved-policy-picker > button { white-space: nowrap; }
 .custom-website-policy > h3 { margin: 0; color: var(--teal-dark); font-size: 14px; }
 .custom-website-content { display: grid; gap: 10px; padding-top: 12px; }
 .custom-website-policy, .custom-website-content, .website-list-details, .website-deadline-options { min-width: 0; }

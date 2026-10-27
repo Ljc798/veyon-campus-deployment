@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=50">
-  <script src="/app.js?v=50" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=51">
+  <script src="/app.js?v=51" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -187,6 +187,29 @@
               <div id="room-list" class="room-list" aria-live="polite"></div>
             </div>
           </details>
+
+          <section class="policy-config saved-policy-config">
+            <div class="policy-mode-heading"><h3>教师端策略预设</h3></div>
+            <p class="fine-print">选择教师电脑已保存的网站、应用、组合或系统预设，发送前会核对所选电脑当前状态。</p>
+            <div class="saved-policy-picker">
+              <label for="saved-policy-profile">策略预设
+                <select id="saved-policy-profile" disabled>
+                  <option value="">正在读取教师端预设…</option>
+                </select>
+              </label>
+              <button id="refresh-saved-policy-profiles" class="secondary-button compact-button" type="button">
+                重新读取预设
+              </button>
+            </div>
+            <p id="saved-policy-profile-summary" class="fine-print" aria-live="polite"></p>
+            <p id="saved-policy-scope-status" class="fine-print" role="status" aria-live="polite"></p>
+            <div class="button-stack">
+              <button id="apply-saved-policy-profile" class="primary-button" type="button" disabled>发送策略预设</button>
+              <button id="disable-saved-policy-profile" class="text-button" type="button" disabled>解除此预设</button>
+            </div>
+            <p id="saved-policy-profiles-status" class="fine-print" role="status" aria-live="polite"></p>
+            <div id="saved-policy-result" class="result-list" aria-live="polite"></div>
+          </section>
 
           <section class="policy-config custom-website-policy">
             <div class="policy-mode-heading"><h3>网站名单</h3></div>

@@ -39,6 +39,10 @@ let selectedComputerTarget = null;
 let computerDirectoryScrollY = null;
 let selectedDirectoryRoomName = readRecentDirectoryRoomName();
 let websiteListsAvailable = false;
+let savedPolicyProfiles = [];
+let savedPolicyProfilesAvailable = false;
+let savedPolicyProfilesLoading = false;
+let pendingSavedPolicyReview = null;
 
 let websiteListsUpdatedUtc = null;
 let websiteListsSavedSnapshot = "";
@@ -1349,6 +1353,7 @@ function updateSelectionCount() {
     !customWebsitePolicyInput().valid || operationDisabled || !websiteListsAvailable;
   $("disable-custom-website-policy").disabled = !count || !websiteStatusReady || operationDisabled;
   updateCustomWebsiteModeGuidance(targets, websiteStatusReady);
+  updateSavedPolicyProfileControls(targets);
 }
 
 function policyStatusRequirementMessage(targets) {
@@ -1384,6 +1389,191 @@ function expectedRevisionFields(targets) {
     revisions[target] = revision;
   }
   return { expectedWebsiteRevisions: revisions };
+}
+
+function selectedSavedPolicyProfile() {
+  const id = $("saved-policy-profile")?.value || "";
+  return savedPolicyProfiles.find(profile => profile.id === id) || null;
+}
+
+function mobilePolicyKindLabel(kind) {
+  return kind === "website" ? "网站" : kind === "application" ? "应用" :
+    kind === "websiteApplication" ? "网站和应用" : kind === "system" ? "长期系统" : "未知类型";
+}
+
+function mobilePolicyModeLabel(mode, kind) {
+  const label = value => {
+    const normalized = String(value || "").toLowerCase();
+    return normalized === "blocklist" ? "阻止名单" : normalized === "allowlist" ? "允许名单" :
+      normalized === "combined" ? "阻止名单和例外" : normalized === "audit" ? "先检查影响" :
+        normalized === "enforce" ? "启用限制" : value || "模式未知";
+  };
+  if (kind === "system") return "长期生效";
+  const parts = String(mode || "").split("|");
+  if (kind === "websiteApplication" && parts.length === 2)
+    return `${label(parts[0])} · ${label(parts[1])}`;
+  return label(parts[0]);
+}
+
+function savedPolicyProfileDescription(profile) {
+  if (!profile) return "选择教师端保存的策略预设。";
+  const duration = profile.lifetimeMinutes === 0
+    ? "不会自动到期" : `有效 ${profile.lifetimeMinutes} 分钟`;
+  const details = [`${mobilePolicyKindLabel(profile.kind)} · ${mobilePolicyModeLabel(profile.mode, profile.kind)}`, duration];
+  if (profile.kind === "system" && profile.systemSettings) {
+    const enabled = systemPolicyLabels.filter(([key]) => profile.systemSettings[key]).map(([, label]) => label);
+    details.push(enabled.length ? `包含：${enabled.join("、")}` : "当前没有启用的系统设置");
+  }
+  if ((profile.kind === "application" || profile.kind === "websiteApplication") &&
+      String(profile.mode || "").toLowerCase().includes("enforce"))
+    details.push("启用前必须核对逐台影响预览并再次确认");
+  return details.join(" · ");
+}
+
+function validPolicyRevision(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+function savedPolicyProfileStatusReady(targets, profile) {
+  if (!profile || !targets.length) return false;
+  const duplicates = duplicateDirectoryTargets();
+  if (targets.some(target => duplicates.has(normalizeTarget(target)))) return false;
+  const needsWebsite = profile.kind === "website" || profile.kind === "websiteApplication";
+  const needsApplication = profile.kind === "application" || profile.kind === "websiteApplication";
+  const needsSystem = profile.kind === "system";
+  return targets.every(target => {
+    const status = latestStatusByTarget.get(normalizeTarget(target));
+    if (!status || !status.online || status.needsReview || !status.supportsPolicyCompareAndSet) return false;
+    if (needsWebsite && !validPolicyRevision(status.websiteRevision)) return false;
+    if (needsApplication && (!status.applicationSupported || !validPolicyRevision(status.applicationRevision))) return false;
+    if (needsSystem && (!status.systemPolicy?.supported || status.systemPolicy.pending ||
+        !validPolicyRevision(status.systemPolicy.revision))) return false;
+    return true;
+  });
+}
+
+function savedPolicyProfileReadinessMessage(targets, profile) {
+  if (!savedPolicyProfilesAvailable) return "请先读取教师电脑上已保存的策略预设。";
+  if (!profile) return "请选择一个教师端策略预设。";
+  if (!targets.length) return "请选择至少一台学生电脑，再读取状态并发送预设。";
+  const duplicates = duplicateDirectoryTargets();
+  if (targets.some(target => duplicates.has(normalizeTarget(target))))
+    return "所选目标在多个地点重复；请先在教师端修复地点目录。";
+  const statuses = targets.map(target => latestStatusByTarget.get(normalizeTarget(target)));
+  if (statuses.some(status => status?.needsReview))
+    return "学生 Agent 身份或签名需要核对；请先在教师端确认身份，再刷新手机状态。";
+  if (statuses.some(status => !status?.online))
+    return "至少一台学生电脑没有回应；请检查学生 Agent 和校园网，再刷新状态。";
+  if (statuses.some(status => !status?.supportsPolicyCompareAndSet))
+    return "至少一台学生 Agent 版本过旧或状态不完整；请更新学生端并重新读取状态。";
+  if ((profile.kind === "website" || profile.kind === "websiteApplication") &&
+      statuses.some(status => !validPolicyRevision(status?.websiteRevision)))
+    return "没有读到网站策略版本；请刷新所选电脑状态后重试。";
+  if ((profile.kind === "application" || profile.kind === "websiteApplication") &&
+      statuses.some(status => !status?.applicationSupported || !validPolicyRevision(status.applicationRevision)))
+    return "所选电脑未报告可用的应用策略版本；请更新学生端或在教师端核对。";
+  if (profile.kind === "system" && statuses.some(status => !status.systemPolicy?.supported ||
+      status.systemPolicy.pending || !validPolicyRevision(status.systemPolicy.revision)))
+    return "所选电脑的系统策略状态不完整或仍待处理；请在教师端核对后刷新。";
+  return "状态已读回并通过身份核对，可以安全发送。";
+}
+
+function expectedRevisionFieldsForProfile(targets, profile) {
+  const expected = {};
+  const add = (field, readRevision) => {
+    const revisions = Object.create(null);
+    for (const target of targets) {
+      const revision = readRevision(latestStatusByTarget.get(normalizeTarget(target)));
+      if (!validPolicyRevision(revision)) return false;
+      revisions[target] = revision;
+    }
+    expected[field] = revisions;
+    return true;
+  };
+  if ((profile.kind === "website" || profile.kind === "websiteApplication") &&
+      !add("expectedWebsiteRevisions", status => status?.websiteRevision)) return null;
+  if ((profile.kind === "application" || profile.kind === "websiteApplication") &&
+      !add("expectedApplicationRevisions", status => status?.applicationRevision)) return null;
+  if (profile.kind === "system" &&
+      !add("expectedSystemRevisions", status => status?.systemPolicy?.revision)) return null;
+  return expected;
+}
+
+function updateSavedPolicyProfileControls(targets = selectedTargets()) {
+  const select = $("saved-policy-profile");
+  const refresh = $("refresh-saved-policy-profiles");
+  const apply = $("apply-saved-policy-profile");
+  const disable = $("disable-saved-policy-profile");
+  const summary = $("saved-policy-profile-summary");
+  const readiness = $("saved-policy-scope-status");
+  if (!select || !refresh || !apply || !disable || !summary || !readiness) return;
+  const profile = selectedSavedPolicyProfile();
+  const statusReady = savedPolicyProfileStatusReady(targets, profile);
+  const actionBlocked = policyOperationInFlight || pendingSavedPolicyReview !== null;
+  select.disabled = !savedPolicyProfilesAvailable || savedPolicyProfiles.length === 0 || actionBlocked;
+  refresh.disabled = savedPolicyProfilesLoading || actionBlocked;
+  apply.disabled = !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
+  disable.disabled = !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
+  summary.textContent = savedPolicyProfileDescription(profile);
+  readiness.textContent = statusReady && !actionBlocked
+    ? savedPolicyProfileReadinessMessage(targets, profile)
+    : actionBlocked ? pendingSavedPolicyReview ? "应用影响预览待确认；其他策略操作暂时停用。" : "正在发送策略预设…"
+      : savedPolicyProfileReadinessMessage(targets, profile);
+}
+
+function renderSavedPolicyProfiles(selectedId = $("saved-policy-profile")?.value || "") {
+  const select = $("saved-policy-profile");
+  if (!select) return;
+  select.replaceChildren();
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = !savedPolicyProfilesAvailable
+    ? "预设暂不可用" : savedPolicyProfiles.length ? "选择教师端策略预设" : "教师端尚无已保存预设";
+  select.append(placeholder);
+  for (const profile of savedPolicyProfiles) {
+    const option = document.createElement("option");
+    option.value = profile.id;
+    option.textContent = `${profile.name} · ${mobilePolicyKindLabel(profile.kind)}`;
+    select.append(option);
+  }
+  select.value = savedPolicyProfiles.some(profile => profile.id === selectedId) ? selectedId : "";
+  updateSavedPolicyProfileControls();
+}
+
+async function refreshSavedPolicyProfiles(showToast = true) {
+  const status = $("saved-policy-profiles-status");
+  const button = $("refresh-saved-policy-profiles");
+  const selectedId = $("saved-policy-profile")?.value || "";
+  savedPolicyProfilesLoading = true;
+  if (status) status.textContent = "正在读取教师电脑已保存的策略预设…";
+  updateSavedPolicyProfileControls();
+  try {
+    const profiles = await api("/api/profiles");
+    const supportedKinds = new Set(["website", "application", "websiteApplication", "system"]);
+    if (!Array.isArray(profiles) || profiles.some(profile => !profile || typeof profile.id !== "string" ||
+        typeof profile.name !== "string" || !supportedKinds.has(profile.kind) ||
+        !Number.isSafeInteger(profile.lifetimeMinutes) || profile.lifetimeMinutes < 0))
+      throw new Error("教师端返回的策略预设格式无效。");
+    savedPolicyProfiles = profiles;
+    savedPolicyProfilesAvailable = true;
+    renderSavedPolicyProfiles(selectedId);
+    if (status) status.textContent = profiles.length
+      ? `已读取 ${profiles.length} 个教师端预设；发送后会返回逐台结果。`
+      : "教师电脑当前没有已保存的策略预设；可在下方使用自定义网站限制。";
+    if (showToast) toast(profiles.length ? "已读取教师端策略预设。" : "教师端当前没有已保存预设。");
+    return true;
+  } catch (error) {
+    savedPolicyProfiles = [];
+    savedPolicyProfilesAvailable = false;
+    renderSavedPolicyProfiles("");
+    if (status) status.textContent = `读取失败：${error?.message || "请检查教师电脑连接后重试。"}`;
+    if (showToast) toast(`教师端策略预设暂不可用：${error?.message || "请稍后重试。"}`);
+    return false;
+  } finally {
+    savedPolicyProfilesLoading = false;
+    if (button) button.disabled = Boolean(pendingSavedPolicyReview) || policyOperationInFlight;
+    updateSavedPolicyProfileControls();
+  }
 }
 
 function policyModeLabel(mode) {
@@ -1838,7 +2028,7 @@ function formatDateTime(value) {
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
 
-function renderOperation(result, container = operationResult) {
+function renderOperation(result, container = operationResult, reviewActions = null) {
   container.replaceChildren();
   const items = Array.isArray(result.results) ? result.results : [];
   const applicationReviewTargets = Array.isArray(result.applicationReview) ? result.applicationReview.length : 0;
@@ -1851,8 +2041,10 @@ function renderOperation(result, container = operationResult) {
     ? `已收到 ${applicationReviewTargets} 台电脑的应用信息。请先查看影响预览，确认后才会启用限制。`
     : items.length
       ? `共 ${items.length} 台电脑：${responded} 台已回应，${needsReview} 台需核对，${notResponded} 台未回应。`
-      : "没有收到电脑回应，请检查连接后重试。";
+        : result.message ? "操作没有返回逐台电脑结果。" : "没有收到电脑回应，请检查连接后重试。";
   container.append(summary);
+  if (typeof result.message === "string" && result.message.trim())
+    appendParagraph(container, result.message.trim());
   for (const item of items) {
     const card = document.createElement("article");
     card.className = "result-card";
@@ -1894,6 +2086,22 @@ function renderOperation(result, container = operationResult) {
       container.append(card);
     }
   }
+  if (result.requiresReview && typeof result.reviewToken === "string" && reviewActions) {
+    const actions = document.createElement("div");
+    actions.className = "button-stack application-review-actions";
+    const confirm = document.createElement("button");
+    confirm.type = "button";
+    confirm.className = "primary-button";
+    confirm.textContent = "核对影响后确认启用";
+    confirm.addEventListener("click", () => void reviewActions.confirm());
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "text-button";
+    cancel.textContent = "取消本次应用";
+    cancel.addEventListener("click", reviewActions.cancel);
+    actions.append(confirm, cancel);
+    container.append(actions);
+  }
 }
 
 async function loadDashboard() {
@@ -1911,8 +2119,8 @@ async function loadDashboard() {
   setActiveControlTab("classroom");
   renderClassroomMode(true);
   const loadWarnings = [];
-  const [roomsResult, websiteListsResult] = await Promise.allSettled([
-    api("/api/rooms"), refreshCustomWebsiteLists(false)
+  const [roomsResult, websiteListsResult, savedPolicyProfilesResult] = await Promise.allSettled([
+    api("/api/rooms"), refreshCustomWebsiteLists(false), refreshSavedPolicyProfiles(false)
   ]);
   if (roomsResult.status === "fulfilled" && Array.isArray(roomsResult.value)) {
     rooms = roomsResult.value;
@@ -1922,6 +2130,8 @@ async function loadDashboard() {
   }
   if (websiteListsResult.status === "rejected" || websiteListsResult.value !== true)
     loadWarnings.push("教师端网站名单暂不可用，请稍后刷新。");
+  if (savedPolicyProfilesResult.status === "rejected" || savedPolicyProfilesResult.value !== true)
+    loadWarnings.push("教师端策略预设暂不可用，请稍后刷新。");
   renderRooms();
   applyActiveClassroomTargetDefaults();
   await refreshStatusIfSelected();
@@ -3010,6 +3220,141 @@ function mobilePolicyErrorMessage(error, action) {
   return `${action}暂时无法完成，请确认教师电脑和学生电脑连接正常后重试。`;
 }
 
+function savedPolicyConfirmationText(profile, targets, enabled) {
+  const targetNames = targets.map(targetDisplayName).join("、");
+  const action = enabled ? "发送" : "解除";
+  const warning = profile.kind === "system" && enabled
+    ? "\n这是长期系统限制，不会自动到期；之后需由教师明确解除。"
+    : (profile.kind === "application" || profile.kind === "websiteApplication") &&
+      String(profile.mode || "").toLowerCase().includes("enforce") && enabled
+      ? "\n应用阻止会先进行影响检查；未查看并二次确认前不会启用。"
+      : "";
+  return `确认${action}“${profile.name}”？\n类型：${mobilePolicyKindLabel(profile.kind)} · ${mobilePolicyModeLabel(profile.mode, profile.kind)}\n目标电脑：${targetNames}\n${profile.lifetimeMinutes === 0 ? "期限：不会自动到期" : `期限：${profile.lifetimeMinutes} 分钟`}${warning}\n\n当前限制：\n${targetConfirmationSummary(targets)}`;
+}
+
+function savedPolicyReviewContextStillCurrent(review) {
+  return Boolean(review && selectedSavedPolicyProfile()?.id === review.profileId &&
+    sameTargets(review.targets, selectedTargets()));
+}
+
+function cancelPendingSavedPolicyReview() {
+  if (!pendingSavedPolicyReview) return;
+  pendingSavedPolicyReview = null;
+  policyOperationInFlight = false;
+  $("saved-policy-profiles-status").textContent =
+    "本次应用限制未确认，因此没有启用；未使用的审核票据会自动过期。";
+  document.querySelector("#saved-policy-result .application-review-actions")?.remove();
+  updateSelectionCount();
+}
+
+async function submitSavedPolicyProfile(profile, targets, enabled, reviewToken = null) {
+  const body = { profileId: profile.id, targets, enabled };
+  if (reviewToken) body.reviewToken = reviewToken;
+  else {
+    const expected = expectedRevisionFieldsForProfile(targets, profile);
+    if (!expected) throw new Error("电脑策略版本已变化；请刷新所选电脑状态后重试。");
+    Object.assign(body, expected);
+  }
+  const result = await api("/api/policy", { method: "POST", body });
+  if (!result || !Array.isArray(result.results))
+    throw new Error("教师端返回的逐台策略结果格式无效。");
+  if (result.requiresReview) {
+    if (typeof result.reviewToken !== "string" || !result.applicationReview?.length)
+      throw new Error("应用影响检查没有返回可核对的逐台结果；尚未启用应用限制。");
+    pendingSavedPolicyReview = { profileId: profile.id, targets: [...targets], reviewToken: result.reviewToken };
+    $("saved-policy-profiles-status").textContent =
+      "应用影响检查已返回。请逐台查看下方结果，再确认是否启用；确认前不会启用应用阻止。";
+    renderOperation(result, $("saved-policy-result"), {
+      confirm: confirmPendingSavedPolicyReview,
+      cancel: cancelPendingSavedPolicyReview
+    });
+    return { reviewPending: true, result };
+  }
+  renderOperation(result, $("saved-policy-result"));
+  $("saved-policy-profiles-status").textContent = result.message ||
+    "策略请求已处理；请查看每台学生电脑的回执。";
+  return { reviewPending: false, result };
+}
+
+async function runSavedPolicyProfile(enabled) {
+  if (policyOperationInFlight || pendingSavedPolicyReview) return;
+  const profile = selectedSavedPolicyProfile();
+  const targets = [...selectedTargets()];
+  if (!profile || !targets.length) return;
+  if (!savedPolicyProfileStatusReady(targets, profile)) {
+    $("saved-policy-scope-status").textContent = savedPolicyProfileReadinessMessage(targets, profile);
+    await refreshStatusIfSelected();
+    return;
+  }
+  if (!expectedRevisionFieldsForProfile(targets, profile)) {
+    $("saved-policy-profiles-status").textContent = "电脑策略版本已变化，正在重新读取状态…";
+    await refreshStatusIfSelected();
+    return;
+  }
+  if (!window.confirm(savedPolicyConfirmationText(profile, targets, enabled))) return;
+
+  policyOperationInFlight = true;
+  updateSelectionCount();
+  $("saved-policy-result").replaceChildren();
+  $("saved-policy-profiles-status").textContent = "正在向教师端发送策略预设…";
+  let keepReviewPending = false;
+  try {
+    const submitted = await submitSavedPolicyProfile(profile, targets, enabled);
+    keepReviewPending = submitted.reviewPending;
+  } catch (error) {
+    $("saved-policy-profiles-status").textContent = mobilePolicyErrorMessage(error, "策略预设");
+    renderOperation({ message: mobilePolicyErrorMessage(error, "策略预设"), results: [] },
+      $("saved-policy-result"));
+    toast(mobilePolicyErrorMessage(error, "策略预设"));
+  } finally {
+    if (!keepReviewPending) {
+      policyOperationInFlight = false;
+      for (const target of targets) latestStatusByTarget.delete(normalizeTarget(target));
+      await refreshStatusIfSelected();
+    }
+    updateSelectionCount();
+  }
+}
+
+async function confirmPendingSavedPolicyReview() {
+  const review = pendingSavedPolicyReview;
+  if (!review || policyOperationInFlight === false) return;
+  if (!savedPolicyReviewContextStillCurrent(review)) {
+    cancelPendingSavedPolicyReview();
+    toast("所选电脑或策略已变化；没有启用应用限制，请重新检查。");
+    return;
+  }
+  if (!window.confirm("请确认已查看每台电脑的应用影响预览。继续后，教师端会再次核对预设、状态和影响结果，再发送应用阻止策略。"))
+    return;
+
+  document.querySelectorAll("#saved-policy-result .application-review-actions button")
+    .forEach(button => { button.disabled = true; });
+  const profile = savedPolicyProfiles.find(item => item.id === review.profileId);
+  if (!profile) {
+    cancelPendingSavedPolicyReview();
+    return;
+  }
+  $("saved-policy-profiles-status").textContent = "正在重新核对影响结果并确认应用限制…";
+  try {
+    pendingSavedPolicyReview = null;
+    const submitted = await submitSavedPolicyProfile(profile, review.targets, true, review.reviewToken);
+    if (submitted.reviewPending)
+      throw new Error("教师端再次要求影响检查；请重新核对下方结果。");
+  } catch (error) {
+    pendingSavedPolicyReview = null;
+    const message = mobilePolicyErrorMessage(error, "确认应用限制");
+    $("saved-policy-profiles-status").textContent = message;
+    renderOperation({ message, results: [] }, $("saved-policy-result"));
+    toast(message);
+  } finally {
+    pendingSavedPolicyReview = null;
+    policyOperationInFlight = false;
+    for (const target of review.targets) latestStatusByTarget.delete(normalizeTarget(target));
+    await refreshStatusIfSelected();
+    updateSelectionCount();
+  }
+}
+
 async function runCustomWebsitePolicy(enabled) {
   const targets = selectedTargets();
   if (!targets.length) return;
@@ -3276,6 +3621,13 @@ $("target-picker").addEventListener("toggle", () => {
 });
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
 $("refresh-custom-website-lists").addEventListener("click", () => void refreshCustomWebsiteLists());
+$("refresh-saved-policy-profiles").addEventListener("click", () => void refreshSavedPolicyProfiles());
+$("saved-policy-profile").addEventListener("change", () => {
+  $("saved-policy-result").replaceChildren();
+  updateSelectionCount();
+});
+$("apply-saved-policy-profile").addEventListener("click", () => void runSavedPolicyProfile(true));
+$("disable-saved-policy-profile").addEventListener("click", () => void runSavedPolicyProfile(false));
 $("save-custom-website-lists").addEventListener("click", () => void saveCustomWebsiteLists());
 $("apply-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(true));
 $("disable-custom-website-policy").addEventListener("click", () => void runCustomWebsitePolicy(false));

@@ -137,6 +137,8 @@ internal static class MobileControlApiChecks
                     : string.Empty;
                 Expect(mobilePage.StatusCode == HttpStatusCode.OK &&
                        html.Contains("正在检查手机连接", StringComparison.Ordinal) &&
+                       html.Contains("id=\"saved-policy-profile\"", StringComparison.Ordinal) &&
+                       html.Contains("id=\"apply-saved-policy-profile\"", StringComparison.Ordinal) &&
                        deviceNameInput.Contains("placeholder=\"例如：王老师\"", StringComparison.Ordinal) &&
                        !deviceNameInput.Contains("value=", StringComparison.Ordinal));
             }
@@ -145,6 +147,9 @@ internal static class MobileControlApiChecks
                 var script = await mobileScript.Content.ReadAsStringAsync();
                 Expect(mobileScript.StatusCode == HttpStatusCode.OK &&
                        script.Contains("/api/mobile-resume", StringComparison.Ordinal) &&
+                       script.Contains("api(\"/api/profiles\")", StringComparison.Ordinal) &&
+                       script.Contains("api(\"/api/policy\"", StringComparison.Ordinal) &&
+                       script.Contains("pendingSavedPolicyReview", StringComparison.Ordinal) &&
                        script.Contains("credentials: path === \"/api/pair-status\" ? \"same-origin\" : \"omit\"",
                            StringComparison.Ordinal) &&
                        script.Contains("credentials: \"same-origin\"", StringComparison.Ordinal));
