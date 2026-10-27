@@ -108,12 +108,20 @@ def main():
             continue
 
     started_at = time.time()
+    cli_environment = os.environ.copy()
+    # Veyon CLI normally starts as QCoreApplication when DISPLAY is unset,
+    # but Screenshot uses Qt GUI pixmaps while writing the returned frame.
+    # Select Qt's offscreen platform so it can create QGuiApplication without
+    # connecting to or exposing a real desktop display.
+    cli_environment["DISPLAY"] = ":99"
+    cli_environment["QT_QPA_PLATFORM"] = "offscreen"
     try:
         result = subprocess.run(
             [VEYON_CLI, "feature", "start", target, "Screenshot"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
+            env=cli_environment,
             timeout=COMMAND_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:

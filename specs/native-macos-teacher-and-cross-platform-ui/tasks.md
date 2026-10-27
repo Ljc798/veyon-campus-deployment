@@ -4,7 +4,7 @@
 
 - [x] 0.1 确认 Apple Silicon 架构、macOS 版本、.NET 10 SDK 和可用虚拟化运行时（SDK 位于 `/Users/alex/.dotnet/dotnet`，Docker Desktop 可运行 ARM64 容器）。
 - [ ] 0.2 建立可恢复的 Ubuntu ARM64 测试环境；验证 Veyon 固定版本 CLI、Key authentication、LAN DNS/端口和网络对象目录读写。正式 ARM64 镜像已从上游 4.11.4 源码构建，CLI 版本为 `4.11.4`；已安装 Ubuntu ARM64 的 QCA RSA 插件，容器可启动，`authkeys list` 和 `authkeys help import` 可运行，导入语法为 `import <KEY> [<FILE>]`。本轮重新运行启动脚本修复了已有容器缺少显式认证模式的问题，并核实 `Authentication/Method=1`、截图与密钥目录路径；容器为非特权 bridge 模式、无发布端口，密钥目录为 `rw,nosuid,nodev,noexec,size=96m` tmpfs。`authkeys list` 目前为空，尚无校区私钥；校园 LAN、真实密钥认证和目录读写仍待验证。
-- [ ] 0.3 在无 Veyon 图形窗口的情况下采集一台 Windows 学生机 Screenshot；确认临时图片精确定位、读取、清理、超时和取消。本机 Veyon 4.11.4 CLI 帮助已确认调用顺序为 `feature start <HOST ADDRESS> <FEATURE>`，与 helper 脚本一致；尚未连接真实学生机或读取画面。
+- [ ] 0.3 在无 Veyon 图形窗口的情况下采集一台 Windows 学生机 Screenshot；确认临时图片精确定位、读取、清理、超时和取消。本机 Veyon 4.11.4 CLI 帮助已确认调用顺序为 `feature start <HOST ADDRESS> <FEATURE>`，与 helper 脚本一致。2026-10-27 使用仅容器互通的 Docker 内部网络、临时容器 tmpfs 内生成的测试密钥和 Veyon 4.11.4 HeadlessVncServer 完成本地合成链路复现：发现 DISPLAY 未设置时 CLI 以 QCoreApplication 启动，截图功能因 Qt GUI pixmap 崩溃并产生 0 字节文件；helper 现在为 CLI 子进程指定 `DISPLAY=:99` 和 `QT_QPA_PLATFORM=offscreen`，同一采集脚本返回有效 640×480 PNG，且采集目录没有遗留原图。该结果验证了 Linux helper 到 Veyon Server 的合成截图链路；真实 Windows 学生桌面、校区密钥、校园 LAN、超时与取消仍待验证。
 - [x] 0.4 选定 Veyon helper 为首选截图路径；若真实 LAN、密钥认证或截图链路验证失败，再实现 Student Agent/Companion 回退。当前还没有真实学生机截图证据。
 
 ## 阶段 1：跨平台教师主机
