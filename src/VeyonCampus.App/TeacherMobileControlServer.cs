@@ -191,6 +191,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     private readonly Func<IReadOnlyList<string>, CancellationToken,
         Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? _readRuntimeSummaries;
     private readonly Func<string, CancellationToken, Task<byte[]>>? _captureScreenAsync;
+    private readonly ITeacherMobileControlIdentityProvider _identityProvider;
     private readonly TeacherMobileControlService _classroomPolicyExecutor;
     private readonly TeacherClassroomQuickControlService? _classroomQuickControlService;
     private TeacherMobileControlService? _service;
@@ -238,6 +239,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         _readRuntimeSummaries = readRuntimeSummaries;
         _studentNameMapper = studentNameMapper;
         _captureScreenAsync = captureScreenAsync;
+        _identityProvider = TeacherMobileControlIdentityProviderFactory.CreateForCurrentPlatform();
         _classroomPolicyExecutor = TeacherMobileControlService.CreatePolicyExecutor(CurrentCampusId);
         if (OperatingSystem.IsWindows())
             _classroomQuickControlService = new TeacherClassroomQuickControlService(CurrentCampusId);
@@ -437,8 +439,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         try
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(_activeCampusId().Trim());
-            var addresses = GetPrivateAddresses();
-            var identity = MobileControlTlsIdentityStore.Create(addresses);
+            var identity = _identityProvider.CreateIdentity();
             Func<Guid, ClassroomQuickControlAction, CancellationToken,
                 Task<ClassroomQuickControlOperationResult>>? executeQuickControl = null;
             Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>? readQuickControl = null;
@@ -459,7 +460,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                 captureScreenAsync: _captureScreenAsync);
             await service.StartAsync(cancellationToken);
             _service = service;
-            var pairingAddress = SelectPreferredLanAddress(identity.Addresses);
+            var pairingAddress = _identityProvider.SelectPreferredLanAddress(identity.Addresses);
             LanUrl = $"https://{pairingAddress}:{HttpsPort}/";
             BootstrapUrl = $"http://{pairingAddress}:{BootstrapPort}/";
             CertificateFingerprint = string.Join(" ", Enumerable.Range(0, identity.RootFingerprint.Length / 2)
@@ -863,53 +864,6 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             : MobilePairingQrLink.Create(BootstrapUrl, LanUrl, PairingCode);
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasPairingQr)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(HasNoPairingQr)));
-    }
-
-    private static IReadOnlyList<IPAddress> GetPrivateAddresses()
-    {
-        var addresses = new SortedSet<IPAddress>(Comparer<IPAddress>.Create((left, right) =>
-            StringComparer.Ordinal.Compare(left.ToString(), right.ToString())));
-        foreach (var adapter in NetworkInterface.GetAllNetworkInterfaces())
-        {
-            if (adapter.OperationalStatus != OperationalStatus.Up) continue;
-            if (OperatingSystem.IsMacOS() &&
-                adapter.NetworkInterfaceType is not (NetworkInterfaceType.Ethernet or NetworkInterfaceType.Wireless80211))
-                continue;
-            foreach (var item in adapter.GetIPProperties().UnicastAddresses)
-                if (MobileControlTlsIdentityStore.IsPrivateIpv4(item.Address)) addresses.Add(item.Address);
-        }
-        if (addresses.Count == 0)
-            throw new InvalidOperationException(OperatingSystem.IsMacOS()
-                ? "当前没有可供手机连接的以太网或 Wi-Fi 私有 IPv4 地址。"
-                : "当前没有可供手机连接的私有 IPv4 地址。");
-        if (addresses.Count > 16) throw new InvalidDataException("本机私有 IPv4 地址过多；请先停用不需要的网络适配器。");
-        return Array.AsReadOnly(addresses.ToArray());
-    }
-
-    private static IPAddress SelectPreferredLanAddress(IReadOnlyList<IPAddress> candidates)
-    {
-        var candidateSet = candidates.ToHashSet();
-        var adapters = NetworkInterface.GetAllNetworkInterfaces()
-            .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up &&
-                              adapter.NetworkInterfaceType is NetworkInterfaceType.Ethernet or
-                                  NetworkInterfaceType.Wireless80211)
-            .Select(adapter => new
-            {
-                Adapter = adapter,
-                Properties = adapter.GetIPProperties(),
-                Addresses = adapter.GetIPProperties().UnicastAddresses
-                    .Where(item => candidateSet.Contains(item.Address)).Select(item => item.Address).ToArray()
-            })
-            .Where(item => item.Addresses.Length > 0)
-            .ToArray();
-        var defaultRoute = adapters
-            .Where(item => item.Properties.GatewayAddresses.Any(gateway =>
-                gateway.Address.AddressFamily == AddressFamily.InterNetwork &&
-                !gateway.Address.Equals(IPAddress.Any)))
-            .OrderByDescending(item => item.Adapter.NetworkInterfaceType == NetworkInterfaceType.Wireless80211)
-            .FirstOrDefault();
-        return defaultRoute?.Addresses[0] ?? candidates.FirstOrDefault() ??
-            throw new InvalidOperationException("当前没有可用于手机连接的教师 LAN 地址。");
     }
 
     private static async Task<IPAddress> SelectTeacherAddressAsync(string target,

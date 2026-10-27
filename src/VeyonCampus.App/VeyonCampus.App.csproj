@@ -85,6 +85,7 @@
     <Compile Remove="ClassroomScreenPreviewCapture.cs" />
     <Compile Remove="TeacherVeyonControlPlane.cs" />
     <Compile Remove="TeacherNetworkDirectory.cs" />
+    <Compile Remove="TeacherMobileControlIdentityProvider.cs" />
   </ItemGroup>
   <ItemGroup Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">
     <AvaloniaXaml Remove="StudentSetupWindow.axaml" />
