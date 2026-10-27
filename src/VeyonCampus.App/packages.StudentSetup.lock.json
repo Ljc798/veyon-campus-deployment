@@ -16,6 +16,16 @@
           "Avalonia.X11": "12.1.3"
         }
       },
+      "Flowery.NET": {
+        "type": "Direct",
+        "requested": "[3.6.1, )",
+        "resolved": "3.6.1",
+        "contentHash": "YDfz8hxdXi2lT4R2/8KEbJMHN4NXtW05yBCvNOvgsn+vXGpj7kxwGeB42j1THfdYDtjXK9fdYXo2ndez08Pmlw==",
+        "dependencies": {
+          "Avalonia": "12.1.0",
+          "Avalonia.Skia": "12.1.0"
+        }
+      },
       "QRCoder": {
         "type": "Direct",
         "requested": "[1.8.0, )",

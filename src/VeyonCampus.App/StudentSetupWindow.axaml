@@ -1,4 +1,4 @@
-<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="True" WindowStartupLocation="CenterScreen">
+<Window xmlns="https://github.com/avaloniaui" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:vm="using:VeyonCampus.App" xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI" xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET" xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET" x:Class="VeyonCampus.App.StudentSetupWindow" x:DataType="vm:MainViewModel" Title="Veyon Campus 学生部署工具" Width="1080" Height="760" Background="#F5F7FA" CanResize="True" WindowStartupLocation="CenterScreen">
   <Window.Styles>
     <Style Selector="Button.wizard-step">
       <Setter Property="Background" Value="#FFFFFF" />
@@ -678,9 +678,16 @@
                            VerticalAlignment="Center" IsVisible="{Binding IsExecuting}"
                            AutomationProperties.Name="正在部署" ToolTip.Tip="正在部署，请稍候" />
               </Grid>
-              <ProgressBar Minimum="0" Maximum="100" Value="{Binding ExecutionProgressPercent}" Height="8"
-                           AutomationProperties.Name="{Binding ExecutionProgressText}"
-                           AutomationProperties.HelpText="{Binding ExecutionOverallStatusText}" />
+              <Border Height="8" ClipToBounds="True" CornerRadius="4">
+                <Border.Styles>
+                  <floweryTheme:DaisyUITheme />
+                </Border.Styles>
+                <flowery:DaisyProgress Value="{Binding ExecutionProgressPercent}"
+                                       AccessibleText="学生部署进度"
+                                       AutomationProperties.Name="{Binding ExecutionProgressText}"
+                                       AutomationProperties.HelpText="{Binding ExecutionOverallStatusText}"
+                                       Height="8" VerticalAlignment="Center" />
+              </Border>
             </StackPanel>
           </Border>
           <Border Classes="card" Grid.Row="1" Padding="16">

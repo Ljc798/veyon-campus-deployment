@@ -34,7 +34,7 @@
     <PackageReference Include="SukiUI" Version="7.0.1" />
     <PackageReference Include="QRCoder" Version="1.8.0" ExcludeAssets="compile;runtime;contentfiles;build;buildmultitargeting;buildtransitive;analyzers;native" Condition="'$(VeyonCampusRole)' != 'TeacherConsole'" />
     <PackageReference Include="QRCoder" Version="1.8.0" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
-    <PackageReference Include="Flowery.NET" Version="3.6.1" Condition="'$(VeyonCampusRole)' == 'TeacherConsole'" />
+    <PackageReference Include="Flowery.NET" Version="3.6.1" />
     <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
     <ProjectReference Include="../VeyonCampus.Worker/VeyonCampus.Worker.csproj" ReferenceOutputAssembly="false"
                       Condition="'$(VeyonCampusTargetRuntime)' != 'osx-arm64' and '$(RuntimeIdentifier)' != 'osx-arm64'" />
