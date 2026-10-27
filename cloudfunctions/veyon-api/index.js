@@ -507,7 +507,6 @@ function noContent(response, headers = {}) {
 }
 
 const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Accept, Authorization, Content-Type',
   'Access-Control-Max-Age': '600'
@@ -2054,7 +2053,6 @@ async function handleAdminDatabase(request, response, config, tableName, url) {
 
 function createRequestHandler(config) {
   return async (request, response) => {
-    response.setHeader('Access-Control-Allow-Origin', '*');
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'Accept, Authorization, Content-Type');
     response.setHeader('Access-Control-Max-Age', '600');
