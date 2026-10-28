@@ -2654,7 +2654,14 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 if (!accepted)
                 {
                     retainedEvent = _classroomEvents.FindRetained(grant.SessionId, verified.Event.EventId, now);
-                    if (retainedEvent is null || !SameClassroomEventContent(retainedEvent, verified.Event))
+                    var correlatedDuplicate =
+                        (verified.Event.Type is ClassroomEventType.HelpResolved or
+                            ClassroomEventType.ClassroomChatDelivered) &&
+                        verified.Event.CorrelationId is { } correlationId &&
+                        _classroomEvents.HasCorrelatedEvent(grant.SessionId, correlationId,
+                            verified.Event.Type, ClassroomEventSender.Student, grant.Target, now);
+                    if ((retainedEvent is null && !correlatedDuplicate) ||
+                        (retainedEvent is not null && !SameClassroomEventContent(retainedEvent, verified.Event)))
                         throw new InvalidDataException("重复课堂事件 ID 与已接收的内容不匹配。");
                 }
                 if (verified.Event.Type == ClassroomEventType.ClassroomChatMessage && accepted)
