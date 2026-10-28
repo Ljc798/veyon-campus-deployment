@@ -4,6 +4,7 @@
 
 ## 2026 年 10 月
 
+- [教师端课堂策略状态回退排查与版本栅栏修复（1.1.40 基线）](2026-10/classroom-quick-control-revision-fix-20261028.md)
 - [Phase 0–6 统一现场验收清单与配套测试包](../下一阶段统一现场验收清单.md)
 - [设备重启识别与 BootId 签名摘要（1.1.25）](2026-10/runtime-summary-boot-identity-20261022.md)
 - [停用旧版课堂临时策略入口（1.1.23）](2026-10/classroom-practice-mode-removal-20261022.md)

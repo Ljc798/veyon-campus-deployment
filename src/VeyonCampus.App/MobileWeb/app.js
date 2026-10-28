@@ -54,6 +54,7 @@ let activeClassroomSessionId = null;
 let classroomQuickControlSnapshot = null;
 let classroomQuickControlUnavailable = false;
 let classroomQuickControlBusy = false;
+let classroomQuickControlSnapshotRequestId = 0;
 let classroomStatePollTimer = 0;
 let classroomStatePollVersion = 0;
 let classroomStatePollInFlight = false;
@@ -135,6 +136,7 @@ function setActiveControlTab(tab) {
     const button = $(buttonId);
     button.classList.toggle("selected", active);
     button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
     $(panelId).classList.toggle("hidden", !active);
   }
   if (selected === "monitor") renderMonitorTargets();
@@ -145,6 +147,24 @@ function setActiveControlTab(tab) {
   }
   if (selected === "policy" && policyPageMode === "directory") startDirectoryStatusPolling();
   else stopDirectoryStatusPolling();
+}
+
+function handleControlTabKeydown(event) {
+  const pages = ["classroom", "policy", "monitor", "settings"];
+  const activeIndex = pages.findIndex(name => $(name + "-tab-button") === event.currentTarget);
+  if (activeIndex < 0) return;
+
+  let nextIndex;
+  if (event.key === "ArrowRight") nextIndex = (activeIndex + 1) % pages.length;
+  else if (event.key === "ArrowLeft") nextIndex = (activeIndex + pages.length - 1) % pages.length;
+  else if (event.key === "Home") nextIndex = 0;
+  else if (event.key === "End") nextIndex = pages.length - 1;
+  else return;
+
+  event.preventDefault();
+  const nextTab = pages[nextIndex];
+  setActiveControlTab(nextTab);
+  $(nextTab + "-tab-button").focus();
 }
 
 function isClassroomMonitorVisible() {
@@ -2517,6 +2537,7 @@ function renderClassroomQuickControl() {
   $("classroom-quick-control-release").disabled = !active || classroomQuickControlUnavailable || classroomQuickControlBusy;
   $("mobile-stat-total").textContent = active ? activeClassroomTargets.length : "0";
   const devices = snapshot?.devices || [];
+  const retryPendingCount = devices.filter(isClassroomQuickControlRetryPending).length;
   const websiteStates = devices.map(websiteControlState);
   $("classroom-website-current").textContent = snapshot ? summarizeControlStates(websiteStates, {
     notEnabled: "未启用", waitingForAgent: "等待上线", applying: "正在下发", reported: "已写入·待核对",
@@ -2525,30 +2546,43 @@ function renderClassroomQuickControl() {
   $("classroom-input-current").textContent = snapshot ? summarizeControlStates(devices.map(item =>
     item.inputState && item.inputState !== "unknown" ? item.inputState : item.inputLeaseId ?
       item.phase === "inputLockedVerified" ? "locked" : "needsReview" : "notEnabled"),
-    {notEnabled: "本工具未锁定", locked: "已锁定", needsReview: "需核对"}) : "正在读取…";
-  $("classroom-website-delivery-hint").textContent = websiteStates.includes("waitingForAgent") || websiteStates.includes("applying")
-    ? "已启用自动补发。学生机开机后需等待服务就绪，可能需 1–2 分钟；无需重复点击。"
+    {notEnabled: "本工具未锁定", locked: "已锁定", waitingForAgent: "等待上线", needsReview: "需核对"}) : "正在读取…";
+  $("classroom-website-delivery-hint").textContent = retryPendingCount > 0 ||
+    websiteStates.includes("waitingForAgent") || websiteStates.includes("applying")
+    ? retryPendingCount > 0
+      ? `已保存期望状态；${retryPendingCount} 台设备待同步，将按退避间隔自动重试，无需重复点击。`
+      : "已启用自动补发。学生机开机后需等待服务就绪，可能需 1–2 分钟；无需重复点击。"
     : websiteStates.includes("reported") ? "名单已写入，正在等待浏览器执行确认。"
     : websiteStates.every(value => value === "notEnabled") ? "启用一次后，未开机的学生电脑也会保留待下发任务；键鼠可单独操作。"
     : "网站限制与键鼠锁定独立操作，互不作为前置条件。";
   const acknowledged = devices.filter((item, index) => ["applied", "reported"].includes(websiteStates[index]) || item.phase === "inputLockedVerified").length;
   const waiting = websiteStates.filter(value => value === "waitingForAgent").length;
-  const review = devices.filter((item, index) => websiteStates[index] !== "waitingForAgent" &&
-    (["unknown", "needsReview", "reported", "releasing"].includes(websiteStates[index]) ||
-     ["unknown", "conflict", "failed", "unsupported", "releasePending"].includes(item.phase))).length;
+  const needsReview = (item, index) => !isClassroomQuickControlRetryPending(item) &&
+    websiteStates[index] !== "waitingForAgent" &&
+    (["unknown", "needsReview", "reported"].includes(websiteStates[index]) ||
+     ["unknown", "conflict", "failed", "unsupported"].includes(item.phase));
+  const review = devices.filter(needsReview).length;
+  const restoring = devices.filter(item => item.phase === "releasePending" &&
+    !isClassroomQuickControlRetryPending(item)).length;
+  const pendingTargets = devices.filter((item, index) => isClassroomQuickControlRetryPending(item) ||
+    websiteStates[index] === "waitingForAgent" || needsReview(item, index) || item.phase === "releasePending").length;
   const sending = devices.filter(item => ["websiteApplying", "switching", "inputLocking"].includes(item.phase)).length;
   $("mobile-stat-receipts").textContent = snapshot ? acknowledged : "—";
-  $("mobile-stat-review").textContent = snapshot ? waiting + review : "—";
+  $("mobile-stat-review").textContent = snapshot ? pendingTargets : "—";
   state.textContent = classroomQuickControlUnavailable ? "Mac 暂不支持" : !active ? "待配置" : !snapshot ? "读取中" :
-    websiteStates.includes("waitingForAgent") ? "等待自动下发" :
-    websiteStates.includes("applying") ? "正在下发" : review ? "有待核对" :
+    review ? "有待核对" : retryPendingCount ? "待同步" : websiteStates.includes("waitingForAgent") ? "等待自动下发" :
+    websiteStates.includes("applying") ? "正在下发" : restoring ? "正在恢复" :
     websiteStates.some(value => ["reported", "applied"].includes(value)) ? "网站限制已启用" : "状态已更新";
-  state.className = "pill " + (review || waiting ? "warn" : acknowledged ? "good" : "mode");
+  state.className = "pill " + (review || waiting || retryPendingCount || restoring
+    ? "warn" : acknowledged ? "good" : "mode");
   status.textContent = classroomQuickControlUnavailable
     ? "Mac 教师端暂不支持课堂快捷管控；网站、应用和系统策略可在“限制”页发送。"
     : !active ? "请先在教师电脑确认学生名单。" : !snapshot ? "正在读取学生状态…" :
+    retryPendingCount && review ? `有 ${review} 台设备需核对；另有 ${retryPendingCount} 台待同步，教师端会按退避间隔重试。` :
+    retryPendingCount ? `期望状态已保存；${retryPendingCount} 台设备待同步，教师端会按退避间隔重试。` :
     !pilotEnabled ? "此教师端暂未开放新管控；可以解除本工具已有管控。" :
     classroomQuickControlBusy || sending ? `正在执行 ${sending} 台，回执会自动更新。` :
+    restoring ? `正在核验 ${restoring} 台设备的恢复结果；取得可信回执后才会标记完成。` :
     "名单写入和浏览器执行结果分别核对，展开学生可查看原因。";
   if (snapshot?.controlExpiresUtc && devices.some(item => item.mode !== "none" || item.inputLeaseId ||
       item.websiteState === "waitingForAgent")) {
@@ -2577,8 +2611,9 @@ function renderClassroomQuickControl() {
     const heading = row.querySelector("summary");
     heading.firstElementChild.textContent = item.displayName || "未填写姓名";
     const badge = heading.lastElementChild;
-    badge.textContent = quickControlPhaseLabel(item.phase);
-    badge.className = "state " + (["websiteApplied", "inputLockedVerified"].includes(item.phase) ? "good" :
+    const retryPending = isClassroomQuickControlRetryPending(item);
+    badge.textContent = retryPending ? "待同步" : quickControlPhaseLabel(item.phase);
+    badge.className = "state " + (!retryPending && ["websiteApplied", "inputLockedVerified"].includes(item.phase) ? "good" :
       ["notStarted", "released"].includes(item.phase) ? "neutral" : "warn");
     row.querySelector("p").textContent = "网站：" + summarizeControlStates([websiteControlState(item)], {
       notEnabled:"未启用",waitingForAgent:"等待上线后自动下发",applying:"正在下发",reported:"已写入，等待浏览器确认",
@@ -2586,6 +2621,11 @@ function renderClassroomQuickControl() {
     }, false) + "。" + (item.detail || "等待设备回执。");
   });
   for (const [key, row] of existing) if (!present.has(key)) row.remove();
+}
+
+function isClassroomQuickControlRetryPending(item) {
+  const retryAfter = item?.retryAfterUtc ? Date.parse(item.retryAfterUtc) : Number.NaN;
+  return Number.isFinite(retryAfter) && retryAfter > Date.now();
 }
 
 function websiteControlState(item) {
@@ -2613,15 +2653,25 @@ function quickControlPhaseLabel(phase) {
 }
 async function loadClassroomQuickControlSnapshot() {
   if (!activeClassroomSessionId || !accessToken) return;
+  const requestId = ++classroomQuickControlSnapshotRequestId;
+  const requestedSessionId = activeClassroomSessionId;
   try {
     const snapshot = await api("/api/classroom/quick-control");
-    if (snapshot?.sessionId !== activeClassroomSessionId || !Array.isArray(snapshot.devices) ||
+    if (requestId !== classroomQuickControlSnapshotRequestId ||
+        requestedSessionId !== activeClassroomSessionId) return;
+    if (snapshot?.sessionId !== requestedSessionId || !Number.isSafeInteger(snapshot.stateRevision) ||
+        snapshot.stateRevision < 0 || !Array.isArray(snapshot.devices) ||
         snapshot.devices.length > 150 || snapshot.devices.some(item =>
           typeof item?.displayName !== "string" || !["none", "websiteRestriction", "inputLocked", "websiteAndInputLocked"].includes(item.mode) ||
           typeof item.phase !== "string"))
       throw new Error("课堂快捷管控状态无效。");
+    if (classroomQuickControlSnapshot?.sessionId === requestedSessionId &&
+        Number.isSafeInteger(classroomQuickControlSnapshot.stateRevision) &&
+        snapshot.stateRevision < classroomQuickControlSnapshot.stateRevision) return;
     classroomQuickControlSnapshot = snapshot;
   } catch (error) {
+    if (requestId !== classroomQuickControlSnapshotRequestId ||
+        requestedSessionId !== activeClassroomSessionId) return;
     classroomQuickControlSnapshot = null;
     classroomQuickControlUnavailable = error?.status === 501;
     $("classroom-quick-control-state").textContent = classroomQuickControlUnavailable ? "Mac 暂不支持" : "状态未知";
@@ -3853,6 +3903,8 @@ $("reconnect-button").addEventListener("click", () => void connectDashboard());
 $("classroom-tab-button").addEventListener("click", () => setActiveControlTab("classroom"));
 $("policy-tab-button").addEventListener("click", () => setActiveControlTab("policy"));
 $("monitor-tab-button").addEventListener("click", () => setActiveControlTab("monitor"));
+for (const id of ["classroom-tab-button", "policy-tab-button", "monitor-tab-button", "settings-tab-button"])
+  $(id).addEventListener("keydown", handleControlTabKeydown);
 function openMobileMessages() {
   if (!activeClassroomSessionId) return;
   const dialog = $("mobile-messages-dialog");

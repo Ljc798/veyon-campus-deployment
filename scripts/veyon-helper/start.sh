@@ -16,6 +16,10 @@ if docker container inspect "${container_name}" >/dev/null 2>&1; then
   publish_all_ports="$(docker inspect --format '{{.HostConfig.PublishAllPorts}}' "${container_name}")"
   port_bindings="$(docker inspect --format '{{json .HostConfig.PortBindings}}' "${container_name}")"
   tmpfs_options="$(docker inspect --format '{{index .HostConfig.Tmpfs "/run/veyon-helper"}}' "${container_name}")"
+  host_binds="$(docker inspect --format '{{json .HostConfig.Binds}}' "${container_name}")"
+  host_mounts="$(docker inspect --format '{{json .HostConfig.Mounts}}' "${container_name}")"
+  volumes_from="$(docker inspect --format '{{json .HostConfig.VolumesFrom}}' "${container_name}")"
+  mounted_volumes="$(docker inspect --format '{{json .Mounts}}' "${container_name}")"
   if [[ "${privileged}" != "false" ]]; then
     echo "Container ${container_name} is privileged; refusing to reuse it." >&2
     exit 1
@@ -29,6 +33,12 @@ if docker container inspect "${container_name}" >/dev/null 2>&1; then
     echo "Container ${container_name} does not use the expected private 96 MiB tmpfs; refusing to load keys." >&2
     exit 1
   fi
+  for mount_config in "${host_binds}" "${host_mounts}" "${volumes_from}" "${mounted_volumes}"; do
+    if [[ "${mount_config}" != "null" && "${mount_config}" != "[]" ]]; then
+      echo "Container ${container_name} has a host bind or volume mount; refusing to load keys." >&2
+      exit 1
+    fi
+  done
   is_running="$(docker inspect --format '{{.State.Running}}' "${container_name}")"
   if [[ "${is_running}" != "true" ]]; then
     docker start "${container_name}" >/dev/null

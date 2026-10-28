@@ -262,6 +262,7 @@ public static class WebsitePolicySigningKeyStore
     {
         if (!OperatingSystem.IsWindows())
         {
+            using var revisionLock = WebsitePolicyRevisionStore.AcquireRevisionLock(campusId);
             lock (PortableStateGate)
             {
                 var state = ReadPortableState(campusId) ?? new PortablePolicyState(1, campusId, null, 0);
@@ -566,6 +567,8 @@ public static class WebsitePolicySigningKeyStore
 /// <summary>Monotonic per-campus revisions stored in the teacher's current-user policy state.</summary>
 public static class WebsitePolicyRevisionStore
 {
+    private static readonly TimeSpan RevisionLockTimeout = TimeSpan.FromSeconds(2);
+
     public static long Next(string campusId) => Next(campusId, 0);
 
     public static long Next(string campusId, long minimumExclusiveRevision)
@@ -573,6 +576,7 @@ public static class WebsitePolicyRevisionStore
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         if (minimumExclusiveRevision < 0 || minimumExclusiveRevision == long.MaxValue)
             throw new InvalidDataException("当前策略版本无效，无法生成更高版本。");
+        using var revisionLock = AcquireRevisionLock(campusId);
         if (!OperatingSystem.IsWindows())
             return WebsitePolicySigningKeyStore.NextPortableRevision(campusId, minimumExclusiveRevision);
         var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)));
@@ -585,6 +589,35 @@ public static class WebsitePolicyRevisionStore
             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         key.SetValue("Revision", next, RegistryValueKind.QWord);
         return next;
+    }
+
+    internal static FileStream AcquireRevisionLock(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var directory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
+            "VeyonCampus", "WebsitePolicy");
+        Directory.CreateDirectory(directory);
+        PathLinkSecurity.RejectLinks(directory);
+        var campusHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(campusId)))
+            .ToLowerInvariant();
+        var path = Path.Combine(directory, campusHash + ".revision.lock");
+        var timer = Stopwatch.StartNew();
+        IOException? lastFailure = null;
+        do
+        {
+            try
+            {
+                if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite,
+                    FileShare.None, 1, FileOptions.WriteThrough);
+            }
+            catch (IOException exception)
+            {
+                lastFailure = exception;
+                Thread.Sleep(25);
+            }
+        } while (timer.Elapsed < RevisionLockTimeout);
+        throw new IOException("另一教师端正在分配校区策略版本，请稍后重试。", lastFailure);
     }
 }
 

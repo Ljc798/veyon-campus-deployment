@@ -84,6 +84,7 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
             snapshot.InputState switch
             {
                 "locked" => ("键鼠锁定已核验", InfoBrush, InfoSubtleBrush),
+                "waitingForAgent" => ("等待学生端上线", WarningBrush, WarningSubtleBrush),
                 "needsReview" => ("键鼠状态需核对", NeedsReviewBrush, NeedsReviewSubtleBrush),
                 "notEnabled" => ("本工具未锁键鼠", NeutralBrush, NeutralSubtleBrush),
                 _ => ("键鼠状态未知", NeutralBrush, NeutralSubtleBrush)
@@ -94,7 +95,8 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         Raise(nameof(InputControlStatus));
         Raise(nameof(InputControlStatusBrush));
         Raise(nameof(InputControlStatusBackground));
-        Summary = snapshot.Phase switch
+        var retryPending = snapshot.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow;
+        Summary = retryPending ? "操作已保存，等待下次设备同步" : snapshot.Phase switch
         {
             ClassroomQuickControlPhase.WaitingForAgent => "尚未收到学生端回执",
             ClassroomQuickControlPhase.WebsiteReported => "名单已写入，浏览器效果待核对",
@@ -110,7 +112,9 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
             ClassroomQuickControlPhase.Unsupported => "当前设备暂不支持此操作",
             _ => "管控已解除"
         };
-        (StatusText, StatusBrush, StatusBackground) = snapshot.Phase switch
+        (StatusText, StatusBrush, StatusBackground) = retryPending
+            ? Status("待同步", WarningBrush, WarningSubtleBrush)
+            : snapshot.Phase switch
         {
             ClassroomQuickControlPhase.NotStarted => Status("尚未操作", NeutralBrush, NeutralSubtleBrush),
             ClassroomQuickControlPhase.WaitingForAgent => Status("等待上线", WarningBrush, WarningSubtleBrush),
@@ -201,6 +205,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly string? _websitePolicyDraftDirectory;
     private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
     private readonly ITeacherNetworkDirectory _networkDirectory;
+    private readonly ITeacherLoginStartPreference _teacherLoginStartPreference;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatGridStore _classroomSeatGridStore;
     private readonly ClassroomCountdownStore _classroomCountdownStore;
@@ -261,6 +266,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private bool _isRunningDeviceHealthBatch;
     private bool _isClassroomQuickControlBusy;
     private ClassroomQuickControlSnapshot? _classroomQuickControlSnapshot;
+    private Guid? _classroomQuickControlRevisionSessionId;
+    private long _classroomQuickControlStateRevision = -1;
     private string _classroomQuickControlSessionNotice = "";
     private int _classroomQuickControlCountdownHours;
     private int _classroomQuickControlCountdownMinutes;
@@ -439,7 +446,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         ClassroomTaskProgressStore? classroomTaskProgressStore = null,
         TeacherRoomSelectionStore? roomSelectionStore = null,
         string? websitePolicyDraftDirectory = null)
+        : this(installerStore, campusDirectoryStore, updateDiagnostics, classroomSessionStore,
+            classroomModeStateStore, operationsTelemetryStore, classroomSeatGridStore, classroomCountdownStore,
+            classroomTaskProgressStore, roomSelectionStore, websitePolicyDraftDirectory,
+            TeacherLoginStartPreferenceFactory.CreateForCurrentPlatform())
     {
+    }
+
+    internal TeacherViewModel(VeyonInstallerStore? installerStore,
+        TeacherCampusDirectoryStore? campusDirectoryStore,
+        UpdateDiagnosticsStore? updateDiagnostics,
+        ClassroomSessionStore? classroomSessionStore,
+        ClassroomModeStateStore? classroomModeStateStore,
+        CampusOperationsTelemetryStore? operationsTelemetryStore,
+        ClassroomSeatGridStore? classroomSeatGridStore,
+        ClassroomCountdownStore? classroomCountdownStore,
+        ClassroomTaskProgressStore? classroomTaskProgressStore,
+        TeacherRoomSelectionStore? roomSelectionStore,
+        string? websitePolicyDraftDirectory,
+        ITeacherLoginStartPreference teacherLoginStartPreference)
+    {
+        _teacherLoginStartPreference = teacherLoginStartPreference ??
+            throw new ArgumentNullException(nameof(teacherLoginStartPreference));
         _websitePolicyDraftDirectory = websitePolicyDraftDirectory;
         _installerStore = installerStore ?? new VeyonInstallerStore();
         _campusDirectoryStore = campusDirectoryStore ?? new TeacherCampusDirectoryStore();
@@ -925,6 +953,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public void UpdateClassroomQuickControlSnapshot(ClassroomQuickControlSnapshot snapshot)
     {
+        if (_activeClassroomSession is { } activeSession && activeSession.SessionId != snapshot.SessionId)
+            return;
+        if (_classroomQuickControlRevisionSessionId == snapshot.SessionId &&
+            snapshot.StateRevision < _classroomQuickControlStateRevision)
+            return;
+        if (_classroomQuickControlRevisionSessionId != snapshot.SessionId)
+        {
+            _classroomQuickControlRevisionSessionId = snapshot.SessionId;
+            _classroomQuickControlStateRevision = -1;
+        }
+        _classroomQuickControlStateRevision = Math.Max(_classroomQuickControlStateRevision,
+            snapshot.StateRevision);
         if (_classroomQuickControlSnapshot is { } current &&
             current.SessionId == snapshot.SessionId && current.RoomName == snapshot.RoomName &&
             current.TargetCount == snapshot.TargetCount && current.ControlExpiresUtc == snapshot.ControlExpiresUtc &&
@@ -1047,8 +1087,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private static string GetClassroomQuickControlProgressSummary(ClassroomQuickControlSnapshot snapshot)
     {
+        var now = DateTimeOffset.UtcNow;
+        var retryPending = snapshot.Devices.Count(item =>
+            item.RetryAfterUtc is { } retryAfter && retryAfter > now);
         var devices = snapshot.Devices.Where(item =>
-            item.Phase != ClassroomQuickControlPhase.WaitingForAgent).ToArray();
+            item.Phase != ClassroomQuickControlPhase.WaitingForAgent &&
+            (item.RetryAfterUtc is not { } retryAfter || retryAfter <= now)).ToArray();
         var receipts = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplied or
             ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.InputLockedVerified);
         var sending = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
@@ -1058,10 +1102,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomQuickControlPhase.Unsupported);
         var restoring = devices.Count(item => item.Phase == ClassroomQuickControlPhase.ReleasePending);
         if (devices.Length == 0 && snapshot.Devices.Count > 0)
-            return "离线设备上线后自动推送。";
-        if (receipts + sending + review + restoring == 0)
+            return retryPending > 0 ? $"已保存期望状态 · 待同步 {retryPending} 台" : "离线设备上线后自动推送。";
+        if (receipts + sending + review + restoring + retryPending == 0)
             return "尚未启用快捷管控。";
-        return $"已回执 {receipts} · 执行中 {sending} · 需核对 {review} · 恢复中 {restoring}";
+        return $"已回执 {receipts} · 执行中 {sending} · 需核对 {review} · 恢复中 {restoring}" +
+               (retryPending > 0 ? $" · 待同步 {retryPending}" : "");
     }
 
     private static string GetClassroomQuickControlBadge(ClassroomQuickControlSnapshot snapshot)
@@ -1070,14 +1115,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
                 ClassroomQuickControlPhase.Unsupported))
             return "有设备需核对";
+        if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent ||
+                item.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow))
+            return "待设备同步";
         if (snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
                 ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking or
                 ClassroomQuickControlPhase.ReleasePending))
             return "正在执行";
         if (snapshot.Devices.Any(item => item.Mode != DeviceControlMode.None))
             return "管控已启用";
-        if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent))
-            return "等待 Agent 上线";
         return "当前未启用";
     }
     public string ClassroomSessionSummary => _activeClassroomSession is { } active
@@ -2455,12 +2501,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (!IsMacTeacherHost) return;
         try
         {
-            SetMacTeacherLoginStart(await Task.Run(MacTeacherLoginStartService.ReadStatus));
+            SetMacTeacherLoginStart(await Task.Run(_teacherLoginStartPreference.ReadStatus));
         }
         catch (Exception exception)
         {
             SetMacTeacherLoginStart(new MacTeacherLoginStartSnapshot(MacTeacherLoginStartState.Failed,
-                "读取 Mac 登录启动状态失败：" + exception.Message, MacTeacherLoginStartService.IsPackagedApp));
+                "读取 Mac 登录启动状态失败：" + exception.Message, _teacherLoginStartPreference.IsPackagedApp));
         }
     }
 
@@ -2473,12 +2519,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var enable = _macTeacherLoginStart.State != MacTeacherLoginStartState.Enabled;
-            SetMacTeacherLoginStart(await Task.Run(() => MacTeacherLoginStartService.SetEnabled(enable)));
+            SetMacTeacherLoginStart(await Task.Run(() => _teacherLoginStartPreference.SetEnabled(enable)));
         }
         catch (Exception exception)
         {
             SetMacTeacherLoginStart(new MacTeacherLoginStartSnapshot(MacTeacherLoginStartState.Failed,
-                "修改 Mac 登录启动失败：" + exception.Message, MacTeacherLoginStartService.IsPackagedApp));
+                "修改 Mac 登录启动失败：" + exception.Message, _teacherLoginStartPreference.IsPackagedApp));
         }
         finally
         {
@@ -4136,18 +4182,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         !IsExecuting && !IsReadingWebsiteLocations;
     public bool CanUseSelectedClassroomLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         ClassroomLocationIndex >= 0 && ClassroomLocationIndex < WebsiteLocations.Count &&
-        (_classroomDirectorySelectionPending || !string.Equals(
-            WebsiteLocations[ClassroomLocationIndex].Name,
-            OperatingSystem.IsMacOS() && SelectedCampusProfile is { } selectedCampus &&
-            SelectedRoomProfile is { } selectedRoom
-                ? LocalClassroomLocationName(selectedCampus, selectedRoom)
-                : SelectedRoomProfile?.DisplayName,
-            StringComparison.OrdinalIgnoreCase));
+        (_classroomDirectorySelectionPending ||
+         !IsCurrentClassroomLocation(WebsiteLocations[ClassroomLocationIndex]));
     public bool CanSyncSeatGridWithVeyon => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets && !IsPreparingSeatSwapPlan &&
         (!_classroomDirectorySelectionPending || CanUseSelectedClassroomLocation);
     public string SeatGridVeyonSyncButtonLabel => _classroomDirectorySelectionPending
         ? "使用所选地点并读取电脑" : "同步 Veyon 地点和电脑";
+
+    private bool IsCurrentClassroomLocation(VeyonNetworkLocation location) => OperatingSystem.IsMacOS()
+        ? SelectedCampusProfile is { } campus && SelectedRoomProfile is { } room &&
+          MacTeacherNetworkDirectory.MatchesCurrentRoom(location, campus, room)
+        : string.Equals(location.Name, SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase);
+
     public bool CanApplyWebsiteLocation => !IsExecuting && !IsReadingWebsiteLocations &&
         _websiteLocationIndex >= 0 && _websiteLocationIndex < WebsiteLocations.Count;
     public string TeacherInstallPlanText =>
@@ -8887,10 +8934,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
 
             var selectedRoomIndex = forceSelection ? -1 : Array.FindIndex(locations.ToArray(), location =>
-                string.Equals(location.Name, SelectedCampusProfile is { } campus &&
-                    SelectedRoomProfile is { } selectedRoom && OperatingSystem.IsMacOS()
-                        ? LocalClassroomLocationName(campus, selectedRoom)
-                        : SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase));
+                OperatingSystem.IsMacOS()
+                    ? SelectedCampusProfile is { } campus && SelectedRoomProfile is { } selectedRoom &&
+                      MacTeacherNetworkDirectory.HasSameIdentity(location, campus, selectedRoom)
+                    : string.Equals(location.Name, SelectedRoomProfile?.DisplayName,
+                        StringComparison.OrdinalIgnoreCase));
             if (selectedRoomIndex >= 0)
             {
                 ClassroomLocationIndex = selectedRoomIndex;
@@ -8936,16 +8984,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
 
         var matches = CampusProfiles.SelectMany(campus => campus.Rooms.Select(room => (Campus: campus, Room: room)))
-            .Where(item => string.Equals(LocalClassroomLocationName(item.Campus, item.Room), location.Name,
-                StringComparison.OrdinalIgnoreCase)).ToArray();
+            .Where(item => MacTeacherNetworkDirectory.MatchesCurrentRoom(location, item.Campus, item.Room))
+            .ToArray();
         if (matches.Length != 1)
         {
-            ClassroomDirectoryError = "本机地点无法唯一对应；课堂范围没有更改。请重新读取地点。";
+            ClassroomDirectoryError = "本机地点身份或电脑地址已变化，无法安全确认课堂范围；课堂范围没有更改。请重新读取地点。";
             return;
         }
 
         SelectedCampusProfile = matches[0].Campus;
-        SelectedRoomProfile = RoomProfiles.SingleOrDefault(room => room.RoomId == matches[0].Room.RoomId);
+        SelectedRoomProfile = matches[0].Room;
         if (SelectedRoomProfile is null)
         {
             ClassroomDirectoryError = "本机地点档案不完整；课堂范围没有更改。";
@@ -8961,9 +9009,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSwitchClassroomScope));
     }
-
-    private static string LocalClassroomLocationName(TeacherCampusProfile campus, TeacherRoomProfile room) =>
-        campus.DisplayName + " / " + room.DisplayName;
 
     public async Task SyncClassroomSeatGridWithVeyonAsync()
     {

@@ -122,11 +122,14 @@
 
   <Target Name="CopyWebsitePolicyAgentToBuildOutput" AfterTargets="Build"
           Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
-    <ItemGroup>
-      <WebsitePolicyAgentBuildFiles Include="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/bin/$(Configuration)/$(TargetFramework)/*" />
-    </ItemGroup>
+    <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
+             Targets="GetStudentAgentBuildPayload" BuildInParallel="false">
+      <Output TaskParameter="TargetOutputs" ItemName="WebsitePolicyAgentBuildFiles" />
+    </MSBuild>
     <MakeDir Directories="$(OutDir)WebsitePolicyAgent" />
-    <Copy SourceFiles="@(WebsitePolicyAgentBuildFiles)" DestinationFolder="$(OutDir)WebsitePolicyAgent" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(WebsitePolicyAgentBuildFiles)"
+          DestinationFiles="@(WebsitePolicyAgentBuildFiles->'$(OutDir)WebsitePolicyAgent/%(AgentRelativePath)')"
+          SkipUnchangedFiles="true" />
   </Target>
 
   <Target Name="PublishWebsitePolicyAgent" AfterTargets="Publish"

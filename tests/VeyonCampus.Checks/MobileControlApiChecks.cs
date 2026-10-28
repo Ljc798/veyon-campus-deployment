@@ -63,6 +63,7 @@ internal static class MobileControlApiChecks
             return new WebsitePolicySigningKey(key, key.ExportSubjectPublicKeyInfoPem(), "test-only");
         }
 
+        var quickControls = new MobileQuickControlApiFixture(eventSession);
         var changes = 0;
         var screenCaptureCount = 0;
         var fakeScreenJpeg = CreateFakeScreenJpeg();
@@ -73,7 +74,8 @@ internal static class MobileControlApiChecks
             {
                 Interlocked.Increment(ref screenCaptureCount);
                 return Task.FromResult((byte[])fakeScreenJpeg.Clone());
-            });
+            }, executeClassroomQuickControl: quickControls.ExecuteAsync,
+            readClassroomQuickControl: quickControls.ReadAsync);
         service.SetClassroomSession("demo", eventSessionId, [eventTarget],
             new Dictionary<string, Guid>(StringComparer.OrdinalIgnoreCase)
             {
@@ -232,6 +234,7 @@ internal static class MobileControlApiChecks
             Expect(approvedResponse.StatusCode == HttpStatusCode.OK && approved.State == "approved" &&
                    approved.Device?.DisplayName == "测试手机" && !string.IsNullOrWhiteSpace(approved.AccessToken));
             var accessToken = approved.AccessToken!;
+            await quickControls.VerifyAsync(client, origin, accessToken).ConfigureAwait(false);
             var deviceId = approved.Device!.Id;
             Expect(MobilePairedDeviceStore.IsAuthorized(accessToken, directory));
             var setCookie = approvedResponse.Headers.TryGetValues("Set-Cookie", out var cookieHeaders)
@@ -287,8 +290,7 @@ internal static class MobileControlApiChecks
                 Expect(unauthorizedRestoresResponse.StatusCode == HttpStatusCode.Unauthorized);
             using (var retryRestoresResponse = await PostAuthorizedJsonAsync(client,
                        "/api/classroom/restores/retry", "{}", origin, accessToken))
-                Expect(retryRestoresResponse.StatusCode == (OperatingSystem.IsWindows()
-                    ? HttpStatusCode.Conflict : HttpStatusCode.NotImplemented));
+                Expect(retryRestoresResponse.StatusCode == HttpStatusCode.Conflict);
             var seatLayoutPath = Path.Combine(directory, "classroom-seat-layouts.json");
             File.WriteAllText(seatLayoutPath, "{\"schemaVersion\":1,\"schemaVersion\":1,\"layouts\":[]}");
             using (var corruptSeatRequest = AuthorizedGet("/api/session", accessToken))

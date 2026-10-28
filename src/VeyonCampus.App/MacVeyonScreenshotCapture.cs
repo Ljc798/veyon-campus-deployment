@@ -103,13 +103,15 @@ internal static class MacVeyonScreenshotCapture
             var build = await RunHelperScriptAsync(scripts, "build.sh", dockerPath, HelperBuildTimeout,
                 cancellationToken).ConfigureAwait(false);
             if (build.ExitCode != 0)
-                throw new InvalidOperationException($"Veyon helper 镜像构建失败（退出码 {build.ExitCode}）；请检查网络和 Docker 磁盘空间后重试。");
+                throw new InvalidOperationException($"Veyon helper 镜像构建失败（退出码 {build.ExitCode}）：" +
+                    DescribeScriptFailure(build, "请检查网络和 Docker 磁盘空间后重试。"));
         }
 
         var start = await RunHelperScriptAsync(scripts, "start.sh", dockerPath, CommandTimeout,
             cancellationToken).ConfigureAwait(false);
         if (start.ExitCode != 0)
-            throw new InvalidOperationException($"Veyon helper 启动失败（退出码 {start.ExitCode}）；请检查 Docker Desktop 状态后重试。");
+            throw new InvalidOperationException($"Veyon helper 启动失败（退出码 {start.ExitCode}）：" +
+                DescribeScriptFailure(start, "请检查 Docker Desktop 状态后重试。"));
         await RestoreVeyonKeyToHelperAsync(campusId, cancellationToken).ConfigureAwait(false);
         return await GetHelperStatusAsync(campusId, cancellationToken).ConfigureAwait(false);
     }
@@ -134,7 +136,8 @@ internal static class MacVeyonScreenshotCapture
         var start = await RunHelperScriptAsync(scripts, "start.sh", dockerPath, CommandTimeout,
             cancellationToken).ConfigureAwait(false);
         if (start.ExitCode != 0)
-            return "无法重新应用 Veyon helper 的密钥认证设置；请在设备健康页重新准备 helper。";
+            return "无法重新应用 Veyon helper 的密钥认证设置：" +
+                   DescribeScriptFailure(start, "请在设备健康页重新准备 helper。");
         await RestoreVeyonKeyToHelperAsync(campusId, cancellationToken).ConfigureAwait(false);
         return await GetHelperStatusAsync(campusId, cancellationToken).ConfigureAwait(false);
     }
@@ -154,6 +157,10 @@ internal static class MacVeyonScreenshotCapture
                 "{{.State.Running}}", ContainerName).ConfigureAwait(false);
             if (state.ExitCode != 0 || !string.Equals(state.Stdout.Trim(), "true", StringComparison.OrdinalIgnoreCase))
                 return false;
+
+            var securityIssue = await GetContainerSecurityIssueAsync(dockerPath, cancellationToken)
+                .ConfigureAwait(false);
+            if (securityIssue is not null) throw new InvalidOperationException(securityIssue);
 
             var keyId = VeyonAuthKeyId.ForCampus(campusId);
             var listing = await RunDockerAsync(dockerPath, cancellationToken, "exec", ContainerName,
@@ -370,13 +377,15 @@ internal static class MacVeyonScreenshotCapture
     {
         var result = await RunDockerAsync(dockerPath, cancellationToken, "inspect", "--format",
             "{{.HostConfig.Privileged}}|{{.HostConfig.NetworkMode}}|{{.HostConfig.PublishAllPorts}}|" +
-            "{{json .HostConfig.PortBindings}}|{{json .HostConfig.Tmpfs}}", ContainerName)
+            "{{json .HostConfig.PortBindings}}|{{json .HostConfig.Tmpfs}}|" +
+            "{{json .HostConfig.Binds}}|{{json .HostConfig.Mounts}}|" +
+            "{{json .HostConfig.VolumesFrom}}|{{json .Mounts}}", ContainerName)
             .ConfigureAwait(false);
         if (result.ExitCode != 0)
             return "无法核验 Veyon helper 的容器隔离配置；为保护教师机，已停止截图。";
 
-        var fields = result.Stdout.Trim().Split('|', 5);
-        if (fields.Length != 5)
+        var fields = result.Stdout.Trim().Split('|', 9);
+        if (fields.Length != 9)
             return "Veyon helper 返回的容器隔离配置无法识别；已停止截图。";
         if (!string.Equals(fields[0], "false", StringComparison.OrdinalIgnoreCase))
             return "Veyon helper 容器启用了特权模式；已停止截图，请重新准备 helper。";
@@ -384,9 +393,27 @@ internal static class MacVeyonScreenshotCapture
             !string.Equals(fields[2], "false", StringComparison.OrdinalIgnoreCase) ||
             !HasNoPublishedPorts(fields[3]))
             return "Veyon helper 容器网络配置不符合要求，或发布了端口；已停止截图，请重新准备 helper。";
+        if (!HasNoHostMounts(fields[5], fields[6], fields[7], fields[8]))
+            return "Veyon helper 容器映射了宿主机目录或卷；为保护教师机密钥，已停止截图，请重新准备 helper。";
         if (!HasExpectedHelperTmpfs(fields[4]))
             return "Veyon helper 的密钥目录未使用预期的私有 tmpfs；已停止截图，请重新准备 helper。";
         return null;
+    }
+
+    private static bool HasNoHostMounts(params string[] jsonValues)
+    {
+        foreach (var json in jsonValues)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                if (root.ValueKind == JsonValueKind.Null) continue;
+                if (root.ValueKind != JsonValueKind.Array || root.GetArrayLength() != 0) return false;
+            }
+            catch (JsonException) { return false; }
+        }
+        return true;
     }
 
     private static bool HasNoPublishedPorts(string json)
@@ -619,5 +646,11 @@ internal static class MacVeyonScreenshotCapture
         var normalized = value.Trim();
         if (normalized.Length == 0) return fallback;
         return normalized.Length <= maximumLength ? normalized : normalized[^maximumLength..];
+    }
+
+    private static string DescribeScriptFailure(ProcessOutput result, string fallback)
+    {
+        var detail = string.IsNullOrWhiteSpace(result.Stderr) ? result.Stdout : result.Stderr;
+        return Truncate(detail, 600, fallback);
     }
 }

@@ -3,7 +3,6 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Runtime.Versioning;
 
 namespace VeyonCampus.Core;
 
@@ -13,7 +12,6 @@ public static class StudentInputGuardTransport
     private static readonly TimeSpan StatusTimeout = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan CommandTimeout = TimeSpan.FromSeconds(8);
 
-    [SupportedOSPlatform("windows")]
     public static async Task<StudentInputGuardStatusDeliveryResult> ReadStatusAsync(string target,
         string campusId, RSA campusPrivateKey, CancellationToken cancellationToken = default)
     {
@@ -45,7 +43,8 @@ public static class StudentInputGuardTransport
                     response.StatusCode == HttpStatusCode.NotFound
                         ? "此 Student Agent 尚不支持 InputGuard 状态协议。"
                         : $"InputGuard 状态读取未确认（HTTP {(int)response.StatusCode}）。",
-                    NeedsReview: response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict);
+                    NeedsReview: response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict,
+                    TransientUnavailable: (int)response.StatusCode >= 500);
 
             var body = await ReadBoundedAsync(response.Content, StudentAgentResponseCryptography.MaximumEnvelopeBytes,
                 timeout.Token).ConfigureAwait(false);
@@ -72,11 +71,12 @@ public static class StudentInputGuardTransport
                 exception is TaskCanceledException or OperationCanceledException
                     ? $"InputGuard 状态读取超过 {StatusTimeout.TotalSeconds:0} 秒，状态未知。"
                     : "InputGuard 状态读取失败：" + exception.Message,
-                NeedsReview: exception is InvalidDataException or CryptographicException);
+                NeedsReview: exception is InvalidDataException or CryptographicException,
+                TransientUnavailable: exception is HttpRequestException or TaskCanceledException or
+                    OperationCanceledException);
         }
     }
 
-    [SupportedOSPlatform("windows")]
     public static async Task<StudentInputGuardDeliveryResult> ExecuteAsync(string target, string campusId,
         RSA campusPrivateKey, Guid roomId, StudentInputGuardAction action, Guid leaseId,
         CancellationToken cancellationToken = default)
@@ -110,8 +110,17 @@ public static class StudentInputGuardTransport
         var leaseExpiresUtc = action is StudentInputGuardAction.Activate or StudentInputGuardAction.Renew
             ? now.Add(StudentInputGuardCommandCryptography.MaximumLeaseLifetime)
             : (DateTimeOffset?)null;
+        string teacherMachineId;
+        try { teacherMachineId = StudentInputGuardMachineIdentity.ReadLocalMachineId(); }
+        catch (Exception exception) when (exception is IOException or InvalidDataException or UnauthorizedAccessException or
+            InvalidOperationException or PlatformNotSupportedException or System.ComponentModel.Win32Exception or
+            System.Security.SecurityException or TimeoutException)
+        {
+            return new StudentInputGuardDeliveryResult(statusResult.Target, false, true,
+                StudentInputGuardOutcome.Failed, null, "教师机身份无法核验；没有发送键鼠命令。" + exception.Message);
+        }
         var command = new StudentInputGuardCommand(1, StudentInputGuardCommandCryptography.Purpose,
-            campusId, roomId, status.DeviceFingerprint, StudentInputGuardMachineIdentity.ReadLocalMachineId(),
+            campusId, roomId, status.DeviceFingerprint, teacherMachineId,
             status.AgentRunId, Guid.NewGuid(), Guid.NewGuid(), status.ControlEpoch, leaseId,
             now, expiresUtc, action, leaseExpiresUtc);
         string signedCommand;
@@ -203,7 +212,6 @@ public static class StudentInputGuardTransport
         return buffer.ToArray();
     }
 
-    [SupportedOSPlatform("windows")]
     public static bool IsLocalMachineTarget(string target)
     {
         var localName = Environment.MachineName;

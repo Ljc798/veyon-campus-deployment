@@ -1,4 +1,3 @@
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using VeyonCampus.Core;
 
@@ -19,12 +18,9 @@ internal sealed partial class TeacherMobileControlService
             Math.Max(0, pending.Count - items.Length));
     }
 
-    [SupportedOSPlatform("windows")]
     public async Task<MobilePolicyOperationResponse> RetryEndedClassroomRestoresAsync(
         CancellationToken cancellationToken)
     {
-        if (!OperatingSystem.IsWindows())
-            throw new PlatformNotSupportedException("课堂策略恢复只支持 Windows 教师端。");
         await _policyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -42,7 +38,7 @@ internal sealed partial class TeacherMobileControlService
 
             var sessions = _classroomSessionStore.ReadRecent().ToDictionary(item => item.SessionId);
             var campuses = _campusDirectoryStore.Load();
-            var locations = await Task.Run(VeyonNetworkObjectDirectory.ReadLocations, cancellationToken)
+            var locations = await Task.Run(_networkDirectory.ReadLocations, cancellationToken)
                 .ConfigureAwait(false);
             var results = new List<MobilePolicyTargetResult>();
             foreach (var state in states.OrderBy(item => sessions.TryGetValue(item.SessionId, out var session)
@@ -151,7 +147,6 @@ internal sealed partial class TeacherMobileControlService
         }
     }
 
-    [SupportedOSPlatform("windows")]
     private string? ResolveClassroomRestoreSigningCampus(ClassroomSession session)
     {
         var available = WebsitePolicySigningKeyStore.ReadCampusIds()
@@ -166,7 +161,6 @@ internal sealed partial class TeacherMobileControlService
         return available.Length == 1 ? available[0] : null;
     }
 
-    [SupportedOSPlatform("windows")]
     public async Task<MobilePolicyOperationResponse> RestoreLegacyClassroomPoliciesAsync(
         CancellationToken cancellationToken)
     {
@@ -226,7 +220,6 @@ internal sealed partial class TeacherMobileControlService
             .ToArray());
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task<MobilePolicyOperationResponse> RestoreOwnedPoliciesAsync(string campusId,
         ClassroomSession session, IReadOnlyList<string> targets, IReadOnlyDictionary<string, Guid> targetIds,
         ClassroomModeSessionState existing, CancellationToken cancellationToken,
@@ -352,7 +345,6 @@ internal sealed partial class TeacherMobileControlService
             .Select(item => item.Target).ToHashSet(StringComparer.OrdinalIgnoreCase);
     }
 
-    [SupportedOSPlatform("windows")]
     private async Task PublishClassroomPresenceAsync(string campusId, ClassroomSession session,
         IReadOnlyList<string> targets, CancellationToken cancellationToken)
     {

@@ -6,6 +6,12 @@ project="$repo_root/src/VeyonCampus.App/VeyonCampus.App.csproj"
 dotnet_cmd="${VEYONCAMPUS_DOTNET:-dotnet}"
 signing_identity="${VEYONCAMPUS_MACOS_SIGNING_IDENTITY:-}"
 notary_profile="${VEYONCAMPUS_MACOS_NOTARY_PROFILE:-}"
+classroom_quick_control_pilot="${VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT:-false}"
+
+if [[ "$classroom_quick_control_pilot" != "true" && "$classroom_quick_control_pilot" != "false" ]]; then
+  printf 'VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT 必须是 true 或 false。\n' >&2
+  exit 2
+fi
 
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
   printf '此脚本仅为 Apple Silicon macOS 构建教师端。\n' >&2
@@ -52,13 +58,20 @@ stage_dir="$(mktemp -d "$artifact_dir/.teacher-$version.XXXXXX")"
 staged_bundle="$stage_dir/Veyon Campus Teacher.app"
 publish_dir="$stage_dir/publish"
 final_bundle="$artifact_dir/Veyon Campus Teacher-$version.app"
+bundle_display_name="Veyon Campus 教师端"
+if [[ "$classroom_quick_control_pilot" == "true" ]]; then
+  final_bundle="$artifact_dir/Veyon Campus Teacher-$version-Pilot.app"
+  bundle_display_name="Veyon Campus 教师端（课堂管控试点）"
+fi
 trap 'rm -rf "$stage_dir"' EXIT
 
-"$dotnet_cmd" restore "$project" --runtime osx-arm64 --locked-mode \
-  -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusTargetRuntime=osx-arm64
+"$dotnet_cmd" restore "$project" --locked-mode \
+  -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusTargetRuntime=osx-arm64 \
+  -p:VeyonCampusClassroomQuickControlPilot="$classroom_quick_control_pilot"
 "$dotnet_cmd" publish "$project" --configuration Release --runtime osx-arm64 \
   --self-contained true --no-restore --output "$publish_dir" \
-  -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusTargetRuntime=osx-arm64 -p:UseAppHost=true
+  -p:VeyonCampusRole=TeacherConsole -p:VeyonCampusTargetRuntime=osx-arm64 \
+  -p:VeyonCampusClassroomQuickControlPilot="$classroom_quick_control_pilot" -p:UseAppHost=true
 
 if [[ ! -x "$publish_dir/VeyonCampus.Teacher" ]]; then
   printf '发布目录缺少可执行的 VeyonCampus.Teacher。\n' >&2
@@ -88,7 +101,7 @@ cat >"$staged_bundle/Contents/Info.plist" <<PLIST
 <plist version="1.0">
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>zh_CN</string>
-  <key>CFBundleDisplayName</key><string>Veyon Campus 教师端</string>
+  <key>CFBundleDisplayName</key><string>$bundle_display_name</string>
   <key>CFBundleExecutable</key><string>VeyonCampus.Teacher</string>
   <key>CFBundleIdentifier</key><string>com.veyon.campus.teacher</string>
   <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
@@ -161,6 +174,9 @@ fi
 
 printf 'Mac 教师端已生成：%s\n' "$final_bundle"
 printf '签名状态：%s\n' "$signing_status"
+if [[ "$classroom_quick_control_pilot" == "true" ]]; then
+  printf '课堂快捷管控试点：已启用（独立本机预览包）。\n'
+fi
 if [[ -n "$signing_identity" && -z "$notary_profile" ]]; then
   printf '此应用已签名但未公证；跨设备分发前仍需设置 VEYONCAMPUS_MACOS_NOTARY_PROFILE 完成公证。\n'
 elif [[ -z "$signing_identity" ]]; then

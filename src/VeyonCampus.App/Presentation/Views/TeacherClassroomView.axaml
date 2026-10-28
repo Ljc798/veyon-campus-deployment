@@ -212,9 +212,17 @@
                   <Border Padding="16,13" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
                     <TextBlock Text="{Binding ClassroomQuickControlProgressHeader}" Classes="component-title" />
                   </Border>
-                  <ScrollViewer MaxHeight="360" HorizontalScrollBarVisibility="Disabled">
-                    <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}">
-                      <ItemsControl.ItemTemplate>
+                  <ListBox ItemsSource="{Binding ClassroomQuickControlDevices}" MaxHeight="360"
+                           Background="Transparent" BorderThickness="0" Padding="4"
+                           ItemContainerTheme="{StaticResource Teacher.DeviceListItem}"
+                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                           ScrollViewer.VerticalScrollBarVisibility="Auto">
+                    <ListBox.ItemsPanel>
+                      <ItemsPanelTemplate>
+                        <VirtualizingStackPanel />
+                      </ItemsPanelTemplate>
+                    </ListBox.ItemsPanel>
+                    <ListBox.ItemTemplate>
                       <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
                         <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
                           <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
@@ -255,9 +263,8 @@
                           </Expander>
                         </Border>
                       </DataTemplate>
-                      </ItemsControl.ItemTemplate>
-                    </ItemsControl>
-                  </ScrollViewer>
+                    </ListBox.ItemTemplate>
+                  </ListBox>
                 </StackPanel>
               </Border>
             </StackPanel>

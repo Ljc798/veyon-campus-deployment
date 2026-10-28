@@ -40,12 +40,16 @@
           <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" />
           <Button Classes="primary" Content="安装/修复教师端 Veyon" Click="RequestInstallTeacherVeyon" IsEnabled="{Binding CanInstallTeacherVeyon}" HorizontalAlignment="Left" />
-          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
+          <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                 AccessibleText="正在安装或修复教师端 Veyon"
+                                 IsVisible="{Binding IsInstallingTeacherVeyon}" Height="6" />
           <StackPanel Orientation="Horizontal" Spacing="8">
             <Button Content="重新检查 Veyon 状态" Click="RequestRefreshTeacherSetupVeyon"
                     IsEnabled="{Binding CanRefreshTeacherSetupVeyon}" />
-            <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsCheckingTeacherSetupVeyon}"
-                         Width="120" Height="6" VerticalAlignment="Center" />
+            <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                   AccessibleText="正在检查教师端 Veyon 状态"
+                                   IsVisible="{Binding IsCheckingTeacherSetupVeyon}"
+                                   Width="120" VerticalAlignment="Center" />
           </StackPanel>
           <TextBlock Text="{Binding TeacherSetupVeyonStatus}" Classes="muted" TextWrapping="Wrap"
                      IsVisible="{Binding HasTeacherSetupVeyonStatus}" />
@@ -115,8 +119,10 @@
                 <Button Classes="primary" Content="准备/恢复 Veyon helper"
                         Click="RequestPrepareMacVeyonHelper"
                         IsEnabled="{Binding CanPrepareMacVeyonHelper}" />
-                <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsPreparingMacVeyonHelper}"
-                             Width="80" Height="5" VerticalAlignment="Center" />
+                <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                       AccessibleText="正在准备或恢复 Mac Veyon helper"
+                                       IsVisible="{Binding IsPreparingMacVeyonHelper}"
+                                       Width="80" VerticalAlignment="Center" />
               </StackPanel>
             </StackPanel>
           </Border>
@@ -129,8 +135,10 @@
                       IsEnabled="{Binding CanChangeMacTeacherLoginStart}" />
               <Button Content="刷新状态" Click="RequestRefreshMacTeacherLoginStart"
                       IsEnabled="{Binding CanRefreshMacTeacherLoginStart}" />
-              <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsChangingMacTeacherLoginStart}"
-                           Width="72" Height="5" VerticalAlignment="Center" />
+              <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                     AccessibleText="正在更新 Mac 登录启动偏好"
+                                     IsVisible="{Binding IsChangingMacTeacherLoginStart}"
+                                     Width="72" VerticalAlignment="Center" />
             </StackPanel>
           </StackPanel>
           <TextBlock Text="此设置只让当前 macOS 用户登录后打开 TeacherConsole；macOS 的登录项服务要求应用包已代码签名。手机服务是否自动恢复，仍由手机控制页中的自动恢复设置决定。"
@@ -193,7 +201,9 @@
                       Click="RequestImportMacVeyonPrivateKey"
                       IsEnabled="{Binding CanImportMacVeyonPrivateKey}" />
             </Grid>
-            <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsImportingMacVeyonKey}" Height="5" />
+            <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                   AccessibleText="正在验证并导入 Veyon 教师私钥"
+                                   IsVisible="{Binding IsImportingMacVeyonKey}" Height="6" />
           </StackPanel>
           <StackPanel Spacing="8" IsVisible="{Binding IsWindowsTeacherHost}">
             <TextBlock Text="校区名称" FontWeight="SemiBold" />
@@ -214,7 +224,9 @@
             <Button Content="确认替换不可用的 Windows 签名密钥并重新生成"
                     Click="RequestReplaceWebsiteSigningKey" IsVisible="{Binding CanReplaceWebsiteSigningKey}" />
           </StackPanel>
-          <ProgressBar IsIndeterminate="True" IsVisible="{Binding IsGeneratingStudentPackage}" Height="6" />
+          <flowery:DaisyProgress IsIndeterminate="True" Variant="Info" Size="ExtraSmall"
+                                 AccessibleText="正在生成学生配置包"
+                                 IsVisible="{Binding IsGeneratingStudentPackage}" Height="6" />
           <TextBlock Text="{Binding PackageGenerationStatus}" Classes="muted" TextWrapping="Wrap"
                      IsVisible="{Binding IsGeneratingStudentPackage}" />
           <Border Classes="status-panel success" Padding="12" IsVisible="{Binding HasPackageOutput}">

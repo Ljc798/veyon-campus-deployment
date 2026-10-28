@@ -5,12 +5,6 @@ using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-public sealed record VeyonNetworkLocation(string Name, IReadOnlyList<string> Targets,
-    IReadOnlyDictionary<string, string>? TargetDisplayNames = null)
-{
-    public string DisplayName => $"{Name}（{Targets.Count} 台）";
-}
-
 public sealed record VeyonNetworkComputer(string ComputerName, string Host, string? StudentName = null)
 {
     public string DisplayName => string.IsNullOrWhiteSpace(StudentName)

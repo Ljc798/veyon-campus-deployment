@@ -1,5 +1,4 @@
 using System.Collections.Concurrent;
-using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using VeyonCampus.Core;
 
@@ -25,7 +24,6 @@ internal static class TeacherClassroomQuickControlBuildFeatures
 /// It never starts legacy classroom policy modes. Ordinary release clears only this service's owned policies;
 /// the explicit website-reset action clears each current website policy after signed compare-and-set preflight.
 /// </summary>
-[SupportedOSPlatform("windows")]
 internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 {
     private const int MaximumOperationConcurrency = 16;
@@ -36,16 +34,21 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     private sealed record TargetBinding(Guid TargetId, string Target, string DisplayName);
     private sealed record CatchUpContext(TeacherClassroomEventContext Context, bool IsEndedRestore);
-    private sealed record CatchUpRetry(int FailureCount, DateTimeOffset RetryAfterUtc);
     private sealed record QuickReadback(StudentAgentStatusDeliveryResult Website,
         StudentInputGuardStatusDeliveryResult Guard);
+
+    private sealed class StaleClassroomQuickControlTaskException(string message)
+        : InvalidOperationException(message);
 
     private readonly object _contextGate = new();
     private readonly Func<string> _activeCampusId;
     private readonly ClassroomQuickControlStateStore _stateStore;
+    private readonly ClassroomSessionStore _classroomSessionStore;
+    private readonly TeacherCampusDirectoryStore _campusDirectoryStore;
+    private readonly ClassroomSigningContextStore _classroomSigningContextStore;
+    private readonly ITeacherNetworkDirectory _networkDirectory;
     private readonly ConcurrentDictionary<Guid, SemaphoreSlim> _targetGates = new();
     private readonly ConcurrentDictionary<(Guid SessionId, Guid TargetId), string> _websiteObservations = new();
-    private readonly ConcurrentDictionary<(Guid SessionId, Guid TargetId), CatchUpRetry> _catchUpRetries = new();
     private readonly HashSet<(Guid TargetId, Guid LeaseId)> _renewableLeases = [];
     private readonly Dictionary<Guid, TeacherClassroomEventContext> _endedRestoreContexts = [];
     private readonly CancellationTokenSource _shutdown = new();
@@ -54,13 +57,23 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private Task? _websiteCatchUpTask;
     private Task? _controlExpiryTask;
     private bool _websiteCatchUpRequested;
+    private int _endedRestoreContextRecoveryQueued;
     private bool _disposed;
 
-    public TeacherClassroomQuickControlService(Func<string> activeCampusId, string? storageDirectory = null)
+    public TeacherClassroomQuickControlService(Func<string> activeCampusId, string? storageDirectory = null,
+        ITeacherNetworkDirectory? networkDirectory = null)
     {
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _stateStore = new ClassroomQuickControlStateStore(storageDirectory is null
             ? null : Path.Combine(storageDirectory, "classroom-quick-control.json"));
+        _classroomSessionStore = new ClassroomSessionStore(storageDirectory is null
+            ? null : Path.Combine(storageDirectory, "classroom-sessions.json"));
+        _campusDirectoryStore = new TeacherCampusDirectoryStore(storageDirectory is null
+            ? null : Path.Combine(storageDirectory, "campus-directory.json"));
+        _classroomSigningContextStore = new ClassroomSigningContextStore(storageDirectory is null
+            ? null : Path.Combine(storageDirectory, "classroom-signing-context.json"));
+        _networkDirectory = networkDirectory ??
+            TeacherNetworkDirectoryFactory.CreateForCurrentPlatform(_campusDirectoryStore.Load);
         RecoverPreviousProcessState();
     }
 
@@ -74,7 +87,6 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             {
                 if (previous is not null)
                 {
-                    SetSessionActive(previous.SessionId, active: false);
                     QueueEndedSessionRestores(previous);
                 }
                 _renewableLeases.Clear();
@@ -85,7 +97,16 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 ValidateContext(context);
                 if (!string.Equals(_activeCampusId().Trim(), context.CampusId, StringComparison.Ordinal))
                     throw new InvalidDataException("快捷管控上下文与当前校区不匹配；未保存课堂状态。");
+                var savedClassroom = _classroomSessionStore.ReadRecent()
+                    .SingleOrDefault(item => item.SessionId == context.SessionId);
+                if (savedClassroom is not { Status: ClassroomSessionStatus.Active } ||
+                    savedClassroom.Room.RoomId != context.Session.Room.RoomId ||
+                    _classroomSessionStore.ReadActive() is { } activeClassroom &&
+                    activeClassroom.SessionId != context.SessionId)
+                    throw new InvalidOperationException("课堂记录已结束或已切换；没有恢复旧课堂快捷管控上下文。");
                 var existing = _stateStore.Read(context.SessionId);
+                if (existing?.ClosedUtc is not null)
+                    throw new InvalidOperationException("课堂快捷管控状态已终结；没有重新激活旧课堂。");
                 var scopeChanged = existing is not null && (existing.CampusId != context.CampusId ||
                     existing.RoomId != context.Session.Room.RoomId);
                 var activeIds = context.TargetIds.Values.ToHashSet();
@@ -110,40 +131,48 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                     .ToDictionary(item => item.TargetId) ?? [];
                 foreach (var targetId in context.TargetIds.Values)
                     devices.TryAdd(targetId, NotStartedState(targetId));
+                var now = DateTimeOffset.UtcNow;
                 var nextState = new ClassroomQuickControlSessionState(
                     ClassroomQuickControlStateStore.CurrentSchemaVersion, context.SessionId, context.CampusId,
-                    context.Session.Room.RoomId, true, DateTimeOffset.UtcNow,
+                    context.Session.Room.RoomId, true, now,
                     Array.AsReadOnly(devices.Values.OrderBy(item => item.TargetId).ToArray()))
                 {
+                    StateRevision = checked((existing?.StateRevision ?? 0) + 1),
                     ControlExpiresUtc = scopeChanged || deviceSetChanged || contextChanged
                         ? null : existing?.ControlExpiresUtc
                 };
 
                 var sessionChanged = previous?.SessionId != context.SessionId;
-                if (sessionChanged && previous is not null) SetSessionActive(previous.SessionId, active: false);
-                try
-                {
-                    _stateStore.Save(nextState);
-                }
-                catch
-                {
-                    if (sessionChanged && previous is not null) SetSessionActive(previous.SessionId, active: true);
-                    throw;
-                }
-
                 if (sessionChanged && previous is not null) QueueEndedSessionRestores(previous);
+                var saved = _stateStore.Save(nextState);
+                if (!saved.Active || saved.ClosedUtc is not null)
+                    throw new InvalidOperationException("课堂已结束；没有恢复旧课堂快捷管控上下文。");
                 if (sessionChanged) _renewableLeases.Clear();
                 else
                 {
                     _renewableLeases.RemoveWhere(item => !activeIds.Contains(item.TargetId));
                 }
                 _context = context;
+                if (context is not null) _endedRestoreContexts.Remove(context.SessionId);
                 if (_renewableLeases.Count > 0) EnsureRenewalLoop();
             }
-
         }
+        ScheduleEndedRestoreContextRecovery();
         EnsureWebsiteCatchUpLoop();
         EnsureControlExpiryLoop();
+    }
+
+    public void DetachForShutdown()
+    {
+        ThrowIfDisposed();
+        lock (_contextGate)
+        {
+            if (_context is { } context)
+                _ = _stateStore.PauseSession(context.SessionId, DateTimeOffset.UtcNow,
+                    "teacher-stop", "TeacherConsole 关闭或重启；保留活动课堂期望状态，不创建课堂结束恢复任务。");
+            _renewableLeases.Clear();
+            _context = null;
+        }
     }
 
     public ClassroomQuickControlSnapshot ReadSnapshot(Guid expectedSessionId)
@@ -156,17 +185,26 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         var targets = context.TargetIds.Values.Distinct().Select(targetId =>
         {
             var device = byId.GetValueOrDefault(targetId) ?? NotStartedState(targetId);
+            var retryPending = device.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow;
+            var websiteSyncPending = retryPending && device.DesiredAction is
+                ClassroomQuickControlAction.EnableWebsiteRestriction or ClassroomQuickControlAction.Release or
+                ClassroomQuickControlAction.ClearWebsiteRestrictions;
+            var inputSyncPending = retryPending && device.DesiredAction is
+                ClassroomQuickControlAction.Release or ClassroomQuickControlAction.UnlockInput;
             return new ClassroomQuickControlTargetSnapshot(targetId,
                 displayNames.GetValueOrDefault(targetId, "学生电脑"), device.Mode, device.Phase,
                 device.UpdatedUtc, device.WebsiteRevision ?? device.PendingWebsiteRevision,
                 device.InputLeaseId, device.ExpiresUtc, SanitizeTargetDetail(context, targetId, device.Detail))
             {
-                WebsiteState = !HasWebsiteOwnership(device) &&
+                DesiredAction = device.DesiredAction,
+                RetryAfterUtc = device.RetryAfterUtc,
+                WebsiteState = websiteSyncPending ? "waitingForAgent" : !HasWebsiteOwnership(device) &&
                     (device.WebsitePhase is null or ClassroomQuickControlPhase.NoneVerified) &&
                     device.Phase != ClassroomQuickControlPhase.WaitingForAgent
                     ? _websiteObservations.GetValueOrDefault((context.SessionId, targetId), "unknown")
                     : WebsiteState(device),
-                InputState = device.InputLeaseId is null ? "notEnabled" :
+                InputState = inputSyncPending ? "waitingForAgent" : device.InputLeaseId is null ? "notEnabled" :
+                    device.Phase == ClassroomQuickControlPhase.WaitingForAgent ? "waitingForAgent" :
                     device.InputExpiresUtc <= DateTimeOffset.UtcNow ? "needsReview" :
                     device.Phase == ClassroomQuickControlPhase.InputLockedVerified ? "locked" : "needsReview"
             };
@@ -177,14 +215,15 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             context.Session.Room.RoomName, context.Session.Room.ComputerCount,
             context.Session.Room.CampusName)
         {
-            ControlExpiresUtc = state?.ControlExpiresUtc
+            ControlExpiresUtc = state?.ControlExpiresUtc,
+            StateRevision = state?.StateRevision ?? 0
         };
     }
 
     public async Task<ClassroomQuickControlOperationResult> ExecuteAsync(Guid expectedSessionId,
         ClassroomQuickControlAction action, IReadOnlyList<Guid>? selectedTargetIds = null,
         DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default,
-        DateTimeOffset? expectedControlExpiresUtc = null)
+        DateTimeOffset? expectedControlExpiresUtc = null, string source = "teacher-command")
     {
         if (!Enum.IsDefined(action)) throw new InvalidDataException("快捷管控操作无效。");
         if (!TeacherClassroomQuickControlBuildFeatures.PilotEnabled && action is not
@@ -192,23 +231,43 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 ClassroomQuickControlAction.UnlockInput))
             throw new InvalidOperationException("当前教师端构建未开放启用类课堂快捷管控；没有发送命令。恢复操作仍可使用。");
         var context = CaptureContext(expectedSessionId);
+        var initialControlExpiry = _stateStore.Read(context.SessionId)?.ControlExpiresUtc;
         DateTimeOffset? requestedControlExpiry = null;
         if (action is ClassroomQuickControlAction.EnableWebsiteRestriction or ClassroomQuickControlAction.LockInput)
         {
-            var state = _stateStore.Read(context.SessionId);
-            var expires = state?.ControlExpiresUtc ?? controlExpiresUtc ??
-                DateTimeOffset.UtcNow.Add(DefaultWebsiteLifetime);
+            var expires = ResolveControlExpiry(controlExpiresUtc, DateTimeOffset.UtcNow);
             ValidateControlExpiry(expires, DateTimeOffset.UtcNow);
             requestedControlExpiry = expires;
         }
         var targets = SelectTargets(context, selectedTargetIds);
         if (targets.Count == 0) throw new InvalidDataException("当前课堂没有可操作的学生电脑。");
-        if (requestedControlExpiry is { } controlExpiry)
-        {
-            SaveControlExpiry(context.SessionId, controlExpiry);
-            EnsureControlExpiryLoop();
-        }
         var requestedUtc = DateTimeOffset.UtcNow;
+        var clearControlExpiryWithRelease = action == ClassroomQuickControlAction.Release &&
+            (expectedControlExpiresUtc is not null || selectedTargetIds is null);
+        var updateControlExpiry = requestedControlExpiry is not null || clearControlExpiryWithRelease;
+        var operationSource = expectedControlExpiresUtc is null ? source : "automatic-deadline";
+        var reason = expectedControlExpiresUtc is null
+            ? $"{(source == "teacher-mobile" ? "手机端" : "教师端")}请求 {action}。"
+            : $"课堂策略到达截止时间 {expectedControlExpiresUtc.Value:O}。";
+        IReadOnlyList<ClassroomQuickControlDeviceState> operations;
+        try
+        {
+            operations = _stateStore.BeginOperations(context.SessionId,
+                targets.Select(binding => binding.TargetId).ToArray(), action, operationSource, reason,
+                requestedControlExpiry, updateControlExpiry,
+                expectedControlExpiresUtc: expectedControlExpiresUtc);
+        }
+        catch (InvalidOperationException) when (expectedControlExpiresUtc is { } expectedExpiry &&
+                                                  IsControlDeadlineStale(context.SessionId, expectedExpiry))
+        {
+            var skipped = targets.Select(binding => SkippedOperationResult(context, binding, action,
+                TryReadDevice(context.SessionId, binding.TargetId),
+                "已跳过失效的截止任务；课堂状态或截止时间已变化。")).ToArray();
+            return new ClassroomQuickControlOperationResult(context.SessionId, action, requestedUtc,
+                Array.AsReadOnly(skipped), "旧截止任务已失效；没有发送恢复命令。");
+        }
+        if (requestedControlExpiry is not null) EnsureControlExpiryLoop();
+        var operationsByTarget = operations.ToDictionary(item => item.TargetId);
         using var limit = new SemaphoreSlim(MaximumOperationConcurrency, MaximumOperationConcurrency);
         var tasks = targets.Select(async binding =>
         {
@@ -219,37 +278,60 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 await targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    if (expectedControlExpiresUtc is { } expectedExpiry &&
-                        _stateStore.Read(context.SessionId)?.ControlExpiresUtc != expectedExpiry)
-                    {
-                        var current = TryReadDevice(context.SessionId, binding.TargetId);
-                        var mode = current?.Mode ?? DeviceControlMode.None;
-                        return new ClassroomQuickControlTargetResult(binding.TargetId, binding.DisplayName,
-                            mode, DeviceControlMode.None, mode, current?.Phase ?? ClassroomQuickControlPhase.NotStarted,
-                            true, false, current?.WebsiteRevision ?? current?.PendingWebsiteRevision,
-                            current?.InputLeaseId, "已跳过旧的到期任务；课堂管控截止时间已经更新。");
-                    }
-                    ClearCatchUpRetry(context.SessionId, binding.TargetId);
-                    return await ExecuteTargetAsync(context, binding, action, cancellationToken)
+                    var operation = operationsByTarget[binding.TargetId];
+                    var current = TryReadDevice(context.SessionId, binding.TargetId);
+                    if (current is null || current.DesiredRevision != operation.DesiredRevision ||
+                        current.TaskId != operation.TaskId)
+                        return SkippedOperationResult(context, binding, action, current,
+                            $"已忽略过期任务 {operation.TaskId:D}；设备已有更新的期望状态。");
+                    if (current.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow)
+                        return SkippedOperationResult(context, binding, action, current,
+                            $"设备仍离线或状态未确认；已保留待同步任务，约 {Math.Ceiling((retryAfter - DateTimeOffset.UtcNow).TotalSeconds):0} 秒后再试。");
+                    if (current.UpdatedUtc > operation.UpdatedUtc)
+                        return SkippedOperationResult(context, binding, action, current,
+                            "同一任务已由另一工作线程处理；已读取权威状态，没有重复发送。");
+                    var result = await ExecuteTargetAsync(context, binding, action, cancellationToken,
+                            operation.DesiredRevision, operation.TaskId!.Value)
                         .ConfigureAwait(false);
+                    var latest = TryReadDevice(context.SessionId, binding.TargetId);
+                    if (latest is { } latestState && latestState.DesiredRevision == operation.DesiredRevision &&
+                        latestState.TaskId == operation.TaskId)
+                    {
+                        if (ClassroomQuickControlDesiredState.NeedsCatchUp(latestState))
+                            RecordCatchUpFailure(context.SessionId, binding.TargetId,
+                                operation.DesiredRevision, operation.TaskId!.Value);
+                        else
+                            ClearCatchUpRetry(context.SessionId, binding.TargetId,
+                                operation.DesiredRevision, operation.TaskId!.Value);
+                    }
+                    return result;
                 }
                 finally { targetGate.Release(); }
             }
             finally { limit.Release(); }
         }).ToArray();
         var results = await Task.WhenAll(tasks).ConfigureAwait(false);
-        var expiryStillMatches = expectedControlExpiresUtc is null ||
-            _stateStore.Read(context.SessionId)?.ControlExpiresUtc == expectedControlExpiresUtc;
-        if (action == ClassroomQuickControlAction.Release && expiryStillMatches)
-            SaveControlExpiry(context.SessionId, null);
+        var expiryToPreserve = expectedControlExpiresUtc ?? initialControlExpiry;
+        var expiryStillMatches = _stateStore.Read(context.SessionId)?.ControlExpiresUtc == expiryToPreserve;
+        if (action == ClassroomQuickControlAction.Release && expiryStillMatches &&
+            _stateStore.Read(context.SessionId) is { } afterRelease &&
+            afterRelease.Devices.All(device => !HasWebsiteOwnership(device) && !HasInputOwnership(device) &&
+                device.DesiredAction != ClassroomQuickControlAction.EnableWebsiteRestriction &&
+                device.Phase != ClassroomQuickControlPhase.WebsiteApplying &&
+                device.Phase != ClassroomQuickControlPhase.Switching))
+            _ = _stateStore.TrySetControlExpiry(context.SessionId, expiryToPreserve, null,
+                expectedControlExpiresUtc is null ? source : "automatic-deadline",
+                "恢复意图已持久化；清除当前截止计时器。");
         else if (action == ClassroomQuickControlAction.ClearWebsiteRestrictions &&
                  _stateStore.Read(context.SessionId) is { } afterClear &&
                  afterClear.Devices.All(device => !HasWebsiteOwnership(device) && !HasInputOwnership(device)))
-            SaveControlExpiry(context.SessionId, null);
+            _ = _stateStore.TrySetControlExpiry(context.SessionId, expiryToPreserve, null,
+                source, "网站策略恢复已完成；清除课堂截止计时器。");
         else if (action == ClassroomQuickControlAction.UnlockInput &&
                  _stateStore.Read(context.SessionId) is { } afterUnlock &&
                  afterUnlock.Devices.All(device => !HasWebsiteOwnership(device) && !HasInputOwnership(device)))
-            SaveControlExpiry(context.SessionId, null);
+            _ = _stateStore.TrySetControlExpiry(context.SessionId, expiryToPreserve, null,
+                source, "键鼠恢复已完成；清除课堂截止计时器。");
         var succeeded = results.Count(item => item.Succeeded);
         var waiting = results.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var pending = results.Count(item => !item.Succeeded && item.NeedsReview);
@@ -277,14 +359,15 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         await ExecuteAsync(expectedSessionId, ClassroomQuickControlAction.Release,
             cancellationToken: cancellationToken).ConfigureAwait(false);
 
-    private void SaveControlExpiry(Guid sessionId, DateTimeOffset? expiresUtc)
+    internal static DateTimeOffset ResolveControlExpiry(DateTimeOffset? requestedUtc, DateTimeOffset nowUtc)
     {
-        var state = _stateStore.Read(sessionId);
-        if (state is null) return;
-        if (expiresUtc is { Offset: var offset } && offset != TimeSpan.Zero)
-            expiresUtc = expiresUtc.Value.ToUniversalTime();
-        _stateStore.Save(state with { ControlExpiresUtc = expiresUtc, UpdatedUtc = DateTimeOffset.UtcNow });
+        // A new Apply starts a new deadline. Reusing the previous value lets its old expiry timer
+        // undo the newly applied policy later; mobile Apply requests also arrive without a deadline.
+        return (requestedUtc ?? nowUtc.Add(DefaultWebsiteLifetime)).ToUniversalTime();
     }
+
+    internal static DateTimeOffset ResolveControlExpiry(DateTimeOffset? requestedUtc,
+        DateTimeOffset? previousExpiryUtc, DateTimeOffset nowUtc) => ResolveControlExpiry(requestedUtc, nowUtc);
 
     private static void ValidateControlExpiry(DateTimeOffset expiresUtc, DateTimeOffset nowUtc)
     {
@@ -335,8 +418,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                         // Persisted ownership remains available for the normal agent catch-up loop.
                         try
                         {
-                            if (_stateStore.Read(context.SessionId)?.ControlExpiresUtc == expires)
-                                SaveControlExpiry(context.SessionId, null);
+                            _ = _stateStore.TrySetControlExpiry(context.SessionId, expires, null,
+                                "automatic-deadline",
+                                "自动截止处理失败；仅移除仍匹配的旧截止计时器，保留待同步设备记录。");
                         }
                         catch (Exception) { }
                     }
@@ -356,7 +440,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     private async Task<ClassroomQuickControlTargetResult> ExecuteTargetAsync(
         TeacherClassroomEventContext context, TargetBinding binding, ClassroomQuickControlAction action,
-        CancellationToken cancellationToken, bool allowEndedRestore = false)
+        CancellationToken cancellationToken, long desiredRevision, Guid taskId,
+        bool allowEndedRestore = false)
     {
         var previous = ReadDevice(context.SessionId, binding.TargetId);
         var requestedMode = action switch
@@ -367,6 +452,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         };
         try
         {
+            EnsureCurrentTask(context.SessionId, binding.TargetId, desiredRevision, taskId, action,
+                allowEndedRestore);
             if ((previous.Phase == ClassroomQuickControlPhase.WaitingForAgent ||
                  previous.WebsitePhase == ClassroomQuickControlPhase.WaitingForAgent) &&
                 action == ClassroomQuickControlAction.Release && previous.Mode == DeviceControlMode.None &&
@@ -437,22 +524,30 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             return action switch
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => await EnableWebsiteAsync(context,
-                    binding, previous, website!, guardResult, cancellationToken).ConfigureAwait(false),
+                    binding, previous, website!, guardResult, cancellationToken, allowEndedRestore).ConfigureAwait(false),
                 ClassroomQuickControlAction.LockInput => await LockInputAsync(context, binding, previous,
-                    website, guardResult, cancellationToken).ConfigureAwait(false),
+                    website, guardResult, cancellationToken, allowEndedRestore).ConfigureAwait(false),
                 ClassroomQuickControlAction.UnlockInput => await UnlockInputAsync(context, binding, previous,
                     guardResult, cancellationToken, allowEndedRestore).ConfigureAwait(false),
                 ClassroomQuickControlAction.ClearWebsiteRestrictions => await ClearAllWebsiteRestrictionsAsync(
                     context, binding, previous, readback.Website, cancellationToken, allowEndedRestore)
                     .ConfigureAwait(false),
                 ClassroomQuickControlAction.Release => await ReleaseAsync(context, binding, previous,
-                    website, cancellationToken, allowEndedRestore).ConfigureAwait(false),
+                    website, readback.Website.TransientUnavailable, cancellationToken, allowEndedRestore)
+                    .ConfigureAwait(false),
                 _ => StoreResult(context, binding, previous, requestedMode, ClassroomQuickControlPhase.Conflict,
                     false, true, "快捷管控操作无效。", previous.WebsiteRevision,
                     previous.PendingWebsiteRevision, previous.InputLeaseId, previous.ExpiresUtc)
             };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (StaleClassroomQuickControlTaskException exception)
+        {
+            var latest = TryReadDevice(context.SessionId, binding.TargetId) ?? previous;
+            return Result(context, binding, previous.Mode, requestedMode, latest.Mode, latest.Phase,
+                false, true, exception.Message, latest.WebsiteRevision ?? latest.PendingWebsiteRevision,
+                latest.InputLeaseId, latest.ExpiresUtc);
+        }
         catch (InvalidOperationException exception) when (!IsTargetAllowed(context, binding.TargetId,
             allowEndedRestore))
         {
@@ -476,6 +571,12 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                                           ArgumentException or System.Security.SecurityException or TaskCanceledException)
         {
             var latest = TryReadDevice(context.SessionId, binding.TargetId) ?? previous;
+            if (latest.DesiredRevision != desiredRevision || latest.TaskId != taskId ||
+                latest.DesiredAction != action)
+                return Result(context, binding, previous.Mode, requestedMode, latest.Mode, latest.Phase,
+                    false, true, "已忽略旧任务的失败回执；当前设备期望状态属于较新的任务。",
+                    latest.WebsiteRevision ?? latest.PendingWebsiteRevision, latest.InputLeaseId,
+                    latest.ExpiresUtc);
             if (action == ClassroomQuickControlAction.ClearWebsiteRestrictions)
                 return StoreWebsiteOnlyResult(context, binding, latest, requestedMode,
                     ClassroomQuickControlPhase.Failed, false, true,
@@ -521,13 +622,19 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             UpdatedUtc = now,
             Detail = "正在清除当前电脑的黑名单和白名单；键鼠租约及其他限制保持不变。"
         };
-        SaveDevice(context, pending);
+        pending = SaveDevice(context, pending);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.ClearWebsiteRestrictions, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         var pushed = await WebsitePolicyTransport.PushAsync([binding.Target], signed, context.CampusId,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.ClearWebsiteRestrictions, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         var verified = await ReadWebsiteStatusAsync(context.CampusId, binding.Target,
             signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.ClearWebsiteRestrictions, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         if (verified.Succeeded && verified.Status?.Website is { Mode: WebsitePolicyMode.Disabled } current &&
             current.Revision >= revision)
@@ -539,7 +646,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 clear.InputLeaseId, clear.InputExpiresUtc ?? clear.ExpiresUtc);
         }
 
-        var phase = verified.Succeeded ? ClassroomQuickControlPhase.Conflict : ClassroomQuickControlPhase.Unknown;
+        var phase = verified.TransientUnavailable ? ClassroomQuickControlPhase.WaitingForAgent :
+            verified.Succeeded ? ClassroomQuickControlPhase.Conflict : ClassroomQuickControlPhase.Unknown;
         var detail = "网站限制尚未通过签名状态读回；保留待确认版本，键鼠租约和其他限制未修改。";
         var uncertain = pending with
         {
@@ -603,10 +711,14 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             }
             else if (current.Phase == ClassroomQuickControlPhase.ReleasePending &&
                      website.Mode != WebsitePolicyMode.Disabled &&
-                     current.WebsiteRevision == website.Revision)
+                     (current.WebsiteRevision == website.Revision ||
+                      current.PendingWebsiteRevision == website.Revision))
             {
                 current = current with { Phase = ClassroomQuickControlPhase.WebsiteReported,
-                    PendingWebsiteRevision = null, UpdatedUtc = DateTimeOffset.UtcNow,
+                    WebsiteRevision = website.Revision, PendingWebsiteRevision = null,
+                    Mode = GetMode(website.Revision, null, current.InputLeaseId),
+                    WebsitePhase = ClassroomQuickControlPhase.WebsiteReported,
+                    UpdatedUtc = DateTimeOffset.UtcNow,
                     Detail = "Agent 仍报告本工具创建的网站策略；正在重试已请求的恢复。" };
                 current = SaveDevice(context, current);
             }
@@ -664,6 +776,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         if (action is ClassroomQuickControlAction.EnableWebsiteRestriction or
             ClassroomQuickControlAction.ClearWebsiteRestrictions or ClassroomQuickControlAction.Release)
             return (current, current.Phase, null);
+
+        if (action == ClassroomQuickControlAction.UnlockInput && guardResult.TransientUnavailable)
+            return (current, ClassroomQuickControlPhase.WaitingForAgent, null);
 
         if (!guardResult.Succeeded || guardResult.Status is not { } guard)
         {
@@ -728,7 +843,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private async Task<ClassroomQuickControlTargetResult> EnableWebsiteAsync(
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, WebsitePolicyReportedState website,
-        StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken)
+        StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken,
+        bool allowEndedRestore = false)
     {
         if (HasWebsiteOwnership(previous) &&
             website.Mode != WebsitePolicyMode.Disabled && previous.WebsiteRevision != website.Revision)
@@ -798,13 +914,19 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 ? "正在发送有到期时间、绑定预期版本的课堂网站策略。"
                 : "正在独立更新网站策略；已有键鼠租约保持不变。"
         };
-        SaveDevice(context, applying);
+        applying = SaveDevice(context, applying);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, applying.DesiredRevision,
+            applying.TaskId!.Value, ClassroomQuickControlAction.EnableWebsiteRestriction, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId);
         _ = await WebsitePolicyTransport.PushAsync([binding.Target], signed, context.CampusId,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, applying.DesiredRevision,
+            applying.TaskId!.Value, ClassroomQuickControlAction.EnableWebsiteRestriction, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId);
         var readback = await ReadWebsiteStatusAsync(context.CampusId, binding.Target, signingKey.PrivateKey,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, applying.DesiredRevision,
+            applying.TaskId!.Value, ClassroomQuickControlAction.EnableWebsiteRestriction, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId);
         if (!readback.Succeeded || readback.Status is not { } status ||
             status.Website.Mode != mode || status.Website.Revision != revision)
@@ -842,7 +964,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             WebsiteRevision = revision,
             PendingWebsiteRevision = null,
             WebsiteExpiresUtc = expires,
-            UpdatedUtc = status.CollectedUtc,
+            UpdatedUtc = DateTimeOffset.UtcNow,
             Detail = detail
         };
         SaveDevice(context, applied);
@@ -868,7 +990,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private async Task<ClassroomQuickControlTargetResult> LockInputAsync(
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, WebsitePolicyReportedState? website,
-        StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken)
+        StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken,
+        bool allowEndedRestore = false)
     {
         if (!guardResult.Succeeded || guardResult.Status is not { Supported: true } guard)
             return StoreResult(context, binding, previous, DeviceControlMode.InputLocked,
@@ -907,12 +1030,16 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 ? "正在申请短期 InputGuard 租约；现有网站策略保持不变。"
                 : "正在申请短期 InputGuard 租约；只有签名状态读回后才标记为已锁定。"
         };
-        SaveDevice(context, locking);
+        locking = SaveDevice(context, locking);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, locking.DesiredRevision,
+            locking.TaskId!.Value, ClassroomQuickControlAction.LockInput, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId);
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var command = await StudentInputGuardTransport.ExecuteAsync(binding.Target, context.CampusId,
             signingKey.PrivateKey, context.Session.Room.RoomId, StudentInputGuardAction.Activate,
             leaseId, cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, locking.DesiredRevision,
+            locking.TaskId!.Value, ClassroomQuickControlAction.LockInput, allowEndedRestore);
         if (!command.Succeeded || command.Receipt?.Outcome != StudentInputGuardOutcome.Succeeded)
         {
             var uncertain = locking with { Phase = command.NeedsReview ? ClassroomQuickControlPhase.Unknown :
@@ -924,6 +1051,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         }
         var verified = await StudentInputGuardTransport.ReadStatusAsync(binding.Target, context.CampusId,
             signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, locking.DesiredRevision,
+            locking.TaskId!.Value, ClassroomQuickControlAction.LockInput, allowEndedRestore);
         if (!verified.Succeeded || verified.Status is not { Supported: true,
                 Phase: StudentInputGuardPhase.Locked } status || status.LeaseId != leaseId)
         {
@@ -940,7 +1069,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             Phase = ClassroomQuickControlPhase.InputLockedVerified,
             ExpiresUtc = status.LeaseExpiresUtc,
             InputExpiresUtc = status.LeaseExpiresUtc,
-            UpdatedUtc = status.CollectedUtc,
+            UpdatedUtc = DateTimeOffset.UtcNow,
             Detail = HasWebsiteOwnership(previous)
                 ? "Agent 已签名读回当前键鼠租约；教师端每 5 秒续租。网站策略独立保持，关闭教师端或断线后键鼠租约最多 20 秒自动释放。"
                 : "Agent 已签名读回当前锁定租约；教师端每 5 秒请求续租，教师端停止或断线后最多 20 秒自动释放。"
@@ -960,14 +1089,17 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         if (!guardResult.Succeeded || guardResult.Status is not { Supported: true } guard)
             return StoreResult(context, binding, previous, DeviceControlMode.None,
                 guardResult.Status?.Supported == false ? ClassroomQuickControlPhase.Unsupported :
-                    ClassroomQuickControlPhase.Unknown, false, true,
-                "InputGuard 没有提供可信的签名状态；没有解除键鼠锁定。" + guardResult.Detail,
+                    guardResult.TransientUnavailable ? ClassroomQuickControlPhase.WaitingForAgent :
+                    ClassroomQuickControlPhase.Unknown, false, !guardResult.TransientUnavailable,
+                guardResult.TransientUnavailable
+                    ? "Agent 暂不可达；已保留键鼠恢复意图，设备上线后按退避间隔重新核对。" + guardResult.Detail
+                    : "InputGuard 没有提供可信的签名状态；没有解除键鼠锁定。" + guardResult.Detail,
                 previous.WebsiteRevision, previous.PendingWebsiteRevision, previous.InputLeaseId,
                 previous.InputExpiresUtc ?? previous.ExpiresUtc);
 
         if (HasInputOwnership(previous))
             return await ReleaseOwnedInputAsync(context, binding, previous, guardResult,
-                cancellationToken, allowEndedRestore).ConfigureAwait(false);
+                ClassroomQuickControlAction.UnlockInput, cancellationToken, allowEndedRestore).ConfigureAwait(false);
 
         if ((guard.Phase is StudentInputGuardPhase.Unlocked or StudentInputGuardPhase.Expired) &&
             guard.LeaseId is null)
@@ -993,15 +1125,20 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private async Task<ClassroomQuickControlTargetResult> ReleaseAsync(
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, WebsitePolicyReportedState? website,
-        CancellationToken cancellationToken, bool allowEndedRestore = false)
+        bool websiteTransientUnavailable, CancellationToken cancellationToken,
+        bool allowEndedRestore = false)
     {
         ClassroomQuickControlTargetResult? websiteResult = null;
         if (HasWebsiteOwnership(previous))
         {
             websiteResult = website is null
                 ? StoreResult(context, binding, previous, DeviceControlMode.None,
-                    ClassroomQuickControlPhase.ReleasePending, false, true,
-                    "网站策略状态暂不可读；保留网站归属记录，未修改该策略。",
+                    websiteTransientUnavailable ? ClassroomQuickControlPhase.WaitingForAgent :
+                        ClassroomQuickControlPhase.Unknown,
+                    false, !websiteTransientUnavailable,
+                    websiteTransientUnavailable
+                        ? "Agent 暂不可达；已保留恢复期望状态，设备上线后按退避间隔重新核对。"
+                        : "网站策略状态暂不可读；保留网站归属记录，未修改该策略。",
                     previous.WebsiteRevision, previous.PendingWebsiteRevision, previous.InputLeaseId,
                     previous.InputExpiresUtc ?? previous.ExpiresUtc)
                 : await ReleaseOwnedWebsiteAsync(context, binding, previous, website, cancellationToken,
@@ -1015,7 +1152,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             var inputReadback = await ReadInputGuardStatusAsync(context.CampusId, binding.Target,
                 cancellationToken).ConfigureAwait(false);
             inputResult = await ReleaseOwnedInputAsync(context, binding, previous, inputReadback,
-                cancellationToken, allowEndedRestore).ConfigureAwait(false);
+                ClassroomQuickControlAction.Release, cancellationToken, allowEndedRestore).ConfigureAwait(false);
             previous = ReadDevice(context.SessionId, binding.TargetId);
         }
 
@@ -1128,25 +1265,34 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             Mode = GetMode(previous.WebsiteRevision, revision, previous.InputLeaseId),
             Detail = "正在独立解除本工具持有的网站策略；键鼠租约保持不变。"
         };
-        SaveDevice(context, pending);
+        pending = SaveDevice(context, pending);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.Release, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         _ = await WebsitePolicyTransport.PushAsync([binding.Target], signed, context.CampusId,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.Release, allowEndedRestore);
+        ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         var result = await ReadWebsiteStatusAsync(context.CampusId, binding.Target, signingKey.PrivateKey,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, ClassroomQuickControlAction.Release, allowEndedRestore);
+        ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         if (result.Succeeded && result.Status?.Website.Mode == WebsitePolicyMode.Disabled &&
             result.Status.Website.Revision >= revision)
         {
-            var clear = SaveDevice(context, ClearWebsiteControl(previous,
+            var clear = SaveDevice(context, ClearWebsiteControl(pending,
                 "解除命令后已读回网站限制为停用。"));
             return Result(context, binding, previous.Mode, DeviceControlMode.None, clear.Mode,
                 clear.Phase, true, HasInputOwnership(clear), clear.Detail, null,
                 clear.InputLeaseId, clear.InputExpiresUtc ?? clear.ExpiresUtc);
         }
-        var phase = result.Succeeded ? ClassroomQuickControlPhase.Conflict : ClassroomQuickControlPhase.Unknown;
+        var phase = result.TransientUnavailable ? ClassroomQuickControlPhase.WaitingForAgent :
+            result.Succeeded ? ClassroomQuickControlPhase.Conflict : ClassroomQuickControlPhase.Unknown;
         var uncertain = pending with { Mode = GetMode(previous.WebsiteRevision, revision,
                 previous.InputLeaseId),
-            Phase = phase, UpdatedUtc = DateTimeOffset.UtcNow,
+            Phase = phase, WebsitePhase = phase, UpdatedUtc = DateTimeOffset.UtcNow,
             Detail = "网站解除尚未通过签名状态读回；保留归属与待确认版本，键鼠租约未改动。" };
         SaveDevice(context, uncertain);
         return Result(context, binding, previous.Mode, DeviceControlMode.None, previous.Mode, phase,
@@ -1157,12 +1303,17 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private async Task<ClassroomQuickControlTargetResult> ReleaseOwnedInputAsync(
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, StudentInputGuardStatusDeliveryResult guardResult,
-        CancellationToken cancellationToken, bool allowEndedRestore = false)
+        ClassroomQuickControlAction action, CancellationToken cancellationToken,
+        bool allowEndedRestore = false)
     {
         if (!guardResult.Succeeded || guardResult.Status is not { Supported: true } status)
             return StoreResult(context, binding, previous, DeviceControlMode.None,
-                ClassroomQuickControlPhase.Unknown, false, true,
-                "InputGuard 状态未通过签名读回；没有报告已解除。" + guardResult.Detail,
+                guardResult.TransientUnavailable ? ClassroomQuickControlPhase.WaitingForAgent :
+                    ClassroomQuickControlPhase.Unknown,
+                false, !guardResult.TransientUnavailable,
+                guardResult.TransientUnavailable
+                    ? "Agent 暂不可达；已保留键鼠恢复意图，设备上线后按退避间隔重新核对。" + guardResult.Detail
+                    : "InputGuard 状态未通过签名读回；没有报告已解除。" + guardResult.Detail,
                 previous.WebsiteRevision, previous.PendingWebsiteRevision, previous.InputLeaseId,
                 previous.ExpiresUtc);
         if ((status.Phase is StudentInputGuardPhase.Unlocked or StudentInputGuardPhase.Expired) &&
@@ -1186,15 +1337,21 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         var pending = previous with { Phase = ClassroomQuickControlPhase.ReleasePending,
             UpdatedUtc = DateTimeOffset.UtcNow,
             Detail = "正在向原锁定租约发送解除命令并等待签名状态读回。" };
-        SaveDevice(context, pending);
+        pending = SaveDevice(context, pending);
         RemoveRenewableLease(binding.TargetId, leaseId);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, action, allowEndedRestore);
         ThrowIfContextChanged(context, binding.TargetId, allowEndedRestore);
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var command = await StudentInputGuardTransport.ExecuteAsync(binding.Target, context.CampusId,
             signingKey.PrivateKey, context.Session.Room.RoomId, StudentInputGuardAction.Release, leaseId,
             cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, action, allowEndedRestore);
         var finalStatus = await StudentInputGuardTransport.ReadStatusAsync(binding.Target, context.CampusId,
             signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
+        EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
+            pending.TaskId!.Value, action, allowEndedRestore);
         if (command.Succeeded && finalStatus.Succeeded && finalStatus.Status is { Supported: true } final &&
             final.LeaseId is null && (final.Phase is StudentInputGuardPhase.Unlocked or
                 StudentInputGuardPhase.Expired))
@@ -1205,12 +1362,16 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 clear.Phase, true, HasWebsiteOwnership(clear), clear.Detail,
                 clear.WebsiteRevision ?? clear.PendingWebsiteRevision, null, clear.ExpiresUtc);
         }
-        var uncertain = pending with { Phase = ClassroomQuickControlPhase.Unknown,
+        var uncertainPhase = finalStatus.TransientUnavailable
+            ? ClassroomQuickControlPhase.WaitingForAgent : ClassroomQuickControlPhase.Unknown;
+        var uncertain = pending with { Phase = uncertainPhase,
             UpdatedUtc = DateTimeOffset.UtcNow,
-            Detail = "解除尚未通过签名状态读回；20 秒租约到期后 Guard 会自行恢复输入。" };
+            Detail = finalStatus.TransientUnavailable
+                ? "Agent 在解除后暂不可达；保留键鼠恢复意图，设备上线后按退避间隔重新核对。"
+                : "解除尚未通过签名状态读回；20 秒租约到期后 Guard 会自行恢复输入。" };
         SaveDevice(context, uncertain);
         return Result(context, binding, previous.Mode, DeviceControlMode.None, previous.Mode,
-            ClassroomQuickControlPhase.Unknown, false, true,
+            uncertainPhase, false, !finalStatus.TransientUnavailable,
             uncertain.Detail + " " + command.Detail + " " + finalStatus.Detail,
             null, leaseId, status.LeaseExpiresUtc);
     }
@@ -1263,7 +1424,11 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         var stored = previous with { Mode = waitingWithoutOwnership ? DeviceControlMode.None :
                 GetMode(websiteRevision, pendingWebsiteRevision, leaseId),
             Phase = phase, WebsiteRevision = websiteRevision,
-            WebsitePhase = requestedMode == DeviceControlMode.WebsiteRestriction ? phase : previous.WebsitePhase,
+            WebsitePhase = requestedMode == DeviceControlMode.WebsiteRestriction ||
+                           (previous.DesiredAction is ClassroomQuickControlAction.Release or
+                               ClassroomQuickControlAction.ClearWebsiteRestrictions) &&
+                           (websiteRevision is not null || pendingWebsiteRevision is not null)
+                ? phase : previous.WebsitePhase,
             PendingWebsiteRevision = pendingWebsiteRevision, InputLeaseId = leaseId,
             ExpiresUtc = expiresUtc,
             WebsiteExpiresUtc = websiteRevision is not null || pendingWebsiteRevision is not null
@@ -1300,19 +1465,64 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         requestedMode, currentMode, phase, succeeded, needsReview, websiteRevision, leaseId,
         Truncate(SanitizeTargetDetail(context, binding.TargetId, detail), 512));
 
-    private ClassroomQuickControlDeviceState SaveDevice(TeacherClassroomEventContext context,
-        ClassroomQuickControlDeviceState device)
+    private ClassroomQuickControlTargetResult SkippedOperationResult(TeacherClassroomEventContext context,
+        TargetBinding binding, ClassroomQuickControlAction action, ClassroomQuickControlDeviceState? current,
+        string detail)
     {
+        var state = current ?? NotStartedState(binding.TargetId);
+        var requestedMode = action switch
+        {
+            ClassroomQuickControlAction.EnableWebsiteRestriction => DeviceControlMode.WebsiteRestriction,
+            ClassroomQuickControlAction.LockInput => DeviceControlMode.InputLocked,
+            _ => DeviceControlMode.None
+        };
+        return Result(context, binding, state.Mode, requestedMode, state.Mode, state.Phase,
+            false, false, detail, state.WebsiteRevision ?? state.PendingWebsiteRevision,
+            state.InputLeaseId, state.InputExpiresUtc ?? state.ExpiresUtc);
+    }
+
+    private ClassroomQuickControlDeviceState SaveDevice(TeacherClassroomEventContext context,
+        ClassroomQuickControlDeviceState device, string source = "agent-execution")
+    {
+        if (device.DesiredRevision > 0 && device.TaskId is { } taskId &&
+            !_stateStore.IsCurrentTask(context.SessionId, device.TargetId, device.DesiredRevision, taskId))
+            throw new StaleClassroomQuickControlTaskException(
+                $"已忽略跨课堂过期任务 {taskId:D}（Revision={device.DesiredRevision}）；设备已有更新的权威任务。");
         if (device.WebsitePhase == ClassroomQuickControlPhase.NoneVerified)
             _websiteObservations[(context.SessionId, device.TargetId)] = "notEnabled";
+        device = device with { ChangeSource = source, TriggerReason = device.Detail };
         var session = _stateStore.Read(context.SessionId) ?? new ClassroomQuickControlSessionState(
             ClassroomQuickControlStateStore.CurrentSchemaVersion, context.SessionId, context.CampusId,
             context.Session.Room.RoomId, true, DateTimeOffset.UtcNow, []);
         var devices = session.Devices.Where(item => item.TargetId != device.TargetId).Append(device)
             .OrderBy(item => item.TargetId).ToArray();
-        _stateStore.Save(session with { UpdatedUtc = DateTimeOffset.UtcNow,
+        var saved = _stateStore.Save(session with { UpdatedUtc = DateTimeOffset.UtcNow,
             Devices = Array.AsReadOnly(devices) });
-        return device;
+        var current = saved.Devices.Single(item => item.TargetId == device.TargetId);
+        if (current.DesiredRevision != device.DesiredRevision || current.TaskId != device.TaskId)
+            throw new StaleClassroomQuickControlTaskException(
+                $"已忽略旧任务 {device.TaskId?.ToString("D") ?? "(legacy)"} 的状态回写；当前 Revision={current.DesiredRevision}，TaskId={current.TaskId?.ToString("D") ?? "(none)"}。");
+        if (current != device &&
+            (device.StateRevision == long.MaxValue || current.StateRevision != device.StateRevision + 1 ||
+             current != (device with { StateRevision = current.StateRevision })))
+            throw new StaleClassroomQuickControlTaskException(
+                $"已忽略基于旧状态 Revision={device.StateRevision} 的回写（来源={source}）；当前状态 Revision={current.StateRevision}。");
+        return current;
+    }
+
+    private void EnsureCurrentTask(Guid sessionId, Guid targetId, long desiredRevision, Guid taskId,
+        ClassroomQuickControlAction action, bool allowEndedRestore = false)
+    {
+        var session = _stateStore.Read(sessionId);
+        var current = TryReadDevice(sessionId, targetId);
+        var sessionAllowsAction = session is { ClosedUtc: null, Active: true } ||
+            allowEndedRestore && action == ClassroomQuickControlAction.Release &&
+            session is { Active: false, ClosedUtc: not null };
+        if (!sessionAllowsAction || current is null || current.DesiredRevision != desiredRevision ||
+            current.TaskId != taskId || current.DesiredAction != action ||
+            !_stateStore.IsCurrentTask(sessionId, targetId, desiredRevision, taskId))
+            throw new StaleClassroomQuickControlTaskException(
+                $"已取消过期快捷管控任务 {taskId:D}（Revision={desiredRevision}）；同设备当前期望状态已变化。");
     }
 
     private ClassroomQuickControlDeviceState ReadDevice(Guid sessionId, Guid targetId) =>
@@ -1321,32 +1531,11 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     private ClassroomQuickControlDeviceState? TryReadDevice(Guid sessionId, Guid targetId) =>
         _stateStore.Read(sessionId)?.Devices.SingleOrDefault(item => item.TargetId == targetId);
 
-    private void SetSessionActive(Guid sessionId, bool active)
-    {
-        var state = _stateStore.Read(sessionId);
-        if (state is not null)
-            _stateStore.Save(state with { Active = active, UpdatedUtc = DateTimeOffset.UtcNow });
-    }
-
     private void QueueEndedSessionRestores(TeacherClassroomEventContext context)
     {
-        var state = _stateStore.Read(context.SessionId);
-        if (state is null) return;
-        var devices = state.Devices.Select(device => (device.Phase == ClassroomQuickControlPhase.WaitingForAgent ||
-                device.WebsitePhase == ClassroomQuickControlPhase.WaitingForAgent) &&
-                device.Mode == DeviceControlMode.None && device.WebsiteRevision is null &&
-                device.PendingWebsiteRevision is null && device.InputLeaseId is null
-            ? ClearState(device, "课堂已结束；取消尚未发送的网站策略。")
-            : device.Mode != DeviceControlMode.None || device.PendingWebsiteRevision is not null &&
-                (device.Phase is ClassroomQuickControlPhase.WebsiteApplying or ClassroomQuickControlPhase.Switching or
-                    ClassroomQuickControlPhase.WaitingForAgent)
-                ? device with { Phase = ClassroomQuickControlPhase.ReleasePending,
-                    UpdatedUtc = DateTimeOffset.UtcNow,
-                    Detail = "课堂已结束；等待 Agent 上线后核对归属并恢复本工具创建的管控。" }
-                : device).ToArray();
-        _stateStore.Save(state with { Active = false, UpdatedUtc = DateTimeOffset.UtcNow,
-            Devices = Array.AsReadOnly(devices) });
-        if (devices.Any(device => device.Phase == ClassroomQuickControlPhase.ReleasePending))
+        var state = _stateStore.CloseSession(context.SessionId, DateTimeOffset.UtcNow);
+        if (state.Devices.Any(device => device.DesiredAction == ClassroomQuickControlAction.Release &&
+                                        (HasWebsiteOwnership(device) || HasInputOwnership(device))))
             _endedRestoreContexts[context.SessionId] = context;
         else
             _endedRestoreContexts.Remove(context.SessionId);
@@ -1354,16 +1543,103 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     private void RecoverPreviousProcessState()
     {
-        foreach (var session in _stateStore.ReadAll().Where(item => item.Active))
+        IReadOnlyDictionary<Guid, ClassroomSession> classroomSessions;
+        try { classroomSessions = _classroomSessionStore.ReadRecent().ToDictionary(item => item.SessionId); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        { classroomSessions = new Dictionary<Guid, ClassroomSession>(); }
+
+        foreach (var session in _stateStore.ReadAll())
         {
-            var recovered = session.Devices.Select(device => HasInputOwnership(device)
-                ? device with { Phase = ClassroomQuickControlPhase.Unknown, UpdatedUtc = DateTimeOffset.UtcNow,
-                    Detail = "TeacherConsole 已重启；旧租约不会自动续期或重新锁定。请读回状态后手动解除。" }
-                : device).ToArray();
-            _stateStore.Save(session with { Active = false, UpdatedUtc = DateTimeOffset.UtcNow,
-                Devices = Array.AsReadOnly(recovered) });
+            var now = DateTimeOffset.UtcNow;
+            if (session.ClosedUtc is null &&
+                classroomSessions.TryGetValue(session.SessionId, out var classroom) &&
+                classroom.Status == ClassroomSessionStatus.Ended)
+            {
+                _ = _stateStore.CloseSession(session.SessionId, now);
+                continue;
+            }
+            if (!session.Active || session.ClosedUtc is not null) continue;
+            _ = _stateStore.PauseSession(session.SessionId, now, "teacher-restart",
+                "检测到 TeacherConsole 重启；栅栏上次进程任务并保留活动课堂期望状态，待当前课堂重新连接。");
+        }
+        ScheduleEndedRestoreContextRecovery();
+    }
+
+    private void ScheduleEndedRestoreContextRecovery()
+    {
+        if (Interlocked.Exchange(ref _endedRestoreContextRecoveryQueued, 1) != 0) return;
+        _ = Task.Run(() =>
+        {
+            try { RecoverEndedSessionRestoreContexts(); }
+            finally { Interlocked.Exchange(ref _endedRestoreContextRecoveryQueued, 0); }
+        });
+    }
+
+    private void RecoverEndedSessionRestoreContexts()
+    {
+        try
+        {
+            var pendingStates = _stateStore.ReadAll().Where(item => !item.Active &&
+                item.Devices.Any(device => device.DesiredAction == ClassroomQuickControlAction.Release &&
+                    (HasWebsiteOwnership(device) || HasInputOwnership(device)))).ToArray();
+            if (pendingStates.Length == 0) return;
+            var sessions = _classroomSessionStore.ReadRecent().Where(item =>
+                    item.Status == ClassroomSessionStatus.Ended)
+                .ToDictionary(item => item.SessionId);
+            if (!pendingStates.Any(item => sessions.ContainsKey(item.SessionId))) return;
+            var campuses = _campusDirectoryStore.Load();
+            var locations = _networkDirectory.ReadLocations();
+            var availableSigningCampuses = WebsitePolicySigningKeyStore.ReadCampusIds()
+                .Where(item => !ApplicationPolicySigningKeyStore.IsInternalNamespace(item) &&
+                               !StudentSystemPolicySigningKeyStore.IsInternalNamespace(item))
+                .Distinct(StringComparer.Ordinal).ToArray();
+            foreach (var state in pendingStates)
+            {
+                if (!sessions.TryGetValue(state.SessionId, out var endedSession)) continue;
+                var campusMatches = campuses.Where(item => item.ProfileId == endedSession.Room.CampusProfileId)
+                    .ToArray();
+                var roomMatches = campusMatches.Length == 1
+                    ? campusMatches[0].Rooms.Where(item => item.RoomId == endedSession.Room.RoomId).ToArray()
+                    : [];
+                if (campusMatches.Length != 1 || roomMatches.Length != 1) continue;
+                var matched = ClassroomRestoreLedger.MatchCurrentTargets(endedSession, campusMatches[0],
+                    roomMatches[0], locations);
+                var pendingIds = state.Devices.Where(device =>
+                        device.DesiredAction == ClassroomQuickControlAction.Release &&
+                        (HasWebsiteOwnership(device) || HasInputOwnership(device)))
+                    .Select(device => device.TargetId).ToHashSet();
+                var targets = matched.Where(item => pendingIds.Contains(item.TargetId)).ToArray();
+                if (targets.Length == 0) continue;
+                var targetIds = targets.ToDictionary(item => item.Target, item => item.TargetId,
+                    StringComparer.OrdinalIgnoreCase);
+                var signingCampus = ResolveEndedRestoreSigningCampus(state.CampusId,
+                    _classroomSigningContextStore.Read(endedSession.SessionId), availableSigningCampuses);
+                if (signingCampus is null) continue;
+                var targetNames = targets.ToDictionary(item => item.Target,
+                    item => item.DeviceLabel, StringComparer.OrdinalIgnoreCase);
+                var context = new TeacherClassroomEventContext(signingCampus, endedSession.SessionId,
+                    Array.AsReadOnly(targetIds.Keys.ToArray()), targetIds, endedSession, targetNames);
+                lock (_contextGate)
+                {
+                    if (_disposed || _context?.SessionId == endedSession.SessionId) continue;
+                    _endedRestoreContexts[endedSession.SessionId] = context;
+                }
+            }
+            EnsureWebsiteCatchUpLoop();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException or CryptographicException or
+            PlatformNotSupportedException or ArgumentException or System.Security.SecurityException or
+            System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            // Keep the durable release intent pending; a later explicit session sync can retry context recovery.
         }
     }
+
+    internal static string? ResolveEndedRestoreSigningCampus(string recordedCampusId, string? pinnedCampusId,
+        IReadOnlyList<string> availableSigningCampuses) =>
+        (pinnedCampusId is null || string.Equals(pinnedCampusId, recordedCampusId, StringComparison.Ordinal)) &&
+        availableSigningCampuses.Contains(recordedCampusId, StringComparer.Ordinal) ? recordedCampusId : null;
 
     private static ClassroomQuickControlDeviceState NotStartedState(Guid targetId) =>
         new(targetId, DeviceControlMode.None, ClassroomQuickControlPhase.NotStarted, null, null, null, null,
@@ -1401,15 +1677,6 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             ? "needsReview" : "notEnabled";
     }
 
-    private static bool NeedsWebsiteCatchUp(ClassroomQuickControlDeviceState device) =>
-        device.Phase == ClassroomQuickControlPhase.ReleasePending ||
-        device.WebsitePhase is ClassroomQuickControlPhase.ReleasePending or
-            ClassroomQuickControlPhase.WaitingForAgent or ClassroomQuickControlPhase.WebsiteApplying or
-            ClassroomQuickControlPhase.Switching || device.PendingWebsiteRevision is not null ||
-        HasWebsiteOwnership(device) &&
-            (device.WebsitePhase == ClassroomQuickControlPhase.Unknown ||
-             device.WebsitePhase is null && device.Phase == ClassroomQuickControlPhase.Unknown);
-
     private async Task RefreshWebsiteStateAsync(TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState device, CancellationToken cancellationToken)
     {
@@ -1431,13 +1698,15 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         }
         if (!result.Succeeded || result.Status?.Website is not { } website)
         {
-            SaveDevice(context, device with { WebsitePhase = ClassroomQuickControlPhase.Unknown });
+            SaveDevice(context, device with { WebsitePhase = ClassroomQuickControlPhase.Unknown },
+                "agent-status-poll");
             return;
         }
         if (website.Mode == WebsitePolicyMode.Disabled &&
             website.Revision >= Math.Max(device.WebsiteRevision ?? 0, device.PendingWebsiteRevision ?? 0))
         {
-            SaveDevice(context, ClearWebsiteControl(device, "网站限制已解除或已到期。"));
+            SaveDevice(context, ClearWebsiteControl(device, "网站限制已解除或已到期。"),
+                "agent-status-poll");
             return;
         }
         var revision = device.PendingWebsiteRevision ?? device.WebsiteRevision;
@@ -1453,7 +1722,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             PendingWebsiteRevision = matches ? null : device.PendingWebsiteRevision,
             Mode = matches ? GetMode(revision, null, device.InputLeaseId) : device.Mode,
             Phase = device.InputLeaseId is null ? phase : device.Phase
-        });
+        }, "agent-status-poll");
     }
 
     private static DeviceControlMode GetMode(long? websiteRevision, long? pendingWebsiteRevision,
@@ -1595,22 +1864,27 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 }
                 if (contexts.Length == 0) return;
 
-                var candidates = contexts.SelectMany(item =>
+                var candidates = new List<(CatchUpContext Context, Guid TargetId,
+                    ClassroomQuickControlAction Action, long DesiredRevision, Guid TaskId)>();
+                foreach (var item in contexts)
                 {
                     var state = _stateStore.Read(item.Context.SessionId);
                     if (state is null || item.IsEndedRestore && state.Active ||
-                        !item.IsEndedRestore && !state.Active)
-                        return Enumerable.Empty<(CatchUpContext Context, Guid TargetId,
-                            ClassroomQuickControlAction Action)>();
-                    return state.Devices.Where(device => item.IsEndedRestore
-                            ? device.Phase == ClassroomQuickControlPhase.ReleasePending
-                            : NeedsWebsiteCatchUp(device))
-                        .Select(device => (Context: item, device.TargetId,
-                            Action: device.Phase == ClassroomQuickControlPhase.ReleasePending
-                                ? ClassroomQuickControlAction.Release
-                                : ClassroomQuickControlAction.EnableWebsiteRestriction));
-                }).ToArray();
-                if (candidates.Length == 0)
+                        !item.IsEndedRestore && !state.Active) continue;
+                    foreach (var device in state.Devices)
+                    {
+                        var action = ClassroomQuickControlDesiredState.ResolveCatchUpAction(device);
+                        if (action is null || item.IsEndedRestore && action != ClassroomQuickControlAction.Release ||
+                            !ClassroomQuickControlDesiredState.NeedsCatchUp(device) ||
+                            device.DesiredRevision < 1 || device.TaskId is null ||
+                            !_stateStore.IsCurrentTask(item.Context.SessionId, device.TargetId,
+                                device.DesiredRevision, device.TaskId.Value))
+                            continue;
+                        candidates.Add((item, device.TargetId, action.Value, device.DesiredRevision,
+                            device.TaskId.Value));
+                    }
+                }
+                if (candidates.Count == 0)
                 {
                     RemoveCompletedEndedRestoreContexts();
                     return;
@@ -1618,7 +1892,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
                 var nowUtc = DateTimeOffset.UtcNow;
                 var work = candidates.Where(item => IsCatchUpDue(item.Context.Context.SessionId,
-                    item.TargetId, nowUtc)).ToArray();
+                    item.TargetId, item.DesiredRevision, item.TaskId, nowUtc)).ToArray();
                 if (work.Length == 0)
                 {
                     await Task.Delay(WebsiteCatchUpInterval, _shutdown.Token).ConfigureAwait(false);
@@ -1637,39 +1911,46 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                         {
                             var context = item.Context.Context;
                             var current = TryReadDevice(context.SessionId, item.TargetId);
-                            if (current is null ||
-                                item.Action == ClassroomQuickControlAction.Release &&
-                                current.Phase != ClassroomQuickControlPhase.ReleasePending ||
-                                item.Action == ClassroomQuickControlAction.EnableWebsiteRestriction &&
-                                !NeedsWebsiteCatchUp(current))
+                            if (current is null || current.DesiredRevision != item.DesiredRevision ||
+                                current.TaskId != item.TaskId ||
+                                ClassroomQuickControlDesiredState.ResolveCatchUpAction(current) != item.Action ||
+                                !ClassroomQuickControlDesiredState.NeedsCatchUp(current))
                             {
-                                ClearCatchUpRetry(context.SessionId, item.TargetId);
+                                ClearCatchUpRetry(context.SessionId, item.TargetId,
+                                    item.DesiredRevision, item.TaskId);
                                 return;
                             }
                             if (!item.Context.IsEndedRestore && !IsCurrentTarget(context, item.TargetId)) return;
                             var binding = SelectTargets(context, [item.TargetId]).Single();
                             if (item.Action == ClassroomQuickControlAction.EnableWebsiteRestriction &&
-                                current.WebsitePhase is not (ClassroomQuickControlPhase.WaitingForAgent or
+                                (current.DesiredAction != item.Action ||
+                                 current.WebsitePhase is not (ClassroomQuickControlPhase.WaitingForAgent or
                                     ClassroomQuickControlPhase.WebsiteApplying or
                                     ClassroomQuickControlPhase.Switching) &&
-                                current.PendingWebsiteRevision is null)
+                                 current.PendingWebsiteRevision is null))
                             {
                                 await RefreshWebsiteStateAsync(context, binding, current, _shutdown.Token)
                                     .ConfigureAwait(false);
                                 var refreshed = TryReadDevice(context.SessionId, item.TargetId);
-                                if (refreshed is not null && !NeedsWebsiteCatchUp(refreshed))
-                                    ClearCatchUpRetry(context.SessionId, item.TargetId);
+                                if (refreshed is not null &&
+                                    !ClassroomQuickControlDesiredState.NeedsCatchUp(refreshed))
+                                    ClearCatchUpRetry(context.SessionId, item.TargetId,
+                                        item.DesiredRevision, item.TaskId);
                                 else
-                                    RecordCatchUpFailure(context.SessionId, item.TargetId);
+                                    RecordCatchUpFailure(context.SessionId, item.TargetId,
+                                        item.DesiredRevision, item.TaskId);
                                 return;
                             }
                             _ = await ExecuteTargetAsync(context, binding, item.Action, _shutdown.Token,
-                                item.Context.IsEndedRestore).ConfigureAwait(false);
-                            if (!NeedsWebsiteCatchUp(
+                                item.DesiredRevision, item.TaskId, item.Context.IsEndedRestore)
+                                .ConfigureAwait(false);
+                            if (!ClassroomQuickControlDesiredState.NeedsCatchUp(
                                     TryReadDevice(context.SessionId, item.TargetId) ?? current))
-                                ClearCatchUpRetry(context.SessionId, item.TargetId);
+                                ClearCatchUpRetry(context.SessionId, item.TargetId,
+                                    item.DesiredRevision, item.TaskId);
                             else
-                                RecordCatchUpFailure(context.SessionId, item.TargetId);
+                                RecordCatchUpFailure(context.SessionId, item.TargetId,
+                                    item.DesiredRevision, item.TaskId);
                         }
                         finally { targetGate.Release(); }
                     }
@@ -1680,7 +1961,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                         TaskCanceledException)
                     {
                         // The persisted waiting state remains visible; the next bounded pass will retry it.
-                        RecordCatchUpFailure(item.Context.Context.SessionId, item.TargetId);
+                        RecordCatchUpFailure(item.Context.Context.SessionId, item.TargetId,
+                            item.DesiredRevision, item.TaskId);
                     }
                     finally { limit.Release(); }
                 }).ToArray();
@@ -1711,21 +1993,28 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         }
     }
 
-    private bool IsCatchUpDue(Guid sessionId, Guid targetId, DateTimeOffset nowUtc) =>
-        !_catchUpRetries.TryGetValue((sessionId, targetId), out var retry) || retry.RetryAfterUtc <= nowUtc;
-
-    private void RecordCatchUpFailure(Guid sessionId, Guid targetId)
+    private bool IsCatchUpDue(Guid sessionId, Guid targetId, long desiredRevision, Guid taskId,
+        DateTimeOffset nowUtc)
     {
-        var key = (sessionId, targetId);
-        var failureCount = _catchUpRetries.TryGetValue(key, out var previous)
-            ? Math.Min(previous.FailureCount + 1, 7)
-            : 1;
-        var seconds = Math.Min(5 * (1 << Math.Max(0, failureCount - 1)), 300);
-        _catchUpRetries[key] = new CatchUpRetry(failureCount, DateTimeOffset.UtcNow.AddSeconds(seconds));
+        var current = TryReadDevice(sessionId, targetId);
+        return current is not null && current.DesiredRevision == desiredRevision && current.TaskId == taskId &&
+               _stateStore.IsCurrentTask(sessionId, targetId, desiredRevision, taskId) &&
+               (current.RetryAfterUtc is null || current.RetryAfterUtc <= nowUtc);
     }
 
-    private void ClearCatchUpRetry(Guid sessionId, Guid targetId) =>
-        _catchUpRetries.TryRemove((sessionId, targetId), out _);
+    private void RecordCatchUpFailure(Guid sessionId, Guid targetId, long desiredRevision, Guid taskId)
+    {
+        try { _ = _stateStore.UpdateRetry(sessionId, targetId, desiredRevision, taskId); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                         InvalidDataException or InvalidOperationException) { }
+    }
+
+    private void ClearCatchUpRetry(Guid sessionId, Guid targetId, long desiredRevision, Guid taskId)
+    {
+        try { _ = _stateStore.ClearRetry(sessionId, targetId, desiredRevision, taskId); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                         InvalidDataException or InvalidOperationException) { }
+    }
 
     private void RemoveCompletedEndedRestoreContexts()
     {
@@ -1734,7 +2023,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             {
                 var state = _stateStore.Read(sessionId);
                 if (state is null || !state.Devices.Any(device =>
-                        device.Phase == ClassroomQuickControlPhase.ReleasePending))
+                        device.DesiredAction == ClassroomQuickControlAction.Release &&
+                        (HasWebsiteOwnership(device) || HasInputOwnership(device)) &&
+                        device.Phase != ClassroomQuickControlPhase.Conflict))
                     _endedRestoreContexts.Remove(sessionId);
             }
     }
@@ -1838,49 +2129,57 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         if (_shutdown.IsCancellationRequested) return;
         var binding = SelectTargets(context, [targetId]).Single();
         var targetGate = _targetGates.GetOrAdd(targetId, static _ => new SemaphoreSlim(1, 1));
+        ClassroomQuickControlDeviceState? renewalState = null;
         await targetGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ThrowIfContextChanged(context, targetId);
             var previous = ReadDevice(context.SessionId, targetId);
+            renewalState = previous;
             if (!HasInputOwnership(previous) || previous.InputLeaseId != leaseId ||
                 previous.Phase != ClassroomQuickControlPhase.InputLockedVerified)
             {
                 RemoveRenewableLease(targetId, leaseId);
                 return;
             }
-            if (_stateStore.Read(context.SessionId)?.ControlExpiresUtc is { } controlExpiry &&
+            var sessionState = _stateStore.Read(context.SessionId);
+            if (sessionState is { Active: true, ClosedUtc: null, ControlExpiresUtc: { } controlExpiry } &&
                 controlExpiry <= DateTimeOffset.UtcNow)
             {
+                // The session deadline loop owns the single class-wide transition. Creating a
+                // per-device Release here races that transition and can mint a second task/revision.
                 RemoveRenewableLease(targetId, leaseId);
-                _ = await ExecuteTargetAsync(context, binding, ClassroomQuickControlAction.Release,
-                    CancellationToken.None).ConfigureAwait(false);
+                EnsureControlExpiryLoop();
                 return;
             }
             using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
+            if (!IsCurrentRenewalState(context.SessionId, targetId, renewalState)) return;
             var result = await StudentInputGuardTransport.ExecuteAsync(binding.Target, context.CampusId,
                 signingKey.PrivateKey, context.Session.Room.RoomId, StudentInputGuardAction.Renew, leaseId,
                 cancellationToken).ConfigureAwait(false);
             if (result.Succeeded && result.Receipt?.Outcome == StudentInputGuardOutcome.Succeeded)
             {
+                if (!IsCurrentRenewalState(context.SessionId, targetId, renewalState)) return;
                 var readback = await StudentInputGuardTransport.ReadStatusAsync(binding.Target,
                     context.CampusId, signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
                 if (readback.Succeeded && readback.Status is { Supported: true,
                         Phase: StudentInputGuardPhase.Locked } status && status.LeaseId == leaseId)
                 {
-                    SaveDevice(context, previous with { Mode = GetMode(previous.WebsiteRevision,
-                            previous.PendingWebsiteRevision, previous.InputLeaseId),
+                    if (!IsCurrentRenewalState(context.SessionId, targetId, renewalState)) return;
+                    SaveDevice(context, renewalState with { Mode = GetMode(renewalState.WebsiteRevision,
+                            renewalState.PendingWebsiteRevision, renewalState.InputLeaseId),
                         Phase = ClassroomQuickControlPhase.InputLockedVerified,
                         ExpiresUtc = status.LeaseExpiresUtc, InputExpiresUtc = status.LeaseExpiresUtc,
-                        UpdatedUtc = status.CollectedUtc,
+                        UpdatedUtc = DateTimeOffset.UtcNow,
                         Detail = "续租已收到签名回执并通过状态读回。" });
                     return;
                 }
                 result = result with { Succeeded = false,
                     Detail = "续租回执后状态读回未匹配原租约；租约到期后会自动释放。" };
             }
+            if (!IsCurrentRenewalState(context.SessionId, targetId, renewalState)) return;
             RemoveRenewableLease(targetId, leaseId);
-            SaveDevice(context, previous with { Phase = ClassroomQuickControlPhase.Unknown,
+            SaveDevice(context, renewalState with { Phase = ClassroomQuickControlPhase.Unknown,
                 UpdatedUtc = DateTimeOffset.UtcNow,
                 Detail = "InputGuard 续租未确认；已停止该设备的自动续租，原短租约到期后会自动释放。" +
                          " " + result.Detail });
@@ -1891,15 +2190,35 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                                           CryptographicException or PlatformNotSupportedException or
                                           ArgumentException or System.Security.SecurityException)
         {
+            if (!IsCurrentRenewalState(context.SessionId, targetId, renewalState)) return;
             RemoveRenewableLease(targetId, leaseId);
-            var previous = TryReadDevice(context.SessionId, targetId);
-            if (previous is not null)
-                SaveDevice(context, previous with { Phase = ClassroomQuickControlPhase.Unknown,
+            if (renewalState is not null)
+                SaveDevice(context, renewalState with { Phase = ClassroomQuickControlPhase.Unknown,
                     UpdatedUtc = DateTimeOffset.UtcNow,
                     Detail = "InputGuard 续租未确认；已停止该设备的自动续租，原短租约到期后会自动释放。" +
                              " " + Truncate(exception.Message, 300) });
         }
         finally { targetGate.Release(); }
+    }
+
+    private bool IsCurrentRenewalState(Guid sessionId, Guid targetId,
+        ClassroomQuickControlDeviceState? expected)
+    {
+        if (expected is null || _stateStore.Read(sessionId) is not
+            { Active: true, ClosedUtc: null }) return false;
+        var current = TryReadDevice(sessionId, targetId);
+        return current is not null && current.DesiredRevision == expected.DesiredRevision &&
+               current.TaskId == expected.TaskId && current.DesiredAction == expected.DesiredAction &&
+               current.InputLeaseId == expected.InputLeaseId &&
+               expected.TaskId is { } taskId && expected.DesiredRevision > 0 &&
+               _stateStore.IsCurrentTask(sessionId, targetId, expected.DesiredRevision, taskId);
+    }
+
+    private bool IsControlDeadlineStale(Guid sessionId, DateTimeOffset expected)
+    {
+        var session = _stateStore.Read(sessionId);
+        return session is null || !session.Active || session.ClosedUtc is not null ||
+               session.ControlExpiresUtc != expected;
     }
 
     private void ThrowIfDisposed()

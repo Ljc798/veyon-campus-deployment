@@ -56,11 +56,15 @@ public static class ClassroomRestoreLedger
             !string.Equals(room.DisplayName, session.Room.RoomName, StringComparison.Ordinal) ||
             !string.Equals(room.Prefix, session.Room.ComputerPrefix, StringComparison.Ordinal) ||
             room.StartNumber != session.Room.StartNumber || room.ComputerCount != session.Room.ComputerCount ||
-            !room.GetComputerNumbers().SequenceEqual(snapshotNumbers))
+            !room.GetComputerNumbers().SequenceEqual(snapshotNumbers) ||
+            !(room.HostOverrides ?? []).SequenceEqual(session.Room.HostOverrides ?? [],
+                StringComparer.OrdinalIgnoreCase))
             return Array.Empty<ClassroomRestoreTarget>();
 
         var matchingLocations = locations.Where(item =>
-            string.Equals(item.Name, session.Room.RoomName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            item.CampusProfileId is not null || item.RoomId is not null
+                ? item.CampusProfileId == campus.ProfileId && item.RoomId == room.RoomId
+                : string.Equals(item.Name, session.Room.RoomName, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (matchingLocations.Length != 1) return Array.Empty<ClassroomRestoreTarget>();
 
         var locationTargets = matchingLocations[0].Targets.ToArray();

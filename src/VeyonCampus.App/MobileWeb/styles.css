@@ -355,6 +355,7 @@ button:disabled { opacity: .48; cursor: not-allowed; }
 .student-detail-heading h2 { overflow-wrap: anywhere; font-size: 18px; }
 .student-detail-heading .eyebrow { margin-bottom: 4px; }
 .welcome-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 2px 14px; }
+.welcome-connection { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex: 0 0 auto; }
 .classroom-mode-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .classroom-countdown {
   display: flex;
@@ -581,6 +582,7 @@ footer { color: var(--muted); text-align: center; font-size: 11px; padding: 0 18
   padding-left: 12px;
 }
 .welcome-row { min-height: 56px; margin-bottom: 16px; }
+.welcome-connection .pill { white-space: nowrap; }
 .welcome-row .eyebrow,
 .policy-page-heading .eyebrow,
 .monitor-heading .eyebrow { margin-bottom: 4px; }
@@ -719,6 +721,8 @@ main { width: min(100% - 28px, 680px); margin: 20px auto 24px; }
 h2 { font-size: 19px; line-height: 1.4; font-weight: 750; }
 h3 { font-size: 15px; }
 .welcome-row { margin: 0 3px 18px; }
+.welcome-connection { gap: 5px; }
+.welcome-connection .compact-button { padding-inline: 9px; }
 .welcome-row .eyebrow { font-size: 11px; color: var(--muted); }
 .welcome-row h2 { font-size: 23px; letter-spacing: -.025em; }
 .fine-print { font-size: 12px; line-height: 1.65; }

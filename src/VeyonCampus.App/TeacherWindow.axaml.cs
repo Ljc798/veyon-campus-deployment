@@ -23,6 +23,9 @@ namespace VeyonCampus.App;
 
 public partial class TeacherWindow : Window
 {
+    private static bool SupportsTeacherClassroomPolicyState =>
+        OperatingSystem.IsWindows() || OperatingSystem.IsMacOS();
+
     private readonly TeacherViewModel _model = new(roomSelectionStore: new TeacherRoomSelectionStore());
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly SemaphoreSlim _classroomModeGate = new(1, 1);
@@ -137,12 +140,15 @@ public partial class TeacherWindow : Window
                 await _model.RefreshActiveClassroomStatusAsync();
                 await SyncClassroomEventChannelAsync();
                 RefreshClassroomEvents(this, EventArgs.Empty);
-                if (OperatingSystem.IsWindows() && _model.HasActiveClassroomSession)
+                var expectedSessionId = _model.ActiveClassroomSessionId;
+                if (SupportsTeacherClassroomPolicyState && expectedSessionId is { } expectedSession)
                 {
                     try
                     {
-                        var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
-                        _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                        var snapshot = await Task.Run(() =>
+                            _mobileControl.ReadClassroomQuickControlSnapshot(expectedSession));
+                        if (_model.ActiveClassroomSessionId == expectedSession)
+                            _model.UpdateClassroomQuickControlSnapshot(snapshot);
                     }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                         InvalidDataException or InvalidOperationException or CryptographicException or
@@ -375,14 +381,16 @@ public partial class TeacherWindow : Window
             SyncClassroomVisualTimers();
             return;
         }
-        if (!OperatingSystem.IsWindows() || !_model.HasActiveClassroomSession) return;
+        if (!SupportsTeacherClassroomPolicyState ||
+            _model.ActiveClassroomSessionId is not { } expectedSession) return;
         _model.RefreshClassroomQuickControlDeadlineState();
         if (_isRefreshingQuickControlSnapshot) return;
         _isRefreshingQuickControlSnapshot = true;
         try
         {
-            var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
-            if (_model.HasActiveClassroomSession)
+            var snapshot = await Task.Run(() =>
+                _mobileControl.ReadClassroomQuickControlSnapshot(expectedSession));
+            if (_model.ActiveClassroomSessionId == expectedSession)
             {
                 _model.UpdateClassroomQuickControlSnapshot(snapshot);
             }
@@ -465,9 +473,10 @@ public partial class TeacherWindow : Window
             }
 
             var context = _mobileControl.ReadClassroomSessionContext() ?? _model.GetActiveClassroomEventContext();
-            if (context is not null && OperatingSystem.IsWindows())
+            if (context is not null && SupportsTeacherClassroomPolicyState)
             {
-                var currentControls = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                var currentControls = await Task.Run(() =>
+                    _mobileControl.ReadClassroomQuickControlSnapshot(context.SessionId));
                 if (currentControls.Devices.Any(item => item.Mode != DeviceControlMode.None ||
                                                         item.Phase == ClassroomQuickControlPhase.ReleasePending))
                 {
@@ -475,7 +484,8 @@ public partial class TeacherWindow : Window
                     try
                     {
                         _ = await _mobileControl.ReleaseClassroomQuickControlsAsync();
-                        var released = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
+                        var released = await Task.Run(() =>
+                            _mobileControl.ReadClassroomQuickControlSnapshot(context.SessionId));
                         if (released.Devices.Any(item => item.Mode != DeviceControlMode.None ||
                                                          item.Phase == ClassroomQuickControlPhase.ReleasePending))
                             throw new InvalidOperationException("原课堂范围仍有快捷管控未解除；已保留旧范围，可在结果完成后自动重试。");
@@ -548,10 +558,16 @@ public partial class TeacherWindow : Window
         if (startsSessionForPolicy && (!startsPolicy || !TeacherClassroomQuickControlBuildFeatures.PilotEnabled))
             return;
 
+        Guid? expectedSessionId = _model.ActiveClassroomSessionId;
         ClassroomQuickControlSnapshot? snapshot = null;
         if (!startsSessionForPolicy)
         {
-            try { snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot); }
+            if (expectedSessionId is null) return;
+            try
+            {
+                snapshot = await Task.Run(() =>
+                    _mobileControl.ReadClassroomQuickControlSnapshot(expectedSessionId.Value));
+            }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               InvalidDataException or InvalidOperationException or CryptographicException or
                                               PlatformNotSupportedException)
@@ -559,6 +575,8 @@ public partial class TeacherWindow : Window
                 _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
                 return;
             }
+            if (_model.ActiveClassroomSessionId != expectedSessionId || snapshot.SessionId != expectedSessionId)
+                return;
         }
         if (action is not (ClassroomQuickControlAction.Release or
             ClassroomQuickControlAction.ClearWebsiteRestrictions or ClassroomQuickControlAction.UnlockInput) &&
@@ -612,14 +630,19 @@ public partial class TeacherWindow : Window
                 await _model.EnsureClassroomSessionAsync();
                 if (!_model.HasActiveClassroomSession) return;
                 await SyncClassroomEventChannelAsync();
-                if (!_model.HasActiveClassroomSession) return;
+                if (_model.ActiveClassroomSessionId is not { } activeSession) return;
+                expectedSessionId = activeSession;
             }
 
+            if (expectedSessionId is not { } targetSessionId ||
+                _model.ActiveClassroomSessionId != targetSessionId) return;
             var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
-                action, controlExpiresUtc));
+                targetSessionId, action, controlExpiresUtc));
             _lastClassroomQuickControlSummary = FormatClassroomQuickControlResult(result);
-            var refreshedSnapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
-            _model.UpdateClassroomQuickControlSnapshot(refreshedSnapshot);
+            var refreshedSnapshot = await Task.Run(() =>
+                _mobileControl.ReadClassroomQuickControlSnapshot(result.SessionId));
+            if (_model.ActiveClassroomSessionId == result.SessionId)
+                _model.UpdateClassroomQuickControlSnapshot(refreshedSnapshot);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
@@ -657,10 +680,11 @@ public partial class TeacherWindow : Window
         {
             if (_model.ActiveClassroomSessionId is { } sessionId)
             {
-                if (OperatingSystem.IsWindows())
+                if (SupportsTeacherClassroomPolicyState)
                 {
-                    var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
-                    _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                    var snapshot = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
+                    if (_model.ActiveClassroomSessionId == sessionId)
+                        _model.UpdateClassroomQuickControlSnapshot(snapshot);
                     if (!IsQuickControlLifecycleIdle(snapshot, sessionId, _model.ActiveClassroomTargetCount))
                     {
                         _model.SetClassroomQuickControlSessionNotice(
@@ -781,13 +805,16 @@ public partial class TeacherWindow : Window
             {
                 _model.SetClassroomQuickControlSessionNotice(_lastClassroomQuickControlSummary.Length > 0
                     ? _lastClassroomQuickControlSummary
-                    : "课堂范围尚未配置；未发送的网站策略不会自动应用。");
+                    : "");
             }
-            else if (OperatingSystem.IsWindows())
+            else if (SupportsTeacherClassroomPolicyState &&
+                     _model.ActiveClassroomSessionId == context.SessionId)
             {
                 _lastClassroomQuickControlSummary = "";
-                var snapshot = await Task.Run(_mobileControl.ReadClassroomQuickControlSnapshot);
-                _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                var snapshot = await Task.Run(() =>
+                    _mobileControl.ReadClassroomQuickControlSnapshot(context.SessionId));
+                if (_model.ActiveClassroomSessionId == context.SessionId)
+                    _model.UpdateClassroomQuickControlSnapshot(snapshot);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

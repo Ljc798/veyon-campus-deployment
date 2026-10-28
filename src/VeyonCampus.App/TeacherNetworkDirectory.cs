@@ -30,24 +30,49 @@ internal sealed class MacTeacherNetworkDirectory(
     public IReadOnlyList<VeyonNetworkLocation> ReadLocations() =>
         readCampusProfiles().SelectMany(campus => campus.Rooms
                 .Where(room => room.ComputerCount > 0)
-                .Select(room =>
-                {
-                    var computerNames = room.GetComputerNames();
-                    var targets = computerNames.Select((name, index) =>
-                    {
-                        var host = room.HostOverrides is { } hosts && index < hosts.Count
-                            ? hosts[index]
-                            : "";
-                        return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
-                    }).ToArray();
-                    var displayNames = targets.Select((target, index) => (Target: target, Name: computerNames[index]))
-                        .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
-                        .ToDictionary(group => group.Key, group => group.First().Name,
-                            StringComparer.OrdinalIgnoreCase);
-                    return new VeyonNetworkLocation(campus.DisplayName + " / " + room.DisplayName,
-                        Array.AsReadOnly(targets), displayNames);
-                }))
+                .Select(room => CreateLocation(campus, room)))
             .ToArray();
+
+    internal static VeyonNetworkLocation CreateLocation(TeacherCampusProfile campus, TeacherRoomProfile room)
+    {
+        var computerNames = room.GetComputerNames();
+        var targets = computerNames.Select((name, index) =>
+        {
+            var host = room.HostOverrides is { } hosts && index < hosts.Count
+                ? hosts[index]
+                : "";
+            return string.IsNullOrWhiteSpace(host) ? name : VeyonHostAddress.NormalizeOverride(host);
+        }).ToArray();
+        var displayNames = targets.Select((target, index) => (Target: target, Name: computerNames[index]))
+            .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First().Name, StringComparer.OrdinalIgnoreCase);
+        return new VeyonNetworkLocation(campus.DisplayName + " / " + room.DisplayName,
+            Array.AsReadOnly(targets), displayNames)
+        {
+            CampusProfileId = campus.ProfileId,
+            RoomId = room.RoomId
+        };
+    }
+
+    internal static bool HasSameIdentity(VeyonNetworkLocation location,
+        TeacherCampusProfile campus, TeacherRoomProfile room) =>
+        location.CampusProfileId == campus.ProfileId && location.RoomId == room.RoomId;
+
+    internal static bool MatchesCurrentRoom(VeyonNetworkLocation location,
+        TeacherCampusProfile campus, TeacherRoomProfile room)
+    {
+        if (!HasSameIdentity(location, campus, room)) return false;
+        try
+        {
+            var current = CreateLocation(campus, room);
+            return location.Targets.SequenceEqual(current.Targets, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or
+                                          InvalidOperationException or OverflowException)
+        {
+            return false;
+        }
+    }
 }
 
 internal sealed class UnsupportedTeacherNetworkDirectory : ITeacherNetworkDirectory

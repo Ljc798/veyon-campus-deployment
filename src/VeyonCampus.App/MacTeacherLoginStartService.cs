@@ -15,6 +15,37 @@ internal enum MacTeacherLoginStartState
 internal sealed record MacTeacherLoginStartSnapshot(MacTeacherLoginStartState State, string Message,
     bool IsPackagedApp);
 
+internal interface ITeacherLoginStartPreference
+{
+    bool IsPackagedApp { get; }
+    MacTeacherLoginStartSnapshot ReadStatus();
+    MacTeacherLoginStartSnapshot SetEnabled(bool enabled);
+}
+
+internal static class TeacherLoginStartPreferenceFactory
+{
+    public static ITeacherLoginStartPreference CreateForCurrentPlatform() => OperatingSystem.IsMacOS()
+        ? new MacTeacherLoginStartPreference()
+        : new UnsupportedTeacherLoginStartPreference();
+}
+
+internal sealed class MacTeacherLoginStartPreference : ITeacherLoginStartPreference
+{
+    public bool IsPackagedApp => MacTeacherLoginStartService.IsPackagedApp;
+    public MacTeacherLoginStartSnapshot ReadStatus() => MacTeacherLoginStartService.ReadStatus();
+    public MacTeacherLoginStartSnapshot SetEnabled(bool enabled) => MacTeacherLoginStartService.SetEnabled(enabled);
+}
+
+internal sealed class UnsupportedTeacherLoginStartPreference : ITeacherLoginStartPreference
+{
+    public bool IsPackagedApp => false;
+
+    public MacTeacherLoginStartSnapshot ReadStatus() => new(MacTeacherLoginStartState.Unavailable,
+        "登录启动设置仅支持 macOS 13 或更新版本。", IsPackagedApp: false);
+
+    public MacTeacherLoginStartSnapshot SetEnabled(bool enabled) => ReadStatus();
+}
+
 /// <summary>Controls whether the bundled TeacherConsole app opens for the current user at login.</summary>
 internal static class MacTeacherLoginStartService
 {

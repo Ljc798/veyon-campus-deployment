@@ -2,7 +2,6 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Runtime.Versioning;
-using Microsoft.Win32;
 
 namespace VeyonCampus.Core;
 
@@ -87,7 +86,8 @@ public sealed record StudentInputGuardStatusResponse(
     DateTimeOffset? LeaseExpiresUtc);
 
 public sealed record StudentInputGuardStatusDeliveryResult(string Target, bool Succeeded,
-    string Detail, StudentInputGuardStatusResponse? Status = null, bool NeedsReview = false);
+    string Detail, StudentInputGuardStatusResponse? Status = null, bool NeedsReview = false,
+    bool TransientUnavailable = false);
 
 public sealed record StudentInputGuardDeliveryResult(string Target, bool Succeeded, bool NeedsReview,
     StudentInputGuardOutcome? Outcome, StudentInputGuardReceipt? Receipt, string Detail);
@@ -398,19 +398,5 @@ internal sealed class StudentInputGuardAgentState
             command.CampusId, command.RoomId, _deviceFingerprint, AgentRunId, command.CommandId,
             command.Nonce, previousEpoch, _controlEpoch, command.LeaseId, command.Action, outcome,
             phase, completedUtc.ToUniversalTime(), detail);
-    }
-}
-
-internal static class StudentInputGuardMachineIdentity
-{
-    [SupportedOSPlatform("windows")]
-    public static string ReadLocalMachineId()
-    {
-        using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography", writable: false)
-                        ?? throw new InvalidDataException("Windows 本机身份注册表项不可读。");
-        var value = key.GetValue("MachineGuid") as string;
-        if (!Guid.TryParse(value, out var machineId) || machineId == Guid.Empty)
-            throw new InvalidDataException("Windows MachineGuid 缺失或格式无效；拒绝 InputGuard 命令。");
-        return machineId.ToString("N").ToUpperInvariant();
     }
 }

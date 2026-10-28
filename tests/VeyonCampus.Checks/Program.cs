@@ -8,7 +8,6 @@ using VeyonCampus.Checks;
 
 if (args is ["--mobile-channel-state-fixtures"])
 {
-    if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows classroom service fixture");
     var waiting = new ClassroomQuickControlDeviceState(Guid.NewGuid(), DeviceControlMode.None,
         ClassroomQuickControlPhase.WaitingForAgent, null, null, null, null, DateTimeOffset.UtcNow, "")
         { WebsitePhase = ClassroomQuickControlPhase.WaitingForAgent };
@@ -24,6 +23,20 @@ if (args is ["--mobile-channel-state-fixtures"])
     if (TeacherClassroomQuickControlService.WebsiteState(applied with { WebsiteExpiresUtc = DateTimeOffset.UtcNow.AddSeconds(-1) }) != "expired")
         throw new InvalidDataException("Expired website intent stayed applied.");
     Console.WriteLine("PASS independent website queue, input lock, browser confirmation and expiration states");
+    return;
+}
+
+if (args is ["--native-teacher-classroom-fixtures"])
+{
+    await TeacherNativeClassroomChecks.RunAsync();
+    Console.WriteLine("PASS native teacher identity, scoped directory restoration and restart recovery");
+    return;
+}
+
+if (args is ["--classroom-quick-control-revision-fixtures"])
+{
+    ClassroomQuickControlRevisionChecks.Run();
+    Console.WriteLine("PASS classroom quick-control desired state, Revision fencing, restart backoff and change log");
     return;
 }
 
