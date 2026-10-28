@@ -95,8 +95,7 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         Raise(nameof(InputControlStatus));
         Raise(nameof(InputControlStatusBrush));
         Raise(nameof(InputControlStatusBackground));
-        var retryPending = snapshot.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow;
-        Summary = retryPending ? "操作已保存，等待下次设备同步" : snapshot.Phase switch
+        Summary = snapshot.Phase switch
         {
             ClassroomQuickControlPhase.WaitingForAgent => "尚未收到学生端回执",
             ClassroomQuickControlPhase.WebsiteReported => "名单已写入，浏览器效果待核对",
@@ -112,9 +111,7 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
             ClassroomQuickControlPhase.Unsupported => "当前设备暂不支持此操作",
             _ => "管控已解除"
         };
-        (StatusText, StatusBrush, StatusBackground) = retryPending
-            ? Status("待同步", WarningBrush, WarningSubtleBrush)
-            : snapshot.Phase switch
+        (StatusText, StatusBrush, StatusBackground) = snapshot.Phase switch
         {
             ClassroomQuickControlPhase.NotStarted => Status("尚未操作", NeutralBrush, NeutralSubtleBrush),
             ClassroomQuickControlPhase.WaitingForAgent => Status("等待上线", WarningBrush, WarningSubtleBrush),
@@ -792,11 +789,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 snapshot.Devices.Count == 0)
                 return false;
 
-            return snapshot.Devices.All(device => device.Phase is
-                ClassroomQuickControlPhase.WebsiteApplied or
-                ClassroomQuickControlPhase.WebsiteReported or
-                ClassroomQuickControlPhase.InputLockedVerified or
-                ClassroomQuickControlPhase.WaitingForAgent);
+            // The persisted deadline keeps advancing while devices reconnect or need review.
+            return true;
         }
     }
     public bool CanEditClassroomQuickControlDeadline => !_isClassroomQuickControlBusy &&
@@ -809,7 +803,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (_classroomQuickControlSnapshot?.ControlExpiresUtc is { } deadline)
                 return deadline <= DateTimeOffset.UtcNow
                     ? "已到截止时间，正在恢复。"
-                    : "尚有设备未确认，倒计时未开始。";
+                    : "已恢复原截止时间，设备状态仍待核对。";
             return TryGetClassroomQuickControlDeadlineUtc(DateTimeOffset.UtcNow, out _, out _)
                 ? ""
                 : "请选择今天内的未来时间。";
@@ -912,7 +906,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (draft is null) return "尚未保存网站规则";
                 var blocked = draft.BlockedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
                 var allowed = draft.AllowedDomains.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Length;
-                var mode = WebsitePolicyModeStore.Read(CampusId) ??
+                var mode = WebsitePolicyModeStore.Read(CampusId, _websitePolicyDraftDirectory) ??
                     WebsitePolicyModeSelection.Infer(draft.BlockedDomains, draft.AllowedDomains);
                 return mode switch
                 {
@@ -935,7 +929,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string ClassroomQuickControlProgressSummary => _classroomQuickControlSnapshot is not { } snapshot
         ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice :
             HasActiveClassroomSession ? "尚未启用快捷管控。" : "确认教室范围后可查看逐台进度。"
-        : GetClassroomQuickControlProgressSummary(snapshot);
+        : GetClassroomQuickControlProgressSummary(snapshot) +
+          (_classroomQuickControlSessionNotice.Length > 0 ? " · " + _classroomQuickControlSessionNotice : "");
     public string ClassroomQuickControlBadgeText => _classroomQuickControlSnapshot is not { } snapshot
         ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "状态需核对" : "等待教室配置"
         : GetClassroomQuickControlBadge(snapshot);
@@ -1035,8 +1030,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanStartClassroomInputLock));
     }
 
-    public void SetClassroomQuickControlSessionNotice(string message)
+    public void SetClassroomQuickControlSessionNotice(string message, bool clearSnapshot = false)
     {
+        if (!clearSnapshot && _classroomQuickControlSnapshot is { } snapshot &&
+            snapshot.SessionId == ActiveClassroomSessionId)
+        {
+            _classroomQuickControlSessionNotice = message ?? "";
+            Changed(nameof(ClassroomQuickControlProgressSummary));
+            return;
+        }
         if (_classroomQuickControlSnapshot is null && _classroomQuickControlSessionNotice == message) return;
         _classroomQuickControlSnapshot = null;
         _classroomQuickControlSessionNotice = message ?? "";
@@ -1071,8 +1073,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private static string GetClassroomQuickControlSelectionSummary(ClassroomQuickControlSnapshot snapshot)
     {
-        var active = snapshot.Devices.Where(item => item.Phase != ClassroomQuickControlPhase.WaitingForAgent &&
-                                                     item.Mode != DeviceControlMode.None)
+        var active = snapshot.Devices.Where(item => item.Mode != DeviceControlMode.None)
             .Select(item => item.Mode).Distinct().ToArray();
         var selection = active.Length switch
         {
@@ -1087,12 +1088,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private static string GetClassroomQuickControlProgressSummary(ClassroomQuickControlSnapshot snapshot)
     {
-        var now = DateTimeOffset.UtcNow;
-        var retryPending = snapshot.Devices.Count(item =>
-            item.RetryAfterUtc is { } retryAfter && retryAfter > now);
+        var retryPending = snapshot.Devices.Count(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent);
         var devices = snapshot.Devices.Where(item =>
-            item.Phase != ClassroomQuickControlPhase.WaitingForAgent &&
-            (item.RetryAfterUtc is not { } retryAfter || retryAfter <= now)).ToArray();
+            item.Phase != ClassroomQuickControlPhase.WaitingForAgent).ToArray();
         var receipts = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplied or
             ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.InputLockedVerified);
         var sending = devices.Count(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
@@ -1115,8 +1113,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unknown or
                 ClassroomQuickControlPhase.Unsupported))
             return "有设备需核对";
-        if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent ||
-                item.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow))
+        if (snapshot.Devices.Any(item => item.Phase == ClassroomQuickControlPhase.WaitingForAgent))
             return "待设备同步";
         if (snapshot.Devices.Any(item => item.Phase is ClassroomQuickControlPhase.WebsiteApplying or
                 ClassroomQuickControlPhase.Switching or ClassroomQuickControlPhase.InputLocking or
@@ -2042,7 +2039,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             if (!value) return;
             SelectPage("classroom");
-            if (string.IsNullOrWhiteSpace(WebsiteTargets)) _ = ReadWebsiteLocationsAsync();
         }
     }
     public bool IsClassroomExperiencePage
@@ -3115,7 +3111,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 { ClassroomDeliveryStatus = "课堂地点已更新；签名校区上下文需要检查。" + exception.Message; }
             }
-            SetClassroomQuickControlSessionNotice("课堂范围已更新，正在读取新范围的管控状态。");
+            SetClassroomQuickControlSessionNotice("课堂范围已更新，正在读取新范围的管控状态。", clearSnapshot: true);
             RefreshClassroomSessionProperties();
             ClassroomDeliveryStatus = "课堂控制范围已自动更新；正在通知新范围内的学生电脑。";
             await PublishClassroomStatusAsync(updated, updated);
@@ -4771,6 +4767,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 Changed(nameof(CanSaveRoomProfile));
                 Changed(nameof(CanEditRoomProfileNumbering));
                 Changed(nameof(HasFixedRoomComputerNumbers));
+                SyncStudentRosterFromSelectedRoom();
             }
             Changed(nameof(HasRoomProfiles));
             Changed(nameof(HasNoRoomProfiles));
@@ -5317,9 +5314,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomComputerHosts = string.Join(Environment.NewLine, value?.HostOverrides ?? []);
             CampusDirectoryError = "";
             LoadSelectedSeatGrid();
+            SyncStudentRosterFromSelectedRoom();
             Changed(nameof(SeatGridContext));
             SaveRecentRoomSelection(value);
         }
+    }
+
+    private void SyncStudentRosterFromSelectedRoom()
+    {
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room)
+        {
+            WebsiteTargets = "";
+            return;
+        }
+        var location = MacTeacherNetworkDirectory.CreateLocation(campus, room);
+        WebsiteTargets = string.Join(Environment.NewLine, location.Targets);
     }
     public bool HasSelectedRoomProfile => SelectedRoomProfile is not null;
 
@@ -7117,7 +7126,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             string? modeLoadIssue = null;
             try
             {
-                selectedMode = WebsitePolicyModeStore.Read(campusId.Trim()) ?? selectedMode;
+                selectedMode = WebsitePolicyModeStore.Read(campusId.Trim(), _websitePolicyDraftDirectory) ?? selectedMode;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                              InvalidDataException or System.Text.Json.JsonException or ArgumentException)
@@ -7220,8 +7229,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             // Bump the existing list draft timestamp too, so a phone editing an older snapshot
             // cannot overwrite a teacher's newer mode selection.
-            WebsitePolicyListDraftStore.Save(campusId, WebsiteBlockDomains, WebsiteAllowDomains);
-            WebsitePolicyModeStore.Save(campusId, SelectedWebsiteMode);
+            WebsitePolicyListDraftStore.Save(campusId, WebsiteBlockDomains, WebsiteAllowDomains,
+                SelectedWebsiteMode, _websitePolicyDraftDirectory);
+            WebsitePolicyModeStore.Save(campusId, SelectedWebsiteMode, _websitePolicyDraftDirectory);
             WebsitePolicyDraftStatus = "当前访问方式已保存在教师电脑；手机刷新后会同步读取。";
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -8404,6 +8414,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
         Changed(nameof(ClassroomQuickControlPresetSummary));
+        if (page is "classroom" or "updates" && string.IsNullOrWhiteSpace(WebsiteTargets))
+            _ = ReadClassroomLocationsAsync();
     }
 
     public void GenerateRoomPreview()

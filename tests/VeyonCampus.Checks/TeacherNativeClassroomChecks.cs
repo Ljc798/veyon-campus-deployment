@@ -135,7 +135,7 @@ internal static class TeacherNativeClassroomChecks
                     await unavailableDirectory.Called.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
                     var pending = state.Read(active.SessionId)!;
                     var target = pending.Devices.Single();
-                    Expect(!pending.Active && target.DesiredRevision == 4 && target.TaskId != oldTaskId &&
+                    Expect(!pending.Active && target.DesiredRevision == operation.DesiredRevision + 1 && target.TaskId != oldTaskId &&
                         target.DesiredAction == ClassroomQuickControlAction.Release &&
                         target.Phase == ClassroomQuickControlPhase.ReleasePending &&
                         target.WebsiteRevision == 71 && target.PendingWebsiteRevision == 72,
@@ -193,6 +193,7 @@ internal static class TeacherNativeClassroomChecks
                     "Restart recovery may pause the saved context without marking the class ended.");
             }
 
+            var pausedRevision = state.Read(session.SessionId)!.Devices.Single().DesiredRevision;
             history.EndSession(session.SessionId, now.AddMinutes(1));
             var unavailableDirectory = new UnavailableDirectory();
             await using (var restarted = new TeacherClassroomQuickControlService(() => "demo", root,
@@ -201,7 +202,7 @@ internal static class TeacherNativeClassroomChecks
                 await unavailableDirectory.Called.Task.WaitAsync(TimeSpan.FromSeconds(5)).ConfigureAwait(false);
                 var ended = state.Read(session.SessionId)!;
                 var target = ended.Devices.Single();
-                Expect(!ended.Active && ended.ClosedUtc is not null && target.DesiredRevision == 7 &&
+                Expect(!ended.Active && ended.ClosedUtc is not null && target.DesiredRevision == pausedRevision + 1 &&
                     target.TaskId != oldTaskId && target.DesiredAction == ClassroomQuickControlAction.Release &&
                     target.Phase == ClassroomQuickControlPhase.ReleasePending,
                     "An ended class must create one durable release after the teacher was offline.");

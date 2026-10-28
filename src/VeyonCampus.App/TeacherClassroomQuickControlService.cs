@@ -228,18 +228,33 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
     {
         var context = CaptureContext(expectedSessionId);
         var state = _stateStore.Read(context.SessionId);
+        return BuildSnapshot(context, state);
+    }
+
+    internal ClassroomQuickControlSnapshot ReadSavedSnapshot(TeacherClassroomEventContext context)
+    {
+        ThrowIfDisposed();
+        ValidateContext(context);
+        var active = _classroomSessionStore.ReadActive();
+        var state = _stateStore.Read(context.SessionId);
+        if (active?.SessionId != context.SessionId || active.Room.RoomId != context.Session.Room.RoomId ||
+            !string.Equals(_activeCampusId().Trim(), context.CampusId, StringComparison.Ordinal) ||
+            state is not null && (state.ClosedUtc is not null || state.CampusId != context.CampusId ||
+                state.RoomId != context.Session.Room.RoomId ||
+                !state.Devices.Select(item => item.TargetId).ToHashSet().SetEquals(context.TargetIds.Values)))
+            throw new InvalidOperationException("本机保存的管控记录与当前课堂范围不一致；原记录已保留，请核对课堂范围。");
+        return BuildSnapshot(context, state);
+    }
+
+    private ClassroomQuickControlSnapshot BuildSnapshot(TeacherClassroomEventContext context,
+        ClassroomQuickControlSessionState? state)
+    {
         var byId = state?.Devices.ToDictionary(item => item.TargetId) ?? [];
         var displayNames = context.TargetIds.ToDictionary(pair => pair.Value,
             pair => context.TargetDisplayNames.GetValueOrDefault(pair.Key, "未填写姓名"));
         var targets = context.TargetIds.Values.Distinct().Select(targetId =>
         {
             var device = byId.GetValueOrDefault(targetId) ?? NotStartedState(targetId);
-            var retryPending = device.RetryAfterUtc is { } retryAfter && retryAfter > DateTimeOffset.UtcNow;
-            var websiteSyncPending = retryPending && device.DesiredAction is
-                ClassroomQuickControlAction.EnableWebsiteRestriction or ClassroomQuickControlAction.Release or
-                ClassroomQuickControlAction.ClearWebsiteRestrictions;
-            var inputSyncPending = retryPending && device.DesiredAction is
-                ClassroomQuickControlAction.Release or ClassroomQuickControlAction.UnlockInput;
             return new ClassroomQuickControlTargetSnapshot(targetId,
                 displayNames.GetValueOrDefault(targetId, "学生电脑"), device.Mode, device.Phase,
                 device.UpdatedUtc, device.WebsiteRevision ?? device.PendingWebsiteRevision,
@@ -247,12 +262,12 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             {
                 DesiredAction = device.DesiredAction,
                 RetryAfterUtc = device.RetryAfterUtc,
-                WebsiteState = websiteSyncPending ? "waitingForAgent" : !HasWebsiteOwnership(device) &&
+                WebsiteState = !HasWebsiteOwnership(device) &&
                     (device.WebsitePhase is null or ClassroomQuickControlPhase.NoneVerified) &&
                     device.Phase != ClassroomQuickControlPhase.WaitingForAgent
                     ? _websiteObservations.GetValueOrDefault((context.SessionId, targetId), "unknown")
                     : WebsiteState(device),
-                InputState = inputSyncPending ? "waitingForAgent" : device.InputLeaseId is null ? "notEnabled" :
+                InputState = device.InputLeaseId is null ? "notEnabled" :
                     device.Phase == ClassroomQuickControlPhase.WaitingForAgent ? "waitingForAgent" :
                     device.InputExpiresUtc <= DateTimeOffset.UtcNow ? "needsReview" :
                     device.Phase == ClassroomQuickControlPhase.InputLockedVerified ? "locked" : "needsReview"

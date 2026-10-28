@@ -1,6 +1,7 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
+             xmlns:core="using:VeyonCampus.Core"
              xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI"
              xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
              xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
@@ -37,6 +38,16 @@
                   Click="RequestReadStudentDeviceHealth" IsEnabled="{Binding CanReadDeviceHealth}"
                   ToolTip.Tip="刷新学生电脑状态；需要处理的问题会显示在下方。" />
         </Grid>
+        <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+        <ComboBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
+                  IsVisible="{Binding HasMultipleRoomProfiles}" IsEnabled="{Binding !IsExecuting}"
+                  PlaceholderText="选择学生所在教室" MinWidth="180">
+          <ComboBox.ItemTemplate>
+            <DataTemplate x:DataType="core:TeacherRoomProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+          </ComboBox.ItemTemplate>
+        </ComboBox>
+        <TextBlock Text="{Binding ClassroomDirectoryError}" Classes="supporting-copy" TextWrapping="Wrap"
+                   IsVisible="{Binding HasClassroomDirectoryError}" />
         <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
           <Border Background="{DynamicResource Teacher.Color.SuccessSubtle}" CornerRadius="10" Padding="12">
             <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">

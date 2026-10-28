@@ -1,11 +1,26 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
+             xmlns:core="using:VeyonCampus.Core"
              xmlns:suki="clr-namespace:SukiUI.Controls;assembly=SukiUI"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherPolicyView"
              x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">
         <StackPanel IsVisible="{Binding IsClassroomPage}" Spacing="20">
+          <StackPanel Spacing="8">
+            <TextBlock Text="{Binding ClassroomRoomContextSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+            <ComboBox ItemsSource="{Binding RoomProfiles}" SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
+                      IsVisible="{Binding HasMultipleRoomProfiles}" IsEnabled="{Binding !IsExecuting}"
+                      PlaceholderText="选择学生所在教室" MinWidth="180">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:TeacherRoomProfile"><TextBlock Text="{Binding DisplayName}" /></DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+            <TextBlock Text="{Binding ClassroomDirectoryError}" Classes="supporting-copy" TextWrapping="Wrap"
+                       IsVisible="{Binding HasClassroomDirectoryError}" />
+            <TextBlock Text="请先在“地点与学生名单”中配置或选择教室。" Classes="supporting-copy"
+                       IsVisible="{Binding !HasDeviceHealthTargets}" />
+          </StackPanel>
           <Border Classes="section-card" IsVisible="{Binding IsWebsitePolicyPage}">
             <StackPanel Spacing="16">
               <TextBlock Text="学生名单" Classes="section-title" />

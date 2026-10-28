@@ -676,6 +676,13 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return service.ReadSnapshot(expectedSessionId);
     }
 
+    internal ClassroomQuickControlSnapshot ReadSavedClassroomQuickControlSnapshot(TeacherClassroomEventContext context)
+    {
+        var service = _classroomQuickControlService ?? throw new PlatformNotSupportedException(
+            "当前教师平台不支持课堂快捷管控。");
+        return service.ReadSavedSnapshot(context);
+    }
+
     private Task<ClassroomQuickControlOperationResult> ExecuteClassroomQuickControlForMobileAsync(
         Guid sessionId, ClassroomQuickControlAction action, CancellationToken cancellationToken)
     {

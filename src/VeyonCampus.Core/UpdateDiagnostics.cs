@@ -91,8 +91,7 @@ public static class UpdateDiagnosticCatalog
         TaskCanceledException or TimeoutException =>
             new("UPDATE_TIMEOUT", UpdateDiagnosticSeverity.Warning, true, "连接超时，请稍后重试。"),
         OperationCanceledException => Cancelled,
-        HttpRequestException =>
-            new("UPDATE_NETWORK", UpdateDiagnosticSeverity.Warning, true, "无法连接更新服务，请检查网络后重试。"),
+        HttpRequestException http => ClassifyHttpFailure(http),
         UnauthorizedAccessException =>
             new("UPDATE_PERMISSION_DENIED", UpdateDiagnosticSeverity.Error, false, "当前账户无权访问所需文件，请检查管理员和目录权限。"),
         System.Security.Cryptography.CryptographicException =>
@@ -110,6 +109,31 @@ public static class UpdateDiagnosticCatalog
             new("UPDATE_INPUT_INVALID", UpdateDiagnosticSeverity.Error, false, "所选更新文件或输入格式无效，请重新选择完整更新包。"),
         _ => new("UPDATE_UNKNOWN", UpdateDiagnosticSeverity.Error, false, "更新失败，请记录此错误码并联系维护人员。")
     };
+
+    private static UpdateDiagnosticFailure ClassifyHttpFailure(HttpRequestException exception)
+    {
+        var guidance = exception.StatusCode switch
+        {
+            System.Net.HttpStatusCode.Unauthorized or System.Net.HttpStatusCode.Forbidden =>
+                "更新服务拒绝访问，请联系管理员检查更新服务权限。",
+            System.Net.HttpStatusCode.NotFound =>
+                "更新服务接口不存在，请联系管理员检查服务部署。",
+            System.Net.HttpStatusCode.TooManyRequests => "更新服务请求过多，请稍后重试。",
+            { } status when (int)status >= 500 =>
+                $"更新服务暂时不可用（HTTP {(int)status}），请稍后重试；持续失败请联系管理员。",
+            { } status => $"更新服务返回 HTTP {(int)status}，请联系管理员检查服务。",
+            null => exception.HttpRequestError switch
+            {
+                HttpRequestError.NameResolutionError => "无法解析更新服务地址，请检查 DNS 或代理设置后重试。",
+                HttpRequestError.SecureConnectionError => "无法建立更新服务的安全连接，请检查系统时间、证书或代理设置。",
+                HttpRequestError.ProxyTunnelError => "无法通过代理连接更新服务，请检查代理设置后重试。",
+                _ => "无法连接更新服务，请检查网络或代理设置后重试。"
+            }
+        };
+        var retryable = exception.StatusCode is null or System.Net.HttpStatusCode.RequestTimeout or
+            System.Net.HttpStatusCode.TooManyRequests || (int?)exception.StatusCode >= 500;
+        return new("UPDATE_NETWORK", UpdateDiagnosticSeverity.Warning, retryable, guidance);
+    }
 
     internal static bool IsKnownCode(string? code) => code is
         "UPDATE_SUCCEEDED" or "UPDATE_PARTIAL" or "UPDATE_HANDOFF_STARTED" or "UPDATE_CANCELLED" or "UPDATE_TIMEOUT" or

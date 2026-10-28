@@ -6,6 +6,12 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--teacher-restart-regression-fixtures"])
+{
+    await TeacherRestartRegressionChecks.RunAsync();
+    return;
+}
+
 if (args is ["--mobile-channel-state-fixtures"])
 {
     var waiting = new ClassroomQuickControlDeviceState(Guid.NewGuid(), DeviceControlMode.None,
@@ -565,6 +571,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
+await CheckAsync("教师端名单恢复、重启倒计时、稳定重试状态和更新服务错误提示", TeacherRestartRegressionChecks.RunAsync);
 Check("低敏运维汇总默认关闭、HKT 聚合、幂等待发队列与固定上报字段", CampusOperationsTelemetryChecks.Run);
 Check("本地课堂会话快照、生命周期、存储保留与互斥", ClassroomSessionChecks.Run);
 Check("机房座位图默认排序、位置交换、范围变更与损坏保护", ClassroomSeatLayoutChecks.Run);

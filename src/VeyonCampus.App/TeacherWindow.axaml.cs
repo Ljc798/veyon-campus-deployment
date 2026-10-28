@@ -123,6 +123,25 @@ public partial class TeacherWindow : Window
             FitWindowToWorkingArea();
             SyncDeviceRuntimePolling();
             SyncClassroomVisualTimers();
+            if (SupportsTeacherClassroomPolicyState && _model.HasActiveClassroomSession)
+            {
+                try
+                {
+                    if (_model.GetActiveClassroomEventContext() is { } savedContext)
+                    {
+                        var savedSnapshot = await Task.Run(() =>
+                            _mobileControl.ReadSavedClassroomQuickControlSnapshot(savedContext));
+                        if (_model.ActiveClassroomSessionId == savedContext.SessionId)
+                            _model.UpdateClassroomQuickControlSnapshot(savedSnapshot);
+                    }
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                    InvalidDataException or InvalidOperationException or CryptographicException or
+                    PlatformNotSupportedException)
+                {
+                    _model.SetClassroomQuickControlSessionNotice("无法恢复本机管控记录；请核对课堂状态。" + exception.Message);
+                }
+            }
             await _mobileControl.RestoreStartupStateAsync();
             if (OperatingSystem.IsMacOS())
             {

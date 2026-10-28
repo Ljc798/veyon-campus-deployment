@@ -152,7 +152,7 @@ internal static class ClassroomQuickControlRevisionChecks
 
             var retried = store.UpdateRetry(sessionId, targetId, endedDevice.DesiredRevision,
                 endedDevice.TaskId!.Value, now.AddSeconds(4));
-            Expect(retried.RetryFailureCount == 1 && retried.RetryAfterUtc == now.AddSeconds(19));
+            Expect(retried.RetryFailureCount == 1 && retried.RetryAfterUtc == now.AddSeconds(64));
             var restartedStore = new ClassroomQuickControlStateStore(path);
             var afterRestart = restartedStore.Read(sessionId)!.Devices.Single();
             Expect(afterRestart.DesiredRevision == endedDevice.DesiredRevision &&
