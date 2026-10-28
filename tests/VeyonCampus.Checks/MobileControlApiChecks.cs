@@ -527,7 +527,7 @@ internal static class MobileControlApiChecks
                        verifiedResolution.MatchesPinnedKey);
             }
 
-            for (var duplicate = 0; duplicate < 6; duplicate++)
+            for (var duplicate = 0; duplicate < 7; duplicate++)
             {
                 using var duplicateResponse = await PostStudentEventAsync(client, origin, grant.AccessToken,
                     signedHelpEvent);
