@@ -30,12 +30,12 @@ public partial class TeacherWindow : Window
     private readonly TeacherMobileControlManager _mobileControl;
     private readonly SemaphoreSlim _classroomModeGate = new(1, 1);
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
-    private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(60) };
     private readonly DispatcherTimer _classroomEventsTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _classroomCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DispatcherTimer _classroomQuickControlProgressTimer = new() { Interval = TimeSpan.FromSeconds(2) };
     private readonly DispatcherTimer _classroomQuickControlCountdownTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private readonly DispatcherTimer _deviceRuntimeSummaryTimer = new() { Interval = TimeSpan.FromSeconds(5) };
+    private readonly DispatcherTimer _deviceRuntimeSummaryTimer = new() { Interval = TimeSpan.FromSeconds(30) };
     private long _classroomEventCursor;
     private Guid? _classroomEventSessionId;
     private bool _isShowingReleaseNotice;
@@ -44,6 +44,7 @@ public partial class TeacherWindow : Window
     private bool _isRefreshingQuickControlSnapshot;
     private bool _isOpeningWindow = true;
     private bool _classroomScopeDirty;
+    private bool _classroomScopeWaitingForAgentConnections;
     private bool _isReconcilingClassroomScope;
     private CancellationTokenSource? _classroomScopeSyncCancellation;
     private string? _observedClassroomScopeFingerprint;
@@ -97,6 +98,7 @@ public partial class TeacherWindow : Window
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _model.PropertyChanged += TeacherModelPropertyChanged;
         _model.ActiveClassroomSeatGridChanged += OnActiveClassroomSeatGridChanged;
+        _mobileControl.StudentAgentChannelConnected += OnStudentAgentChannelConnected;
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
@@ -175,6 +177,7 @@ public partial class TeacherWindow : Window
             _model.ReleaseNoticeAvailable -= OnReleaseNoticeAvailable;
             _model.PropertyChanged -= TeacherModelPropertyChanged;
             _model.ActiveClassroomSeatGridChanged -= OnActiveClassroomSeatGridChanged;
+            _mobileControl.StudentAgentChannelConnected -= OnStudentAgentChannelConnected;
             _classroomScopeSyncCancellation?.Cancel();
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -368,6 +371,7 @@ public partial class TeacherWindow : Window
 
     private async void RefreshClassroomStatus(object? sender, EventArgs e)
     {
+        if (_classroomScopeWaitingForAgentConnections) return;
         if (_classroomScopeDirty || _model.HasPendingClassroomScopeChange)
             await ReconcileClassroomScopeAsync();
         await _model.RefreshActiveClassroomStatusAsync();
@@ -410,6 +414,7 @@ public partial class TeacherWindow : Window
         if (string.Equals(next, _observedClassroomScopeFingerprint, StringComparison.Ordinal)) return;
         _observedClassroomScopeFingerprint = next;
         _classroomScopeDirty = true;
+        _classroomScopeWaitingForAgentConnections = false;
         if (_isOpeningWindow) return;
 
         _classroomScopeSyncCancellation?.Cancel();
@@ -417,6 +422,30 @@ public partial class TeacherWindow : Window
         var cancellationToken = cancellation.Token;
         _classroomScopeSyncCancellation = cancellation;
         Dispatcher.UIThread.Post(() => _ = ReconcileClassroomScopeAfterDelayAsync(cancellation, cancellationToken));
+    }
+
+    private void OnStudentAgentChannelConnected(string target)
+    {
+        Dispatcher.UIThread.Post(() =>
+        {
+            if (!_classroomScopeWaitingForAgentConnections ||
+                !_classroomScopeDirty && !_model.HasPendingClassroomScopeChange)
+                return;
+            var context = _mobileControl.ReadClassroomSessionContext();
+            if (context is null || !context.Targets.Contains(target, StringComparer.OrdinalIgnoreCase)) return;
+            _classroomScopeWaitingForAgentConnections = false;
+            _ = ReconcileClassroomScopeAfterStudentConnectedAsync();
+        });
+    }
+
+    private async Task ReconcileClassroomScopeAfterStudentConnectedAsync()
+    {
+        try { await ReconcileClassroomScopeAsync(); }
+        catch (Exception exception)
+        {
+            _model.SetClassroomQuickControlSessionNotice(
+                "学生端已连接，但课堂范围恢复仍未完成；状态已保留。" + exception.Message);
+        }
     }
 
     private async Task ReconcileClassroomScopeAfterDelayAsync(CancellationTokenSource cancellation,
@@ -468,6 +497,7 @@ public partial class TeacherWindow : Window
             if (!_model.HasActiveClassroomSession)
             {
                 _classroomScopeDirty = false;
+                _classroomScopeWaitingForAgentConnections = false;
                 _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
                 return;
             }
@@ -477,39 +507,75 @@ public partial class TeacherWindow : Window
             {
                 var currentControls = await Task.Run(() =>
                     _mobileControl.ReadClassroomQuickControlSnapshot(context.SessionId));
-                if (currentControls.Devices.Any(item => item.Mode != DeviceControlMode.None ||
-                                                        item.Phase == ClassroomQuickControlPhase.ReleasePending))
+                var targetIdsNeedingRelease = currentControls.Devices
+                    .Where(item => item.Mode != DeviceControlMode.None ||
+                                   item.Phase == ClassroomQuickControlPhase.ReleasePending)
+                    .Select(item => item.TargetId).ToHashSet();
+                if (targetIdsNeedingRelease.Count > 0)
                 {
+                    var connectedTargetIds = context.TargetIds
+                        .Where(pair => targetIdsNeedingRelease.Contains(pair.Value) &&
+                                       StudentAgentChannelHub.IsConnected(pair.Key))
+                        .Select(pair => pair.Value).Distinct().ToArray();
+                    if (connectedTargetIds.Length == 0)
+                    {
+                        _classroomScopeWaitingForAgentConnections = true;
+                        _model.SetClassroomQuickControlSessionNotice(
+                            $"旧课堂范围有 {targetIdsNeedingRelease.Count} 台电脑需要确认恢复；任务已保留，等待学生端主动连接。连接后会自动继续。");
+                        return;
+                    }
+
                     _model.SetClassroomQuickControlBusy(true);
                     try
                     {
-                        _ = await _mobileControl.ReleaseClassroomQuickControlsAsync();
+                        _ = await Task.Run(() => _mobileControl.ReleaseClassroomQuickControlsAsync(
+                            selectedTargetIds: connectedTargetIds));
                         var released = await Task.Run(() =>
                             _mobileControl.ReadClassroomQuickControlSnapshot(context.SessionId));
-                        if (released.Devices.Any(item => item.Mode != DeviceControlMode.None ||
-                                                         item.Phase == ClassroomQuickControlPhase.ReleasePending))
-                            throw new InvalidOperationException("原课堂范围仍有快捷管控未解除；已保留旧范围，可在结果完成后自动重试。");
+                        var stillPending = released.Devices.Where(item =>
+                            item.Mode != DeviceControlMode.None ||
+                            item.Phase == ClassroomQuickControlPhase.ReleasePending).ToArray();
+                        if (stillPending.Length > 0)
+                        {
+                            var offlinePendingCount = context.TargetIds
+                                .Where(pair => stillPending.Any(item => item.TargetId == pair.Value) &&
+                                               !StudentAgentChannelHub.IsConnected(pair.Key))
+                                .Select(pair => pair.Value).Distinct().Count();
+                            _classroomScopeWaitingForAgentConnections = offlinePendingCount > 0;
+                            _model.SetClassroomQuickControlSessionNotice(offlinePendingCount > 0
+                                ? $"旧课堂范围还有 {offlinePendingCount} 台电脑未建立教师端长连接；恢复任务已保留，上线后会自动继续。"
+                                : "旧课堂范围仍有快捷管控未确认；已保留状态，等待下一次可信回执后继续。");
+                            return;
+                        }
                     }
                     catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                         InvalidDataException or InvalidOperationException or CryptographicException or
                         PlatformNotSupportedException or SocketException)
                     {
-                        _model.SetClassroomQuickControlSessionNotice("课堂名单已保存；原范围的快捷管控尚未确认解除，因此暂时保留原控制范围。" + exception.Message);
+                        _classroomScopeWaitingForAgentConnections = context.TargetIds
+                            .Where(pair => targetIdsNeedingRelease.Contains(pair.Value))
+                            .Any(pair => !StudentAgentChannelHub.IsConnected(pair.Key));
+                        _model.SetClassroomQuickControlSessionNotice(
+                            "课堂范围恢复未确认；状态已保留，学生端连接后会继续。" + exception.Message);
                         return;
                     }
                     finally { _model.SetClassroomQuickControlBusy(false); }
                 }
 
-                try
+                if (_model.HasPendingClassroomRestoreItems)
                 {
-                    var restore = await _mobileControl.RestoreClassroomOwnedPoliciesAsync();
-                    _model.RefreshClassroomRestoreLedger(restore.Message);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                    InvalidDataException or InvalidOperationException or CryptographicException or
-                    PlatformNotSupportedException or SocketException)
-                {
-                    _model.RefreshClassroomRestoreLedger("原范围的旧版课堂策略恢复仍在等待处理；继续更新课堂范围。" + exception.Message);
+                    try
+                    {
+                        var restore = await Task.Run(() => _mobileControl.RestoreClassroomOwnedPoliciesAsync());
+                        await _model.RefreshClassroomRestoreLedgerAsync(restore.Message);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                        InvalidDataException or InvalidOperationException or CryptographicException or
+                        PlatformNotSupportedException or SocketException)
+                    {
+                        await _model.RefreshClassroomRestoreLedgerAsync(
+                            "原范围的旧版课堂策略恢复仍在等待处理；继续更新课堂范围。" + exception.Message);
+                    }
                 }
             }
 
@@ -517,6 +583,7 @@ public partial class TeacherWindow : Window
             await SyncClassroomEventChannelAsync();
             RefreshClassroomEvents(this, EventArgs.Empty);
             _classroomScopeDirty = _model.HasPendingClassroomScopeChange;
+            _classroomScopeWaitingForAgentConnections = false;
             if (!_classroomScopeDirty)
                 _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
         }
@@ -766,10 +833,10 @@ public partial class TeacherWindow : Window
     {
         if (!_model.CanRetryClassroomRestores) return;
         _model.SetClassroomRestoreRetrying(true);
-        _model.RefreshClassroomRestoreLedger("正在读取机房目录并重新核对 Agent 签名状态……");
+        await _model.RefreshClassroomRestoreLedgerAsync("正在读取机房目录并重新核对 Agent 签名状态……");
         try
         {
-            var response = await _mobileControl.RetryClassroomRestoresAsync();
+            var response = await Task.Run(() => _mobileControl.RetryClassroomRestoresAsync());
             var details = response.Results.Take(24).Select(result =>
                 $"{_model.GetStudentDisplayNameForTarget(result.Target)}：{(result.NeedsReview ? "待处理" : result.AgentAccepted ? "已确认" : "未执行")} · {result.Detail}")
                 .ToArray();
@@ -778,18 +845,19 @@ public partial class TeacherWindow : Window
                   Environment.NewLine + $"另有 {response.Results.Count - details.Length} 项结果。"
                 : details.Length == 0 ? response.Message : response.Message + Environment.NewLine +
                     string.Join(Environment.NewLine, details);
-            _model.RefreshClassroomRestoreLedger(status);
+            await _model.RefreshClassroomRestoreLedgerAsync(status);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or InvalidOperationException or
                                           CryptographicException or PlatformNotSupportedException or SocketException)
         {
-            _model.RefreshClassroomRestoreLedger("待恢复项没有全部处理；记录仍保留，可稍后重试。" + exception.Message);
+            await _model.RefreshClassroomRestoreLedgerAsync(
+                "待恢复项没有全部处理；记录仍保留，可稍后重试。" + exception.Message);
         }
         finally
         {
             _model.SetClassroomRestoreRetrying(false);
-            _model.RefreshClassroomRestoreLedger();
+            await _model.RefreshClassroomRestoreLedgerAsync();
         }
     }
 

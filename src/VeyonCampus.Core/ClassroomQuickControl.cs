@@ -705,7 +705,7 @@ public sealed class ClassroomQuickControlStateStore
             if (previous.DesiredRevision != desiredRevision || previous.TaskId != taskId)
                 return previous;
             var failures = Math.Min(previous.RetryFailureCount + 1, 7);
-            var seconds = Math.Min(15 * (1 << Math.Max(0, failures - 1)), 300);
+            var seconds = Math.Min(60 * (1 << Math.Max(0, failures - 1)), 1800);
             var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
             var next = previous with
             {
@@ -714,7 +714,7 @@ public sealed class ClassroomQuickControlStateStore
                 RetryAfterUtc = now.AddSeconds(seconds),
                 UpdatedUtc = now,
                 ChangeSource = "retry-backoff",
-                TriggerReason = $"设备暂未取得可信状态；第 {failures} 次退避，{seconds} 秒后重试同一任务。"
+                TriggerReason = $"设备暂未取得可信状态；第 {failures} 次退避，{seconds} 秒后再检查同一任务。"
             };
             if (session.StateRevision == long.MaxValue)
                 throw new InvalidDataException("课堂状态 Revision 已达到上限；待同步时间未更新。");

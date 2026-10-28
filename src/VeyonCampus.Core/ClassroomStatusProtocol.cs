@@ -261,7 +261,7 @@ public static class ClassroomStatusTransport
         var signedCommand = ClassroomStatusCryptography.Sign(command, teacherPrivateKey);
         trustStore ??= new StudentAgentIdentityTrustStore();
 
-        using var handler = new HttpClientHandler { UseProxy = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = normalizedTargets.Select(async target =>

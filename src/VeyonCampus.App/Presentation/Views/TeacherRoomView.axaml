@@ -1,24 +1,38 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:VeyonCampus.App"
-             xmlns:flowery="clr-namespace:Flowery.Controls;assembly=Flowery.NET"
-             xmlns:floweryTheme="clr-namespace:Flowery;assembly=Flowery.NET"
+             xmlns:core="using:VeyonCampus.Core"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherRoomView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
     <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
-      <Border IsVisible="{Binding HasActiveClassroomSession}">
-        <Border.Styles>
-          <floweryTheme:DaisyUITheme />
-        </Border.Styles>
-        <flowery:DaisyAlert Variant="Info">
-          <StackPanel Spacing="4">
-            <TextBlock Text="无需关闭课堂模式，也可以编辑地点和座位。"
-                       FontWeight="SemiBold" TextWrapping="Wrap" />
-            <TextBlock Text="保存地点设置后，教师端会重新核对并同步课堂电脑范围；修改当前课堂的座位和姓名后，手机上的座位关联会刷新。"
-                       TextWrapping="Wrap" />
+      <Border Classes="card" IsVisible="{Binding HasCampusProfiles}">
+        <Grid ColumnDefinitions="*,16,*" ColumnSpacing="0">
+          <StackPanel Spacing="6">
+            <TextBlock Text="本机校区档案" FontWeight="SemiBold" />
+            <ComboBox ItemsSource="{Binding CampusProfiles}"
+                      SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择校区档案">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:TeacherCampusProfile">
+                  <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
           </StackPanel>
-        </flowery:DaisyAlert>
+          <StackPanel Grid.Column="2" Spacing="6">
+            <TextBlock Text="已保存的地点" FontWeight="SemiBold" />
+            <ComboBox ItemsSource="{Binding RoomProfiles}"
+                      SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择地点">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:TeacherRoomProfile">
+                  <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+        </Grid>
       </Border>
       <Border Classes="card" IsVisible="{Binding HasSelectedRoomProfile}">
         <StackPanel Spacing="12">

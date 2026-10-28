@@ -227,14 +227,16 @@ public static class WebsitePolicyStatusTransport
         IEnumerable<string> targets, string campusId, RSA privateKey,
         CancellationToken cancellationToken = default)
     {
-        var results = await ReadAsync(targets, campusId, privateKey, cancellationToken).ConfigureAwait(false);
+        var results = await ReadAsync(targets, campusId, privateKey, cancellationToken,
+            allowLegacyDirectFallback: true).ConfigureAwait(false);
         return Array.AsReadOnly(results.Select(result => new StudentAgentIdentityDiscoveryResult(result.Target,
             result.IdentityCandidate, result.Succeeded, result.Detail)).ToArray());
     }
 
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
-        bool includeHealthSnapshot = false, Guid? updateCommandId = null)
+        bool includeHealthSnapshot = false, Guid? updateCommandId = null,
+        bool allowLegacyDirectFallback = false)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
@@ -246,7 +248,7 @@ public static class WebsitePolicyStatusTransport
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
         }).ToArray();
-        using var handler = new HttpClientHandler { UseProxy = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = outgoing.Select(async outgoingRequest =>

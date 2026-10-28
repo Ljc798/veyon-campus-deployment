@@ -623,7 +623,9 @@ public static class WebsitePolicyRevisionStore
 
 public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyPem, string? TelemetryEndpoint = null,
     Guid? DeploymentId = null, string? ApplicationVersion = null, string? ApplicationPolicyPublicKeyPem = null,
-    string? StudentSystemPolicyPublicKeyPem = null);
+    string? StudentSystemPolicyPublicKeyPem = null,
+    IReadOnlyList<string>? TeacherChannelEndpoints = null,
+    string? TeacherChannelRootCertificateBase64 = null);
 
 public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath, string PreviousExecutablePath);
 
@@ -1145,6 +1147,8 @@ public static class WebsitePolicyAgentInstaller
             using var systemKey = RSA.Create();
             systemKey.ImportFromPem(systemPem);
         }
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
+            config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
         if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
             AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
     }
@@ -1329,12 +1333,19 @@ public static class WebsitePolicyAgentInstaller
             var telemetryEndpoint = package.TelemetryEndpoint ?? existing?.TelemetryEndpoint;
             if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
                 AnonymousUsageHeartbeat.ValidateEndpoint(telemetryEndpoint);
+            var teacherChannelEndpoints = package.TeacherChannelEndpoints ?? existing?.TeacherChannelEndpoints;
+            var teacherChannelRootCertificateBase64 = package.TeacherChannelRootCertificatePath is { } rootPath
+                ? Convert.ToBase64String(PackageManifest.ReadBytesLimited(rootPath, 16 * 1024))
+                : existing?.TeacherChannelRootCertificateBase64;
+            StudentAgentChannelProtocol.ValidateBootstrapConfiguration(package.Campus,
+                teacherChannelEndpoints, teacherChannelRootCertificateBase64);
             var studentSetupVersion = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3)
                                       ?? "unknown";
             var config = new WebsitePolicyAgentConfig(package.Campus, canonicalPem, telemetryEndpoint,
                 package.DeploymentId ?? existing?.DeploymentId, studentSetupVersion,
                 applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem,
-                studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem);
+                studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem,
+                teacherChannelEndpoints, teacherChannelRootCertificateBase64);
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
 
             var existingAgentMatchesConfiguration = existing is not null &&
@@ -3434,7 +3445,7 @@ public static class WebsitePolicyTransport
         if (validated.Any(target => !policies.ContainsKey(target)) || policies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台网站策略信封必须完整匹配每一台目标电脑。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new HttpClientHandler { UseProxy = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>
@@ -3693,7 +3704,9 @@ public sealed class WebsitePolicyAgent
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? "") + "\n" +
             config.DeploymentId + "\n" + config.ApplicationVersion + "\n" + (config.ApplicationPolicyPublicKeyPem ?? "") + "\n" +
-            (config.StudentSystemPolicyPublicKeyPem ?? ""))));
+            (config.StudentSystemPolicyPublicKeyPem ?? "") + "\n" +
+            string.Join(";", config.TeacherChannelEndpoints ?? Array.Empty<string>()) + "\n" +
+            (config.TeacherChannelRootCertificateBase64 ?? ""))));
 
     public static string GetRuntimeVersion()
     {
@@ -3721,6 +3734,8 @@ public sealed class WebsitePolicyAgent
         var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(await File.ReadAllBytesAsync(configPath, cancellationToken), JsonOptions)
                      ?? throw new InvalidDataException("学生网站策略代理配置为空。");
         WebsitePolicySigningKeyStore.ValidateCampusId(config.CampusId);
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
+            config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
         using var agentIdentityKey = StudentAgentIdentityKeyStore.LoadOrCreateForSystemAgent(configPath);
         using var rsa = RSA.Create();
         rsa.ImportFromPem(config.PublicKeyPem);
@@ -3767,6 +3782,22 @@ public sealed class WebsitePolicyAgent
             try { listener.Stop(); }
             catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException) { }
         });
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await StudentAgentTeacherChannelClient.RunAsync(configPath, config, agentIdentityKey,
+                    shutdown.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or
+                UnauthorizedAccessException or CryptographicException or HttpRequestException or
+                PlatformNotSupportedException)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel",
+                    Guid.NewGuid().ToString("N")[..12], exception);
+            }
+        }, CancellationToken.None);
         using var expiryTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         var nextRequest = listener.GetContextAsync();
         var nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();

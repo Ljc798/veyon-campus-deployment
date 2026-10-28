@@ -1743,6 +1743,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomRestoreSummary));
         Changed(nameof(CanRetryClassroomRestores));
     }
+
+    internal async Task RefreshClassroomRestoreLedgerAsync(string? status = null)
+    {
+        try
+        {
+            var pending = await Task.Run(() => ClassroomRestoreLedger.ListPending(
+                _classroomModeStateStore.ReadAll(), _classroomSessionStore.ReadRecent()));
+            _pendingClassroomRestores = pending;
+            if (status is not null) _classroomRestoreStatus = status;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _classroomRestoreStatus = "无法读取本机待恢复记录；原记录已保留。";
+        }
+        Changed(nameof(HasClassroomRestores));
+        Changed(nameof(HasPendingClassroomRestoreItems));
+        Changed(nameof(PendingClassroomRestoreCount));
+        Changed(nameof(ClassroomRestoreSummary));
+        Changed(nameof(CanRetryClassroomRestores));
+    }
+
     internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
     internal void ResetClassroomEventFeed(Guid? sessionId)
     {
@@ -2289,10 +2310,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         state.ConsecutiveFailures++;
                         var retrySeconds = state.ConsecutiveFailures switch
                         {
-                            1 => 5,
-                            2 => 10,
-                            3 => 20,
-                            _ => 60
+                            1 => 60,
+                            2 => 120,
+                            3 => 300,
+                            _ => 600
                         };
                         state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
                     }
@@ -2303,7 +2324,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (result.Succeeded)
                 {
                     state.ConsecutiveFailures = 0;
-                    state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(5);
+                    state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(30);
                     successful++;
                 }
                 else
@@ -2311,10 +2332,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     state.ConsecutiveFailures++;
                     var retrySeconds = state.ConsecutiveFailures switch
                     {
-                        1 => 5,
-                        2 => 10,
-                        3 => 20,
-                        _ => 60
+                        1 => 60,
+                        2 => 120,
+                        3 => 300,
+                        _ => 600
                     };
                     state.NextPollUtc = DateTimeOffset.UtcNow.AddSeconds(retrySeconds);
                 }
@@ -2398,6 +2419,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool IsTeacherSetupStep1 => _teacherSetupWizardStep == 1;
     public bool IsTeacherSetupStep2 => _teacherSetupWizardStep == 2;
     public bool IsTeacherSetupStep3 => _teacherSetupWizardStep == 3;
+    public bool IsWindowsTeacherSetupStep => IsTeacherSetupStep1 && IsWindowsTeacherHost;
+    public bool IsMacTeacherSetupStep => IsTeacherSetupStep1 && IsMacTeacherHost;
     public bool IsTeacherSetupPackageStepVisible => IsSetupPage && IsTeacherSetupStep3;
     public bool IsCheckingTeacherSetupVeyon => _isCheckingTeacherSetupVeyon;
     public string TeacherSetupVeyonStatus => _teacherSetupVeyonStatus;
@@ -2482,6 +2505,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsTeacherSetupStep1));
         Changed(nameof(IsTeacherSetupStep2));
         Changed(nameof(IsTeacherSetupStep3));
+        Changed(nameof(IsWindowsTeacherSetupStep));
+        Changed(nameof(IsMacTeacherSetupStep));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
         NotifyTeacherSetupNavigationStateChanged();
     }
@@ -3060,7 +3085,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var previous = _activeClassroomSession;
-            var updated = _classroomSessionStore.UpdateActiveSession(previous.SessionId, campus, room.RoomId);
+            var updated = await Task.Run(() =>
+                _classroomSessionStore.UpdateActiveSession(previous.SessionId, campus, room.RoomId));
             _activeClassroomSession = updated;
             if (previousContext is not null)
             {
@@ -3085,7 +3111,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             if (previous.Room.CampusProfileId != updated.Room.CampusProfileId)
             {
-                try { _classroomSigningContextStore.Clear(updated.SessionId); }
+                try { await Task.Run(() => _classroomSigningContextStore.Clear(updated.SessionId)); }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
                 { ClassroomDeliveryStatus = "课堂地点已更新；签名校区上下文需要检查。" + exception.Message; }
             }
@@ -3103,7 +3129,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally
         {
             _isClassroomTransitioning = false;
-            RefreshClassroomRestoreLedger();
+            await RefreshClassroomRestoreLedgerAsync();
             Changed(nameof(CanSwitchClassroomScope));
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanAddRoomToVeyon));
@@ -11880,6 +11906,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     RecommendCreateStudentAccount, RecommendChangeAdminPassword);
             var enableTelemetry = trustSourcePackage is null ||
                                   !string.IsNullOrWhiteSpace(trustSourcePackage.TelemetryEndpoint);
+            IReadOnlyList<string>? teacherChannelEndpoints = null;
+            byte[]? teacherChannelRootCertificate = null;
+            if (isWindows)
+            {
+                var identityProvider = TeacherMobileControlIdentityProviderFactory.CreateForCurrentPlatform();
+                using var teacherIdentity = await Task.Run(() =>
+                    identityProvider.CreateIdentity());
+                var preferredAddress = identityProvider.SelectPreferredLanAddress(teacherIdentity.Addresses);
+                var orderedAddresses = new[] { preferredAddress }
+                    .Concat(teacherIdentity.Addresses.Where(address => !address.Equals(preferredAddress)));
+                teacherChannelEndpoints = Array.AsReadOnly(orderedAddresses
+                    .Select(address => ClassroomEventCryptography.CreateTeacherEndpoint(address))
+                    .Distinct(StringComparer.Ordinal).ToArray());
+                teacherChannelRootCertificate = teacherIdentity.RootCertificateBytes.ToArray();
+            }
+            else if (trustSourcePackage?.TeacherChannelEndpoints is { Count: > 0 } sourceEndpoints &&
+                     trustSourcePackage.TeacherChannelRootCertificatePath is { } sourceRootPath)
+            {
+                teacherChannelEndpoints = Array.AsReadOnly(sourceEndpoints.ToArray());
+                teacherChannelRootCertificate = await File.ReadAllBytesAsync(sourceRootPath);
+            }
             packageBuildCancellation = new CancellationTokenSource();
             _studentPackageBuildCancellation = packageBuildCancellation;
             IsBuildingStudentPackage = true;
@@ -11894,7 +11941,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     cancellationToken: token, applicationPolicyPublicKeyPem: applicationSigningKey.PublicKeyPem,
                     compatibility: compatibility,
                     studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
-                    recommendedOperations: recommendations), token);
+                    recommendedOperations: recommendations,
+                    teacherChannelEndpoints: teacherChannelEndpoints,
+                    teacherChannelRootCertificate: teacherChannelRootCertificate), token);
             }
             finally
             {
@@ -13140,7 +13189,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         var collected = _runtimeSummary?.CollectedUtc ?? _status?.CollectedUtc;
         var next = collected is null
             ? TeacherDeviceRuntimeFreshness.Unknown
-            : collected.Value >= nowUtc.AddSeconds(-45)
+            : collected.Value >= nowUtc.AddSeconds(-90)
                 ? TeacherDeviceRuntimeFreshness.Current
                 : TeacherDeviceRuntimeFreshness.Stale;
         if (next == _runtimeFreshness)
@@ -13159,7 +13208,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         SetRuntimeFreshness(next);
         if (next == TeacherDeviceRuntimeFreshness.Stale)
         {
-            var detail = $"最后一次签名状态于 {collected!.Value.ToLocalTime():HH:mm:ss}；超过 45 秒未能更新，设备状态视为未知。";
+            var detail = $"最后一次签名状态于 {collected!.Value.ToLocalTime():HH:mm:ss}；超过 90 秒未能更新，设备状态视为未知。";
             SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-no-response", "Agent 状态已过期",
                 TeacherDeviceHealthAlertSeverity.Informational, detail)]);
             Detail = detail;

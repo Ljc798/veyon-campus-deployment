@@ -15,18 +15,23 @@ public static class PackageBuilder
         bool enableAnonymousTelemetry = false, CancellationToken cancellationToken = default,
         string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
         string? studentSystemPolicyPublicKeyPem = null,
-        PackageSetupRecommendations? recommendedOperations = null)
+        PackageSetupRecommendations? recommendedOperations = null,
+        IReadOnlyList<string>? teacherChannelEndpoints = null,
+        byte[]? teacherChannelRootCertificate = null)
         => BuildCore(outputDirectory, campus, computerPrefix, publicKeySourcePath,
             websitePolicyPublicKeyPem, enableAnonymousTelemetry,
             cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility,
-            studentSystemPolicyPublicKeyPem, recommendedOperations);
+            studentSystemPolicyPublicKeyPem, recommendedOperations, teacherChannelEndpoints,
+            teacherChannelRootCertificate);
 
     internal static string BuildCore(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem, bool enableAnonymousTelemetry,
         CancellationToken cancellationToken, IPackageBuildFileSystem fileSystem,
         string? applicationPolicyPublicKeyPem = null, PackageCompatibility? compatibility = null,
         string? studentSystemPolicyPublicKeyPem = null,
-        PackageSetupRecommendations? recommendedOperations = null)
+        PackageSetupRecommendations? recommendedOperations = null,
+        IReadOnlyList<string>? teacherChannelEndpoints = null,
+        byte[]? teacherChannelRootCertificate = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         cancellationToken.ThrowIfCancellationRequested();
@@ -43,6 +48,15 @@ public static class PackageBuilder
             throw new InvalidDataException("Student Agent 兼容范围只允许用于 schemaVersion=5/6。");
         if (recommendedOperations is not null && studentSystemPolicyPublicKeyPem is null)
             throw new InvalidDataException("schemaVersion=6 建议操作必须和完整 schemaVersion=5 策略信任载荷一起提供。");
+        if ((teacherChannelEndpoints is null) != (teacherChannelRootCertificate is null))
+            throw new InvalidDataException("学生主动连接教师端必须同时提供教师地址和 TLS 根证书。");
+        if (teacherChannelEndpoints is not null)
+        {
+            if (studentSystemPolicyPublicKeyPem is null || compatibility?.StudentAgent is null)
+                throw new InvalidDataException("schemaVersion=7 学生通道包必须包含完整的系统策略密钥和 Agent 兼容范围。");
+            StudentAgentChannelProtocol.ValidateBootstrapConfiguration(campus, teacherChannelEndpoints,
+                Convert.ToBase64String(teacherChannelRootCertificate!));
+        }
         compatibility?.Validate();
         WebsitePolicySigningKeyStore.ValidateCampusId(campus);
         MachineNaming.CreateRange(computerPrefix, "1", "150");
@@ -96,6 +110,15 @@ public static class PackageBuilder
                 fileSystem.WriteAllText(studentSystemPolicyPublicPath, studentSystemPolicyPem);
                 cancellationToken.ThrowIfCancellationRequested();
             }
+            string? teacherChannelRootCertificateFileName = null;
+            string? teacherChannelRootCertificatePath = null;
+            if (teacherChannelRootCertificate is not null)
+            {
+                teacherChannelRootCertificateFileName = "teacher-mobile-root.cer";
+                teacherChannelRootCertificatePath = Path.Combine(root, teacherChannelRootCertificateFileName);
+                fileSystem.WriteAllBytes(teacherChannelRootCertificatePath, teacherChannelRootCertificate);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
 
             // campus.json with BOM, matching the legacy teacher script format.
             var campusFields = new Dictionary<string, object?>
@@ -121,7 +144,8 @@ public static class PackageBuilder
 
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
-            var schemaVersion = recommendedOperations is not null ? 6 : studentSystemPolicyPublicPath is not null ? 5 :
+            var schemaVersion = teacherChannelRootCertificatePath is not null ? 7 :
+                recommendedOperations is not null ? 6 : studentSystemPolicyPublicPath is not null ? 5 :
                 applicationPolicyPublicPath is not null ? 4 : websitePolicyPublicPath is not null ? 3 : 2;
             var manifest = new Dictionary<string, object?>
             {
@@ -151,6 +175,17 @@ public static class PackageBuilder
                 {
                     path = studentSystemPolicyKeyFileName!, size = Size(studentSystemPolicyPublicPath), sha256 = Hash(studentSystemPolicyPublicPath)
                 };
+            if (teacherChannelRootCertificatePath is not null)
+                manifest["teacherChannel"] = new
+                {
+                    endpoints = teacherChannelEndpoints,
+                    rootCertificate = new
+                    {
+                        path = teacherChannelRootCertificateFileName!,
+                        size = Size(teacherChannelRootCertificatePath),
+                        sha256 = Hash(teacherChannelRootCertificatePath)
+                    }
+                };
             if (schemaVersion >= 4)
             {
                 var compatibilityFields = new Dictionary<string, object?>
@@ -174,10 +209,12 @@ public static class PackageBuilder
                 };
                 if (studentSystemPolicyPublicPath is not null)
                     files.Add(new { path = studentSystemPolicyKeyFileName!, size = Size(studentSystemPolicyPublicPath), sha256 = Hash(studentSystemPolicyPublicPath) });
+                if (teacherChannelRootCertificatePath is not null)
+                    files.Add(new { path = teacherChannelRootCertificateFileName!, size = Size(teacherChannelRootCertificatePath), sha256 = Hash(teacherChannelRootCertificatePath) });
                 files.Add(new { path = "README.md", size = Size(Path.Combine(root, "README.md")), sha256 = Hash(Path.Combine(root, "README.md")) });
                 manifest["files"] = files;
             }
-            if (schemaVersion == 6)
+            if (schemaVersion >= 6)
                 manifest["recommendedOperations"] = new
                 {
                     installVeyon = recommendedOperations!.InstallVeyon,
@@ -196,6 +233,7 @@ public static class PackageBuilder
             if (websitePolicyKeyFileName is not null) allowed.Add(websitePolicyKeyFileName);
             if (applicationPolicyKeyFileName is not null) allowed.Add(applicationPolicyKeyFileName);
             if (studentSystemPolicyKeyFileName is not null) allowed.Add(studentSystemPolicyKeyFileName);
+            if (teacherChannelRootCertificateFileName is not null) allowed.Add(teacherChannelRootCertificateFileName);
             var actual = fileSystem.EnumerateFileSystemEntries(root)
                 .Select(Path.GetFileName).Where(name => name is not null)
                 .Select(name => name!).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -204,7 +242,8 @@ public static class PackageBuilder
 
             // Re-read the staged package and all manifest digests before publishing it.
             var stagedPackage = PackageContext.Load(root);
-            var expectedSchema = recommendedOperations is not null ? 6 : studentSystemPolicyKeyFileName is not null ? 5 :
+            var expectedSchema = teacherChannelRootCertificateFileName is not null ? 7 :
+                recommendedOperations is not null ? 6 : studentSystemPolicyKeyFileName is not null ? 5 :
                 applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
             if (stagedPackage.SchemaVersion != expectedSchema || stagedPackage.Campus != campus ||
                 stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null ||

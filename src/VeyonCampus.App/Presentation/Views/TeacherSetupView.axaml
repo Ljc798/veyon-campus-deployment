@@ -34,8 +34,8 @@
                      Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
-      <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
-        <StackPanel Spacing="12" IsVisible="{Binding IsWindowsTeacherHost}">
+      <Border Classes="card" IsVisible="{Binding IsWindowsTeacherSetupStep}">
+        <StackPanel Spacing="12">
           <TextBlock Text="教师端一键安装 Veyon" FontSize="20" FontWeight="SemiBold" />
           <TextBlock Text="{Binding TeacherInstallPlanText}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding TeacherInstallSafetyText}" Foreground="{DynamicResource Teacher.Color.Danger}" TextWrapping="Wrap" />
@@ -61,8 +61,8 @@
                   IsEnabled="{Binding CanProceedTeacherSetupToRooms}" HorizontalAlignment="Left" />
         </StackPanel>
       </Border>
-      <Border Classes="card" IsVisible="{Binding IsTeacherSetupStep1}">
-        <StackPanel Spacing="12" IsVisible="{Binding IsMacTeacherHost}">
+      <Border Classes="card" IsVisible="{Binding IsMacTeacherSetupStep}">
+        <StackPanel Spacing="12">
           <TextBlock Text="Mac 教师端已就绪" FontSize="20" FontWeight="SemiBold" />
           <suki:InfoBar Message="教师端直接运行在 Mac 本机，不需要 Windows 远程桌面。首次连接已部署学生机前，请先在第三步生成并部署策略密钥更新包。"
                         Severity="Information" IsOpen="True" IsClosable="False" IsOpaque="False" />

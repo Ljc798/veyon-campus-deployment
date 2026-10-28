@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace VeyonCampus.Core;
 
-/// <summary>Read-only schema v1–v6 parser. File hashes prove integrity, not publisher identity.</summary>
+/// <summary>Read-only schema v1–v7 parser. File hashes prove integrity, not publisher identity.</summary>
 public static class PackageManifest
 {
     public static PackageContext Load(string directory)
@@ -21,8 +21,8 @@ public static class PackageManifest
             throw new InvalidDataException("manifest.json 必须是 JSON 对象。");
         NoDuplicateFields(json);
         if (!json.TryGetProperty("schemaVersion", out var schema) || schema.ValueKind != JsonValueKind.Number ||
-            !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3 or 4 or 5 or 6))
-            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1 至 6。");
+            !schema.TryGetInt32(out var version) || version is not (1 or 2 or 3 or 4 or 5 or 6 or 7))
+            throw new InvalidDataException("不支持此部署包版本；当前只支持 schemaVersion=1 至 7。");
         ValidateKnownFields(json, version);
         if (!Guid.TryParse(RequiredString(json, "packageId", 64), out var deploymentId) || deploymentId == Guid.Empty)
             throw new InvalidDataException("packageId 必须是有效的 GUID。");
@@ -33,11 +33,11 @@ public static class PackageManifest
         string? telemetryEndpoint = null;
         if (json.TryGetProperty("telemetryEndpoint", out var telemetryJson))
         {
-            if (version is not (3 or 4 or 5 or 6) || telemetryJson.ValueKind != JsonValueKind.String)
-                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5/6 中使用，且最多 2048 个字符。");
+            if (version is not (3 or 4 or 5 or 6 or 7) || telemetryJson.ValueKind != JsonValueKind.String)
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5/6/7 中使用，且最多 2048 个字符。");
             var configuredEndpoint = telemetryJson.GetString() ?? "";
             if (configuredEndpoint.Length > 2048)
-                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5/6 中使用，且最多 2048 个字符。");
+                throw new InvalidDataException("telemetryEndpoint 只允许在 schemaVersion=3/4/5/6/7 中使用，且最多 2048 个字符。");
             telemetryEndpoint = configuredEndpoint;
             if (!string.IsNullOrWhiteSpace(telemetryEndpoint))
             {
@@ -59,14 +59,42 @@ public static class PackageManifest
         (string Path, string Sha256)? studentSystemPolicyKeyEntry = version >= 5
             ? FileEntry(json, "studentSystemPolicyPublicKey", root, 64 * 1024)
             : null;
+        IReadOnlyList<string>? teacherChannelEndpoints = null;
+        string? teacherChannelRootCertificatePath = null;
+        if (version == 7)
+        {
+            if (!json.TryGetProperty("teacherChannel", out var channelJson) ||
+                channelJson.ValueKind != JsonValueKind.Object)
+                throw new InvalidDataException("schemaVersion=7 必须提供 teacherChannel。");
+            NoDuplicateFields(channelJson);
+            if (channelJson.EnumerateObject().Any(property => property.Name is not ("endpoints" or "rootCertificate")) ||
+                !channelJson.TryGetProperty("endpoints", out var endpointsJson) ||
+                endpointsJson.ValueKind != JsonValueKind.Array || endpointsJson.GetArrayLength() is 0 or > 16)
+                throw new InvalidDataException("teacherChannel 必须包含 1 至 16 个连接地址和根证书。");
+            var endpoints = new List<string>(endpointsJson.GetArrayLength());
+            foreach (var endpointJson in endpointsJson.EnumerateArray())
+            {
+                if (endpointJson.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(endpointJson.GetString()))
+                    throw new InvalidDataException("teacherChannel.endpoints 项必须是非空地址。");
+                endpoints.Add(endpointJson.GetString()!);
+            }
+            teacherChannelEndpoints = Array.AsReadOnly(endpoints.ToArray());
+            var rootEntry = FileEntry(channelJson, "rootCertificate", root, 16 * 1024);
+            if (!rootEntry.Path.EndsWith(".cer", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("教师 TLS 根证书必须是 .cer 文件。");
+            teacherChannelRootCertificatePath = rootEntry.Path;
+            StudentAgentChannelProtocol.ValidateBootstrapConfiguration(campus, teacherChannelEndpoints,
+                Convert.ToBase64String(ReadBytesLimited(rootEntry.Path, 16 * 1024)));
+        }
         var compatibility = version >= 4 ? ReadCompatibility(json, version >= 5) : null;
-        var recommendedOperations = version == 6 ? ReadRecommendedOperations(json.GetProperty("recommendedOperations")) : null;
+        var recommendedOperations = json.TryGetProperty("recommendedOperations", out var recommendationsJson)
+            ? ReadRecommendedOperations(recommendationsJson) : null;
         if (version >= 4 && websitePolicyKeyEntry is null)
             throw new InvalidDataException($"schemaVersion={version} 必须同时携带网站策略公钥，以保持前序功能兼容。");
         if (version < 4 && json.TryGetProperty("applicationPolicyPublicKey", out _))
-            throw new InvalidDataException("applicationPolicyPublicKey 只允许在 schemaVersion=4/5/6 中使用。");
+            throw new InvalidDataException("applicationPolicyPublicKey 只允许在 schemaVersion=4/5/6/7 中使用。");
         if (version < 5 && json.TryGetProperty("studentSystemPolicyPublicKey", out _))
-            throw new InvalidDataException("studentSystemPolicyPublicKey 只允许在 schemaVersion=5/6 中使用。");
+            throw new InvalidDataException("studentSystemPolicyPublicKey 只允许在 schemaVersion=5/6/7 中使用。");
         (string Path, string Sha256)? installerEntry = null;
         if (version == 1)
         {
@@ -76,7 +104,7 @@ public static class PackageManifest
             installerEntry = entry;
         }
         else if (json.TryGetProperty("installer", out _))
-            throw new InvalidDataException("schemaVersion=2/3/4/5/6 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
+            throw new InvalidDataException("schemaVersion=2/3/4/5/6/7 只允许携带校区配置；Veyon 安装器已内嵌在 App 中。");
         if (!keyEntry.Path.EndsWith(".pem", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("公钥文件类型不正确。");
         if (new FileInfo(keyEntry.Path).LinkTarget is not null)
@@ -157,6 +185,9 @@ public static class PackageManifest
                 if (version >= 5)
                     expectedPayloadNames.Add(Path.GetRelativePath(root, studentSystemPolicyKeyEntry!.Value.Path)
                         .Replace(Path.DirectorySeparatorChar, '/'));
+                if (version >= 7)
+                    expectedPayloadNames.Add(Path.GetRelativePath(root, teacherChannelRootCertificatePath!)
+                        .Replace(Path.DirectorySeparatorChar, '/'));
                 if (!expectedPayloadNames.SetEquals(payloadFiles.Select(file => file.Path)))
                     throw new InvalidDataException($"schemaVersion={version} files 必须完整列出校区文件、策略公钥和 README.md。");
                 VerifyCampusJson(root, campus, prefix, keyEntry.Path, websitePolicyKeyEntry.Value.Path,
@@ -169,7 +200,8 @@ public static class PackageManifest
                 version, installerEntry?.Path, installerEntry?.Sha256,
                 websitePolicyPath, websitePolicySha256, telemetryEndpoint, deploymentId,
                 applicationPolicyPath, applicationPolicySha256, compatibility, payloadFiles,
-                studentSystemPolicyPath, studentSystemPolicySha256, recommendedOperations);
+                studentSystemPolicyPath, studentSystemPolicySha256, recommendedOperations,
+                teacherChannelEndpoints, teacherChannelRootCertificatePath);
         }
         catch (Exception ex) when (ex is CryptographicException or ArgumentException)
         {
@@ -242,13 +274,14 @@ public static class PackageManifest
             allowed.Add("files");
         }
         if (version >= 5) allowed.Add("studentSystemPolicyPublicKey");
-        if (version == 6) allowed.Add("recommendedOperations");
+        if (version >= 6) allowed.Add("recommendedOperations");
+        if (version >= 7) allowed.Add("teacherChannel");
         if (json.EnumerateObject().Any(property => !allowed.Contains(property.Name)))
             throw new InvalidDataException($"schemaVersion={version} 清单包含未知字段。");
         if (version >= 4 && (!json.TryGetProperty("compatibility", out _) || !json.TryGetProperty("files", out _)))
             throw new InvalidDataException($"schemaVersion={version} 必须提供 compatibility 和完整 files 清单。");
         if (version < 4 && (json.TryGetProperty("compatibility", out _) || json.TryGetProperty("files", out _)))
-            throw new InvalidDataException("compatibility 和 files 只允许用于 schemaVersion=4/5/6。");
+            throw new InvalidDataException("compatibility 和 files 只允许用于 schemaVersion=4/5/6/7。");
         if (version == 6 && !json.TryGetProperty("recommendedOperations", out _))
             throw new InvalidDataException("schemaVersion=6 必须提供 recommendedOperations。");
     }
@@ -263,8 +296,8 @@ public static class PackageManifest
             throw new InvalidDataException("compatibility 必须提供 studentApp 和 veyon 兼容范围。");
         if (includeStudentAgent != root.TryGetProperty("studentAgent", out var studentAgent))
             throw new InvalidDataException(includeStudentAgent
-                ? "schemaVersion=5/6 必须提供 studentAgent 兼容范围。"
-                : "studentAgent 兼容范围只允许用于 schemaVersion=5/6。");
+                ? "schemaVersion=5/6/7 必须提供 studentAgent 兼容范围。"
+                : "studentAgent 兼容范围只允许用于 schemaVersion=5/6/7。");
         PackageVersionRange ReadRange(JsonElement value, string label)
         {
             if (value.ValueKind != JsonValueKind.Object) throw new InvalidDataException($"{label} 兼容范围无效。");
@@ -310,7 +343,7 @@ public static class PackageManifest
     private static IReadOnlyList<PackagePayloadFile> ReadAndVerifyPayloadFiles(JsonElement json, string root, int schemaVersion)
     {
         var array = json.GetProperty("files");
-        var expectedCount = schemaVersion >= 5 ? 6 : 5;
+        var expectedCount = 5 + (schemaVersion >= 5 ? 1 : 0) + (schemaVersion >= 7 ? 1 : 0);
         if (array.ValueKind != JsonValueKind.Array || array.GetArrayLength() != expectedCount)
             throw new InvalidDataException($"schemaVersion={schemaVersion} files 必须完整列出 {expectedCount} 个载荷文件。");
         var results = new List<PackagePayloadFile>(expectedCount);

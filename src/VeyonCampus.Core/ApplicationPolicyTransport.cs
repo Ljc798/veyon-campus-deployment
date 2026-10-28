@@ -242,7 +242,7 @@ public static class ApplicationPolicyTransport
         IReadOnlyList<string> targets, string path, Func<string, string> bodyForTarget, string campusId,
         CancellationToken cancellationToken, TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
     {
-        using var handler = new HttpClientHandler { UseProxy = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = timeout ?? TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = targets.Select(async target =>

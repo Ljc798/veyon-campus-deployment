@@ -176,7 +176,7 @@ public static class StudentAgentRuntimeSummaryTransport
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new HttpClientHandler { UseProxy = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         var tasks = validated.Select(async target =>
         {

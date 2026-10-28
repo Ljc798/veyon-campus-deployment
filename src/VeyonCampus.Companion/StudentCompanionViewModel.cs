@@ -376,9 +376,11 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
                                           InvalidDataException or IOException or CryptographicException)
         {
             item.MarkFailed();
-            CommunicationStatus = exception is HttpRequestException
-                ? "消息未送出；请检查校园网连接后重试。"
-                : "消息未送出；" + exception.Message;
+            CommunicationStatus = exception is HttpRequestException { StatusCode: not null }
+                ? "消息未送出；" + exception.Message
+                : exception is HttpRequestException
+                    ? "消息未送出；请检查校园网连接后重试。"
+                    : "消息未送出；" + exception.Message;
         }
         finally
         {

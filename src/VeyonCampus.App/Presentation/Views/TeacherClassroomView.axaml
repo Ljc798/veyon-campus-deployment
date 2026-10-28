@@ -212,59 +212,60 @@
                   <Border Padding="16,13" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
                     <TextBlock Text="{Binding ClassroomQuickControlProgressHeader}" Classes="component-title" />
                   </Border>
-                  <ListBox ItemsSource="{Binding ClassroomQuickControlDevices}" MaxHeight="360"
-                           Background="Transparent" BorderThickness="0" Padding="4"
-                           ItemContainerTheme="{StaticResource Teacher.DeviceListItem}"
-                           ScrollViewer.HorizontalScrollBarVisibility="Disabled"
-                           ScrollViewer.VerticalScrollBarVisibility="Auto">
-                    <ListBox.ItemsPanel>
-                      <ItemsPanelTemplate>
-                        <VirtualizingStackPanel />
-                      </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemTemplate>
-                      <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
-                        <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
-                          <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
-                            <Expander.Header>
-                              <Grid ColumnDefinitions="32,*,Auto" ColumnSpacing="12" MinHeight="44">
-                                <Border Width="32" Height="32" CornerRadius="9" Background="{DynamicResource Teacher.Color.InfoSubtle}" VerticalAlignment="Center">
-                                  <Path Data="M2,3 L18,3 L18,14 L2,14 Z M10,14 L10,18 M6,18 L14,18" Width="18" Height="18"
-                                        Stretch="Uniform" Stroke="{DynamicResource Teacher.Color.Primary}" StrokeThickness="1.5" />
-                                </Border>
-                                <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
-                                  <TextBlock Classes="device-row-name" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                                  <TextBlock Text="{Binding Summary}" Classes="supporting-copy" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                                </StackPanel>
-                                <StackPanel Grid.Column="2" Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                  <Border Background="{Binding StatusBackground}" CornerRadius="12" Padding="9,4" HorizontalAlignment="Right">
-                                    <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="12" FontWeight="SemiBold" />
+                  <ScrollViewer MaxHeight="360"
+                                HorizontalScrollBarVisibility="Disabled"
+                                VerticalScrollBarVisibility="Auto">
+                    <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                          <VirtualizingStackPanel />
+                        </ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
+                          <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
+                            <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                              <Expander.Header>
+                                <Grid ColumnDefinitions="32,*,Auto" ColumnSpacing="12" MinHeight="44">
+                                  <Border Width="32" Height="32" CornerRadius="9" Background="{DynamicResource Teacher.Color.InfoSubtle}" VerticalAlignment="Center">
+                                    <Path Data="M2,3 L18,3 L18,14 L2,14 Z M10,14 L10,18 M6,18 L14,18" Width="18" Height="18"
+                                          Stretch="Uniform" Stroke="{DynamicResource Teacher.Color.Primary}" StrokeThickness="1.5" />
                                   </Border>
-                                  <TextBlock Text="{Binding UpdatedText}" Classes="supporting-copy" FontSize="12"
-                                             ToolTip.Tip="该任务最近一次进度的本机记录时间，不代表设备当前在线。" />
-                                </StackPanel>
-                              </Grid>
-                            </Expander.Header>
-                            <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="14,12" Margin="12,0,12,10">
-                              <StackPanel Spacing="8">
-                                <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                                  <Border Background="{Binding WebsiteControlStatusBackground}" CornerRadius="8" Padding="9,6">
-                                    <TextBlock Text="{Binding WebsiteControlStatus}" Foreground="{Binding WebsiteControlStatusBrush}"
-                                               FontSize="12" TextWrapping="Wrap" />
-                                  </Border>
-                                  <Border Grid.Column="1" Background="{Binding InputControlStatusBackground}" CornerRadius="8" Padding="9,6">
-                                    <TextBlock Text="{Binding InputControlStatus}" Foreground="{Binding InputControlStatusBrush}"
-                                               FontSize="12" TextWrapping="Wrap" />
-                                  </Border>
+                                  <StackPanel Grid.Column="1" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Classes="device-row-name" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Summary}" Classes="supporting-copy" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                                  </StackPanel>
+                                  <StackPanel Grid.Column="2" Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                    <Border Background="{Binding StatusBackground}" CornerRadius="12" Padding="9,4" HorizontalAlignment="Right">
+                                      <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="12" FontWeight="SemiBold" />
+                                    </Border>
+                                    <TextBlock Text="{Binding UpdatedText}" Classes="supporting-copy" FontSize="12"
+                                               ToolTip.Tip="该任务最近一次进度的本机记录时间，不代表设备当前在线。" />
+                                  </StackPanel>
                                 </Grid>
-                                <TextBlock Text="{Binding Detail}" Classes="supporting-copy" TextWrapping="Wrap" />
-                              </StackPanel>
-                            </Border>
-                          </Expander>
-                        </Border>
-                      </DataTemplate>
-                    </ListBox.ItemTemplate>
-                  </ListBox>
+                              </Expander.Header>
+                              <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8"
+                                      Padding="14,12" Margin="0,0,0,10" HorizontalAlignment="Stretch">
+                                <StackPanel Spacing="8">
+                                  <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                                    <Border Background="{Binding WebsiteControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                                      <TextBlock Text="{Binding WebsiteControlStatus}" Foreground="{Binding WebsiteControlStatusBrush}"
+                                                 FontSize="12" TextWrapping="Wrap" />
+                                    </Border>
+                                    <Border Grid.Column="1" Background="{Binding InputControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                                      <TextBlock Text="{Binding InputControlStatus}" Foreground="{Binding InputControlStatusBrush}"
+                                                 FontSize="12" TextWrapping="Wrap" />
+                                    </Border>
+                                  </Grid>
+                                  <TextBlock Text="{Binding Detail}" Classes="supporting-copy" TextWrapping="Wrap" />
+                                </StackPanel>
+                              </Border>
+                            </Expander>
+                          </Border>
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
                 </StackPanel>
               </Border>
             </StackPanel>

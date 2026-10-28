@@ -15,9 +15,10 @@
     <ItemGroup>
       <!-- Shared runtime dependencies may live outside the project when OutputPath is overridden. -->
       <_StudentAgentPayloadCandidate Include="@(FileWrites);@(FileWritesShareable);@(ReferenceCopyLocalPaths->'$(TargetDir)%(DestinationSubDirectory)%(Filename)%(Extension)')" />
-      <_StudentAgentBuildPayload Include="@(_StudentAgentPayloadCandidate->Distinct())"
-                                Condition="Exists('%(_StudentAgentPayloadCandidate.FullPath)') and $([System.String]::Copy('%(_StudentAgentPayloadCandidate.FullPath)').StartsWith('$(TargetDir)'))">
-        <AgentRelativePath>$([MSBuild]::MakeRelative('$(TargetDir)', '%(_StudentAgentPayloadCandidate.FullPath)'))</AgentRelativePath>
+      <_StudentAgentPayloadFullPath Include="@(_StudentAgentPayloadCandidate->'%(FullPath)')" />
+      <_StudentAgentBuildPayload Include="@(_StudentAgentPayloadFullPath->Distinct())"
+                                Condition="Exists('%(_StudentAgentPayloadFullPath.Identity)') and $([System.String]::Copy('%(_StudentAgentPayloadFullPath.Identity)').StartsWith('$(TargetDir)'))">
+        <AgentRelativePath>$([MSBuild]::MakeRelative('$(TargetDir)', '%(_StudentAgentPayloadFullPath.Identity)'))</AgentRelativePath>
       </_StudentAgentBuildPayload>
     </ItemGroup>
     <Error Condition="'@(_StudentAgentBuildPayload)' == ''" Text="The Student Agent build did not report any payload files." />

@@ -27,7 +27,7 @@ public static class StudentInputGuardTransport
             return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
                 "Student Agent 身份尚未固定；请先在设备健康页完成身份核对。", NeedsReview: true);
 
-        using var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
@@ -135,7 +135,7 @@ public static class StudentInputGuardTransport
         if (pinnedKey is null)
             return new StudentInputGuardDeliveryResult(statusResult.Target, false, true,
                 null, null, "Student Agent 身份固定已变化；没有发送 InputGuard 命令。");
-        using var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
+        using var handler = new StudentAgentChannelHttpMessageHandler();
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CommandTimeout);

@@ -90,7 +90,13 @@ public static class ClassroomEventTransport
         var json = Encoding.UTF8.GetString(await ReadBoundedAsync(response.Content, MaximumRemoteResponseBytes,
             cancellationToken).ConfigureAwait(false));
         if (!response.IsSuccessStatusCode)
-            throw new HttpRequestException("教师端暂未接收课堂事件。", null, response.StatusCode);
+        {
+            var remoteError = ReadRemoteErrorMessage(json);
+            var detail = string.IsNullOrWhiteSpace(remoteError)
+                ? $"HTTP {(int)response.StatusCode}."
+                : remoteError;
+            throw new HttpRequestException("教师端拒绝课堂事件：" + detail, null, response.StatusCode);
+        }
         PolicyJson.RejectDuplicateFields(Encoding.UTF8.GetBytes(json));
         var result = JsonSerializer.Deserialize<ClassroomEventSubmitResponse>(json,
                          ApplicationPolicyCompiler.JsonOptions)
@@ -99,6 +105,23 @@ public static class ClassroomEventTransport
             throw new InvalidDataException("教师端未接受本次课堂事件。");
         return new StudentAgentClassroomEventSubmission(true, grant.SessionId, classroomEvent.EventId,
             DateTimeOffset.UtcNow, classroomEvent.CorrelationId);
+    }
+
+    private static string? ReadRemoteErrorMessage(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return document.RootElement.ValueKind == JsonValueKind.Object &&
+                   document.RootElement.TryGetProperty("error", out var error) &&
+                   error.ValueKind == JsonValueKind.String
+                ? error.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 
     public static async Task<StudentAgentClassroomEventPage> ReadTeacherEventsAsync(
