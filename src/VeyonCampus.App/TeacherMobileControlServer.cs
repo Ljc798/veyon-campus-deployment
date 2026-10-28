@@ -2639,17 +2639,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         lock (window.Gate)
         {
             var retainedEvent = _classroomEvents.FindRetained(grant.SessionId, verified.Event.EventId, now);
+            if (retainedEvent is not null && !SameClassroomEventContent(retainedEvent, verified.Event))
+                throw new InvalidDataException("重复课堂事件 ID 与已接收的内容不匹配。");
+            if (!AcceptStudentEventRate(window, limit))
+                throw new MobileRateLimitException(rateLimitMessage);
+
             if (retainedEvent is not null)
             {
-                if (!SameClassroomEventContent(retainedEvent, verified.Event))
-                    throw new InvalidDataException("重复课堂事件 ID 与已接收的内容不匹配。");
                 response = new MobileStudentEventSubmitResponse(true, true);
             }
             else
             {
-                if (!AcceptStudentEventRate(window, limit))
-                    throw new MobileRateLimitException(rateLimitMessage);
-
                 var accepted = _classroomEvents.Append(verified.Event, now, signedJson);
                 if (!accepted)
                 {
