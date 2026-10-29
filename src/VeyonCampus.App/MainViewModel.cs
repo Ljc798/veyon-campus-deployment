@@ -66,7 +66,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _installerStatus = "";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
     private string _executionOverallStatus = ExecutionPlan.NotStarted;
-    private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
+    private bool _installVeyon = true, _rename, _createStudent, _changeAdmin = true, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
     private CancellationTokenSource? _stopAfterCurrentStep;
     private bool _stopAfterCurrentStepRequested;
@@ -356,7 +356,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public bool ChangeAdminPassword
     {
         get => _changeAdmin;
-        set { MarkOperationSelectionTouched(); if (_changeAdmin == value) return; _changeAdmin = value; Changed(); Changed(nameof(AdminPasswordRecommendationWarning)); if (!value) ClearAdminPassword(); Invalidate(); }
+        set { MarkOperationSelectionTouched(); if (_changeAdmin == value) return; _changeAdmin = value; Changed(); Changed(nameof(HasAdminPasswordRecommendation)); Changed(nameof(AdminPasswordRecommendationWarning)); if (!value) ClearAdminPassword(); Invalidate(); }
     }
     public void SetStudentPasswordInput(string password, string confirmation)
     {
@@ -377,10 +377,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public PackageContext? LoadedPackage => _package;
     public string PackageRecommendationNotice => _packageRecommendationNotice;
     public bool HasPackageRecommendationNotice => !string.IsNullOrWhiteSpace(PackageRecommendationNotice);
-    public bool HasAdminPasswordRecommendation => LoadedPackage?.RecommendedOperations?.ChangeAdminPassword == true;
+    public bool HasAdminPasswordRecommendation => LoadedPackage is { } package &&
+        (ChangeAdminPassword || package.RecommendedOperations?.ChangeAdminPassword == true);
     public string AdminPasswordRecommendationWarning => ChangeAdminPassword
-        ? "先确认账户，并妥善保存新密码。"
-        : "此项默认关闭；确认账户后再手动启用。";
+        ? "已启用管理员密码更改。请核对目标账户并妥善保管新密码；程序不会保存或恢复旧密码。"
+        : "已取消管理员密码更改；部署不会更改该账户的密码。";
     public string LoadedPackageInlineSummary => LoadedPackage is null
         ? "尚未选择校区配置"
         : LoadedPackage.Campus;
@@ -684,7 +685,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _applyingPackageRecommendations = true;
         try
         {
-            InstallVeyon = true; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = false;
+            InstallVeyon = true; RenameComputer = false; CreateStudent = false; ChangeAdminPassword = true;
         }
         finally { _applyingPackageRecommendations = false; }
         SetPackageRecommendationNotice("");
@@ -1218,7 +1219,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 _studentAgentVersionChecked = true;
                 _studentAgentVersionCheckSucceeded = true;
                 SetStudentAgentVersionStatus($"本机 Student Agent：{_studentAgentInstalledVersion}；随包版本：{WebsitePolicyAgentInstaller.BuildVersion}；更新/修复后健康状态核验通过。");
-                WebsiteAgentInstallStatus = $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。";
+                WebsiteAgentInstallStatus = string.IsNullOrWhiteSpace(result.Detail)
+                    ? $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。"
+                    : result.Detail;
             }
             else
             {
@@ -2342,8 +2345,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 InstallVeyon = recommendations?.InstallVeyon ?? true;
                 RenameComputer = recommendations?.RenameComputer ?? false;
                 CreateStudent = recommendations?.CreateStudentAccount ?? false;
-                // A general campus package cannot identify the local administrator account.
-                ChangeAdminPassword = false;
+                ChangeAdminPassword = recommendations?.ChangeAdminPassword ?? true;
             }
             finally { _applyingPackageRecommendations = false; }
         }

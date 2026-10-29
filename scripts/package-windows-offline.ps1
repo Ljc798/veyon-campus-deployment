@@ -4,6 +4,7 @@ param(
     [string]$Role = 'StudentSetup',
     [string]$OutputDirectory,
     [string]$InstallerPath,
+    [string]$TestVersionOverride,
     [string]$FileUpdateHelperDirectory,
     [string]$ReleasePublicKeyPath,
     [string]$EdgeExtensionId,
@@ -69,6 +70,7 @@ $artifactsPrefix = $artifactsRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySepara
 $appProjectPath = Join-Path $repoRoot 'src/VeyonCampus.App/VeyonCampus.App.csproj'
 $updateHelperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/VeyonCampus.UpdateHelper.csproj'
 $coreProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonCampus.Core.csproj'
+$agentProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Agent/VeyonCampus.Agent.csproj'
 $companionProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/VeyonCampus.Companion.csproj'
 $companionManifestPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/StudentCompanion.manifest'
 $edgePolicyExecutorProjectPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj'
@@ -174,6 +176,13 @@ $appVersion = [string](@($appProjectXml.Project.PropertyGroup | ForEach-Object {
     Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '无法从 VeyonCampus.App.csproj 读取应用版本。'
+}
+if (-not [string]::IsNullOrWhiteSpace($TestVersionOverride)) {
+    if ($TestVersionOverride -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$') {
+        throw 'TestVersionOverride 必须是 X.Y.Z 或带预发布后缀的版本号。'
+    }
+    $appVersion = $TestVersionOverride
+    Write-Host "本地测试版本覆盖：$appVersion（不会修改项目文件）" -ForegroundColor Yellow
 }
 $updateHandoffSource = Get-Content -LiteralPath (Join-Path $repoRoot 'src/VeyonCampus.Core/ApplicationReleaseUpdateHandoff.cs') -Raw -Encoding UTF8
 if ($updateHandoffSource -notmatch 'Arguments\s*=\s*"/SILENT /NOCANCEL /NORESTART /CLOSEAPPLICATIONS"' -or
@@ -498,6 +507,14 @@ if (-not (Test-Path -LiteralPath $dotnetRuntimeInstallerPath -PathType Leaf) -or
 
 if (-not $SkipRestore) {
     if ($Role -eq 'StudentSetup') {
+        $agentRestoreArguments = @('restore', $agentProjectPath, '-r', 'win-x64', '--locked-mode',
+            '-p:NuGetAudit=false', '-p:VeyonCampusStudentAgentBuild=true',
+            '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-p:VeyonCampusIncludeInstaller=false')
+        if ($releasePublicKeyFullPath) {
+            $agentRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+        }
+        Invoke-Dotnet $agentRestoreArguments
+
         $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
             '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
             '-p:VeyonCampusIncludeInstaller=false')
@@ -539,6 +556,7 @@ if (-not $SkipRestore) {
 
 $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'false', '--no-restore', "-p:VeyonCampusRole=$Role",
+    "-p:Version=$appVersion",
     '-p:AppHostDotNetSearch=Global', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
     '-p:VeyonCampusTargetRuntime=win-x64',
     '-o', $publishDirectory)
@@ -556,6 +574,19 @@ if ($ClassroomQuickControlManualTest) {
 Invoke-Dotnet $publishArguments
 
 if ($Role -eq 'StudentSetup') {
+    $setupDllPath = Join-Path $publishDirectory 'VeyonCampus.StudentSetup.dll'
+    $coreDllPath = Join-Path $publishDirectory 'VeyonCampus.Core.dll'
+    if (-not (Test-Path -LiteralPath $setupDllPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $coreDllPath -PathType Leaf)) {
+        throw 'StudentSetup 发布目录缺少主程序或 Core 程序集。'
+    }
+    $actualSetupVersion = [System.Reflection.AssemblyName]::GetAssemblyName($setupDllPath).Version.ToString(3)
+    $actualCoreVersion = [System.Reflection.AssemblyName]::GetAssemblyName($coreDllPath).Version.ToString(3)
+    if ($actualSetupVersion -cne $appVersion -or $actualCoreVersion -cne $actualSetupVersion) {
+        throw "StudentSetup 主程序/Core 版本不一致：期望 $appVersion，主程序 $actualSetupVersion，Core $actualCoreVersion。"
+    }
+    Write-Host "已验证 StudentSetup 主程序与 Core 版本：$actualSetupVersion。" -ForegroundColor Green
+
     $inputGuardPublishDirectory = Join-Path $publishDirectory 'InputGuard'
     $inputGuardPublishArguments = @('publish', $inputGuardProjectPath, '-c', 'Release', '-r', 'win-x64',
         '--self-contained', 'false', '--no-restore', '-p:AppHostDotNetSearch=Global', "-p:Version=$appVersion",
@@ -762,6 +793,17 @@ if ($Role -eq 'StudentSetup') {
     if (-not (Test-Path -LiteralPath $agentExePath -PathType Leaf)) {
         throw "发布结果中缺少独立后台代理 VeyonCampus.Agent.exe：$agentExePath"
     }
+    $agentDllPath = Join-Path $publishDirectory 'WebsitePolicyAgent/VeyonCampus.Agent.dll'
+    if (-not (Test-Path -LiteralPath $agentDllPath -PathType Leaf)) {
+        throw "发布结果中缺少独立后台代理 VeyonCampus.Agent.dll：$agentDllPath"
+    }
+    $expectedAgentVersion = Get-RequiredMatchValue (Get-Content -LiteralPath $agentProjectPath -Raw -Encoding UTF8) `
+        '<Version>([^<]+)</Version>' 'Student Agent 版本'
+    $actualAgentVersion = [System.Reflection.AssemblyName]::GetAssemblyName($agentDllPath).Version.ToString(3)
+    if ($actualAgentVersion -cne $expectedAgentVersion) {
+        throw "StudentSetup 内置 Agent 版本不匹配：期望 $expectedAgentVersion，实际 $actualAgentVersion。"
+    }
+    Write-Host "已验证 StudentSetup 内置 Agent 版本：$actualAgentVersion。" -ForegroundColor Green
 
     $wallpaperAssetPath = Join-Path $publishDirectory 'WebsitePolicyAgent/Assets/StudentDefaultWallpaper-v1.jpg'
     if (-not (Test-Path -LiteralPath $wallpaperAssetPath -PathType Leaf)) {
@@ -869,6 +911,7 @@ elseif (-not (Test-Path -LiteralPath (Join-Path (Split-Path -Parent $updateHelpe
 }
 $helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release', '-r', 'win-x64',
     '--self-contained', 'false', '--no-restore', '-p:PublishSingleFile=true',
+    "-p:Version=$appVersion",
     '-p:AppHostDotNetSearch=Global', '-p:DebugType=None',
     '-p:VeyonCampusIncludeInstaller=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
     '-o', $updateHelperOutputDirectory)

@@ -5,4 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(VeyonCampusStudentAgentBuild)' == 'true'">
+    <!-- Keep the separately versioned Agent/Core build from overwriting the Setup app's outputs. -->
+    <BaseOutputPath>bin\student-agent-payload\</BaseOutputPath>
+  </PropertyGroup>
 </Project>

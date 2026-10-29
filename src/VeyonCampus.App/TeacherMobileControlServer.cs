@@ -365,6 +365,17 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         finally { _classroomSyncGate.Release(); }
     }
 
+    public async Task StartForAgentCommandsAsync(CancellationToken cancellationToken = default)
+    {
+        await _classroomSyncGate.WaitAsync(cancellationToken);
+        try
+        {
+            await StartServiceCoreAsync(cancellationToken);
+            if (_classroomContext is not null) await ApplyClassroomContextAsync(cancellationToken);
+        }
+        finally { _classroomSyncGate.Release(); }
+    }
+
     internal async Task SyncClassroomSessionAsync(TeacherClassroomEventContext? context,
         CancellationToken cancellationToken = default)
     {

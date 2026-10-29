@@ -35,7 +35,7 @@ public static class StudentSystemPolicyTransport
         if (validated.Any(target => !validatedPolicies.ContainsKey(target)) ||
             validatedPolicies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台系统策略信封必须完整匹配每一台目标电脑。");
-        using var handler = new StudentAgentChannelHttpMessageHandler();
+        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>

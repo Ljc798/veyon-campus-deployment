@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
 using System.Runtime.Versioning;
 
 namespace VeyonCampus.Core;
@@ -191,7 +192,7 @@ public static class StudentUpdatePhaseTimingStore
 {
     public const int MaximumPhases = 16;
     public const int MaximumSnapshotBytes = 32 * 1024;
-    private const string DirectoryName = "student-update-phase-timings";
+    internal const string DirectoryName = "student-update-phase-timings";
     private const int MaximumFiles = 128;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -285,6 +286,44 @@ public static class StudentUpdatePhaseTimingStore
         if (!OperatingSystem.IsWindows() || commandId == Guid.Empty ||
             !StudentUpdateEnvironmentCategories.IsValid(environment)) return;
         TryWrite(configPath, commandId, timing: null, environment: environment);
+    }
+
+    /// <summary>
+    /// Verifies the bounded, private diagnostic sidecar before a full Agent configuration
+    /// directory is removed. Timing data is not update state and must never block an update.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    internal static void VerifyOwnedDirectoryForRemoval(string directory)
+    {
+        PathLinkSecurity.RejectLinks(directory);
+        if (!Directory.Exists(directory)) return;
+        if (!AgentFileSecurity.IsPrivate(directory, directory: true))
+            throw new IOException("学生更新计时目录 ACL 无效；拒绝删除。");
+
+        var entries = Directory.EnumerateFileSystemEntries(directory, "*", SearchOption.TopDirectoryOnly)
+            .Take(MaximumFiles * 2 + 1).ToArray();
+        if (entries.Length > MaximumFiles * 2)
+            throw new IOException("学生更新计时目录包含过多文件；拒绝删除。");
+
+        foreach (var entry in entries)
+        {
+            var attributes = File.GetAttributes(entry);
+            if ((attributes & (FileAttributes.Directory | FileAttributes.ReparsePoint)) != 0)
+                throw new IOException("学生更新计时目录包含目录或重解析点；拒绝递归删除。");
+
+            var name = Path.GetFileName(entry);
+            var snapshot = Guid.TryParseExact(Path.GetFileNameWithoutExtension(name), "N", out _) &&
+                           string.Equals(Path.GetExtension(name), ".json", StringComparison.OrdinalIgnoreCase);
+            var temporary = Regex.IsMatch(name,
+                @"^[0-9a-f]{32}\.json\.tmp-[0-9a-f]{32}$",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!snapshot && !temporary)
+                throw new IOException($"学生更新计时目录含无法确认归属的文件：{entry}；拒绝删除。");
+
+            PathLinkSecurity.RejectLinks(entry);
+            if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                throw new IOException("学生更新计时文件 ACL 无效；拒绝删除。");
+        }
     }
 
     internal static void ValidateResponsePhases(IReadOnlyList<StudentUpdatePhaseTiming> phases,

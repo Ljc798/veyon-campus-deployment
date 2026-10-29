@@ -283,6 +283,9 @@ public static class ApplicationReleaseUpdateHandoff
             Directory.CreateDirectory(recoveryDirectory);
             PathLinkSecurity.RejectLinks(recoveryDirectory);
             var previousInstallationDirectory = Path.Combine(recoveryDirectory, "Previous");
+            VeyonCampusProcessCleanup.StopInstalledRoleProcesses(
+                role == ApplicationReleaseRole.StudentSetup ? "StudentSetup" : "TeacherConsole",
+                preserveUpdateHelper: true);
             Directory.Move(installDirectory, previousInstallationDirectory);
 
             try

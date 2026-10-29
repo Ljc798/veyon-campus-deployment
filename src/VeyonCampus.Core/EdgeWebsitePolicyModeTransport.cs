@@ -46,7 +46,7 @@ public static class EdgeWebsitePolicyModeTransport
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         var revisions = NormalizeMap(expectedRevisions, validated, "策略版本");
         var profiles = NormalizeMap(profileIdsByTarget, validated, "Edge Profile 状态");
-        using var handler = new StudentAgentChannelHttpMessageHandler();
+        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>

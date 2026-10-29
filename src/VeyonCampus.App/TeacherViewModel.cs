@@ -10117,7 +10117,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentUpdateStatus = $"正在读取 {targets.Count} 台电脑的 StudentSetup 与 SYSTEM Agent 版本……";
             SetStudentUpdateProgress(true, true, 0, "正在核对每台学生电脑的已安装版本……");
             var preflight = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
-                signingKey.PrivateKey);
+                signingKey.PrivateKey, allowLegacyDirectFallback: true);
             foreach (var target in targets)
             {
                 var row = FindStudentUpdateTargetRow(target);
@@ -10127,7 +10127,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (observed is not { Succeeded: true, Status: not null })
                 {
                     var detail = observed?.Detail ?? "没有收到此电脑的版本状态。";
-                    RemoveStudentUpdateTargetRow(target);
+                    if (row is not null)
+                    {
+                        row.SetResult(succeeded: false, needsReview: true,
+                            SanitizeStudentUpdateDetail(detail, target, row.DisplayName));
+                        ShowStudentUpdateTargetRow(row);
+                    }
                     preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
                         NeedsReview: true, IdentityCandidate: observed?.IdentityCandidate));
                     continue;
@@ -10197,7 +10202,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 foreach (var result in preflightResults)
                 {
                     if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
-                    row.SetResult(result.Succeeded, result.NeedsReview, result.Detail, result.RolledBack);
+                    row.SetResult(result.Succeeded, result.NeedsReview,
+                        SanitizeStudentUpdateDetail(result.Detail, result.Target, row.DisplayName), result.RolledBack);
                 }
                 SortStudentUpdateTargetRows();
                 return;
@@ -10303,7 +10309,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             foreach (var result in preflightResults)
             {
                 if (!_studentUpdateRowsByTarget.TryGetValue(NormalizeTargetKey(result.Target), out var row)) continue;
-                row.SetResult(result.Succeeded, result.NeedsReview, result.Detail, result.RolledBack);
+                row.SetResult(result.Succeeded, result.NeedsReview,
+                    SanitizeStudentUpdateDetail(result.Detail, result.Target, row.DisplayName), result.RolledBack);
             }
             foreach (var delivery in deliveries)
             {
@@ -10801,7 +10808,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
             var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
-                signingKey.PrivateKey);
+                signingKey.PrivateKey, allowLegacyDirectFallback: true);
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             var verified = results.Count(result => result.Succeeded && result.Status is not null);
             var appliedProfiles = results.Where(result => result.Status?.EdgeWebsite is not null)

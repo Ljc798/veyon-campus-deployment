@@ -378,14 +378,14 @@ public static class StudentUpdateAtomicTransaction
             return;
         record = persisted;
 
-        if (record.State is not (StudentUpdateTransactionState.RollbackPending or
-                StudentUpdateTransactionState.RecoveryRequired))
-            record = Advance(configPath, record, StudentUpdateTransactionState.RollbackPending, cause.ToString());
-        else if (record.State == StudentUpdateTransactionState.RecoveryRequired)
-            record = Advance(configPath, record, StudentUpdateTransactionState.RollbackPending, cause.ToString());
-
         try
         {
+            if (record.State is not (StudentUpdateTransactionState.RollbackPending or
+                    StudentUpdateTransactionState.RecoveryRequired))
+                record = Advance(configPath, record, StudentUpdateTransactionState.RollbackPending, cause.ToString());
+            else if (record.State == StudentUpdateTransactionState.RecoveryRequired)
+                record = Advance(configPath, record, StudentUpdateTransactionState.RollbackPending, cause.ToString());
+
             StopOrphanedInstallerProcesses(configPath, record);
             var previousAgentPath = GetAgentExecutablePath(record.PreviousAgentVersion);
             var targetAgentPath = GetAgentExecutablePath(record.TargetAgentVersion);
@@ -420,10 +420,19 @@ public static class StudentUpdateAtomicTransaction
         }
         catch (Exception rollbackFailure)
         {
-            RecordRecoveryFailure(configPath, record,
-                new AggregateException("学生更新失败，且联合回滚尚未通过读回。", cause, rollbackFailure));
+            var reportedRollbackFailure = rollbackFailure;
+            try
+            {
+                RecordRecoveryFailure(configPath, record,
+                    new AggregateException("学生更新失败，且联合回滚尚未通过读回。", cause, rollbackFailure));
+            }
+            catch (Exception recoveryStateFailure)
+            {
+                reportedRollbackFailure = new AggregateException("学生更新失败，且无法持久化回滚恢复状态。",
+                    rollbackFailure, recoveryStateFailure);
+            }
             throw new AggregateException("学生更新失败，且联合回滚尚未通过读回；事务恢复材料已保留。", cause,
-                rollbackFailure);
+                reportedRollbackFailure);
         }
     }
 
@@ -834,6 +843,7 @@ public static class StudentUpdateAtomicTransaction
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.PreviousSetupPreserved) => true,
             (StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.SetupInstallationPending) => true,
+            (StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.SetupInstallationPending, StudentUpdateTransactionState.SetupInstalled) => true,
             (StudentUpdateTransactionState.SetupInstallationPending, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.SetupInstalled, StudentUpdateTransactionState.AgentStaged) => true,

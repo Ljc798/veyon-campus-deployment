@@ -13,7 +13,8 @@
           <TextBlock Text="{Binding Status}" TextWrapping="Wrap" MinHeight="42" />
           <ProgressBar Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"
                        IsIndeterminate="{Binding ProgressIsIndeterminate}"
-                       IsVisible="{Binding IsProgressVisible}" Height="8" />
+                       IsVisible="{Binding IsProgressVisible}" Height="8"
+                       Background="#DCE7F2" Foreground="#1479F5" />
           <TextBlock Text="{Binding ProgressText}" Classes="muted" TextWrapping="Wrap"
                      IsVisible="{Binding IsProgressVisible}" />
           <WrapPanel>

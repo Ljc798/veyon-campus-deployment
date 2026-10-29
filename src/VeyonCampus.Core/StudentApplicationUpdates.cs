@@ -1206,13 +1206,7 @@ public static class StudentApplicationUpdateTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         _ = ApplicationReleaseClient.CompareVersions(expectedAgentVersion, expectedAgentVersion);
         var validatedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
-        using var handler = new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseCookies = false,
-            UseProxy = false,
-            ConnectTimeout = TimeSpan.FromSeconds(8)
-        };
+        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = RequestTimeout };
         using var concurrencyLimit = new SemaphoreSlim(8, 8);
         var completedTargets = 0;
@@ -1292,8 +1286,34 @@ public static class StudentApplicationUpdateTransport
                 }
                 using var response = responseMessage;
                 var resultText = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode is HttpStatusCode.OK or HttpStatusCode.Accepted &&
+                    string.IsNullOrWhiteSpace(resultText))
+                {
+                    var preflightFailure = await TryResolvePreflightFailureAsync(client, target, campusId,
+                        pinnedKey, campusPrivateKey, command.CommandId, response.StatusCode, progress,
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        cancellationToken).ConfigureAwait(false);
+                    if (preflightFailure is not null) return preflightFailure;
+
+                    var emptyReceiptReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
+                        campusPrivateKey, pinnedKey, command.CommandId, waitForProgress: true,
+                        cancellationToken, progress, () => Volatile.Read(ref completedTargets),
+                        validatedTargets.Count, maxWait: TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+                    return ResolveUncertainUpdateResult(target, emptyReceiptReadback, source,
+                        expectedAgentVersion, "学生 Agent 返回了空的更新签名回执。");
+                }
                 if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Accepted))
                 {
+                    var httpFailure = FormatUpdateHttpFailure(response.StatusCode, resultText);
+                    var preflightFailure = await TryResolvePreflightFailureAsync(client, target, campusId,
+                        pinnedKey, campusPrivateKey, command.CommandId, response.StatusCode, progress,
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        cancellationToken).ConfigureAwait(false);
+                    if (preflightFailure is not null) return preflightFailure with
+                    {
+                        Detail = $"{preflightFailure.Detail} Agent 响应：{httpFailure}"
+                    };
+
                     var failedReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
                         campusPrivateKey, pinnedKey, command.CommandId,
                         waitForProgress: false, cancellationToken, progress,
@@ -1323,10 +1343,10 @@ public static class StudentApplicationUpdateTransport
                         failedReadback is { State: "committed" } ||
                         (int)response.StatusCode >= 500)
                         return new StudentApplicationUpdatePushResult(target, false,
-                            "学生端更新没有返回可确认的提交或回滚终态；需人工核对恢复状态。",
+                            $"{httpFailure}；且未读取到本次命令对应的提交或回滚终态，需人工核对恢复状态。",
                             NeedsReview: true, IdentityCandidate: failedReadback?.IdentityCandidate);
                     return new StudentApplicationUpdatePushResult(target, false,
-                        $"HTTP {(int)response.StatusCode}：{resultText}");
+                        httpFailure);
                 }
                 var restartPending = response.StatusCode == HttpStatusCode.Accepted;
                 var verifiedUpdate = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(resultText,
@@ -1342,7 +1362,7 @@ public static class StudentApplicationUpdateTransport
                     var readback = await WaitForUpdateTerminalAsync(client, target, campusId, campusPrivateKey,
                         pinnedKey, command.CommandId, waitForProgress: true,
                         cancellationToken, progress, () => Volatile.Read(ref completedTargets),
-                        validatedTargets.Count).ConfigureAwait(false);
+                        validatedTargets.Count, maxWait: TimeSpan.FromMinutes(5)).ConfigureAwait(false);
                     if (readback is null)
                         return new StudentApplicationUpdatePushResult(target, false,
                             "未能读取到本次原子更新事务的签名终态；需核对任务、ACL、端口和启动日志。",
@@ -1463,6 +1483,8 @@ public static class StudentApplicationUpdateTransport
                 $"读取学生更新下载能力返回 HTTP {(int)response.StatusCode}；未下发更新命令。",
                 null, response.StatusCode);
         var signedResult = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(signedResult))
+            throw new InvalidDataException("学生端更新下载能力接口返回空签名回执；本次更新命令尚未下发。");
         var verified = StudentAgentResponseCryptography
             .Verify<StudentApplicationUpdateDownloadCapabilityResponse>(signedResult, pinnedAgentPublicKeyPem);
         if (!verified.MatchesPinnedKey)
@@ -1570,11 +1592,13 @@ public static class StudentApplicationUpdateTransport
             using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return null;
             var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(resultText)) return null;
             var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(resultText,
                 pinnedAgentPublicKeyPem);
             WebsitePolicyStatusCryptography.ValidateResponse(verified.Payload, request, DateTimeOffset.UtcNow);
             var transaction = verified.Payload.UpdateTransaction
                               ?? throw new InvalidDataException("学生 Agent 缺少本次更新事务回执。");
+            if (transaction.CommandId != commandId) return null;
             return new UpdateTerminalReadback(transaction.State, verified.MatchesPinnedKey,
                 verified.Payload, CreateIdentityCandidate(target, campusId, verified, pinnedAgentPublicKeyPem));
         }
@@ -1605,6 +1629,35 @@ public static class StudentApplicationUpdateTransport
             stage, phases, commandId, snapshot?.Environment));
     }
 
+    private static async Task<StudentApplicationUpdatePushResult?> TryResolvePreflightFailureAsync(
+        HttpClient client, string target, string campusId, string pinnedAgentPublicKeyPem,
+        RSA campusPrivateKey, Guid commandId, HttpStatusCode responseStatus,
+        IProgress<StudentApplicationUpdateProgress>? progress, Func<int> getCompletedTargets,
+        int totalTargets, CancellationToken cancellationToken)
+    {
+        var snapshot = await TryReadUpdatePhaseTimingsAsync(client, target, campusId,
+            pinnedAgentPublicKeyPem, campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
+        if (snapshot is null || snapshot.CommandId != commandId || !IsDefinitivePreflightFailure(snapshot))
+            return null;
+
+        progress?.Report(new StudentApplicationUpdateProgress(target, getCompletedTargets(), totalTargets,
+            "学生端命令预检失败；本次更新未进入安装阶段。", snapshot.Phases, commandId,
+            snapshot.Environment));
+        return new StudentApplicationUpdatePushResult(target, false,
+            $"学生 Agent 的签名阶段记录确认命令在“命令接收与预检”阶段失败（HTTP {(int)responseStatus}）；" +
+            "本次更新未进入局域网传输或安装阶段。Agent 没有返回签名终态回执，已立即停止等待；" +
+            "请检查学生端 SYSTEM Agent 的预检日志并处理遗留事务后重试。",
+            NeedsReview: true);
+    }
+
+    private static bool IsDefinitivePreflightFailure(StudentUpdatePhaseTimingSnapshot snapshot)
+    {
+        var offer = snapshot.Phases.FirstOrDefault(phase => phase.Phase == StudentUpdatePhase.TeacherOffer);
+        if (offer is null || offer.Outcome != "failed" || offer.CompletedUtc is null) return false;
+        return snapshot.Phases.All(phase => phase.Phase is StudentUpdatePhase.IntegrityVerify or
+            StudentUpdatePhase.TeacherOffer);
+    }
+
     private static async Task<StudentUpdatePhaseTimingSnapshot?> TryReadUpdatePhaseTimingsAsync(HttpClient client,
         string target, string campusId, string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId,
         CancellationToken cancellationToken)
@@ -1632,6 +1685,7 @@ public static class StudentApplicationUpdateTransport
             using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.NotFound || !response.IsSuccessStatusCode) return null;
             var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(resultText)) return null;
             var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponse>(resultText,
                 pinnedAgentPublicKeyPem);
             if (!verified.MatchesPinnedKey) return null;
@@ -1664,6 +1718,7 @@ public static class StudentApplicationUpdateTransport
             if (response.StatusCode == HttpStatusCode.NotFound) return (true, null);
             if (!response.IsSuccessStatusCode) return (false, null);
             var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(resultText)) return (false, null);
             var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponseV3>(
                 resultText, pinnedAgentPublicKeyPem);
             if (!verified.MatchesPinnedKey) return (false, null);
@@ -1697,6 +1752,7 @@ public static class StudentApplicationUpdateTransport
             if (response.StatusCode == HttpStatusCode.NotFound) return (true, null);
             if (!response.IsSuccessStatusCode) return (false, null);
             var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(resultText)) return (false, null);
             var verified = StudentAgentResponseCryptography.Verify<StudentUpdatePhaseTimingResponseV2>(
                 resultText, pinnedAgentPublicKeyPem);
             if (!verified.MatchesPinnedKey) return (false, null);
@@ -1738,6 +1794,15 @@ public static class StudentApplicationUpdateTransport
                string.Equals(transaction.TargetAgentVersion, expectedTargetAgentVersion, StringComparison.Ordinal) &&
                string.Equals(status.StudentSetupVersion, transaction.TargetSetupVersion, StringComparison.Ordinal) &&
                string.Equals(status.AgentVersion, transaction.TargetAgentVersion, StringComparison.Ordinal);
+    }
+
+    private static string FormatUpdateHttpFailure(HttpStatusCode statusCode, string responseBody)
+    {
+        var detail = Regex.Replace(responseBody, @"[\p{Cc}\s]+", " ", RegexOptions.CultureInvariant).Trim();
+        if (detail.Length > 1000) detail = detail[..1000] + "…";
+        return string.IsNullOrWhiteSpace(detail)
+            ? $"HTTP {(int)statusCode}；学生 Agent 未返回错误详情"
+            : $"HTTP {(int)statusCode}：{detail}";
     }
 
     private static StudentApplicationUpdatePushResult ResolveUncertainUpdateResult(string target,

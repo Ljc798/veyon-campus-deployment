@@ -998,7 +998,9 @@ public static class WebsitePolicyAgentInstaller
     public static int GetInstalledAgentConfigurationCount()
     {
         if (!OperatingSystem.IsWindows()) return 0;
-        VerifyAgentConfigurationRootIsSafe();
+        // Timing data is best-effort diagnostics. A stale sidecar must not prevent
+        // the repair path from discovering and reusing the installed campus config.
+        VerifyAgentConfigurationRootIsSafe(allowTimingDiagnostics: true);
         return FindAgentConfigurationFiles().Count;
     }
 
@@ -1029,7 +1031,7 @@ public static class WebsitePolicyAgentInstaller
 
             stage = "核验本机 Agent 配置";
             VerifyAgentInstallationRootsAreSafe();
-            VerifyAgentConfigurationRootIsSafe();
+            VerifyAgentConfigurationRootIsSafe(allowTimingDiagnostics: true);
             var configurations = FindAgentConfigurationFiles();
             if (configurations.Count == 0)
                 return new(step, ExecutionPlan.NeedsReview,
@@ -1042,13 +1044,31 @@ public static class WebsitePolicyAgentInstaller
             configPath = installedConfiguration.Path;
             config = installedConfiguration.Config;
             VerifyConfigPathIdentity(configPath, config);
-            StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
             ValidateInstalledAgentTrustConfiguration(config);
             var originalConfigBytes = File.ReadAllBytes(configPath);
             var expectedConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+            var pendingTransaction = StudentUpdateAtomicTransaction.Read(configPath);
+            var installedStudentSetupVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
+            var recoveryBootstrapTransaction = pendingTransaction is
+                { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
+                string.Equals(transaction.PreviousSetupVersion, installedStudentSetupVersion, StringComparison.Ordinal) &&
+                string.Equals(transaction.PreviousAgentVersion, BuildVersion, StringComparison.Ordinal) &&
+                string.Equals(transaction.ConfigurationFingerprint, expectedConfigFingerprint,
+                    StringComparison.OrdinalIgnoreCase) &&
+                transaction.UpdatedUtc <= DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(1))
+                ? transaction
+                : null;
+            if (recoveryBootstrapTransaction is null)
+                StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
 
             stage = "核验现有 SYSTEM 任务";
             previousTask = ReadTaskForRemoval();
+            if (recoveryBootstrapTransaction is not null &&
+                (previousTask is null ||
+                 !PathEquals(previousTask.ExecutablePath,
+                     StudentUpdateAtomicTransaction.GetAgentExecutablePath(BuildVersion))))
+                return new(step, ExecutionPlan.NeedsReview,
+                    "检测到旧版保留阶段的更新事务，但当前 SYSTEM Agent 任务没有指向已核验的旧 Agent；未更改任务或文件。请人工核对。" );
             if (previousTask is not null &&
                 (!PathEquals(previousTask.ConfigPath, configPath) || previousTask.Config is null ||
                  !string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
@@ -1115,7 +1135,11 @@ public static class WebsitePolicyAgentInstaller
                 backupCleanupDetail = " 旧 Agent 的受保护备份暂时保留，后续维护可清理。";
 
             return new(step, ExecutionPlan.Succeeded,
-                $"Student Agent 已更新/修复到 {BuildVersion}；原校区、网站/应用/系统策略信任密钥和配置均已保留，SYSTEM 任务、权限、防火墙及健康检查通过。{backupCleanupDetail}");
+                $"Student Agent 已更新/修复到 {BuildVersion}；原校区、网站/应用/系统策略信任密钥和配置均已保留，SYSTEM 任务、权限、防火墙及健康检查通过。" +
+                (recoveryBootstrapTransaction is null
+                    ? ""
+                    : $" 回滚恢复修复码 TXR-2 已部署（StudentSetup {installedStudentSetupVersion}；Student Agent {BuildVersion}）；已保留中断事务的恢复材料，修复后的 Agent 会在下次更新或计划恢复任务中先执行回滚。") +
+                backupCleanupDetail);
         }
         catch (Exception exception) when (exception is COMException or RuntimeBinderException or IOException or
                                           UnauthorizedAccessException or InvalidDataException or CryptographicException or
@@ -2845,7 +2869,7 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
-    private static void VerifyAgentConfigurationRootIsSafe()
+    private static void VerifyAgentConfigurationRootIsSafe(bool allowTimingDiagnostics = false)
     {
         var root = GetAgentConfigurationRoot();
         VerifyAgentConfigurationPathAncestors();
@@ -2867,6 +2891,10 @@ public static class WebsitePolicyAgentInstaller
                 var healthRepairDirectory = (attributes & FileAttributes.Directory) != 0 &&
                     string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase);
                 if (healthRepairDirectory) VerifyHealthRepairDirectoryIsSafe(entry);
+                var updateTimingDirectory = (attributes & FileAttributes.Directory) != 0 &&
+                    string.Equals(name, StudentUpdatePhaseTimingStore.DirectoryName, StringComparison.OrdinalIgnoreCase);
+                if (updateTimingDirectory && !allowTimingDiagnostics)
+                    StudentUpdatePhaseTimingStore.VerifyOwnedDirectoryForRemoval(entry);
                 // The SYSTEM updater stages its signed installer beside the campus config.
                 // This directory is product-owned and may remain when cleanup is interrupted;
                 // keep it as recognized recovery data instead of treating it as an unknown file.
@@ -2890,7 +2918,7 @@ public static class WebsitePolicyAgentInstaller
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var legacyHealthRepairTemporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (!updateStagingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
+                if (!updateStagingDirectory && !updateTimingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
                     !edgePolicyRefreshQueue && !healthRepairDirectory && !legacyHealthRepairLedger &&
                     !edgePolicyRefreshTemporary && !usageInstallationId &&
                     !legacyHealthRepairTemporary && !usageLastSentState && !startupLog && !runtimeLog &&
@@ -3445,7 +3473,7 @@ public static class WebsitePolicyTransport
         if (validated.Any(target => !policies.ContainsKey(target)) || policies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台网站策略信封必须完整匹配每一台目标电脑。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new StudentAgentChannelHttpMessageHandler();
+        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>

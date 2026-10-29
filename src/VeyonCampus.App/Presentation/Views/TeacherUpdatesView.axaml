@@ -83,10 +83,11 @@
                             <TextBlock Text="{Binding DisplayName}" Classes="device-row-name"
                                        TextTrimming="CharacterEllipsis" />
                             <Border Grid.Column="1" Background="{Binding StatusBackground}"
-                                    CornerRadius="999" Padding="8,3" MaxWidth="220"
+                                    CornerRadius="999" Padding="8,3" MaxWidth="300"
                                     VerticalAlignment="Center">
                               <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusForeground}"
-                                         FontWeight="SemiBold" TextWrapping="Wrap" />
+                                         FontWeight="SemiBold" TextWrapping="NoWrap"
+                                         TextTrimming="CharacterEllipsis" />
                             </Border>
                           </Grid>
                           <ProgressBar Classes="inline-progress" Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"

@@ -61,7 +61,7 @@ public static class StudentAgentTeacherChannelClient
             }
             if (cancellationToken.IsCancellationRequested) return;
             failureCount = Math.Min(failureCount + 1, 8);
-            var baseSeconds = connected ? 1 : Math.Min(180, 2 << Math.Min(failureCount - 1, 6));
+            var baseSeconds = connected ? 1 : Math.Min(30, 2 << Math.Min(failureCount - 1, 6));
             var jitter = 0.8 + RandomNumberGenerator.GetInt32(401) / 1000.0;
             try
             {

@@ -1611,17 +1611,26 @@ public partial class TeacherWindow : Window
     private async void PushWebsitePolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmWebsitePolicyPushAsync()) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.PushWebsitePolicyAsync();
     }
     private async void DisableWebsitePolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmProfileActionAsync("确认解除网站限制",
                 _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.DisableWebsitePolicyAsync();
     }
-    private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e) => await _model.ReadWebsitePolicyStatusAsync();
-    private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e) =>
-        await _model.ReadStudentDeviceHealthAsync();
+    private async void ReadWebsitePolicyStatus(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureTeacherAgentChannelStartedAsync())
+            await _model.ReadWebsitePolicyStatusAsync();
+    }
+    private async void ReadStudentDeviceHealth(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureTeacherAgentChannelStartedAsync())
+            await _model.ReadStudentDeviceHealthAsync();
+    }
     private async void PrepareMacVeyonHelper(object? sender, RoutedEventArgs e) =>
         await _model.PrepareMacVeyonHelperAsync();
     private void PreviousDeviceHealthPage(object? sender, RoutedEventArgs e) =>
@@ -1826,25 +1835,33 @@ public partial class TeacherWindow : Window
     {
         if (!await ConfirmProfileActionAsync("确认推送应用策略",
                 _model.WebsitePolicyDisableConfirmationSummary, "确认推送")) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.PushApplicationPolicyAsync();
     }
     private async void DisableApplicationPolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmProfileActionAsync("确认解除应用限制",
                 _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.DisableApplicationPolicyAsync();
     }
-    private async void ReadApplicationPolicyAudit(object? sender, RoutedEventArgs e) => await _model.ReadApplicationPolicyAuditAsync();
+    private async void ReadApplicationPolicyAudit(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureTeacherAgentChannelStartedAsync())
+            await _model.ReadApplicationPolicyAuditAsync();
+    }
     private async void PushStudentSystemPolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmProfileActionAsync("确认推送学生电脑设置",
                 _model.WebsitePolicyDisableConfirmationSummary, "确认推送")) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.PushStudentSystemPolicyAsync();
     }
     private async void DisableStudentSystemPolicy(object? sender, RoutedEventArgs e)
     {
         if (!await ConfirmProfileActionAsync("确认解除学生电脑设置",
                 _model.WebsitePolicyDisableConfirmationSummary, "确认解除")) return;
+        if (!await EnsureTeacherAgentChannelStartedAsync()) return;
         await _model.DisableStudentSystemPolicyAsync();
     }
     private void SelectRecommendedStudentSystemRestrictions(object? sender, RoutedEventArgs e) =>
@@ -2146,7 +2163,55 @@ public partial class TeacherWindow : Window
         await dialog.ShowDialog(this);
     }
 
-    private async void DeployStudentUpdate(object? sender, RoutedEventArgs e) => await _model.DeployStudentUpdateAsync();
+    private async Task ShowTeacherAgentChannelErrorAsync(string message)
+    {
+        var dialog = new Window
+        {
+            Title = "教师端学生连接服务未启动",
+            Width = 520,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Spacing = 16,
+                Margin = new Avalonia.Thickness(20),
+                Children =
+                {
+                    new TextBlock
+                    {
+                        Text = "教师端需要启动安全连接服务，学生电脑才能通过主动连接通道接收策略和更新。",
+                        TextWrapping = Avalonia.Media.TextWrapping.Wrap
+                    },
+                    new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+                    new Button { Content = "关闭", IsDefault = true, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right }
+                }
+            }
+        };
+        ((Button)((StackPanel)dialog.Content!).Children[2]!).Click += (_, _) => dialog.Close();
+        await dialog.ShowDialog(this);
+    }
+
+    private async Task<bool> EnsureTeacherAgentChannelStartedAsync()
+    {
+        if (_mobileControl.IsRunning) return true;
+        try
+        {
+            await _mobileControl.StartForAgentCommandsAsync();
+            return true;
+        }
+        catch (Exception exception)
+        {
+            await ShowTeacherAgentChannelErrorAsync(exception.Message);
+            return false;
+        }
+    }
+
+    private async void DeployStudentUpdate(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureTeacherAgentChannelStartedAsync())
+            await _model.DeployStudentUpdateAsync();
+    }
 
     private async void RecheckStudentUpdateResult(object? sender, RoutedEventArgs e)
     {
