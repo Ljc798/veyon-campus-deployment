@@ -964,7 +964,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             current.SessionId == snapshot.SessionId && current.RoomName == snapshot.RoomName &&
             current.TargetCount == snapshot.TargetCount && current.ControlExpiresUtc == snapshot.ControlExpiresUtc &&
             current.Devices.SequenceEqual(snapshot.Devices))
+        {
+            if (_classroomQuickControlSessionNotice.Length > 0)
+            {
+                _classroomQuickControlSessionNotice = "";
+                Changed(nameof(ClassroomQuickControlProgressSummary));
+            }
             return;
+        }
         _classroomQuickControlSessionNotice = "";
         _classroomQuickControlSnapshot = snapshot;
         // Keep students in place while progress changes, including while a row is expanded.
@@ -1311,8 +1318,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         IReadOnlyList<ClassroomSeatGridLocation> seats;
         try
         {
-            var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
-                session.Room.RoomId, session.Room.StartNumber);
+            var layout = ReadClassroomSeatGridForSession(session);
             seats = ClassroomSeatGridStore.GetLocations(layout);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -1543,8 +1549,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             try
             {
-                var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
-                    session.Room.RoomId, session.Room.StartNumber);
+                var layout = ReadClassroomSeatGridForSession(session);
                 seats = ClassroomSeatGridStore.GetLocations(layout);
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
@@ -1574,6 +1579,27 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 names[seat.VeyonHostAddress] = names[target];
         }
         return names;
+    }
+
+    private ClassroomSeatGridLayout ReadClassroomSeatGridForSession(ClassroomSession session)
+    {
+        var layout = _classroomSeatGridStore.GetLayout(session.Room.CampusProfileId,
+            session.Room.RoomId, session.Room.StartNumber);
+        if (layout.Seats.Length > 0) return layout;
+
+        var targets = session.Room.HostOverrides is { } hosts && hosts.Length == session.Targets.Length
+            ? hosts
+            : session.Targets.Select(item => item.DeviceLabel).ToArray();
+        var recoveredCampus = FindSavedSeatMapCampus(new VeyonNetworkLocation(
+            session.Room.RoomName, Array.AsReadOnly(targets)), SelectedCampusProfile);
+        if (recoveredCampus is null || recoveredCampus.ProfileId == session.Room.CampusProfileId) return layout;
+
+        var targetSet = targets.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matchingRoom = recoveredCampus.Rooms.SingleOrDefault(room =>
+            string.Equals(room.DisplayName, session.Room.RoomName, StringComparison.OrdinalIgnoreCase) &&
+            targetSet.SetEquals(MacTeacherNetworkDirectory.CreateLocation(recoveredCampus, room).Targets));
+        return matchingRoom is null ? layout : _classroomSeatGridStore.GetLayout(
+            recoveredCampus.ProfileId, matchingRoom.RoomId, matchingRoom.StartNumber);
     }
 
     private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(ClassroomSession session,
@@ -4744,9 +4770,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public IReadOnlyList<TeacherCampusProfile> CampusProfiles
     {
         get => _campusProfiles;
-        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); }
+        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); Changed(nameof(ShowRoomLocationSettings)); }
     }
     public bool HasCampusProfiles => CampusProfiles.Count > 0;
+    private bool _seatMapProfileSelectionRequired;
+    public bool ShowRoomLocationSettings => _seatMapProfileSelectionRequired || (WebsiteLocations.Count > 0
+        ? WebsiteLocations.Count > 1
+        : CampusProfiles.SelectMany(campus => campus.Rooms.Select(room =>
+                room.DisplayName + "\n" + string.Join("\n", MacTeacherNetworkDirectory.CreateLocation(campus, room)
+                    .Targets.OrderBy(target => target, StringComparer.OrdinalIgnoreCase))))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(2).Count() > 1);
     public IReadOnlyList<TeacherRoomProfile> RoomProfiles
     {
         get => _roomProfiles;
@@ -4773,6 +4806,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasNoRoomProfiles));
             Changed(nameof(HasSingleRoomProfile));
             Changed(nameof(HasMultipleRoomProfiles));
+            Changed(nameof(ShowRoomLocationSettings));
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(CanSwitchClassroomScope));
@@ -7716,6 +7750,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomLocationChoices));
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(ShowClassroomLocationPicker));
+            Changed(nameof(ShowRoomLocationSettings));
             Changed(nameof(CanApplyWebsiteLocation));
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanSyncSeatGridWithVeyon));
@@ -9064,12 +9099,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         await ReadSeatVeyonTargetsAsync();
     }
 
-    private void ApplyClassroomVeyonLocation(VeyonNetworkLocation location)
+    internal void ApplyClassroomVeyonLocation(VeyonNetworkLocation location)
     {
         try
         {
             var campus = SelectedCampusProfile;
             if (campus is null && CampusProfiles.Count == 1) campus = CampusProfiles[0];
+            campus = FindSavedSeatMapCampus(location, campus) ?? campus;
             var roomCampus = string.IsNullOrWhiteSpace(RoomCampusName) || RoomCampusName == "本机校区"
                 ? null : RoomCampusName.Trim();
             var configuredCampus = string.IsNullOrWhiteSpace(CampusId) || CampusId == DefaultCampusNamePrefix
@@ -9091,6 +9127,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
             SelectedCampusProfile = CampusProfiles.FirstOrDefault(item => item.ProfileId == mergedCampus.ProfileId);
             SelectedRoomProfile = RoomProfiles.FirstOrDefault(item => item.RoomId == selectedRoom.RoomId);
+            _seatMapProfileSelectionRequired = false;
+            Changed(nameof(ShowRoomLocationSettings));
             _classroomDirectorySelectionPending = false;
             ClassroomDirectoryError = "";
             ClassroomDirectoryStatus = "";
@@ -9106,6 +9144,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             ClassroomDirectoryStatus = "";
             ClassroomDirectoryError = "此 Veyon 地点名单无法用于学生互动；本机电脑名单没有更改。" + exception.Message;
         }
+    }
+
+    private TeacherCampusProfile? FindSavedSeatMapCampus(VeyonNetworkLocation location,
+        TeacherCampusProfile? selectedCampus)
+    {
+        var targets = location.Targets.Select(VeyonHostAddress.NormalizeOverride)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var matches = new List<TeacherCampusProfile>();
+        foreach (var campus in CampusProfiles)
+        foreach (var room in campus.Rooms)
+        {
+            if (!string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase) ||
+                !targets.SetEquals(MacTeacherNetworkDirectory.CreateLocation(campus, room).Targets)) continue;
+            var layout = _classroomSeatGridStore.GetLayout(campus.ProfileId, room.RoomId, room.StartNumber);
+            if (layout.Seats.Length == 0) continue;
+            // Keep a deliberately selected populated map. An empty duplicate must not hide a saved map.
+            if (campus.ProfileId == selectedCampus?.ProfileId) return campus;
+            matches.Add(campus);
+        }
+        if (matches.Count <= 1) return matches.SingleOrDefault();
+        _seatMapProfileSelectionRequired = true;
+        Changed(nameof(ShowRoomLocationSettings));
+        throw new InvalidDataException("此地点对应多份已保存的座位图，无法自动确认；请在本机校区档案中选择原档案。");
     }
 
     public void FillWebsiteTargetsFromSelectedLocation()

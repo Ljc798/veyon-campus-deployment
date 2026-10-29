@@ -6,6 +6,7 @@
              x:DataType="vm:TeacherViewModel">
   <StackPanel Margin="24,24,24,28" Spacing="20">
     <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
+      <StackPanel IsVisible="{Binding ShowRoomLocationSettings}" Spacing="20">
       <Border Classes="card" IsVisible="{Binding HasCampusProfiles}">
         <Grid ColumnDefinitions="*,16,*" ColumnSpacing="0">
           <StackPanel Spacing="6">
@@ -78,10 +79,11 @@
                      Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasFixedRoomComputerNumbers}" />
           <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted"
                      IsVisible="{Binding HasCampusDirectoryStatus}" TextWrapping="Wrap" />
-          <TextBlock Text="{Binding CampusDirectoryError}" Foreground="{DynamicResource Teacher.Color.Danger}"
-                     IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
         </StackPanel>
       </Border>
+      </StackPanel>
+      <TextBlock Text="{Binding CampusDirectoryError}" Foreground="{DynamicResource Teacher.Color.Danger}"
+                 IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
       <Border Classes="card">
         <StackPanel Spacing="12">
           <Grid ColumnDefinitions="*" ColumnSpacing="14">

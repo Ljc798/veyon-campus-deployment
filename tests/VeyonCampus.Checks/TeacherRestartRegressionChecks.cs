@@ -12,6 +12,7 @@ internal static class TeacherRestartRegressionChecks
         Directory.CreateDirectory(root);
         try
         {
+            CheckSavedSeatMapRecovery(Path.Combine(root, "saved-map"));
             var room = new TeacherRoomProfile(Guid.NewGuid(), "教室一", "PC-", 1, 2,
                 ["192.0.2.51", "192.0.2.52"]);
             var other = new TeacherRoomProfile(Guid.NewGuid(), "教室二", "LAB-", 3, 1, ["192.0.2.53"]);
@@ -95,6 +96,14 @@ internal static class TeacherRestartRegressionChecks
             model.SetClassroomQuickControlSessionNotice("暂时无法核对连接");
             Expect(model.HasCurrentClassroomQuickControlDeadline && model.HasClassroomQuickControlDevices,
                 "A transient notice must not erase the current session's countdown or device state.");
+            var summaryRefreshed = false;
+            model.PropertyChanged += (_, args) =>
+            {
+                if (args.PropertyName == nameof(model.ClassroomQuickControlProgressSummary)) summaryRefreshed = true;
+            };
+            model.UpdateClassroomQuickControlSnapshot(due);
+            Expect(summaryRefreshed && !model.ClassroomQuickControlProgressSummary.Contains("暂时无法核对连接"),
+                "A successful unchanged readback must clear the transient connection notice.");
             model.UpdateClassroomQuickControlSnapshot(due with { ControlExpiresUtc = now.AddSeconds(-1) });
             Expect(!model.HasCurrentClassroomQuickControlDeadline &&
                    model.CurrentClassroomQuickControlCountdownMinutes == 0,
@@ -117,5 +126,91 @@ internal static class TeacherRestartRegressionChecks
     private static void Expect(bool condition, string message)
     {
         if (!condition) throw new InvalidDataException(message);
+    }
+
+    private static void CheckSavedSeatMapRecovery(string root)
+    {
+        Directory.CreateDirectory(root);
+        var hosts = new List<string> { "192.0.2.81", "192.0.2.82" };
+        var originalRoom = new TeacherRoomProfile(Guid.NewGuid(), "原机房", "PC-", 1, 2, hosts, [1, 2]);
+        var duplicateRoom = originalRoom with { RoomId = Guid.NewGuid(), ComputerNumbers = [3, 2] };
+        var original = new TeacherCampusProfile(Guid.NewGuid(), "原校区", [originalRoom]);
+        var duplicate = new TeacherCampusProfile(Guid.NewGuid(), "新校区", [duplicateRoom]);
+        var campuses = new TeacherCampusDirectoryStore(Path.Combine(root, "campuses.json"));
+        campuses.Save([duplicate, original]);
+        var seats = new ClassroomSeatGridStore(Path.Combine(root, "seats.json"));
+        seats.SaveSeat(original.ProfileId, originalRoom.RoomId, 2, 3, "学生甲", 1);
+        var saved = seats.SaveSeat(original.ProfileId, originalRoom.RoomId, 4, 5, "学生乙", 2);
+        var savedFile = File.ReadAllBytes(Path.Combine(root, "seats.json"));
+        TeacherViewModel CreateModel() => new(campusDirectoryStore: campuses, classroomSeatGridStore: seats,
+            classroomSessionStore: new ClassroomSessionStore(Path.Combine(root, "sessions.json")),
+            classroomModeStateStore: new ClassroomModeStateStore(Path.Combine(root, "modes.json")),
+            classroomCountdownStore: new ClassroomCountdownStore(Path.Combine(root, "countdown.json")),
+            classroomTaskProgressStore: new ClassroomTaskProgressStore(Path.Combine(root, "tasks.json")),
+            websitePolicyDraftDirectory: Path.Combine(root, "drafts"));
+        var model = CreateModel();
+        Expect(model.SelectedCampusProfile?.ProfileId == duplicate.ProfileId && model.SeatGridSeatCount == 0,
+            "The fixture must reproduce selecting an empty duplicate of a saved room.");
+        Expect(!model.ShowRoomLocationSettings,
+            "Duplicate local profiles for the same physical location must not expose multiple-location settings.");
+        var location = new VeyonNetworkLocation(originalRoom.DisplayName, hosts.AsEnumerable().Reverse().ToArray());
+        var locationsProperty = typeof(TeacherViewModel).GetProperty(nameof(TeacherViewModel.WebsiteLocations))!;
+        locationsProperty.SetValue(model, new[] { location });
+        Expect(!model.ShowRoomLocationSettings, "One Veyon location must hide the entire location settings block.");
+        locationsProperty.SetValue(model, new[] { location, new VeyonNetworkLocation("另一机房", ["192.0.2.83"]) });
+        Expect(model.ShowRoomLocationSettings, "Multiple Veyon locations must retain location settings.");
+        locationsProperty.SetValue(model, new[] { location });
+        model.ApplyClassroomVeyonLocation(location);
+        Expect(model.SelectedCampusProfile?.ProfileId == original.ProfileId &&
+               model.SelectedRoomProfile?.RoomId == originalRoom.RoomId &&
+               model.SeatGridSeatCount == 2 && model.SeatGridNamedCount == 2,
+            "Reading the same Veyon hosts must recover the original saved map rather than the empty duplicate.");
+        Expect(model.SelectedRoomProfile!.GetComputerNumbers().SequenceEqual([2, 1]),
+            "Saved computer numbers must follow their hosts even when the Veyon host order changes.");
+        Expect(File.ReadAllBytes(Path.Combine(root, "seats.json")).SequenceEqual(savedFile) &&
+               seats.GetLayout(original.ProfileId, originalRoom.RoomId).Seats.SequenceEqual(saved.Seats),
+            "Recovering a saved room must preserve every seat ID, position, name and number without rewriting the map.");
+        var restarted = CreateModel();
+        restarted.ApplyClassroomVeyonLocation(location);
+        Expect(restarted.SelectedRoomProfile?.RoomId == originalRoom.RoomId && restarted.SeatGridNamedCount == 2,
+            "The saved map must remain recoverable after another process restart.");
+        var activeSessions = new ClassroomSessionStore(Path.Combine(root, "active-sessions.json"));
+        var activeSession = activeSessions.StartSession(duplicate, duplicateRoom.RoomId, DateTimeOffset.UtcNow);
+        var activeModel = new TeacherViewModel(campusDirectoryStore: campuses,
+            classroomSeatGridStore: seats, classroomSessionStore: activeSessions,
+            classroomModeStateStore: new ClassroomModeStateStore(Path.Combine(root, "active-modes.json")),
+            classroomCountdownStore: new ClassroomCountdownStore(Path.Combine(root, "active-countdown.json")),
+            classroomTaskProgressStore: new ClassroomTaskProgressStore(Path.Combine(root, "active-tasks.json")),
+            websitePolicyDraftDirectory: Path.Combine(root, "active-drafts"));
+        var resolveNames = typeof(TeacherViewModel).GetMethod("ResolveClassroomStudentDisplayNames",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!;
+        var activeNames = (IReadOnlyDictionary<string, string>)resolveNames.Invoke(activeModel,
+            [activeSession, hosts])!;
+        Expect(activeSession.Room.CampusProfileId == duplicate.ProfileId && activeModel.SeatGridSeatCount == 0 &&
+               activeNames[hosts[0]] == "学生甲" && activeNames[hosts[1]] == "学生乙",
+            "An active session pinned to an empty duplicate profile must still label quick-control targets from the matching saved map.");
+        model.SelectedCampusProfile = duplicate;
+        model.ApplyClassroomVeyonLocation(new VeyonNetworkLocation(originalRoom.DisplayName,
+            ["192.0.2.91", "192.0.2.92"]));
+        Expect(model.SelectedCampusProfile?.ProfileId == duplicate.ProfileId && model.SeatGridSeatCount == 0,
+            "A same-named room with different hosts must not borrow another room's student map.");
+        campuses.Save([duplicate, original]);
+        seats.SaveSeat(duplicate.ProfileId, duplicateRoom.RoomId, 1, 1, "另一学生", 3);
+        model = CreateModel();
+        model.ApplyClassroomVeyonLocation(location);
+        Expect(model.SelectedCampusProfile?.ProfileId == duplicate.ProfileId && model.SeatGridSeatCount == 1,
+            "A deliberately selected populated map must not be replaced by another saved map.");
+        var empty = new TeacherCampusProfile(Guid.NewGuid(), "待确认校区",
+            [duplicateRoom with { RoomId = Guid.NewGuid() }]);
+        campuses.Save([empty, duplicate, original]);
+        model = CreateModel();
+        locationsProperty.SetValue(model, new[] { location });
+        var directoryBeforeAmbiguousRead = File.ReadAllBytes(Path.Combine(root, "campuses.json"));
+        model.ApplyClassroomVeyonLocation(location);
+        Expect(model.HasClassroomDirectoryError && model.ShowRoomLocationSettings &&
+               model.SelectedCampusProfile?.ProfileId == empty.ProfileId &&
+               File.ReadAllBytes(Path.Combine(root, "campuses.json")).SequenceEqual(directoryBeforeAmbiguousRead),
+            "Ambiguous saved maps must retain the selection controls and preserve the directory for manual selection.");
+        Console.WriteLine("PASS single-location settings, duplicate profile recovery, saved seats and stable host numbering");
     }
 }

@@ -80,7 +80,23 @@ internal static class TeacherWorkflowChecks
         Console.WriteLine("PASS teacher authentication writes key mode and rejects failed writes/incorrect readback");
     }
 
-    internal static void RunHealthSelection() => CheckHealthScopeAndRetrySelection(new TeacherViewModel());
+    internal static void RunHealthSelection()
+    {
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "teacher-health-selection-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            CheckHealthScopeAndRetrySelection(new TeacherViewModel(
+                campusDirectoryStore: new TeacherCampusDirectoryStore(Path.Combine(root, "campuses.json")),
+                classroomSessionStore: new ClassroomSessionStore(Path.Combine(root, "sessions.json")),
+                classroomModeStateStore: new ClassroomModeStateStore(Path.Combine(root, "modes.json")),
+                classroomSeatGridStore: new ClassroomSeatGridStore(Path.Combine(root, "seats.json")),
+                classroomCountdownStore: new ClassroomCountdownStore(Path.Combine(root, "countdown.json")),
+                classroomTaskProgressStore: new ClassroomTaskProgressStore(Path.Combine(root, "tasks.json")),
+                websitePolicyDraftDirectory: Path.Combine(root, "drafts")));
+        }
+        finally { Directory.Delete(root, recursive: true); }
+    }
 
     private static void CheckHealthScopeAndRetrySelection(TeacherViewModel model)
     {
