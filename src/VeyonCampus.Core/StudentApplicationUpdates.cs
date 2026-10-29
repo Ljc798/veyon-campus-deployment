@@ -1377,10 +1377,12 @@ public static class StudentApplicationUpdateTransport
                     progress?.Report(new StudentApplicationUpdateProgress(target,
                         Volatile.Read(ref completedTargets), validatedTargets.Count,
                         "已收到更新命令，正在安装并重启 Agent"));
-                    var readback = await WaitForUpdateTerminalAsync(client, target, campusId, campusPrivateKey,
-                        pinnedKey, command.CommandId, waitForProgress: true,
-                        cancellationToken, progress, () => Volatile.Read(ref completedTargets),
-                        validatedTargets.Count, maxWait: TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+                    var (readback, preflightFailure) = await WaitForUpdateTerminalOrPreflightFailureAsync(
+                        client, target, campusId, campusPrivateKey, pinnedKey, command.CommandId,
+                        HttpStatusCode.Accepted, cancellationToken, progress,
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        maxWait: TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+                    if (preflightFailure is not null) return preflightFailure;
                     if (readback is null)
                         return new StudentApplicationUpdatePushResult(target, false,
                             "未能读取到本次原子更新事务的签名终态；需核对任务、ACL、端口和启动日志。",
@@ -1591,6 +1593,44 @@ public static class StudentApplicationUpdateTransport
             campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "failed", progress,
             getCompletedTargets(), totalTargets, cancellationToken).ConfigureAwait(false);
         return null;
+    }
+
+    private static async Task<(UpdateTerminalReadback? Readback,
+        StudentApplicationUpdatePushResult? PreflightFailure)> WaitForUpdateTerminalOrPreflightFailureAsync(
+        HttpClient client, string target, string campusId, RSA campusPrivateKey,
+        string pinnedAgentPublicKeyPem, Guid commandId, HttpStatusCode responseStatus,
+        CancellationToken cancellationToken, IProgress<StudentApplicationUpdateProgress>? progress,
+        Func<int> getCompletedTargets, int totalTargets, TimeSpan maxWait)
+    {
+        using var terminalWaitCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var terminalWait = WaitForUpdateTerminalAsync(client, target, campusId, campusPrivateKey,
+            pinnedAgentPublicKeyPem, commandId, waitForProgress: true, terminalWaitCancellation.Token,
+            progress, getCompletedTargets, totalTargets, maxWait);
+
+        while (!terminalWait.IsCompleted)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+            if (terminalWait.IsCompleted) break;
+
+            var preflightFailure = await TryResolvePreflightFailureAsync(client, target, campusId,
+                pinnedAgentPublicKeyPem, campusPrivateKey, commandId, responseStatus, progress,
+                getCompletedTargets, totalTargets, cancellationToken).ConfigureAwait(false);
+            if (preflightFailure is null) continue;
+
+            terminalWaitCancellation.Cancel();
+            try
+            {
+                var readback = await terminalWait.ConfigureAwait(false);
+                if (readback is not null) return (readback, null);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            {
+                // The definitive preflight failure makes the longer transaction wait unnecessary.
+            }
+            return (null, preflightFailure);
+        }
+
+        return (await terminalWait.ConfigureAwait(false), null);
     }
 
     private static async Task<UpdateTerminalReadback?> TryReadUpdateTerminalOnceAsync(HttpClient client,
