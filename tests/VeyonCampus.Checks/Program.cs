@@ -881,7 +881,7 @@ Check("四项操作独立；无选项不生成计划", () =>
     Expect(admin.Steps.Any(s => s.Id == "admin-password") && admin.Steps.All(s => s.Id != "rename"));
     var accountSelections = new MainViewModel();
     accountSelections.CreateStudent = true;
-    Expect(accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
+    Expect(accountSelections.CreateStudent && !accountSelections.ChangeAdminPassword);
     accountSelections.ChangeAdminPassword = true;
     Expect(accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
     accountSelections.CreateStudent = false;
@@ -1660,7 +1660,7 @@ try
         var basicDefaultsVm = new MainViewModel(new VeyonInstallerStore(Path.Combine(temporary, "basic-defaults-cache")));
         basicDefaultsVm.LoadPackage(websitePackagePath);
         Expect(basicDefaultsVm.InstallVeyon && !basicDefaultsVm.RenameComputer && !basicDefaultsVm.CreateStudent &&
-               !basicDefaultsVm.ChangeAdminPassword && !basicDefaultsVm.HasPackageRecommendationNotice);
+               basicDefaultsVm.ChangeAdminPassword && !basicDefaultsVm.HasPackageRecommendationNotice);
         var websitePackageFiles = Directory.EnumerateFiles(websitePackagePath).Select(Path.GetFileName).ToArray();
         Expect(websitePackageFiles.Contains("website-policy-public.pem") &&
                websitePackageFiles.All(name => name is not null && !name.Contains("private", StringComparison.OrdinalIgnoreCase)));
@@ -1766,14 +1766,14 @@ try
         var suggestionVm = new MainViewModel(new VeyonInstallerStore(Path.Combine(temporary, "recommendation-vm-cache")));
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
-               !suggestionVm.ChangeAdminPassword && suggestionVm.HasAdminPasswordRecommendation &&
+               suggestionVm.ChangeAdminPassword && suggestionVm.HasAdminPasswordRecommendation &&
                !suggestionVm.HasPackageRecommendationNotice &&
                suggestionVm.DeploymentSelectionSummary.Contains("配置 Veyon") &&
                !suggestionVm.DeploymentSelectionSummary.Contains("默认操作建议"));
         suggestionVm.RenameComputer = false;
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
-               !suggestionVm.HasPackageRecommendationNotice);
+               suggestionVm.ChangeAdminPassword && !suggestionVm.HasPackageRecommendationNotice);
         var secondV6PackagePath = PackageBuilder.Build(Path.Combine(temporary, "student-package-recommendations-second"),
             "campus-demo", "PC-", publicKeySource, policySigner.ExportSubjectPublicKeyInfoPem(),
             applicationPolicyPublicKeyPem: applicationPolicySigner.ExportSubjectPublicKeyInfoPem(),
@@ -1783,11 +1783,12 @@ try
             recommendedOperations: PackageSetupRecommendations.Default);
         suggestionVm.LoadPackage(secondV6PackagePath);
         Expect(!suggestionVm.RenameComputer && suggestionVm.InstallVeyon && suggestionVm.CreateStudent &&
+               suggestionVm.ChangeAdminPassword &&
                suggestionVm.PackageRecommendationNotice.Contains("已更换配置"));
         suggestionVm.Reset();
         suggestionVm.LoadPackage(v6PackagePath);
         Expect(suggestionVm.InstallVeyon && suggestionVm.RenameComputer && suggestionVm.CreateStudent &&
-               !suggestionVm.ChangeAdminPassword);
+               suggestionVm.ChangeAdminPassword);
         var privateKeySource = Path.Combine(temporary, "source-private.pem");
         using (var privateKey = RSA.Create(2048))
             File.WriteAllText(privateKeySource, privateKey.ExportRSAPrivateKeyPem());

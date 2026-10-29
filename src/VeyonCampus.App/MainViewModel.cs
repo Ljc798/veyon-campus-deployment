@@ -66,7 +66,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _installerStatus = "";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
     private string _executionOverallStatus = ExecutionPlan.NotStarted;
-    private bool _installVeyon = true, _rename, _createStudent, _changeAdmin = true, _isExecuting = false;
+    private bool _installVeyon = true, _rename, _createStudent, _changeAdmin, _isExecuting = false;
     private bool _isDetectingVeyon, _isPreparingDeployment;
     private CancellationTokenSource? _stopAfterCurrentStep;
     private bool _stopAfterCurrentStepRequested;
