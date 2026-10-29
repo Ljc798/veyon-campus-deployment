@@ -4630,9 +4630,30 @@ public sealed class WebsitePolicyAgent
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var result = await StudentApplicationUpdateProcessor.ProcessAsync(signedCommand, configPath, config,
-                        cancellationToken).ConfigureAwait(false);
-                    var signedResult = StudentAgentResponseCryptography.Sign(result.Response, agentIdentityKey);
+                    StudentApplicationUpdateProcessingResult result;
+                    string signedResult;
+                    try
+                    {
+                        result = await StudentApplicationUpdateProcessor.ProcessAsync(signedCommand, configPath,
+                            config, cancellationToken).ConfigureAwait(false);
+                        signedResult = StudentAgentResponseCryptography.Sign(result.Response, agentIdentityKey);
+                    }
+                    catch (InvalidDataException)
+                    {
+                        throw;
+                    }
+                    catch (Exception exception) when (exception is not OutOfMemoryException and
+                                                      not StackOverflowException and not AccessViolationException)
+                    {
+                        var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+                        WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "更新", diagnosticId,
+                            exception);
+                        var detail = FormatAgentDiagnostic(exception.Message);
+                        await RespondAsync(response, 500,
+                            $"学生端更新失败：{detail}；本次状态需核对。诊断编号 {diagnosticId}。",
+                            CancellationToken.None).ConfigureAwait(false);
+                        return;
+                    }
                     await RespondBytesAsync(response, result.AgentRestartPending ? 202 : 200,
                         Encoding.UTF8.GetBytes(signedResult), "application/json; charset=utf-8",
                         CancellationToken.None).ConfigureAwait(false);
@@ -4905,6 +4926,7 @@ public sealed class WebsitePolicyAgent
 
     private static string AgentOperationName(string? path) => path switch
     {
+        StudentUpdatePath => "更新",
         ApplicationInventoryPath => "软件清单读取",
         StudentAccountsPath => "学生账户读取",
         ApplicationCatalogPath => "快速软件目录读取",

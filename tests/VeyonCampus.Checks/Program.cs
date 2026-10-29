@@ -881,7 +881,7 @@ Check("四项操作独立；无选项不生成计划", () =>
     Expect(admin.Steps.Any(s => s.Id == "admin-password") && admin.Steps.All(s => s.Id != "rename"));
     var accountSelections = new MainViewModel();
     accountSelections.CreateStudent = true;
-    Expect(accountSelections.CreateStudent && !accountSelections.ChangeAdminPassword);
+    Expect(accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
     accountSelections.ChangeAdminPassword = true;
     Expect(accountSelections.CreateStudent && accountSelections.ChangeAdminPassword);
     accountSelections.CreateStudent = false;

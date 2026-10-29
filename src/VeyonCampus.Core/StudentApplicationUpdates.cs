@@ -1298,9 +1298,15 @@ public static class StudentApplicationUpdateTransport
                     var emptyReceiptReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
                         campusPrivateKey, pinnedKey, command.CommandId, waitForProgress: true,
                         cancellationToken, progress, () => Volatile.Read(ref completedTargets),
-                        validatedTargets.Count, maxWait: TimeSpan.FromMinutes(5)).ConfigureAwait(false);
+                        validatedTargets.Count, maxWait: TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+                    var latePreflightFailure = await TryResolvePreflightFailureAsync(client, target, campusId,
+                        pinnedKey, campusPrivateKey, command.CommandId, response.StatusCode, progress,
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        cancellationToken).ConfigureAwait(false);
+                    if (latePreflightFailure is not null) return latePreflightFailure;
                     return ResolveUncertainUpdateResult(target, emptyReceiptReadback, source,
-                        expectedAgentVersion, "学生 Agent 返回了空的更新签名回执。");
+                        expectedAgentVersion,
+                        "学生 Agent 返回了空的更新签名回执；已停止长时间等待并在 15 秒内核对事务状态。");
                 }
                 if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Accepted))
                 {
@@ -1317,7 +1323,19 @@ public static class StudentApplicationUpdateTransport
                     var failedReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
                         campusPrivateKey, pinnedKey, command.CommandId,
                         waitForProgress: false, cancellationToken, progress,
-                        () => Volatile.Read(ref completedTargets), validatedTargets.Count).ConfigureAwait(false);
+                        () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                        maxWait: TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+                    if (failedReadback is null)
+                    {
+                        var latePreflightFailure = await TryResolvePreflightFailureAsync(client, target, campusId,
+                            pinnedKey, campusPrivateKey, command.CommandId, response.StatusCode, progress,
+                            () => Volatile.Read(ref completedTargets), validatedTargets.Count,
+                            cancellationToken).ConfigureAwait(false);
+                        if (latePreflightFailure is not null) return latePreflightFailure with
+                        {
+                            Detail = $"{latePreflightFailure.Detail} Agent 响应：{httpFailure}"
+                        };
+                    }
                     if (failedReadback is { State: "rolledBack" } rolledBack)
                     {
                         var restored = rolledBack.MatchesPinnedKey &&
