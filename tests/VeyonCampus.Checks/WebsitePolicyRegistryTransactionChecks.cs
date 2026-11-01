@@ -42,10 +42,78 @@ internal static class WebsitePolicyRegistryTransactionChecks
         var legacyJson = System.Text.Json.Nodes.JsonNode.Parse(serialized)!.AsObject();
         legacyJson["before"]!.AsObject().Remove("firefox");
         legacyJson["after"]!.AsObject().Remove("firefox");
+        foreach (var side in new[] { "before", "after" })
+        foreach (var browser in new[] { "edge", "chrome" })
+        {
+            var browserSnapshot = legacyJson[side]![browser]!.AsObject();
+            browserSnapshot.Remove("policyGameRestriction");
+            browserSnapshot.Remove("managedGameRestriction");
+        }
         var legacy = WebsitePolicyRegistryTransactions.Deserialize(legacyJson.ToJsonString());
         Expect(legacy.Before.Firefox is null &&
-               !WebsitePolicyRegistryTransactions.FirefoxSnapshot(legacy.Before).Initialized.Exists,
-            "A pre-Firefox pending transaction was not safely upgraded as an empty Firefox snapshot.");
+               !WebsitePolicyRegistryTransactions.FirefoxSnapshot(legacy.Before).Initialized.Exists &&
+               !WebsitePolicyRegistryTransactions.GameRestriction(legacy.Before.Edge).Exists &&
+               !WebsitePolicyRegistryTransactions.ManagedGameRestriction(legacy.Before.Chrome).Exists,
+            "A legacy pending transaction was not safely upgraded with empty optional policy snapshots.");
+
+        var gamePolicyBefore = Snapshot("1", "Blocklist", ["blocked.example"], []);
+        var edgeGamePolicy = gamePolicyBefore.Edge with
+        {
+            PolicyGameRestriction = Value("0"),
+            ManagedGameRestriction = Value("0")
+        };
+        var chromeGamePolicy = gamePolicyBefore.Chrome with
+        {
+            PolicyGameRestriction = Value("0"),
+            ManagedGameRestriction = Value("0")
+        };
+        var gamePolicyAfter = gamePolicyBefore with
+        {
+            Revision = Value("2"),
+            Edge = edgeGamePolicy,
+            Chrome = chromeGamePolicy
+        };
+        var gamePolicyBackend = new FakeBackend(gamePolicyBefore, failAtMutation: 5);
+        try
+        {
+            WebsitePolicyRegistryTransactions.Commit(gamePolicyBackend,
+                WebsitePolicyRegistryTransactionOperation.Apply, gamePolicyBefore, gamePolicyAfter);
+        }
+        catch (IOException) { }
+        if (gamePolicyBackend.Transaction is not null)
+            WebsitePolicyRegistryTransactions.Reconcile(gamePolicyBackend);
+        Expect(gamePolicyBackend.Transaction is null &&
+               WebsitePolicyRegistryTransactions.Equivalent(gamePolicyBackend.State, gamePolicyAfter),
+            "Interrupted Edge/Chrome game-policy transaction did not recover.");
+
+        var externallyDisabledEdge = gamePolicyBefore.Edge with { PolicyGameRestriction = Value("0") };
+        var blockedExternalEdge = WebsitePolicyRegistryTransactions.ApplyGameRestriction(externallyDisabledEdge,
+            externallyDisabledEdge, enabled: true, browser: "Edge");
+        var clearedExternalEdge = WebsitePolicyRegistryTransactions.ApplyGameRestriction(blockedExternalEdge,
+            blockedExternalEdge, enabled: false, browser: "Edge");
+        Expect(WebsitePolicyRegistryTransactions.GameRestriction(blockedExternalEdge) == Value("0") &&
+               !WebsitePolicyRegistryTransactions.ManagedGameRestriction(blockedExternalEdge).Exists &&
+               WebsitePolicyRegistryTransactions.GameRestriction(clearedExternalEdge) == Value("0"),
+            "The website policy took ownership of or removed an external Edge game restriction.");
+
+        var managedEdgeGamePolicy = WebsitePolicyRegistryTransactions.ApplyGameRestriction(gamePolicyBefore.Edge,
+            gamePolicyBefore.Edge, enabled: true, browser: "Edge");
+        var restoredEdgeGamePolicy = WebsitePolicyRegistryTransactions.ApplyGameRestriction(managedEdgeGamePolicy,
+            managedEdgeGamePolicy, enabled: false, browser: "Edge");
+        Expect(WebsitePolicyRegistryTransactions.GameRestriction(managedEdgeGamePolicy) == Value("0") &&
+               WebsitePolicyRegistryTransactions.ManagedGameRestriction(managedEdgeGamePolicy) == Value("0") &&
+               !WebsitePolicyRegistryTransactions.GameRestriction(restoredEdgeGamePolicy).Exists &&
+               !WebsitePolicyRegistryTransactions.ManagedGameRestriction(restoredEdgeGamePolicy).Exists,
+            "Disabling website policy did not restore an originally unset Edge game policy.");
+
+        try
+        {
+            WebsitePolicyRegistryTransactions.ApplyGameRestriction(
+                gamePolicyBefore.Edge with { PolicyGameRestriction = Value("1") }, gamePolicyBefore.Edge,
+                enabled: true, browser: "Edge");
+            throw new Exception("A conflicting external Edge game policy was overwritten.");
+        }
+        catch (IOException) { }
 
         var absent = new WebsitePolicyRegistryListSnapshot(false, []);
         var original = List(["old.example"]);
@@ -299,6 +367,18 @@ internal static class WebsitePolicyRegistryTransactionChecks
             Verify(WebsitePolicyRegistryTransactions.FirefoxSnapshot(State).PolicyAllowlist,
                 WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.Before).PolicyAllowlist,
                 WebsitePolicyRegistryTransactions.FirefoxSnapshot(transaction.After).PolicyAllowlist);
+            VerifyValue(WebsitePolicyRegistryTransactions.GameRestriction(State.Edge),
+                WebsitePolicyRegistryTransactions.GameRestriction(transaction.Before.Edge),
+                WebsitePolicyRegistryTransactions.GameRestriction(transaction.After.Edge));
+            VerifyValue(WebsitePolicyRegistryTransactions.ManagedGameRestriction(State.Edge),
+                WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.Before.Edge),
+                WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.After.Edge));
+            VerifyValue(WebsitePolicyRegistryTransactions.GameRestriction(State.Chrome),
+                WebsitePolicyRegistryTransactions.GameRestriction(transaction.Before.Chrome),
+                WebsitePolicyRegistryTransactions.GameRestriction(transaction.After.Chrome));
+            VerifyValue(WebsitePolicyRegistryTransactions.ManagedGameRestriction(State.Chrome),
+                WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.Before.Chrome),
+                WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.After.Chrome));
 
             static void Verify(WebsitePolicyRegistryListSnapshot current, WebsitePolicyRegistryListSnapshot before,
                 WebsitePolicyRegistryListSnapshot after)
@@ -307,6 +387,13 @@ internal static class WebsitePolicyRegistryTransactionChecks
                     current.Exists && !current.Values.SequenceEqual(before.Values, StringComparer.Ordinal) &&
                     !current.Values.SequenceEqual(after.Values, StringComparer.Ordinal))
                     throw new IOException("External policy conflict in simulated registry backend.");
+            }
+
+            static void VerifyValue(WebsitePolicyRegistryValueSnapshot current,
+                WebsitePolicyRegistryValueSnapshot before, WebsitePolicyRegistryValueSnapshot after)
+            {
+                if (current != before && current != after)
+                    throw new IOException("External registry value conflict in simulated policy backend.");
             }
         }
 
@@ -356,6 +443,8 @@ internal static class WebsitePolicyRegistryTransactionChecks
             Set(browserName, Current(browserName) with { PolicyAllowlist = target.PolicyAllowlist });
             Set(browserName, Current(browserName) with { ManagedBlocklist = target.ManagedBlocklist });
             Set(browserName, Current(browserName) with { ManagedAllowlist = target.ManagedAllowlist });
+            Set(browserName, Current(browserName) with { PolicyGameRestriction = target.PolicyGameRestriction });
+            Set(browserName, Current(browserName) with { ManagedGameRestriction = target.ManagedGameRestriction });
             Set(browserName, Current(browserName) with { Initialized = target.Initialized });
         }
 

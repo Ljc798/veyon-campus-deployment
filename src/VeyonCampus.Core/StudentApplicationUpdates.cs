@@ -540,6 +540,10 @@ public static class StudentApplicationUpdateProcessor
                 }
 
                 EnsureUpdateDiskSpace(installDirectory, configDirectory, installerPath, manifest.SizeBytes);
+                // The transaction renames the whole Student directory before launching Inno Setup.
+                // Close installed UI and worker processes first so their loaded files cannot block that move.
+                VeyonCampusProcessCleanup.StopInstalledRoleProcesses("StudentSetup",
+                    preserveUpdateHelper: true);
                 if (!StudentApplicationUpdateReplayStore.TryConsume(replayStatePath, command.CommandId,
                         command.ExpiresUtc))
                     throw new InvalidDataException("学生更新命令已执行过；已拒绝重放。");

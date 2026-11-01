@@ -540,17 +540,19 @@ void CheckWebsitePolicyApplyAcknowledgement()
 {
     var realtimeAcknowledgement = WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement;
     Expect(realtimeAcknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
-           realtimeAcknowledgement.Contains("Chrome 和 Firefox 机器策略已写入", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("Chrome 和 Firefox 网站策略已写入", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
-           realtimeAcknowledgement.Contains("如果未生效，请手动重启浏览器", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("Edge 下载和冲浪游戏、Chrome 小恐龙已通过机器策略禁用", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("需重启浏览器后生效", StringComparison.Ordinal) &&
            !realtimeAcknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
 
     var machinePolicyAcknowledgement = WebsitePolicyAgent.PolicyAppliedAcknowledgement;
     Expect(machinePolicyAcknowledgement.StartsWith("policy applied;", StringComparison.Ordinal) &&
-           machinePolicyAcknowledgement.Contains("Edge 刷新任务已由 SYSTEM Agent 持久化", StringComparison.Ordinal) &&
-           machinePolicyAcknowledgement.Contains("实际浏览器生效状态待核对", StringComparison.Ordinal) &&
-           machinePolicyAcknowledgement.Contains("如果未生效，请手动重启浏览器", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("Edge 已禁止所有下载并关闭冲浪游戏，Chrome 小恐龙也已关闭", StringComparison.Ordinal) &&
+           machinePolicyAcknowledgement.Contains("相关浏览器需重启后生效", StringComparison.Ordinal) &&
            !machinePolicyAcknowledgement.Contains("不会关闭或重启浏览器", StringComparison.Ordinal));
+
+    Expect(WebsitePolicyAgent.PolicyDisabledAcknowledgement.Contains("已撤销本工具写入的 Edge 下载和浏览器游戏限制", StringComparison.Ordinal));
 }
 if (args is ["--student-setup-fixtures"])
 {
