@@ -541,7 +541,7 @@ void CheckWebsitePolicyApplyAcknowledgement()
     var realtimeAcknowledgement = WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement;
     Expect(realtimeAcknowledgement.StartsWith("policy accepted;", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("Chrome 和 Firefox 网站策略已写入", StringComparison.Ordinal) &&
-           realtimeAcknowledgement.Contains("Edge 策略已进入实时扩展同步", StringComparison.Ordinal) &&
+           realtimeAcknowledgement.Contains("Edge 网站策略已进入实时扩展同步", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("Edge 下载和冲浪游戏、Chrome 小恐龙已通过机器策略禁用", StringComparison.Ordinal) &&
            realtimeAcknowledgement.Contains("需重启浏览器后生效", StringComparison.Ordinal) &&
            !realtimeAcknowledgement.Contains("不会自动重启浏览器", StringComparison.Ordinal));
