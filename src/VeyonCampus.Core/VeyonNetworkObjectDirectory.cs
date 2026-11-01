@@ -97,6 +97,80 @@ public static class VeyonNetworkObjectDirectory
         finally { CryptographicOperations.ZeroMemory(export.Bytes); }
     }
 
+    /// <summary>Reads stable object IDs through Veyon's directory command, without exporting full configuration.</summary>
+    public static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("读取 Veyon 电脑目录仅支持 Windows 教师端。");
+        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
+                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        return ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!);
+    }
+
+    /// <summary>Parses the bordered table printed by `veyon-cli networkobjects dump`.</summary>
+    public static IReadOnlyList<VeyonNetworkObject> ParseNetworkObjectsDump(string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var lines = output.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
+        var rulerIndex = Array.FindIndex(lines, IsNetworkObjectsRuler);
+        if (rulerIndex < 0)
+            throw new InvalidDataException("Veyon 电脑目录清单格式无法识别。");
+
+        var boundaries = GetNetworkObjectsColumnBoundaries(lines[rulerIndex]);
+        if (boundaries.Length != 7 || rulerIndex + 2 >= lines.Length ||
+            !IsNetworkObjectsRow(lines[rulerIndex + 1], boundaries) ||
+            !IsNetworkObjectsRuler(lines[rulerIndex + 2]) ||
+            !boundaries.SequenceEqual(GetNetworkObjectsColumnBoundaries(lines[rulerIndex + 2])))
+            throw new InvalidDataException("Veyon 电脑目录清单列格式无法识别。");
+
+        var objects = new List<VeyonNetworkObject>();
+        var objectIds = new HashSet<Guid>();
+        var foundEnd = false;
+        for (var lineIndex = rulerIndex + 3; lineIndex < lines.Length; lineIndex++)
+        {
+            var line = lines[lineIndex];
+            if (IsNetworkObjectsRuler(line))
+            {
+                if (!boundaries.SequenceEqual(GetNetworkObjectsColumnBoundaries(line)))
+                    throw new InvalidDataException("Veyon 电脑目录清单结束标记无效。");
+                foundEnd = true;
+                break;
+            }
+            if (string.IsNullOrWhiteSpace(line)) continue;
+            if (!IsNetworkObjectsRow(line, boundaries))
+                throw new InvalidDataException("Veyon 电脑目录清单行格式无法识别。");
+
+            var fields = ParseNetworkObjectsRow(line, boundaries);
+            if (!Guid.TryParse(fields[0], out var objectId) || objectId == Guid.Empty ||
+                !objectIds.Add(objectId))
+                throw new InvalidDataException("Veyon 电脑目录对象标识无效或重复。");
+            var parentObjectId = Guid.Empty;
+            if (fields[1].Length > 0 && !Guid.TryParse(fields[1], out parentObjectId))
+                throw new InvalidDataException("Veyon 电脑目录地点标识无效。");
+
+            var typeLabel = fields[2];
+            if (IsRootTypeLabel(typeLabel) ||
+                (parentObjectId == Guid.Empty && fields[4].Length == 0 && fields[5].Length == 0))
+                continue;
+            var type = IsLocationTypeLabel(typeLabel) ? "location" :
+                IsComputerTypeLabel(typeLabel) ? "computer" :
+                fields[4].Length > 0 || fields[5].Length > 0
+                    ? "computer"
+                    : parentObjectId != Guid.Empty ? "location"
+                    : throw new InvalidDataException("Veyon 电脑目录对象类型无法识别。");
+            objects.Add(new VeyonNetworkObject(type, fields[3], fields[4], fields[5], "",
+                objectId, parentObjectId));
+        }
+
+        if (!foundEnd)
+            throw new InvalidDataException("Veyon 电脑目录清单不完整。");
+        var locationNames = objects.Where(item => item.Type.Equals("location", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(item => item.ObjectId, item => item.Name);
+        return Array.AsReadOnly(objects.Select(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)
+            ? item with { Location = locationNames.GetValueOrDefault(item.ParentObjectId, "") }
+            : item).ToArray());
+    }
+
     /// <summary>Parses Veyon room exports while preserving each target's computer display name.</summary>
     public static IReadOnlyList<VeyonNetworkLocation> ParseLocationsExport(IEnumerable<string> lines)
     {
@@ -174,7 +248,7 @@ public static class VeyonNetworkObjectDirectory
         var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
                       ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
         return BuildImportPreview(locationName, computers,
-            ReadDirectoryObjects(cliPath, Path.GetDirectoryName(cliPath)!)).Conflicts;
+            ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!)).Conflicts;
     }
 
     /// <summary>Reads current Veyon objects and previews additions, preserved duplicates and hard conflicts.</summary>
@@ -187,7 +261,7 @@ public static class VeyonNetworkObjectDirectory
         var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
                       ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
         return BuildImportPreview(locationName, computers,
-            ReadDirectoryObjects(cliPath, Path.GetDirectoryName(cliPath)!));
+            ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!));
     }
 
     /// <summary>Pure conflict check used by the UI and regression fixtures.</summary>
@@ -255,7 +329,7 @@ public static class VeyonNetworkObjectDirectory
         var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
                       ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
         var workingDirectory = Path.GetDirectoryName(cliPath)!;
-        var current = ReadDirectoryObjects(cliPath, workingDirectory);
+        var current = ReadNetworkObjects(cliPath, workingDirectory);
         var preview = BuildImportPreview(locationName, computers, current);
         if (preview.Conflicts.Count > 0)
             throw new InvalidDataException("添加前冲突检查发现问题，未写入任何内容：" + string.Join("、", preview.Conflicts));
@@ -300,7 +374,7 @@ public static class VeyonNetworkObjectDirectory
                     $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入失败；请返回教师控制台重试，控制台会先读取现有目录（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
 
             IReadOnlyList<VeyonNetworkObject> after;
-            try { after = ReadDirectoryObjects(cliPath, workingDirectory); }
+            try { after = ReadNetworkObjects(cliPath, workingDirectory); }
             catch (Exception exception)
             {
                 throw new InvalidOperationException(
@@ -344,15 +418,56 @@ public static class VeyonNetworkObjectDirectory
         }
     }
 
-    private static IReadOnlyList<VeyonNetworkObject> ReadDirectoryObjects(string cliPath, string workingDirectory)
+    private static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects(string cliPath, string workingDirectory)
     {
-        var export = ExportConfiguration(cliPath, workingDirectory);
-        try
-        {
-            return ParseConfigurationDirectory(DecodeConfiguration(export.Bytes));
-        }
-        finally { CryptographicOperations.ZeroMemory(export.Bytes); }
+        var runner = new ProcessRunner();
+        runner.Run(cliPath, ["networkobjects", "dump"], workingDirectory, TimeSpan.FromSeconds(45),
+            outputLimitChars: 8 * 1024 * 1024, redirectedOutputEncoding: Encoding.UTF8);
+        if (runner.ExitCode is not 0)
+            throw new InvalidOperationException(
+                $"Veyon 读取电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+        if (runner.StdoutTruncated)
+            throw new InvalidDataException("Veyon 电脑目录清单超过读取上限；请检查目录。");
+        return ParseNetworkObjectsDump(runner.Stdout);
     }
+
+    private static bool IsNetworkObjectsRuler(string line) =>
+        line.Length >= 2 && line[0] == '+' && line[^1] == '+' &&
+        line.All(character => character is '+' or '=' or '-');
+
+    private static int[] GetNetworkObjectsColumnBoundaries(string ruler) =>
+        ruler.Select((character, index) => (character, index))
+            .Where(item => item.character == '+')
+            .Select(item => item.index).ToArray();
+
+    private static bool IsNetworkObjectsRow(string line, IReadOnlyList<int> boundaries)
+    {
+        if (line.Length <= boundaries[^1] || line[0] != '|' || line[boundaries[^1]] != '|')
+            return false;
+        return boundaries.All(index => index < line.Length && line[index] == '|');
+    }
+
+    private static string[] ParseNetworkObjectsRow(string line, IReadOnlyList<int> boundaries)
+    {
+        var fields = new string[boundaries.Count - 1];
+        for (var index = 0; index < fields.Length; index++)
+            fields[index] = line.Substring(boundaries[index] + 1,
+                boundaries[index + 1] - boundaries[index] - 1).Trim();
+        return fields;
+    }
+
+    private static bool IsLocationTypeLabel(string value) =>
+        value.Equals("Location", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("Room", StringComparison.OrdinalIgnoreCase) ||
+        value is "地点" or "位置" or "机房";
+
+    private static bool IsComputerTypeLabel(string value) =>
+        value.Equals("Computer", StringComparison.OrdinalIgnoreCase) ||
+        value.Equals("Host", StringComparison.OrdinalIgnoreCase) ||
+        value is "计算机" or "电脑";
+
+    private static bool IsRootTypeLabel(string value) =>
+        value.Equals("Root", StringComparison.OrdinalIgnoreCase) || value == "根";
 
     internal static VeyonConfigurationExport ExportConfiguration()
     {

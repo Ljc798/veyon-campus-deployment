@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text;
 
 namespace VeyonCampus.Core;
 
@@ -20,16 +21,21 @@ public sealed class ProcessRunner
 
     /// <summary>Runs the process and waits for exit. Throws on timeout or launch failure.</summary>
     public void Run(string fileName, IReadOnlyList<string> arguments,
-        string workingDirectory, TimeSpan timeout, int outputLimitChars = 8192)
-        => RunCore(fileName, arguments, workingDirectory, timeout, null, outputLimitChars);
+        string workingDirectory, TimeSpan timeout, int outputLimitChars = 8192,
+        Encoding? redirectedOutputEncoding = null)
+        => RunCore(fileName, arguments, workingDirectory, timeout, null, outputLimitChars,
+            redirectedOutputEncoding);
 
     /// <summary>Runs a process with sensitive input on redirected standard input.</summary>
     public void RunWithStandardInput(string fileName, IReadOnlyList<string> arguments,
-        string workingDirectory, TimeSpan timeout, string standardInput, int outputLimitChars = 8192)
-        => RunCore(fileName, arguments, workingDirectory, timeout, standardInput, outputLimitChars);
+        string workingDirectory, TimeSpan timeout, string standardInput, int outputLimitChars = 8192,
+        Encoding? redirectedOutputEncoding = null)
+        => RunCore(fileName, arguments, workingDirectory, timeout, standardInput, outputLimitChars,
+            redirectedOutputEncoding);
 
     private void RunCore(string fileName, IReadOnlyList<string> arguments,
-        string workingDirectory, TimeSpan timeout, string? standardInput, int outputLimitChars)
+        string workingDirectory, TimeSpan timeout, string? standardInput, int outputLimitChars,
+        Encoding? redirectedOutputEncoding)
     {
         ArgumentNullException.ThrowIfNull(arguments);
         if (outputLimitChars < 0)
@@ -53,6 +59,11 @@ public sealed class ProcessRunner
             WorkingDirectory = workingDirectory,
             CreateNoWindow = true
         };
+        if (redirectedOutputEncoding is not null)
+        {
+            startInfo.StandardOutputEncoding = redirectedOutputEncoding;
+            startInfo.StandardErrorEncoding = redirectedOutputEncoding;
+        }
         if (standardInput is not null)
             startInfo.StandardInputEncoding = new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
         foreach (var arg in arguments)

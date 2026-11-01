@@ -14,6 +14,8 @@ public partial class TeacherUpdatesView : UserControl
     public event EventHandler<RoutedEventArgs>? InstallOfflineTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? TrustStudentAgentIdentitiesRequested;
     public event EventHandler<RoutedEventArgs>? DeployStudentUpdateRequested;
+    public event EventHandler<RoutedEventArgs>? SelectAllStudentUpdateTargetsRequested;
+    public event EventHandler<RoutedEventArgs>? ClearStudentUpdateTargetsRequested;
     public event EventHandler<RoutedEventArgs>? ExportStudentUpdatePerformanceReportRequested;
     public event EventHandler<RoutedEventArgs>? RecheckStudentUpdateResultRequested;
 
@@ -37,6 +39,12 @@ public partial class TeacherUpdatesView : UserControl
 
     private void RequestDeployStudentUpdate(object? sender, RoutedEventArgs e) =>
         DeployStudentUpdateRequested?.Invoke(sender, e);
+
+    private void RequestSelectAllStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
+        SelectAllStudentUpdateTargetsRequested?.Invoke(sender, e);
+
+    private void RequestClearStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
+        ClearStudentUpdateTargetsRequested?.Invoke(sender, e);
 
     private void RequestExportStudentUpdatePerformanceReport(object? sender, RoutedEventArgs e) =>
         ExportStudentUpdatePerformanceReportRequested?.Invoke(sender, e);

@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=55">
-  <script src="/app.js?v=55" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=56">
+  <script src="/app.js?v=56" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -90,6 +90,7 @@
           <span id="classroom-quick-control-state" class="pill mode">等待教室配置</span>
         </div>
         <p id="classroom-quick-control-status" class="fine-print">确认教室范围后，可对当前范围的电脑执行课堂管控。</p>
+        <p id="classroom-quick-control-countdown" class="policy-countdown hidden" aria-live="off"></p>
         <div class="channel-status-list" aria-live="polite">
           <div><strong>网站限制</strong><span id="classroom-website-current">正在读取…</span></div>
           <p id="classroom-website-delivery-hint" class="fine-print"></p>
@@ -194,7 +195,7 @@
 
           <section class="policy-config saved-policy-config">
             <div class="policy-mode-heading"><h3>教师端策略预设</h3></div>
-            <p class="fine-print">选择教师电脑已保存的网站、应用、组合或系统预设，发送前会核对所选电脑当前状态。</p>
+            <p class="fine-print">预设是可复用配置，发送后按预设时长运行。倒计时显示所选电脑当前同类限制的最早到期时间；课堂快捷管控按会话单独计时，网站策略冲突时会提示处理。</p>
             <div class="saved-policy-picker">
               <label for="saved-policy-profile">策略预设
                 <select id="saved-policy-profile" disabled>
@@ -206,6 +207,7 @@
               </button>
             </div>
             <p id="saved-policy-profile-summary" class="fine-print" aria-live="polite"></p>
+            <p id="saved-policy-countdown" class="policy-countdown hidden" aria-live="off"></p>
             <p id="saved-policy-scope-status" class="fine-print" role="status" aria-live="polite"></p>
             <div class="button-stack">
               <button id="apply-saved-policy-profile" class="primary-button" type="button" disabled>发送策略预设</button>

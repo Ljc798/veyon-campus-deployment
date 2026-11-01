@@ -242,6 +242,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
+    private IReadOnlyList<TeacherPolicyTargetChoice> _studentUpdateTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
     private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
     private readonly ObservableCollection<TeacherDeviceHealthAlert> _deviceHealthAlerts = [];
     private readonly ObservableCollection<TeacherClassroomQuickControlDeviceItem> _classroomQuickControlDevices = [];
@@ -3420,8 +3421,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         _offlineTeacherUpdateRelease is not null && _offlineTeacherInstallerPath is not null &&
         HasRequiredPolicyCapabilities(_offlineTeacherUpdateRelease.Manifest) &&
         ApplicationReleaseClient.CompareVersions(_offlineTeacherUpdateRelease.Manifest.Version, AppVersion) > 0;
-    public bool CanTrustStudentAgentIdentities => !IsExecuting &&
-        GetSelectedWebsitePolicyTargets().Count > 0 && IsCampusIdValid();
+    public bool CanTrustStudentAgentIdentities => !IsExecuting && AreStudentUpdateTargetsValid();
     public async Task ReadStudentDeviceHealthAsync()
     {
         if (!CanReadDeviceHealth || !TryBeginExclusiveTask()) return;
@@ -4006,7 +4006,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         value.Contains(search, StringComparison.CurrentCultureIgnoreCase);
 
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
-        AreWebsitePolicyTargetsValid() && !string.IsNullOrWhiteSpace(CampusId);
+        AreStudentUpdateTargetsValid();
     private static bool HasRequiredPolicyCapabilities(ApplicationReleaseManifest manifest) =>
         ApplicationReleaseCompatibility.SupportsApplicationPolicy(manifest) &&
         ApplicationReleaseCompatibility.SupportsStudentSystemPolicy(manifest);
@@ -5475,13 +5475,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var roomId = room.RoomId;
-            var snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
+            var objects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
             if (SelectedRoomProfile?.RoomId != roomId)
             {
                 SeatVeyonTargetStatus = "当前地点已切换；本次电脑清单未应用。";
                 return;
             }
-            var roomComputers = snapshot.Objects
+            var roomComputers = objects
                 .Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
                                item.Location.Equals(room.DisplayName, StringComparison.OrdinalIgnoreCase))
                 .ToArray();
@@ -6675,6 +6675,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string WebsitePolicyTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
         ? "请先从 Veyon 读取电脑名单。"
         : $"已选择 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
+    public IReadOnlyList<TeacherPolicyTargetChoice> StudentUpdateTargetChoices => _studentUpdateTargetChoices;
+    public int StudentUpdateSelectedTargetCount => _studentUpdateTargetChoices.Count(item => item.IsSelected);
+    public string StudentUpdateTargetSelectionSummary => _studentUpdateTargetChoices.Count == 0
+        ? "请先在“地点与学生名单”配置学生电脑。"
+        : $"更新范围：已选 {StudentUpdateSelectedTargetCount}/{_studentUpdateTargetChoices.Count} 台学生电脑";
     public IReadOnlyList<string> SelectedWebsitePolicyStudentNames => WebsitePolicyTargetChoices
         .Where(item => item.IsSelected).Select(item => item.StudentName).ToArray();
     public string WebsitePolicyConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: true);
@@ -6827,6 +6832,68 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 !previous.TryGetValue(targetKey, out var selected) || selected);
         }).ToArray();
         WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
+        RebuildStudentUpdateTargetChoices();
+    }
+
+    private void RebuildStudentUpdateTargetChoices()
+    {
+        var previous = _studentUpdateTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
+            item => item.IsSelected, StringComparer.OrdinalIgnoreCase);
+        var studentNames = WebsitePolicyTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
+            item => item.StudentName, StringComparer.OrdinalIgnoreCase);
+        var targets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(target => target.Trim()).Where(target => target.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+        foreach (var choice in _studentUpdateTargetChoices)
+            choice.PropertyChanged -= StudentUpdateTargetChoiceChanged;
+        _studentUpdateTargetChoices = Array.AsReadOnly(targets.Select(target =>
+        {
+            var key = NormalizeTargetKey(target);
+            var studentName = studentNames.GetValueOrDefault(key, "未填写姓名");
+            var isSelected = !previous.TryGetValue(key, out var selected) || selected;
+            return new TeacherPolicyTargetChoice(target, studentName, isSelected);
+        }).ToArray());
+        foreach (var choice in _studentUpdateTargetChoices)
+            choice.PropertyChanged += StudentUpdateTargetChoiceChanged;
+
+        Changed(nameof(StudentUpdateTargetChoices));
+        NotifyStudentUpdateTargetSelectionChanged();
+    }
+
+    private void StudentUpdateTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
+    {
+        if (sender is not TeacherPolicyTargetChoice choice || !_studentUpdateTargetChoices.Contains(choice) ||
+            args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected)) ||
+            _isUpdatingStudentUpdateTargetSelection) return;
+        NotifyStudentUpdateTargetSelectionChanged();
+    }
+
+    private bool _isUpdatingStudentUpdateTargetSelection;
+
+    public void SelectAllStudentUpdateTargets(bool selected)
+    {
+        var changed = false;
+        _isUpdatingStudentUpdateTargetSelection = true;
+        try
+        {
+            foreach (var choice in _studentUpdateTargetChoices)
+            {
+                if (choice.IsSelected == selected) continue;
+                choice.IsSelected = selected;
+                changed = true;
+            }
+        }
+        finally { _isUpdatingStudentUpdateTargetSelection = false; }
+        if (changed) NotifyStudentUpdateTargetSelectionChanged();
+    }
+
+    private void NotifyStudentUpdateTargetSelectionChanged()
+    {
+        Changed(nameof(StudentUpdateTargetSelectionSummary));
+        Changed(nameof(StudentUpdateSelectedTargetCount));
+        Changed(nameof(CanDeployStudentUpdate));
+        Changed(nameof(CanTrustStudentAgentIdentities));
     }
 
     private void WebsitePolicyTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
@@ -6992,6 +7059,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
+        .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
+
+    private IReadOnlyList<string> GetSelectedStudentUpdateTargets() => _studentUpdateTargetChoices
         .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
 
     private IReadOnlyList<TeacherDeviceHealthRow> GetSelectedHealthRows()
@@ -8736,6 +8806,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         RoomCreateResult = "";
         RoomCreateError = "";
         var renamedExistingComputerCount = 0;
+        var existingComputerRenameSkipped = false;
         try
         {
             var locationName = RoomLocationName.Trim();
@@ -8746,14 +8817,44 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 RoomCreateError = $"需要先安装并确认 Veyon {VeyonInstallerTrust.Version}。没有更改目录。\n{veyon.AsText()}";
                 return;
             }
-            var directory = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
+            var directoryObjects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
             VeyonComputerRenameTargetPlan[] renameTargets;
-            try { renameTargets = BuildRoomComputerRenamePlan(locationName, computers, directory); }
+            try { renameTargets = BuildRoomComputerRenamePlan(locationName, computers, directoryObjects); }
             catch (InvalidDataException exception)
             {
                 RoomCreateError = "现有 Veyon 电脑与本次座位编号无法安全对应；没有修改目录。" + exception.Message;
                 return;
             }
+            string? renameConfigFingerprint = null;
+            if (renameTargets.Length > 0)
+            {
+                try
+                {
+                    var renameSnapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
+                    renameTargets = BuildRoomComputerRenamePlan(locationName, computers, renameSnapshot.Objects);
+                    if (renameTargets.Length > 0)
+                        renameConfigFingerprint = renameSnapshot.ConfigFingerprint;
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                   InvalidOperationException or TimeoutException or
+                                                   PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+                {
+                    if (IsVeyonCrtInitializationFailure(exception))
+                    {
+                        existingComputerRenameSkipped = true;
+                        renameTargets = [];
+                    }
+                    else
+                    {
+                        RoomCreateError = "需要同步现有电脑名称，但无法读取 Veyon 配置；没有新增地点或学生电脑。" +
+                                          exception.Message;
+                        return;
+                    }
+                }
+            }
+            var renameSkippedNote = existingComputerRenameSkipped
+                ? "已有电脑显示名未同步（Veyon 配置导出遇到 R6031）。"
+                : "";
             if (renameTargets.Length > 0)
             {
                 RoomCreateStatus = $"正在同步 {renameTargets.Length} 台现有电脑的学生显示名……";
@@ -8761,11 +8862,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     (requestId, caller) => new PrivilegedWorkerRequest(
                         PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
                         PrivilegedWorkerOperation.RenameVeyonComputers,
-                        VeyonConfigFingerprint: directory.ConfigFingerprint,
+                        VeyonConfigFingerprint: renameConfigFingerprint,
                         VeyonComputerRenameTargets: renameTargets));
                 if (!renameResponse.Result.Ok)
                 {
-                    RoomCreateError = "现有电脑名称同步未完成；没有继续创建地点和电脑。" + renameResponse.Result.Detail;
+                    RoomCreateError = "现有电脑名称同步未完成；没有继续创建地点和电脑。" +
+                                      renameSkippedNote + renameResponse.Result.Detail;
                     return;
                 }
                 renamedExistingComputerCount = renameTargets.Length;
@@ -8780,29 +8882,35 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 if (!TrySaveCurrentRoomProfile(out var profileError, computers))
                 {
-                    RoomCreateError = "Veyon 地点和电脑已写入并读回，但本机地点记录未保存；请重新打开本机权限后再试。" + profileError;
+                    RoomCreateError = "Veyon 地点和电脑已写入并读回，但本机地点记录未保存；请重新打开本机权限后再试。" +
+                                      renameSkippedNote + profileError;
                     return;
                 }
-            var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
-                RoomCreateResult = $"Veyon 地点和 {computers.Length} 台学生电脑已写入，并完成写入后自动核对。";
+                var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
+                RoomCreateResult = $"Veyon 地点和 {computers.Length} 台学生电脑已写入，并完成写入后自动核对。" +
+                                   (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "");
                 if (bindingError is null)
                 {
                     CommitSeatMapEdit();
                     IsSeatMapEditing = false;
-                    RoomCreateResult = $"已完成：{computers.Length} 台学生电脑已自动对应姓名桌位；空姓名桌位只保留为桌子。";
+                    RoomCreateResult = $"已完成：{computers.Length} 台学生电脑已自动对应姓名桌位；空姓名桌位只保留为桌子。" +
+                                       (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "");
                 }
                 else
-                    RoomCreateError = $"Veyon 地点和 {computers.Length} 台学生电脑已成功写入。程序已在写入后自动核对，但未能确认教师机上的座位对应关系；已写入的 Veyon 电脑不受影响。原因：" + bindingError;
+                    RoomCreateError = $"Veyon 地点和 {computers.Length} 台学生电脑已成功写入。程序已在写入后自动核对，但未能确认教师机上的座位对应关系；已写入的 Veyon 电脑不受影响。" +
+                                      (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "") + "原因：" + bindingError;
             }
             else RoomCreateError = (renamedExistingComputerCount > 0
                 ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步，但地点写入未完成。"
-                : "") + "添加地点未完成：" + response.Result.Detail;
+                : "") + renameSkippedNote + "添加地点未完成：" + response.Result.Detail;
         }
         catch (Exception exception)
         {
             RoomCreateError = (renamedExistingComputerCount > 0
                 ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步；"
-                : "") + "添加地点未完成：" + exception.Message;
+                : "") + (existingComputerRenameSkipped
+                    ? "已有电脑显示名未同步（Veyon 配置导出遇到 R6031）。"
+                    : "") + "添加地点未完成：" + exception.Message;
         }
         finally
         {
@@ -8826,8 +8934,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (seats.Length != computers.Count)
             return $"当前有 {seats.Length} 个座位，电脑清单有 {computers.Count} 台。";
 
-        VeyonDirectorySnapshot snapshot;
-        try { snapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot); }
+        IReadOnlyList<VeyonNetworkObject> objects;
+        try { objects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects); }
         catch (Exception exception)
         {
             return "写入后的自动核对无法读取 Veyon 电脑目录：" + exception.Message;
@@ -8836,7 +8944,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
             return "读取期间当前地点已切换。";
 
-        var locationObjects = snapshot.Objects.Where(item =>
+        var locationObjects = objects.Where(item =>
             item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
             item.ObjectId != Guid.Empty &&
             string.Equals(item.Name, locationName, StringComparison.Ordinal)).ToArray();
@@ -8852,11 +8960,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             try { expectedHost = VeyonHostAddress.NormalizeOverride(computers[index].Host); }
             catch (InvalidDataException exception) { return "电脑地址无效：" + exception.Message; }
 
-            var matches = snapshot.Objects.Where(item =>
+            var matches = objects.Where(item =>
             {
                 if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
                     item.ObjectId == Guid.Empty || item.ParentObjectId != locationObject.ObjectId ||
-                    !string.Equals(item.Name, computers[index].DisplayName, StringComparison.Ordinal))
+                    string.IsNullOrWhiteSpace(item.Name))
                     return false;
                 try
                 {
@@ -8901,6 +9009,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             exception.InnerException is System.ComponentModel.Win32Exception { NativeErrorCode: 1223 })
             return "已取消管理员权限请求；程序没有启动。";
         return exception.Message;
+    }
+
+    private static bool IsVeyonCrtInitializationFailure(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current.Message.Contains("R6031", StringComparison.OrdinalIgnoreCase) ||
+                current.Message.Contains("Attempt to initialize the CRT more than once",
+                    StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     public void FillWebsiteTargetsFromRoom()
@@ -9454,8 +9574,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                GetSelectedWebsitePolicyTargets());
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
             var settings = disabled ? new StudentSystemPolicySettings(false, false, false, false, false, false) :
                 new StudentSystemPolicySettings(StudentSystemPolicyLockWallpaper,
                     StudentSystemPolicyProhibitTimeChanges, StudentSystemPolicyProhibitNetworkChanges,
@@ -10089,8 +10208,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 _releaseClientError ?? "此版本暂不支持学生端更新。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(
-                GetSelectedWebsitePolicyTargets());
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
             selectedTargetCount = targets.Count;
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
@@ -11601,6 +11719,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException) { return false; }
     }
 
+    private bool AreStudentUpdateTargetsValid()
+    {
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            return WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets()).Count > 0;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
+        { return false; }
+    }
+
     public string StudentAgentIdentityStatus { get; private set; } = "";
     public string StudentAgentIdentityDetails
     {
@@ -11711,7 +11840,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var campus = CampusId.Trim();
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
             StudentAgentIdentityDetails = "";
             ShowStudentAgentIdentityDetails = false;
             StudentAgentIdentityStatus = $"正在读取 {targets.Count} 台学生电脑身份……";
@@ -12286,15 +12415,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
 
     private static VeyonComputerRenameTargetPlan[] BuildRoomComputerRenamePlan(string locationName,
-        IReadOnlyList<VeyonNetworkComputer> computers, VeyonDirectorySnapshot snapshot)
+        IReadOnlyList<VeyonNetworkComputer> computers, IReadOnlyList<VeyonNetworkObject> directoryObjects)
     {
-        var locations = snapshot.Objects.Where(item =>
+        var locations = directoryObjects.Where(item =>
             item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
             item.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (locations.Length > 1)
             throw new InvalidDataException($"Veyon 中有多个同名地点“{locationName}”；请先在教师控制台处理重复地点。");
 
-        var existingComputers = snapshot.Objects.Where(item =>
+        var existingComputers = directoryObjects.Where(item =>
             item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
         var locationId = locations.Length == 1 ? locations[0].ObjectId : (Guid?)null;
         if (locationId is null && existingComputers.Any(item =>

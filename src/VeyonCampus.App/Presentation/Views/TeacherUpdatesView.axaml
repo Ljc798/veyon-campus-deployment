@@ -42,6 +42,36 @@
           </WrapPanel>
           <TextBlock Text="已是最新的电脑会自动跳过；首次连接或身份变化时，需要先核对设备身份。"
                      Classes="supporting-copy" TextWrapping="Wrap" />
+          <Border Classes="subtle-panel">
+            <StackPanel Spacing="8">
+              <TextBlock Text="更新目标电脑" Classes="component-title" />
+              <TextBlock Text="更新范围独立于策略页勾选；新加入的电脑默认选中。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding StudentUpdateTargetSelectionSummary}"
+                         Classes="supporting-copy" TextWrapping="Wrap" />
+              <WrapPanel Orientation="Horizontal">
+                <Button Classes="secondary" Content="全选" Click="RequestSelectAllStudentUpdateTargets"
+                        IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
+                <Button Classes="secondary" Content="全不选" Click="RequestClearStudentUpdateTargets"
+                        IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
+              </WrapPanel>
+              <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto"
+                            IsEnabled="{Binding !IsExecuting}">
+                <ItemsControl ItemsSource="{Binding StudentUpdateTargetChoices}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
+                        <StackPanel Spacing="1">
+                          <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding Target}" Classes="muted" TextWrapping="Wrap" />
+                        </StackPanel>
+                      </CheckBox>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
           <StackPanel Spacing="6">
             <TextBlock Text="{Binding StudentAgentIdentityStatus}" Classes="muted" TextWrapping="Wrap" />
             <ToggleButton Content="{Binding StudentAgentIdentityDetailsToggleText}"

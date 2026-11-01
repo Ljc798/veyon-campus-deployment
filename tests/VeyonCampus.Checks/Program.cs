@@ -6,6 +6,13 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--veyon-networkobjects-dump-fixtures"])
+{
+    CheckNetworkObjectsDumpParsing();
+    Console.WriteLine("PASS Veyon networkobjects dump 表格解析与地点映射");
+    return;
+}
+
 if (args is ["--teacher-restart-regression-fixtures"])
 {
     await TeacherRestartRegressionChecks.RunAsync();
@@ -322,6 +329,32 @@ void Reject(Action action)
     try { action(); } catch (Exception ex) when (ex is InvalidDataException or IOException) { return; }
     throw new Exception("Invalid input was accepted");
 }
+void CheckNetworkObjectsDumpParsing()
+{
+    var widths = new[] { 36, 36, 12, 24, 24, 18 };
+    string FormatRow(params string[] values) => "| " + string.Join(" | ",
+        values.Select((value, index) => value.PadRight(widths[index]))) + " |";
+    var ruler = "+" + string.Join("+", widths.Select(width => new string('-', width + 2))) + "+";
+    var rootId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var locationId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    var computerId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    var dump = string.Join('\n', [
+        "Veyon network objects",
+        ruler,
+        FormatRow("对象 UUID", "Parent UUID", "类型", "名称", "主机地址", "MAC 地址"),
+        ruler,
+        FormatRow(rootId.ToString(), "", "Root", "根目录", "", ""),
+        FormatRow(locationId.ToString(), rootId.ToString(), "地点", "三楼机房", "", ""),
+        FormatRow(computerId.ToString(), locationId.ToString(), "计算机", "PC-01", "10.0.0.1", ""),
+        ruler
+    ]);
+    var networkObjects = VeyonNetworkObjectDirectory.ParseNetworkObjectsDump(dump);
+    Expect(networkObjects.Count == 2 &&
+           networkObjects.Single(item => item.ObjectId == locationId).Type == "location" &&
+           networkObjects.Single(item => item.ObjectId == computerId) is
+               { Type: "computer", Name: "PC-01", Host: "10.0.0.1", Location: "三楼机房" });
+    Reject(() => VeyonNetworkObjectDirectory.ParseNetworkObjectsDump("目录内容无法识别"));
+}
 void CheckPinnedApplicationReleasePublicKey()
 {
     var resourceName = ApplicationReleaseTrust.PublicKeyResourceName;
@@ -568,6 +601,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("服务名: VeyonService\n        状态              : 1  已停止") == WindowsServiceState.Stopped);
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        STATE              : 3  STOP_PENDING") == WindowsServiceState.StopPending);
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
+    CheckNetworkObjectsDumpParsing();
 });
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);

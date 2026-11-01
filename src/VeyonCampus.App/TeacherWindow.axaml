@@ -72,6 +72,8 @@
             InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
             TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
             DeployStudentUpdateRequested="DeployStudentUpdate"
+            SelectAllStudentUpdateTargetsRequested="SelectAllStudentUpdateTargets"
+            ClearStudentUpdateTargetsRequested="ClearStudentUpdateTargets"
             ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport"
             RecheckStudentUpdateResultRequested="RecheckStudentUpdateResult" />
       </StackPanel>

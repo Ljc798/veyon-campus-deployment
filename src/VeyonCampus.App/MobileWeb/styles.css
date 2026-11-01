@@ -201,6 +201,7 @@ h1, h2, p { overflow-wrap: anywhere; }
 h2 { margin: 0; font-size: 20px; line-height: 1.25; }
 .muted { color: var(--muted); line-height: 1.6; margin: 0; }
 .fine-print { color: var(--muted); font-size: 12px; line-height: 1.55; margin: 0; }
+.policy-countdown { margin: 0; padding: 7px 10px; border-left: 3px solid var(--teal); border-radius: 7px; background: #f1f8f6; color: var(--teal-dark); font-size: 12px; line-height: 1.45; font-variant-numeric: tabular-nums; }
 label { display: grid; gap: 7px; font-size: 13px; font-weight: 700; }
 input, select, textarea {
   width: 100%;

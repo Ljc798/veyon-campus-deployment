@@ -58,6 +58,9 @@ let classroomQuickControlSnapshotRequestId = 0;
 let classroomStatePollTimer = 0;
 let classroomStatePollVersion = 0;
 let classroomStatePollInFlight = false;
+let policyCountdownTimer = 0;
+let savedPolicyCountdownNeedsTick = false;
+let classroomQuickControlCountdownNeedsTick = false;
 let directoryStatusPollTimer = 0;
 let directoryStatusPollVersion = 0;
 let directoryStatusPollInFlight = false;
@@ -1684,6 +1687,120 @@ function updateSavedPolicyProfileControls(targets = selectedTargets()) {
     ? savedPolicyProfileReadinessMessage(targets, profile)
     : actionBlocked ? pendingSavedPolicyReview ? "应用影响预览待确认；其他策略操作暂时停用。" : "正在发送策略预设…"
       : savedPolicyProfileReadinessMessage(targets, profile);
+  renderSavedPolicyProfileCountdown(targets, profile);
+}
+
+function formatCountdownDuration(milliseconds) {
+  const totalSeconds = Math.max(0, Math.ceil(milliseconds / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const clock = [hours, minutes, seconds].map(value => String(value).padStart(2, "0")).join(":");
+  return days ? `${days}天 ${clock}` : clock;
+}
+
+function schedulePolicyCountdownRefresh() {
+  if (policyCountdownTimer || document.hidden ||
+      (!savedPolicyCountdownNeedsTick && !classroomQuickControlCountdownNeedsTick)) return;
+  policyCountdownTimer = setTimeout(() => {
+    policyCountdownTimer = 0;
+    renderSavedPolicyProfileCountdown();
+    renderClassroomQuickControlCountdown();
+    schedulePolicyCountdownRefresh();
+  }, 1000);
+}
+
+function renderSavedPolicyProfileCountdown(targets = selectedTargets(), profile = selectedSavedPolicyProfile()) {
+  const countdown = $("saved-policy-countdown");
+  if (!countdown) return;
+  savedPolicyCountdownNeedsTick = false;
+  const show = message => {
+    countdown.textContent = message;
+    countdown.classList.remove("hidden");
+  };
+  if (!profile) {
+    countdown.textContent = "";
+    countdown.classList.add("hidden");
+    schedulePolicyCountdownRefresh();
+    return;
+  }
+  if (profile.kind === "system") {
+    show("系统策略按预设持续生效，不设置自动到期倒计时。");
+    schedulePolicyCountdownRefresh();
+    return;
+  }
+  if (!targets.length) {
+    show("选择电脑并读取状态后，可查看当前限制的倒计时。");
+    schedulePolicyCountdownRefresh();
+    return;
+  }
+
+  const channels = profile.kind === "website" ? [["websiteMode", "websiteExpiresUtc", "网站"]] :
+    profile.kind === "application" ? [["applicationMode", "applicationExpiresUtc", "应用"]] :
+      profile.kind === "websiteApplication"
+        ? [["websiteMode", "websiteExpiresUtc", "网站"], ["applicationMode", "applicationExpiresUtc", "应用"]]
+        : [];
+  const candidates = [];
+  let activeWithoutExpiry = 0;
+  let knownStatuses = 0;
+  for (const target of targets) {
+    const status = latestStatusByTarget.get(normalizeTarget(target));
+    if (!status || !status.online || status.needsReview) continue;
+    knownStatuses++;
+    for (const [modeField, expiryField, label] of channels) {
+      if (modeField === "applicationMode" && !status.applicationSupported) continue;
+      const mode = String(status[modeField] || "").toLowerCase();
+      if (!mode || mode === "disabled") continue;
+      const expiry = Date.parse(status[expiryField] || "");
+      if (Number.isFinite(expiry)) candidates.push({ expiry, label, target });
+      else activeWithoutExpiry++;
+    }
+  }
+  if (candidates.length) {
+    candidates.sort((left, right) => left.expiry - right.expiry);
+    const first = candidates[0];
+    const remaining = first.expiry - (Date.now() + serverClockOffsetMs);
+    const scopePrefix = knownStatuses < targets.length ? `已读 ${knownStatuses}/${targets.length} 台 · ` : "";
+    const targetName = targets.length > 1 ? ` · ${targetDisplayName(first.target)}` : "";
+    show(remaining > 0
+      ? `${scopePrefix}${first.label}限制最早到期 · 剩余 ${formatCountdownDuration(remaining)} · ${formatDateTime(first.expiry)}${targetName}`
+      : `${scopePrefix}${first.label}限制已到期 · 请刷新状态确认${targetName}`);
+    savedPolicyCountdownNeedsTick = remaining > 0;
+  } else if (activeWithoutExpiry) {
+    show(knownStatuses < targets.length
+      ? `已读 ${knownStatuses}/${targets.length} 台；当前对应限制没有自动到期时间，其他设备状态待读取。`
+      : "所选电脑当前对应限制没有自动到期时间。");
+  } else if (knownStatuses < targets.length) {
+    show("请先读取所选电脑状态，再查看当前限制的倒计时。");
+  } else {
+    show("所选范围当前没有此类活动限制。");
+  }
+  schedulePolicyCountdownRefresh();
+}
+
+function renderClassroomQuickControlCountdown() {
+  const countdown = $("classroom-quick-control-countdown");
+  if (!countdown) return;
+  classroomQuickControlCountdownNeedsTick = false;
+  const snapshot = classroomQuickControlSnapshot?.sessionId === activeClassroomSessionId
+    ? classroomQuickControlSnapshot : null;
+  const hasActiveControl = (snapshot?.devices || []).some(item => item.mode !== "none" || item.inputLeaseId ||
+    item.websiteState === "waitingForAgent");
+  const expiry = snapshot?.controlExpiresUtc ? Date.parse(snapshot.controlExpiresUtc) : NaN;
+  if (!hasActiveControl || !Number.isFinite(expiry)) {
+    countdown.textContent = "";
+    countdown.classList.add("hidden");
+    schedulePolicyCountdownRefresh();
+    return;
+  }
+  const remaining = expiry - (Date.now() + serverClockOffsetMs);
+  countdown.textContent = remaining > 0
+    ? `课堂快捷管控剩余 ${formatCountdownDuration(remaining)} · ${formatDateTime(snapshot.controlExpiresUtc)} 自动解除`
+    : "课堂快捷管控期限已到 · 正在核对释放状态";
+  countdown.classList.remove("hidden");
+  classroomQuickControlCountdownNeedsTick = remaining > 0;
+  schedulePolicyCountdownRefresh();
 }
 
 function renderSavedPolicyProfiles(selectedId = $("saved-policy-profile")?.value || "") {
@@ -2584,12 +2701,7 @@ function renderClassroomQuickControl() {
     classroomQuickControlBusy || sending ? `正在执行 ${sending} 台，回执会自动更新。` :
     restoring ? `正在核验 ${restoring} 台设备的恢复结果；取得可信回执后才会标记完成。` :
     "名单写入和浏览器执行结果分别核对，展开学生可查看原因。";
-  if (snapshot?.controlExpiresUtc && devices.some(item => item.mode !== "none" || item.inputLeaseId ||
-      item.websiteState === "waitingForAgent")) {
-    const expires = new Date(snapshot.controlExpiresUtc);
-    if (!Number.isNaN(expires.getTime()))
-      status.textContent += " 快捷管控将于 " + expires.toLocaleString("zh-CN", { hour12: false }) + " 自动解除。";
-  }
+  renderClassroomQuickControlCountdown();
   if (snapshot?.roomName) $("classroom-target-summary").textContent = snapshot.roomName + " · " + activeClassroomTargets.length + " 台学生电脑";
   const progress = $("classroom-quick-control-progress");
   progress.classList.toggle("hidden", !active || !snapshot || classroomQuickControlUnavailable);
@@ -2821,7 +2933,15 @@ function stopClassroomStatePolling() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden || !accessToken || controlView.classList.contains("hidden")) return;
+  if (document.hidden) {
+    clearTimeout(policyCountdownTimer);
+    policyCountdownTimer = 0;
+    return;
+  }
+  renderSavedPolicyProfileCountdown();
+  renderClassroomQuickControlCountdown();
+  schedulePolicyCountdownRefresh();
+  if (!accessToken || controlView.classList.contains("hidden")) return;
   void refreshMobileClassroomState();
   if (isMobileDirectoryStatusViewVisible()) void refreshVisibleDirectoryStatuses();
 });

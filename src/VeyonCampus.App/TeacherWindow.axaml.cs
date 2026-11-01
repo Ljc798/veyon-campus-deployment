@@ -2050,6 +2050,10 @@ public partial class TeacherWindow : Window
     {
         if (_model.InstallOfflineTeacherUpdate()) ExitForUpdate();
     }
+    private void SelectAllStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
+        _model.SelectAllStudentUpdateTargets(selected: true);
+    private void ClearStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
+        _model.SelectAllStudentUpdateTargets(selected: false);
     private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
         await TrustStudentAgentIdentitiesAsync();
 

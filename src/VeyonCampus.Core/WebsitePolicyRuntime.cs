@@ -1113,9 +1113,9 @@ public static class WebsitePolicyAgentInstaller
             var recoveryBootstrapTransaction = pendingTransaction is
                 { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
                 string.Equals(transaction.PreviousSetupVersion, installedStudentSetupVersion, StringComparison.Ordinal) &&
-                string.Equals(transaction.PreviousAgentVersion, BuildVersion, StringComparison.Ordinal) &&
                 string.Equals(transaction.ConfigurationFingerprint, expectedConfigFingerprint,
                     StringComparison.OrdinalIgnoreCase) &&
+                ApplicationReleaseClient.CompareVersions(BuildVersion, transaction.PreviousAgentVersion) >= 0 &&
                 transaction.UpdatedUtc <= DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(1))
                 ? transaction
                 : null;
@@ -1128,12 +1128,21 @@ public static class WebsitePolicyAgentInstaller
 
             stage = "核验现有 SYSTEM 任务";
             previousTask = ReadTaskForRemoval();
-            if (recoveryBootstrapTransaction is not null &&
-                (previousTask is null ||
-                 !PathEquals(previousTask.ExecutablePath,
-                     StudentUpdateAtomicTransaction.GetAgentExecutablePath(BuildVersion))))
-                return new(step, ExecutionPlan.NeedsReview,
-                    "检测到旧版保留阶段的更新事务，但当前 SYSTEM Agent 任务没有指向已核验的旧 Agent；未更改任务或文件。请人工核对。" );
+            if (recoveryBootstrapTransaction is not null)
+            {
+                var recoveryAgentPath = StudentUpdateAtomicTransaction.GetAgentExecutablePath(
+                    recoveryBootstrapTransaction.PreviousAgentVersion);
+                PathLinkSecurity.RejectLinks(recoveryAgentPath);
+                if (previousTask is null ||
+                    !PathEquals(previousTask.ExecutablePath, recoveryAgentPath) ||
+                    !File.Exists(recoveryAgentPath) ||
+                    (File.GetAttributes(recoveryAgentPath) & FileAttributes.ReparsePoint) != 0 ||
+                    !WorkerInstallationGuard.ProductVersionMatches(recoveryAgentPath,
+                        recoveryBootstrapTransaction.PreviousAgentVersion))
+                    return new(step, ExecutionPlan.NeedsReview,
+                        "检测到旧版保留阶段的更新事务，但当前 SYSTEM Agent 任务没有指向事务记录中的旧 Agent；未更改任务或文件。请人工核对。" );
+                WebsitePolicyAgentInstaller.VerifyStudentUpdateRecoveryTasks(recoveryAgentPath, configPath);
+            }
             if (previousTask is not null &&
                 (!PathEquals(previousTask.ConfigPath, configPath) || previousTask.Config is null ||
                  !string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
@@ -1792,6 +1801,27 @@ public static class WebsitePolicyAgentInstaller
     public static bool HasStudentUpdateRecoveryTasks() =>
         ReadScheduledTaskAction(StudentUpdateRecoveryTaskName) is not null ||
         ReadScheduledTaskAction(StudentUpdateRecoveryWatchdogTaskName) is not null;
+
+    [SupportedOSPlatform("windows")]
+    public static void VerifyStudentUpdateRecoveryTasks(string recoveryAgentExecutablePath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生更新恢复任务仅支持 Windows。");
+
+        var expectedAgentPath = Path.GetFullPath(recoveryAgentExecutablePath);
+        var expectedConfigPath = Path.GetFullPath(configPath);
+        var expectedArguments = "--recover-student-update " + Quote(expectedConfigPath);
+        foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+        {
+            var action = ReadScheduledTaskAction(taskName);
+            if (action is null || !string.Equals(action.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                !PathEquals(action.ExecutablePath, expectedAgentPath) ||
+                !string.Equals(action.Arguments, expectedArguments, StringComparison.Ordinal) ||
+                !HasRestrictedScheduledTaskAcl(taskName))
+                throw new InvalidDataException(
+                    $"学生更新恢复任务 {taskName} 未绑定到事务记录中的旧 SYSTEM Agent；不能安全修复 Agent。");
+        }
+    }
 
     [SupportedOSPlatform("windows")]
     private static void RegisterStudentUpdateRecoveryTask(string taskName, string scheduleSwitch,
