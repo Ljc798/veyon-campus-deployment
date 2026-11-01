@@ -849,11 +849,20 @@ public static class WebsitePolicyAgentInstaller
                 var updateTransaction = StudentUpdateAtomicTransaction.Read(item.Path);
                 if (updateTransaction is not null) updateTransactions.Add((item.Path, updateTransaction));
             }
-            var unfinishedTransaction = updateTransactions.FirstOrDefault(item => item.Record!.State is not
-                (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack));
-            if (unfinishedTransaction.Record is not null)
+            foreach (var updateTransaction in updateTransactions.Where(item => item.Record.State is not
+                         (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)))
+                RunStudentUpdateRecoveryTask(updateTransaction.Path);
+
+            task = ReadTaskForRemoval();
+            foreach (var updateTransaction in updateTransactions)
+            {
+                var unfinishedTransaction = StudentUpdateAtomicTransaction.Read(updateTransaction.Path);
+                if (unfinishedTransaction is null || unfinishedTransaction.State is
+                    StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+                    continue;
                 return new(step, ExecutionPlan.NeedsReview,
-                    $"学生端更新事务仍处于 {unfinishedTransaction.Record.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
+                    $"学生端更新事务仍处于 {unfinishedTransaction.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
+            }
             stage = "读取网站策略所有权";
             var registryCampus = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
             var taskCampus = task?.Config?.CampusId;
@@ -995,6 +1004,58 @@ public static class WebsitePolicyAgentInstaller
     public static StepResult Install(PackageContext package, PackageResourceSnapshot snapshot,
         string? agentSourceDirectory = null) => InstallCore(package, snapshot, agentSourceDirectory, null);
 
+    private static void RunStudentUpdateRecoveryTask(string configPath)
+    {
+        if (!OperatingSystem.IsWindows() || !IsElevated())
+            throw new UnauthorizedAccessException("自动恢复学生更新事务需要 Windows 管理员权限。");
+
+        var fullConfigPath = Path.GetFullPath(configPath);
+        var record = StudentUpdateAtomicTransaction.Read(fullConfigPath);
+        if (record is null || record.State is StudentUpdateTransactionState.Committed or
+                StudentUpdateTransactionState.RolledBack)
+            return;
+
+        var expectedArguments = "--recover-student-update " + Quote(fullConfigPath);
+        string? recoveryTaskName = null;
+        foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+        {
+            var action = ReadScheduledTaskAction(taskName);
+            if (action is null) continue;
+            if (!string.Equals(action.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                !string.Equals(action.Arguments, expectedArguments, StringComparison.Ordinal) ||
+                !IsManagedAgentExecutablePath(action.ExecutablePath) ||
+                !File.Exists(action.ExecutablePath) ||
+                (File.GetAttributes(action.ExecutablePath) & FileAttributes.ReparsePoint) != 0 ||
+                !HasRestrictedScheduledTaskAcl(taskName))
+                throw new InvalidDataException(
+                    $"SYSTEM 学生更新恢复任务 {taskName} 与当前配置或安全权限不匹配；没有运行或清理任何恢复文件。");
+            recoveryTaskName = taskName;
+            break;
+        }
+
+        if (recoveryTaskName is null)
+            throw new IOException("没有找到绑定当前校区配置的 SYSTEM 学生更新恢复任务；旧版安装和恢复资料均已保留。");
+
+        var started = Run("schtasks.exe", ["/Run", "/TN", recoveryTaskName]);
+        if (started.ExitCode != 0)
+            throw new IOException($"无法启动已核验的 SYSTEM 学生更新恢复任务 {recoveryTaskName}；恢复资料已保留。");
+
+        var timeout = Stopwatch.StartNew();
+        while (timeout.Elapsed < TimeSpan.FromSeconds(90))
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(500));
+            var current = StudentUpdateAtomicTransaction.Read(fullConfigPath);
+            if (current is null || current.State is StudentUpdateTransactionState.Committed or
+                    StudentUpdateTransactionState.RolledBack)
+                return;
+        }
+
+        var remaining = StudentUpdateAtomicTransaction.Read(fullConfigPath);
+        var state = remaining?.State.ToString() ?? "状态未知";
+        throw new IOException(
+            $"已启动 SYSTEM 恢复任务，但学生更新仍处于 {state}；没有删除 Agent、策略或旧版安装文件。请稍后重试。");
+    }
+
     public static int GetInstalledAgentConfigurationCount()
     {
         if (!OperatingSystem.IsWindows()) return 0;
@@ -1059,7 +1120,11 @@ public static class WebsitePolicyAgentInstaller
                 ? transaction
                 : null;
             if (recoveryBootstrapTransaction is null)
+            {
+                stage = "恢复未完成的学生更新事务";
+                RunStudentUpdateRecoveryTask(configPath);
                 StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+            }
 
             stage = "核验现有 SYSTEM 任务";
             previousTask = ReadTaskForRemoval();
