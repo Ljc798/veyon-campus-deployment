@@ -433,6 +433,10 @@ internal static class StudentApplicationUpdateChecks
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, null, "local-test",
                    expectedLocalTestKeyFingerprint: new string('D', 64)) ==
                StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "local-test",
+                   localTestKeyFingerprint: new string('E', 64),
+                   expectedLocalTestKeyFingerprint: new string('D', 64)) ==
+               StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", 2, null, "stable") ==
                StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "stable") ==
