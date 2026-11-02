@@ -422,11 +422,16 @@ internal static class StudentApplicationUpdateChecks
                StudentAgentUpdateTransportMode.LegacySignedHttp);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, null, "stable") ==
                StudentAgentUpdateTransportMode.LegacySignedHttp);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, null, "stable") ==
+               StudentAgentUpdateTransportMode.LegacySignedHttp);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, 1, "stable") ==
                StudentAgentUpdateTransportMode.SignedDownloadV1);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, 1, "stable") ==
                StudentAgentUpdateTransportMode.SignedDownloadV1);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, null, "local-test") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, null, "local-test",
+                   expectedLocalTestKeyFingerprint: new string('D', 64)) ==
                StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", 2, null, "stable") ==
                StudentAgentUpdateTransportMode.Unsupported);
