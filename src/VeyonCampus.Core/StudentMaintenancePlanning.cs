@@ -37,6 +37,109 @@ public sealed record StudentMaintenancePlan(
     bool NeedsConfigurationSync,
     string Reason);
 
+public enum StudentMaintenanceUpdateDisposition
+{
+    Unknown,
+    NoUpdateRequired,
+    CommittedAndHealthy,
+    PendingVerification,
+    InProgress,
+    RecoveryRequired,
+    RollbackPending,
+    RolledBack,
+    Failed,
+    ManualRequired,
+    IdentityChanged
+}
+
+public sealed record StudentMaintenanceUpdateOutcome(
+    string Target,
+    StudentMaintenanceUpdateDisposition Disposition,
+    string Detail);
+
+public sealed record StudentMaintenanceConfigurationSyncGate(
+    IReadOnlyList<string> AllowedTargets,
+    IReadOnlyList<StudentMaintenanceUpdateOutcome> BlockedTargets);
+
+/// <summary>
+/// Carries the per-device update conclusion into the next maintenance phase. Unknown or
+/// missing results fail closed; only a confirmed no-op or verified committed update may sync.
+/// </summary>
+public sealed class StudentMaintenanceUpdateBatchResult
+{
+    private static readonly HashSet<StudentMaintenanceUpdateDisposition> ConfigurationSyncAllowed =
+    [
+        StudentMaintenanceUpdateDisposition.NoUpdateRequired,
+        StudentMaintenanceUpdateDisposition.CommittedAndHealthy
+    ];
+
+    private readonly Dictionary<string, StudentMaintenanceUpdateOutcome> _outcomes;
+
+    public StudentMaintenanceUpdateBatchResult(IEnumerable<StudentMaintenanceUpdateOutcome> outcomes)
+    {
+        ArgumentNullException.ThrowIfNull(outcomes);
+        _outcomes = new Dictionary<string, StudentMaintenanceUpdateOutcome>(StringComparer.OrdinalIgnoreCase);
+        foreach (var outcome in outcomes)
+        {
+            ArgumentNullException.ThrowIfNull(outcome);
+            if (string.IsNullOrWhiteSpace(outcome.Target))
+                throw new ArgumentException("Maintenance target cannot be empty.", nameof(outcomes));
+            _outcomes[outcome.Target] = outcome;
+        }
+    }
+
+    public static StudentMaintenanceUpdateBatchResult UnknownFor(IEnumerable<string> targets) =>
+        new(targets.Select(target => new StudentMaintenanceUpdateOutcome(target,
+            StudentMaintenanceUpdateDisposition.Unknown, "尚无可信更新结论。")));
+
+    public static StudentMaintenanceUpdateOutcome FromUpdateResult(StudentApplicationUpdatePushResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        var disposition = result.PendingVerification
+            ? StudentMaintenanceUpdateDisposition.PendingVerification
+            : result.RolledBack
+                ? StudentMaintenanceUpdateDisposition.RolledBack
+                : result.NeedsReview
+                    ? StudentMaintenanceUpdateDisposition.RecoveryRequired
+                    : result.Succeeded
+                        ? StudentMaintenanceUpdateDisposition.CommittedAndHealthy
+                        : StudentMaintenanceUpdateDisposition.Failed;
+        return new StudentMaintenanceUpdateOutcome(result.Target, disposition, result.Detail);
+    }
+
+    public StudentMaintenanceUpdateBatchResult WithOutcome(StudentMaintenanceUpdateOutcome outcome)
+    {
+        ArgumentNullException.ThrowIfNull(outcome);
+        var copy = new Dictionary<string, StudentMaintenanceUpdateOutcome>(_outcomes,
+            StringComparer.OrdinalIgnoreCase)
+        {
+            [outcome.Target] = outcome
+        };
+        return new StudentMaintenanceUpdateBatchResult(copy.Values);
+    }
+
+    public StudentMaintenanceConfigurationSyncGate PlanConfigurationSync(IEnumerable<string> selectedTargets)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTargets);
+        var allowed = new List<string>();
+        var blocked = new List<StudentMaintenanceUpdateOutcome>();
+        foreach (var target in selectedTargets)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+                continue;
+            if (!_outcomes.TryGetValue(target, out var outcome))
+                outcome = new StudentMaintenanceUpdateOutcome(target,
+                    StudentMaintenanceUpdateDisposition.Unknown, "没有此设备的签名更新结论。");
+            if (ConfigurationSyncAllowed.Contains(outcome.Disposition))
+                allowed.Add(target);
+            else
+                blocked.Add(outcome);
+        }
+        return new StudentMaintenanceConfigurationSyncGate(Array.AsReadOnly(allowed.ToArray()),
+            Array.AsReadOnly(blocked.ToArray()));
+    }
+}
+
 /// <summary>
 /// Plans safe per-device maintenance from authenticated status facts. Unknown connection
 /// configuration is treated as needing an idempotent signed sync; it is never assumed current.
@@ -57,6 +160,10 @@ public static class StudentMaintenancePlanner
                 input.UpdateTransactionState == "inProgress"
                     ? "学生端已有未结束的原子更新事务；先重新查询该事务，不能并发下发新更新。"
                     : "学生端上次原子更新需要人工恢复核对；保留恢复材料，不下发新更新或配置。" );
+
+        if (input.UpdateTransactionState is { } transactionState && transactionState is not
+            ("notFound" or "committed" or "rolledBack" or "superseded"))
+            return Manual($"学生端返回未知的原子更新状态“{transactionState}”；暂停配置同步并保留设备待核对。");
 
         if (string.IsNullOrWhiteSpace(input.CurrentSetupVersion) ||
             string.IsNullOrWhiteSpace(input.CurrentAgentVersion))

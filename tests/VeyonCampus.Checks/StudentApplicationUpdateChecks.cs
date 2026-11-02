@@ -20,6 +20,7 @@ internal static class StudentApplicationUpdateChecks
         CheckDownloadCapabilityResponse();
         CheckAgentUpdateCompatibilityMatrix();
         CheckStudentMaintenancePlanner();
+        CheckMaintenanceUpdateConfigurationGate();
         CheckInlineIdentityReviewActions();
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
@@ -42,6 +43,7 @@ internal static class StudentApplicationUpdateChecks
         CheckDownloadCapabilityResponse();
         CheckAgentUpdateCompatibilityMatrix();
         CheckStudentMaintenancePlanner();
+        CheckMaintenanceUpdateConfigurationGate();
         CheckInlineIdentityReviewActions();
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
@@ -523,6 +525,10 @@ internal static class StudentApplicationUpdateChecks
         Expect(identityChanged.Kind == StudentMaintenancePlanKind.ManualRequired &&
                !identityChanged.NeedsConfigurationSync);
 
+        var unknownTransaction = StudentMaintenancePlanner.Create(Input(transaction: "unknown"));
+        Expect(unknownTransaction.Kind == StudentMaintenancePlanKind.ManualRequired &&
+               !unknownTransaction.NeedsConfigurationSync);
+
         var independentVersions = StudentMaintenancePlanner.Create(Input(setup: "1.1.58", agent: "0.4.56",
             targetSetup: "1.1.57", targetAgent: "0.4.57"));
         Expect(independentVersions.Kind == StudentMaintenancePlanKind.ManualRequired);
@@ -531,6 +537,70 @@ internal static class StudentApplicationUpdateChecks
             targetSetup: "1.1.57", targetAgent: "0.4.57"));
         Expect(agentOnlyUpdate.Kind == StudentMaintenancePlanKind.UpdateThenConfiguration &&
                agentOnlyUpdate.NeedsSoftwareUpdate);
+    }
+
+    private static void CheckMaintenanceUpdateConfigurationGate()
+    {
+        static StudentMaintenanceUpdateOutcome Outcome(string target,
+            StudentMaintenanceUpdateDisposition disposition) =>
+            new(target, disposition, disposition.ToString());
+
+        var singlePending = StudentMaintenanceUpdateBatchResult.UnknownFor(["student-a"])
+            .WithOutcome(Outcome("student-a", StudentMaintenanceUpdateDisposition.PendingVerification))
+            .PlanConfigurationSync(["student-a"]);
+        Expect(singlePending.AllowedTargets.Count == 0 && singlePending.BlockedTargets.Count == 1 &&
+               singlePending.BlockedTargets[0].Disposition == StudentMaintenanceUpdateDisposition.PendingVerification);
+
+        var targets = new[] { "current", "updated", "pending", "running", "recovery", "rollback-pending",
+            "rolled-back", "failed", "manual", "identity-changed", "unknown", "unreported" };
+        var result = StudentMaintenanceUpdateBatchResult.UnknownFor(targets)
+            .WithOutcome(Outcome("current", StudentMaintenanceUpdateDisposition.NoUpdateRequired))
+            .WithOutcome(Outcome("updated", StudentMaintenanceUpdateDisposition.CommittedAndHealthy))
+            .WithOutcome(Outcome("pending", StudentMaintenanceUpdateDisposition.PendingVerification))
+            .WithOutcome(Outcome("running", StudentMaintenanceUpdateDisposition.InProgress))
+            .WithOutcome(Outcome("recovery", StudentMaintenanceUpdateDisposition.RecoveryRequired))
+            .WithOutcome(Outcome("rollback-pending", StudentMaintenanceUpdateDisposition.RollbackPending))
+            .WithOutcome(Outcome("rolled-back", StudentMaintenanceUpdateDisposition.RolledBack))
+            .WithOutcome(Outcome("failed", StudentMaintenanceUpdateDisposition.Failed))
+            .WithOutcome(Outcome("manual", StudentMaintenanceUpdateDisposition.ManualRequired))
+            .WithOutcome(Outcome("identity-changed", StudentMaintenanceUpdateDisposition.IdentityChanged));
+        var plan = result.PlanConfigurationSync(targets);
+        Expect(plan.AllowedTargets.SequenceEqual(new[] { "current", "updated" }));
+        Expect(plan.BlockedTargets.Count == targets.Length - 2 &&
+               plan.BlockedTargets.Any(item => item.Target == "unreported" &&
+                                               item.Disposition == StudentMaintenanceUpdateDisposition.Unknown));
+
+        var caseInsensitive = StudentMaintenanceUpdateBatchResult.UnknownFor(["Student-A"])
+            .WithOutcome(Outcome("student-a", StudentMaintenanceUpdateDisposition.NoUpdateRequired))
+            .PlanConfigurationSync(["STUDENT-A"]);
+        Expect(caseInsensitive.AllowedTargets.SequenceEqual(new[] { "STUDENT-A" }));
+
+        var deliveryStates = new[]
+        {
+            StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+                new StudentApplicationUpdatePushResult("committed", true, "committed")),
+            StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+                new StudentApplicationUpdatePushResult("pending", false, "pending", PendingVerification: true)),
+            StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+                new StudentApplicationUpdatePushResult("rolled-back", false, "rolled back", RolledBack: true)),
+            StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+                new StudentApplicationUpdatePushResult("review", false, "review", NeedsReview: true)),
+            StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+                new StudentApplicationUpdatePushResult("failed", false, "failed"))
+        };
+        Expect(deliveryStates.Select(item => item.Disposition).SequenceEqual(new[]
+        {
+            StudentMaintenanceUpdateDisposition.CommittedAndHealthy,
+            StudentMaintenanceUpdateDisposition.PendingVerification,
+            StudentMaintenanceUpdateDisposition.RolledBack,
+            StudentMaintenanceUpdateDisposition.RecoveryRequired,
+            StudentMaintenanceUpdateDisposition.Failed
+        }));
+
+        var contradictoryDelivery = StudentMaintenanceUpdateBatchResult.FromUpdateResult(
+            new StudentApplicationUpdatePushResult("ambiguous", true, "ambiguous",
+                PendingVerification: true));
+        Expect(contradictoryDelivery.Disposition == StudentMaintenanceUpdateDisposition.PendingVerification);
     }
 
     private static void CheckInlineIdentityReviewActions()

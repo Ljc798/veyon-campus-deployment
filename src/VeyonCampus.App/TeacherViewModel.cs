@@ -235,7 +235,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly Dictionary<string, string> _studentUpdateTargetsByAddress = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, StudentApplicationUpdateSourceVersions> _studentUpdateSourcesByTarget =
         new(StringComparer.OrdinalIgnoreCase);
-    private readonly HashSet<string> _studentMaintenanceRecoveryTargets = new(StringComparer.OrdinalIgnoreCase);
     private string? _studentUpdateTargetVersion;
     private string? _studentUpdateTargetAgentVersion;
     private string _studentMaintenanceStatus = "检查软件版本并安全同步教师连接配置。";
@@ -10349,29 +10348,29 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task MaintainStudentDevicesAsync()
     {
         if (!CanMaintainStudentDevices) return;
-        _studentMaintenanceRecoveryTargets.Clear();
+        var selectedTargets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
+        var updateResults = StudentMaintenanceUpdateBatchResult.UnknownFor(selectedTargets);
         Changed(nameof(CanMaintainStudentDevices));
         try
         {
             if (CanDeployStudentUpdate)
             {
                 StudentMaintenanceStatus = "步骤 1/2：检查已签名 StudentSetup，核对设备身份、版本和未完成事务。";
-                await DeployStudentUpdateAsync();
+                updateResults = await DeployStudentUpdateWithResultAsync();
             }
             else
             {
                 StudentUpdateStatus = _releaseClient is null
-                    ? "本次未检查软件版本：当前没有可验证的正式发布源。仍将继续核对并同步教师连接配置。"
-                    : "本次未检查软件版本：请先选择有效的更新来源和目标包。仍将继续核对并同步教师连接配置。";
+                    ? "本次未检查软件版本：当前没有可验证的正式发布源；学生更新状态未知。"
+                    : "本次未检查软件版本：请先选择有效的更新来源和目标包；学生更新状态未知。";
             }
 
-            var selectedTargets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
-            var safeConfigurationTargets = selectedTargets.Where(target =>
-                !_studentMaintenanceRecoveryTargets.Contains(NormalizeTargetKey(target))).ToArray();
-            if (safeConfigurationTargets.Length == 0)
+            var syncGate = updateResults.PlanConfigurationSync(selectedTargets);
+            var safeConfigurationTargets = syncGate.AllowedTargets;
+            if (safeConfigurationTargets.Count == 0)
             {
-                StudentConfigurationSyncStatus = "配置同步已跳过：所选设备都有未结束或需人工恢复的原子更新事务；请先重新核对事务状态。";
-                StudentMaintenanceStatus = "维护暂停：先处理未完成的学生端更新事务，再重试连接配置同步。";
+                StudentConfigurationSyncStatus = "配置同步已跳过：没有设备取得“无需更新”或“更新已提交且健康读回通过”的可信结论。";
+                StudentMaintenanceStatus = FormatMaintenanceSyncGateStatus(syncGate);
                 return;
             }
 
@@ -10384,7 +10383,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 StudentMaintenanceStatus = "连接配置同步未能启动；请检查是否有其他维护任务正在运行后重试。";
                 return;
             }
-            StudentMaintenanceStatus = "维护流程已执行。请分别查看软件更新与连接配置结果；未连接设备会保留为待验证。";
+            StudentMaintenanceStatus = syncGate.BlockedTargets.Count == 0
+                ? "维护流程已执行。请分别查看软件更新与连接配置结果。"
+                : FormatMaintenanceSyncGateStatus(syncGate);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           InvalidDataException or CryptographicException or ArgumentException or
@@ -10393,6 +10394,31 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentMaintenanceStatus = "维护未完成：" + exception.Message;
         }
     }
+
+    private static string FormatMaintenanceSyncGateStatus(StudentMaintenanceConfigurationSyncGate gate)
+    {
+        if (gate.BlockedTargets.Count == 0)
+            return $"配置同步仅处理已通过更新门禁的 {gate.AllowedTargets.Count} 台设备。";
+        var examples = string.Join("；", gate.BlockedTargets.Take(4).Select(outcome =>
+            $"{outcome.Target}：{MaintenanceDispositionLabel(outcome.Disposition)}"));
+        var remainder = gate.BlockedTargets.Count > 4 ? "；其余设备见逐台更新结果" : "";
+        return $"配置同步仅处理已通过更新门禁的 {gate.AllowedTargets.Count} 台设备；" +
+               $"另有 {gate.BlockedTargets.Count} 台因更新状态未确认而跳过配置同步：{examples}{remainder}。";
+    }
+
+    private static string MaintenanceDispositionLabel(StudentMaintenanceUpdateDisposition disposition) => disposition switch
+    {
+        StudentMaintenanceUpdateDisposition.Unknown => "状态未知",
+        StudentMaintenanceUpdateDisposition.PendingVerification => "待验证",
+        StudentMaintenanceUpdateDisposition.InProgress => "更新进行中",
+        StudentMaintenanceUpdateDisposition.RecoveryRequired => "需要恢复核对",
+        StudentMaintenanceUpdateDisposition.RollbackPending => "回滚待完成",
+        StudentMaintenanceUpdateDisposition.RolledBack => "已回滚",
+        StudentMaintenanceUpdateDisposition.Failed => "更新失败",
+        StudentMaintenanceUpdateDisposition.ManualRequired => "需要人工维护",
+        StudentMaintenanceUpdateDisposition.IdentityChanged => "设备身份变化",
+        _ => "更新状态未通过门禁"
+    };
 
     private void SetStudentConfigurationSyncProgress(bool visible, double percent, string text)
     {
@@ -10416,18 +10442,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task DeployStudentUpdateAsync()
     {
+        _ = await DeployStudentUpdateWithResultAsync();
+    }
+
+    private async Task<StudentMaintenanceUpdateBatchResult> DeployStudentUpdateWithResultAsync()
+    {
         if (!OperatingSystem.IsWindows())
         {
             ClearStudentUpdateResults();
             ClearStudentUpdateTargetRows();
             StudentUpdateStatus = "学生端更新仅支持 Windows。";
-            return;
+            return StudentMaintenanceUpdateBatchResult.UnknownFor(
+                WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets()));
         }
-        if (!CanDeployStudentUpdate || !TryBeginExclusiveTask()) return;
+        if (!CanDeployStudentUpdate || !TryBeginExclusiveTask())
+            return StudentMaintenanceUpdateBatchResult.UnknownFor(
+                WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets()));
         ClearStudentUpdateResults();
         ClearStudentUpdateTargetRows();
         _studentUpdateSourcesByTarget.Clear();
-        _studentMaintenanceRecoveryTargets.Clear();
         _studentUpdateTargetVersion = null;
         _studentUpdateTargetAgentVersion = null;
         _lastStudentUpdatePerformanceReport = null;
@@ -10456,13 +10489,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StringComparer.OrdinalIgnoreCase);
         StudentUpdateProgressCollector? progressCollector = null;
         var studentUpdateDispatchStarted = false;
+        IReadOnlyList<string> targets = Array.Empty<string>();
+        var updateResults = StudentMaintenanceUpdateBatchResult.UnknownFor(targets);
         try
         {
+            targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
+            updateResults = StudentMaintenanceUpdateBatchResult.UnknownFor(targets);
             var releaseClient = _releaseClient ?? throw new InvalidOperationException(
                 _releaseClientError ?? "此版本暂不支持学生端更新。");
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets());
             selectedTargetCount = targets.Count;
             var displayNames = await ResolveTargetDisplayNamesAsync(targets);
             await PrepareStudentUpdateTargetRowsAsync(targets, displayNames);
@@ -10524,6 +10560,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (observed is not { Succeeded: true, Status: not null })
                 {
                     var detail = observed?.Detail ?? "没有收到此电脑的版本状态。";
+                    updateResults = updateResults.WithOutcome(
+                        new StudentMaintenanceUpdateOutcome(target,
+                            StudentMaintenanceUpdateDisposition.Unknown, detail));
                     if (row is not null)
                     {
                         row.SetResult(succeeded: false, needsReview: true,
@@ -10551,8 +10590,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     ReleaseChannel: release.Manifest.ReleaseChannel ?? "stable"));
                 if (plan.Kind == StudentMaintenancePlanKind.RecoveryRequired)
                 {
-                    _studentMaintenanceRecoveryTargets.Add(NormalizeTargetKey(target));
                     var detail = plan.Reason;
+                    updateResults = updateResults.WithOutcome(
+                        new StudentMaintenanceUpdateOutcome(target,
+                            StudentMaintenanceUpdateDisposition.RecoveryRequired, detail));
                     row?.SetResult(succeeded: false, needsReview: true, detail);
                     preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
                         NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
@@ -10560,7 +10601,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 }
                 if (plan.Kind == StudentMaintenancePlanKind.ManualRequired)
                 {
-                    var detail = plan.Reason + " 未发送安装器；连接配置操作仍会单独验证设备身份和 Agent 回执。";
+                    var detail = plan.Reason + " 未发送安装器或连接配置；需要人工维护。";
+                    updateResults = updateResults.WithOutcome(
+                        new StudentMaintenanceUpdateOutcome(target,
+                            StudentMaintenanceUpdateDisposition.ManualRequired, detail));
                     row?.SetResult(succeeded: false, needsReview: true, detail);
                     preflightResults.Add(new StudentApplicationUpdatePushResult(target, false, detail,
                         NeedsReview: true, IdentityCandidate: observed.IdentityCandidate));
@@ -10573,6 +10617,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         ? "该发行清单未单独声明 Agent 目标版本"
                         : $"目标 Agent {targetAgentVersion}";
                     var detail = $"StudentSetup {status.StudentSetupVersion}；SYSTEM Agent {status.AgentVersion}。{plan.Reason} 目标 StudentSetup {release.Manifest.Version}，{targetAgentDescription}";
+                    updateResults = updateResults.WithOutcome(
+                        new StudentMaintenanceUpdateOutcome(target,
+                            StudentMaintenanceUpdateDisposition.NoUpdateRequired, detail));
                     row?.SetCurrent(detail);
                     alreadyCurrentCount++;
                     continue;
@@ -10609,7 +10656,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         SanitizeStudentUpdateDetail(result.Detail, result.Target, row.DisplayName), result.RolledBack);
                 }
                 SortStudentUpdateTargetRows();
-                return;
+                return updateResults;
             }
 
             var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
@@ -10707,8 +10754,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         signingKey.PrivateKey, releaseClient.ApiBaseAddress, developerPublicKey));
             }, progress: progressCollector, sourceVersions: updateSourceVersions);
             deliveryResults.AddRange(deliveries);
-            foreach (var unresolvedDelivery in deliveries.Where(result => result.NeedsReview && !result.PendingVerification))
-                _studentMaintenanceRecoveryTargets.Add(NormalizeTargetKey(unresolvedDelivery.Target));
+            foreach (var delivery in deliveries)
+                updateResults = updateResults.WithOutcome(
+                    StudentMaintenanceUpdateBatchResult.FromUpdateResult(delivery));
             var succeeded = deliveries.Count(result => result.Succeeded);
             var pendingVerification = deliveries.Count(result => result.PendingVerification);
             var needsReview = deliveries.Count(result => result.NeedsReview && !result.PendingVerification) +
@@ -10741,7 +10789,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             if (studentUpdateDispatchStarted)
             {
                 foreach (var target in rolloutTargetsToUpdate)
-                    _studentMaintenanceRecoveryTargets.Add(NormalizeTargetKey(target));
+                    updateResults = updateResults.WithOutcome(
+                        new StudentMaintenanceUpdateOutcome(target,
+                            StudentMaintenanceUpdateDisposition.RecoveryRequired,
+                            "更新分发期间发生异常，尚无可确认的设备终态。"));
             }
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
                 UpdateDiagnosticOperation.StudentRollout, targetVersion, exception);
@@ -10798,6 +10849,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             EndExclusiveTask();
         }
+        return updateResults;
     }
 
     public async Task RecheckStudentUpdateResultAsync(StudentApplicationUpdateTargetProgressItem row)
