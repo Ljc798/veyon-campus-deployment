@@ -41,10 +41,24 @@ public sealed record ApplicationReleaseEnvelope(
     [property: JsonPropertyName("signature")] string Signature,
     [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt);
 
+public sealed record ApplicationReleaseAgentTargetManifest(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("purpose")] string Purpose,
+    [property: JsonPropertyName("product")] string Product,
+    [property: JsonPropertyName("setupVersion")] string SetupVersion,
+    [property: JsonPropertyName("installerSha256")] string InstallerSha256,
+    [property: JsonPropertyName("studentAgentVersion")] string StudentAgentVersion);
+
+public sealed record ApplicationReleaseAgentTargetEnvelope(
+    [property: JsonPropertyName("manifest")] ApplicationReleaseAgentTargetManifest Manifest,
+    [property: JsonPropertyName("signatureAlgorithm")] string SignatureAlgorithm,
+    [property: JsonPropertyName("signature")] string Signature);
+
 public sealed record ApplicationReleaseCheckResult(
     ApplicationReleaseEnvelope? Release,
     bool IsNewer,
-    string CurrentVersion);
+    string CurrentVersion,
+    ApplicationReleaseAgentTargetEnvelope? StudentAgentTarget = null);
 
 public static class ApplicationReleaseCompatibility
 {
@@ -137,6 +151,7 @@ public sealed class ApplicationReleaseClient
     public const long MaximumArtifactBytes = 512L * 1024 * 1024;
     private const int MaximumMetadataBytes = 64 * 1024;
     private const string SignatureAlgorithm = "RSA-PSS-SHA256";
+    public const string StudentAgentTargetPurpose = "VeyonCampus.StudentSetup.AgentTarget.v1";
     private static readonly Regex VersionPattern = new(
         "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)" +
         "(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)" +
@@ -188,7 +203,7 @@ public sealed class ApplicationReleaseClient
         _ = ParseVersion(currentVersion);
         var roleName = RoleName(role);
         var url = new Uri(_apiBaseAddress,
-            $"v3/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
+            $"v4/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
@@ -207,16 +222,71 @@ public sealed class ApplicationReleaseClient
         {
             throw new InvalidDataException("版本目录响应格式无效。", exception);
         }
-        return EvaluateLatest(result.Release, role, currentVersion);
+        return EvaluateLatest(result.Release, role, currentVersion, result.StudentAgentTarget);
     }
 
     public ApplicationReleaseCheckResult EvaluateLatest(ApplicationReleaseEnvelope? release,
-        ApplicationReleaseRole role, string currentVersion)
+        ApplicationReleaseRole role, string currentVersion,
+        ApplicationReleaseAgentTargetEnvelope? studentAgentTarget = null)
     {
         _ = ParseVersion(currentVersion);
         if (release is null) return new(null, false, currentVersion);
         Verify(release, role, _apiBaseAddress, _publicKeyPem);
-        return new(release, CompareVersions(release.Manifest.Version, currentVersion) > 0, currentVersion);
+        if (studentAgentTarget is not null)
+        {
+            if (role != ApplicationReleaseRole.StudentSetup || release.Manifest.SchemaVersion == 4 ||
+                release.Manifest.ReleaseChannel == "local-test")
+                throw new InvalidDataException("Student Agent 目标版本 sidecar 只允许绑定正式 StudentSetup 发行。");
+            VerifyStudentAgentTarget(studentAgentTarget, release, _publicKeyPem);
+        }
+        return new(release, CompareVersions(release.Manifest.Version, currentVersion) > 0, currentVersion,
+            studentAgentTarget);
+    }
+
+    public static byte[] CreateCanonicalStudentAgentTargetPayload(ApplicationReleaseAgentTargetManifest manifest)
+    {
+        ArgumentNullException.ThrowIfNull(manifest);
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream))
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schemaVersion", manifest.SchemaVersion);
+            writer.WriteString("purpose", manifest.Purpose);
+            writer.WriteString("product", manifest.Product);
+            writer.WriteString("setupVersion", manifest.SetupVersion);
+            writer.WriteString("installerSha256", manifest.InstallerSha256.ToUpperInvariant());
+            writer.WriteString("studentAgentVersion", manifest.StudentAgentVersion);
+            writer.WriteEndObject();
+        }
+        return stream.ToArray();
+    }
+
+    private static void VerifyStudentAgentTarget(ApplicationReleaseAgentTargetEnvelope target,
+        ApplicationReleaseEnvelope release, string publicKeyPem)
+    {
+        var manifest = target.Manifest ?? throw new InvalidDataException("Student Agent 目标版本清单缺失。");
+        var releaseManifest = release.Manifest;
+        if (manifest.SchemaVersion != 1 || manifest.Purpose != StudentAgentTargetPurpose ||
+            manifest.Product != "VeyonCampus.StudentSetup" || manifest.SetupVersion != releaseManifest.Version ||
+            !string.Equals(manifest.InstallerSha256, releaseManifest.Sha256, StringComparison.OrdinalIgnoreCase) ||
+            !IsSemanticVersion(manifest.StudentAgentVersion) || target.SignatureAlgorithm != SignatureAlgorithm ||
+            string.IsNullOrWhiteSpace(target.Signature))
+            throw new InvalidDataException("Student Agent 目标版本清单与正式 StudentSetup 发行版本或摘要不匹配。");
+
+        byte[] signature;
+        try
+        {
+            signature = Convert.FromBase64String(target.Signature);
+            if (Convert.ToBase64String(signature) != target.Signature) throw new FormatException();
+        }
+        catch (FormatException exception)
+        {
+            throw new InvalidDataException("Student Agent 目标版本签名格式无效。", exception);
+        }
+        using var verifier = ImportPublicKey(publicKeyPem);
+        if (!verifier.VerifyData(CreateCanonicalStudentAgentTargetPayload(manifest), signature,
+                HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
+            throw new InvalidDataException("Student Agent 目标版本签名无效。");
     }
 
     public async Task<string> DownloadAsync(ApplicationReleaseEnvelope release,
@@ -746,7 +816,8 @@ public sealed class ApplicationReleaseClient
         value.Length > 0 && value.All(char.IsAsciiDigit);
 
     private sealed record LatestReleaseResponse(
-        [property: JsonPropertyName("release")] ApplicationReleaseEnvelope? Release);
+        [property: JsonPropertyName("release")] ApplicationReleaseEnvelope? Release,
+        [property: JsonPropertyName("studentAgentTarget")] ApplicationReleaseAgentTargetEnvelope? StudentAgentTarget = null);
 
     private sealed record SemanticVersion(BigInteger[] Core, string[]? Prerelease);
 }

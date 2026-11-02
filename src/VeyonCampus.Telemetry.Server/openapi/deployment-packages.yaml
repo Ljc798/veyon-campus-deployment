@@ -631,6 +631,45 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '503': { $ref: '#/components/responses/Unavailable' }
 
+  /v4/releases/latest:
+    get:
+      tags: [Releases]
+      operationId: getLatestStudentSetupReleaseWithAgentTarget
+      summary: Read the signed StudentSetup release and separately signed Agent target
+      x-display-purpose: 查询正式 StudentSetup 发行，并返回与安装器摘要绑定的独立 Agent 目标版本声明。
+      x-access: 公开只读
+      parameters:
+        - name: role
+          in: query
+          required: true
+          schema: { type: string, enum: [TeacherConsole, StudentSetup] }
+        - name: architecture
+          in: query
+          required: false
+          schema: { type: string, const: win-x64, default: win-x64 }
+      responses:
+        '200':
+          description: Schema v3 release envelope plus a separately signed Agent target for StudentSetup; target is null for TeacherConsole.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [release, studentAgentTarget]
+                properties:
+                  release:
+                    oneOf:
+                      - { $ref: '#/components/schemas/ApplicationRelease' }
+                      - { type: 'null' }
+                  studentAgentTarget:
+                    oneOf:
+                      - { $ref: '#/components/schemas/StudentAgentTarget' }
+                      - { type: 'null' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+
   /v1/file-updates/latest:
     get:
       tags: [Releases]
@@ -926,6 +965,25 @@ components:
         signatureAlgorithm: { type: string, const: RSA-PSS-SHA256 }
         signature: { type: string, contentEncoding: base64 }
         publishedAt: { type: string, format: date-time }
+    StudentAgentTarget:
+      type: object
+      additionalProperties: false
+      required: [manifest, signatureAlgorithm, signature]
+      properties:
+        manifest: { $ref: '#/components/schemas/StudentAgentTargetManifest' }
+        signatureAlgorithm: { type: string, const: RSA-PSS-SHA256 }
+        signature: { type: string, contentEncoding: base64 }
+    StudentAgentTargetManifest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, purpose, product, setupVersion, installerSha256, studentAgentVersion]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        purpose: { type: string, const: VeyonCampus.StudentSetup.AgentTarget.v1 }
+        product: { type: string, const: VeyonCampus.StudentSetup }
+        setupVersion: { type: string, maxLength: 64 }
+        installerSha256: { type: string, pattern: '^[A-Fa-f0-9]{64}$' }
+        studentAgentVersion: { type: string, maxLength: 64 }
     FileUpdateReleaseIndex:
       type: object
       additionalProperties: false

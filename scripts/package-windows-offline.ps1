@@ -1078,6 +1078,24 @@ if (-not (Test-Path -LiteralPath $installerFile -PathType Leaf)) {
     throw "Inno Setup 未生成预期安装器：$installerFile"
 }
 
+if ($Role -eq 'StudentSetup' -and
+    -not [string]::IsNullOrWhiteSpace($releasePublicKeyFullPath) -and
+    [string]::IsNullOrWhiteSpace($testReleasePublicKeyFullPath) -and
+    [string]::IsNullOrWhiteSpace($TestVersionOverride)) {
+    $agentTargetEvidence = [ordered]@{
+        schemaVersion = 1
+        product = 'VeyonCampus.StudentSetup'
+        setupVersion = $appVersion
+        installerSha256 = (Get-FileHash -LiteralPath $installerFile -Algorithm SHA256).Hash.ToUpperInvariant()
+        studentAgentVersion = $actualAgentVersion
+    }
+    $agentTargetEvidencePath = $installerFile + '.agent-target.json'
+    [IO.File]::WriteAllText($agentTargetEvidencePath,
+        (ConvertTo-Json -InputObject $agentTargetEvidence -Depth 4) + [Environment]::NewLine,
+        [Text.UTF8Encoding]::new($false))
+    Write-Host "已生成与 StudentSetup 安装器摘要绑定的 Agent 目标版本声明：$agentTargetEvidencePath" -ForegroundColor Green
+}
+
 if ($zipFile) {
     $zipParent = Split-Path -Parent $zipFile
     if (-not (Test-Path -LiteralPath $zipParent -PathType Container)) {

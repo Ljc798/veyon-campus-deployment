@@ -818,6 +818,8 @@ function normalizeReleaseRow(row) {
   const applicationPolicyCapability = Number(row.application_policy_capability ?? 0);
   const legacySignature = row.legacy_signature ?? null;
   const legacySystemPolicySignature = row.legacy_system_policy_signature ?? null;
+  const studentAgentVersion = row.student_agent_version ?? null;
+  const studentAgentTargetSignature = row.student_agent_target_signature ?? null;
   const isCanonicalSignature = (value) => {
     if (typeof value !== 'string' || value.length > 8192) return false;
     const signatureBytes = Buffer.from(value, 'base64');
@@ -834,7 +836,10 @@ function normalizeReleaseRow(row) {
         !Number.isInteger(applicationPolicyCapability) || applicationPolicyCapability < 1 ||
         applicationPolicyCapability > 32767 || !isCanonicalSignature(legacySignature) ||
         !isCanonicalSignature(legacySystemPolicySignature))) ||
-      !isCanonicalSignature(row.signature)) return null;
+      !isCanonicalSignature(row.signature) ||
+      ((studentAgentVersion === null) !== (studentAgentTargetSignature === null)) ||
+      (studentAgentVersion !== null && (row.role !== 'StudentSetup' || !parseSemanticVersion(studentAgentVersion) ||
+        !isCanonicalSignature(studentAgentTargetSignature)))) return null;
   const normalizedId = releaseId.replace(/-/g, '');
   if (row.object_key !== `releases/${row.role}/win-x64/${normalizedId}.exe`) return null;
   return {
@@ -852,6 +857,8 @@ function normalizeReleaseRow(row) {
     studentSystemPolicyCapability,
     applicationPolicyCapability,
     legacySystemPolicySignature,
+    studentAgentVersion,
+    studentAgentTargetSignature,
     signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
     objectKey: row.object_key,
     publishedAt: row.published_at
@@ -1001,9 +1008,9 @@ async function readReleaseRows(config, query) {
   return table(config, 'application_releases', query);
 }
 
-async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1) {
+async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1, includeAgentTarget = false) {
   const query = new URLSearchParams({
-    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,published_at',
+    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,student_agent_version,student_agent_target_signature,published_at',
     role: roles.length === 1 ? 'eq.' + roles[0] : 'in.(' + roles.join(',') + ')',
     architecture: 'eq.win-x64',
     status: 'eq.published',
@@ -1016,16 +1023,31 @@ async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1) {
     Date.parse(right.publishedAt) - Date.parse(left.publishedAt));
   return Object.fromEntries(roles.map((role) => {
     const latest = releases.find((release) => release.role === role);
-    return [role, latest ? {
+    const envelope = latest ? {
       manifest: makeReleaseManifest(config, latest, apiVersion),
       signatureAlgorithm: latest.signatureAlgorithm,
       signature: signatureForApiVersion(latest, apiVersion),
       publishedAt: latest.publishedAt
-    } : null];
+    } : null;
+    if (includeAgentTarget && envelope && latest.studentAgentVersion && latest.studentAgentTargetSignature) {
+      envelope.studentAgentTarget = {
+        manifest: {
+          schemaVersion: 1,
+          purpose: 'VeyonCampus.StudentSetup.AgentTarget.v1',
+          product: 'VeyonCampus.StudentSetup',
+          setupVersion: latest.version,
+          installerSha256: latest.sha256,
+          studentAgentVersion: latest.studentAgentVersion
+        },
+        signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
+        signature: latest.studentAgentTargetSignature
+      };
+    }
+    return [role, envelope];
   }));
 }
 
-async function handleLatestRelease(request, response, config, url, apiVersion = 1) {
+async function handleLatestRelease(request, response, config, url, apiVersion = 1, includeAgentTarget = false) {
   const role = url.searchParams.get('role');
   const architecture = url.searchParams.get('architecture') || 'win-x64';
   if (!APPLICATION_RELEASE_ROLES.has(role)) {
@@ -1038,8 +1060,13 @@ async function handleLatestRelease(request, response, config, url, apiVersion = 
   }
 
   try {
-    const releases = await readLatestReleaseEnvelopes(config, [role], apiVersion);
-    sendJson(response, 200, { release: releases[role] }, { 'Cache-Control': 'no-store' });
+    const releases = await readLatestReleaseEnvelopes(config, [role], apiVersion, includeAgentTarget);
+    const release = releases[role];
+    const studentAgentTarget = release?.studentAgentTarget ?? null;
+    if (release) delete release.studentAgentTarget;
+    sendJson(response, 200,
+      includeAgentTarget ? { release, studentAgentTarget } : { release },
+      { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'release-catalog');
   }
@@ -2120,6 +2147,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v3/releases/latest') {
         await handleLatestRelease(request, response, config, url, 3);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v4/releases/latest') {
+        await handleLatestRelease(request, response, config, url, 3, true);
         return;
       }
       if (request.method === 'GET' && pathname === '/v1/file-updates/latest') {

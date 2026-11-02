@@ -28,7 +28,7 @@ function parseArguments(args) {
       options.confirmed = true;
       continue;
     }
-    if (!['--role', '--version', '--installer'].includes(name) || options[name])
+    if (!['--role', '--version', '--installer', '--agent-target'].includes(name) || options[name])
       throw new Error(`Unexpected or duplicate argument: ${name}`);
     const value = args[++index];
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${name}`);
@@ -41,10 +41,14 @@ function parseArguments(args) {
       !VERSION_PATTERN.test(options['--version']))
     throw new Error('--version must be a valid SemVer X.Y.Z value.');
   if (!options['--installer']) throw new Error('--installer is required.');
+  const installerPath = path.resolve(options['--installer']);
   return {
     role: options['--role'],
     version: options['--version'],
-    installerPath: path.resolve(options['--installer'])
+    installerPath,
+    agentTargetPath: options['--agent-target']
+      ? path.resolve(options['--agent-target'])
+      : `${installerPath}.agent-target.json`
   };
 }
 
@@ -79,6 +83,17 @@ function legacySystemPolicyCanonicalPayload(manifest) {
     schemaVersion: 2,
     policyCapabilities: { studentSystemPolicy: manifest.policyCapabilities.studentSystemPolicy }
   });
+}
+
+function canonicalStudentAgentTargetPayload(manifest) {
+  return Buffer.from(JSON.stringify({
+    schemaVersion: manifest.schemaVersion,
+    purpose: manifest.purpose,
+    product: manifest.product,
+    setupVersion: manifest.setupVersion,
+    installerSha256: manifest.installerSha256.toUpperCase(),
+    studentAgentVersion: manifest.studentAgentVersion
+  }), 'utf8');
 }
 
 async function requestCloudBase(apiBase, apiKey, requestPath, options = {}) {
@@ -196,6 +211,7 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
     throw new Error('Rotate the CloudBase service API key first and set CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes.');
   const envId = (environment.CloudBase__EnvId || '').trim();
   const apiKey = (environment.CloudBase__ApiKey || '').trim();
+  const apiBase = `https://${envId}.api.tcloudbasegateway.com/`;
   const signingKeyPath = environment.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH;
   const publicKeyPath = environment.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH;
   if (!/^[A-Za-z0-9-]+$/.test(envId) || !apiKey || !signingKeyPath || !publicKeyPath)
@@ -211,7 +227,7 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       publicApiBaseUrl.search || publicApiBaseUrl.hash || publicApiBaseUrl.username || publicApiBaseUrl.password)
     throw new Error('The configured public API base URL must be an HTTPS root URL.');
 
-  const { role, version, installerPath } = parseArguments(args);
+  const { role, version, installerPath, agentTargetPath } = parseArguments(args);
   const roleName = role === 'TeacherConsole' ? 'Teacher' : 'Student';
   const product = role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
   const fileName = `VeyonCampus-${roleName}-Setup-${version}-win-x64.exe`;
@@ -249,6 +265,40 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
     downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href,
     policyCapabilities: { applicationPolicy: 1, studentSystemPolicy: 1 }
   };
+  let studentAgentVersion = null;
+  let agentTargetSignature = null;
+  if (role === 'StudentSetup') {
+    let evidence;
+    try {
+      evidence = JSON.parse(await fs.promises.readFile(agentTargetPath, 'utf8'));
+    } catch (error) {
+      throw new Error(`StudentSetup requires build-generated Agent target evidence: ${error.message}`);
+    }
+    const evidenceKeys = Object.keys(evidence || {}).sort().join(',');
+    if (evidenceKeys !== 'installerSha256,product,schemaVersion,setupVersion,studentAgentVersion' ||
+        evidence.schemaVersion !== 1 || evidence.product !== 'VeyonCampus.StudentSetup' ||
+        evidence.setupVersion !== version || typeof evidence.installerSha256 !== 'string' ||
+        !/^[A-Fa-f0-9]{64}$/.test(evidence.installerSha256) ||
+        evidence.installerSha256.toUpperCase() !== manifest.sha256 ||
+        typeof evidence.studentAgentVersion !== 'string' || !VERSION_PATTERN.test(evidence.studentAgentVersion))
+      throw new Error('Agent target evidence does not match the exact StudentSetup installer digest and version.');
+    const targetManifest = {
+      schemaVersion: 1,
+      purpose: 'VeyonCampus.StudentSetup.AgentTarget.v1',
+      product: 'VeyonCampus.StudentSetup',
+      setupVersion: version,
+      installerSha256: manifest.sha256,
+      studentAgentVersion: evidence.studentAgentVersion
+    };
+    studentAgentVersion = targetManifest.studentAgentVersion;
+    agentTargetSignature = crypto.sign('sha256', canonicalStudentAgentTargetPayload(targetManifest), {
+      key: privateKey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+      saltLength: 32
+    }).toString('base64');
+  } else if (args.includes('--agent-target')) {
+    throw new Error('--agent-target is only valid for StudentSetup releases.');
+  }
   const currentRelease = await getLatestRelease(publicApiBaseUrl, role);
   if (currentRelease !== null) {
     if (!currentRelease?.manifest || typeof currentRelease.manifest.version !== 'string' ||
@@ -267,6 +317,21 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       currentRelease.manifest.policyCapabilities?.applicationPolicy === manifest.policyCapabilities.applicationPolicy &&
       currentRelease.manifest.policyCapabilities?.studentSystemPolicy === manifest.policyCapabilities.studentSystemPolicy;
     if (sameArtifact) {
+      if (role === 'StudentSetup') {
+        const externalDownloadUrl = installerDownloadUrl(releaseDownload, manifest);
+        await verifyExternalArtifact(externalDownloadUrl, manifest);
+        await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/bind_application_release_agent_target_v1', {
+          method: 'POST',
+          body: {
+            p_role: role,
+            p_version: version,
+            p_sha256: manifest.sha256,
+            p_student_agent_version: studentAgentVersion,
+            p_student_agent_target_signature: agentTargetSignature
+          },
+          timeoutMs: 30000
+        });
+      }
       console.log(JSON.stringify({ alreadyPublished: true, role, version, fileName, sizeBytes: fileInfo.size,
         sha256: manifest.sha256 }, null, 2));
       return;
@@ -289,11 +354,10 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
   }).toString('base64');
-  const apiBase = `https://${envId}.api.tcloudbasegateway.com/`;
   // Verify the public attachment before advertising it. CloudBase receives JSON metadata only.
   const externalDownloadUrl = installerDownloadUrl(releaseDownload, manifest);
   await verifyExternalArtifact(externalDownloadUrl, manifest);
-  await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v3', {
+  await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v4', {
     method: 'POST',
     body: {
       p_release_id: releaseId,
@@ -305,7 +369,9 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       p_legacy_signature: legacySignature,
       p_legacy_system_policy_signature: legacySystemPolicySignature,
       p_application_policy_capability: manifest.policyCapabilities.applicationPolicy,
-      p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy
+      p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy,
+      p_student_agent_version: studentAgentVersion,
+      p_student_agent_target_signature: agentTargetSignature
     },
     timeoutMs: 30000
   });
@@ -324,6 +390,7 @@ module.exports = {
   canonicalPayload,
   legacyCanonicalPayload,
   legacySystemPolicyCanonicalPayload,
+  canonicalStudentAgentTargetPayload,
   parseArguments,
   createReleaseSigningKey,
   CloudBaseHttpFailure,

@@ -27,7 +27,8 @@ public sealed record StudentMaintenancePlanningInput(
     int? StudentUpdateProtocolVersion,
     string? UpdateTransactionState,
     bool? TeacherChannelConfigurationMatches,
-    bool HasAuthenticatedAgentChannel);
+    bool HasAuthenticatedAgentChannel,
+    string ReleaseChannel = "stable");
 
 public sealed record StudentMaintenancePlan(
     StudentMaintenancePlanKind Kind,
@@ -68,11 +69,14 @@ public static class StudentMaintenancePlanner
             : ApplicationReleaseClient.CompareVersions(input.CurrentAgentVersion, input.TargetAgentVersion);
         var needsSoftwareUpdate = setupComparison < 0 || agentComparison < 0;
 
+        if (input.TargetAgentVersion is null && setupComparison >= 0)
+            return Manual("正式发行清单没有已签名且绑定安装包摘要的 Agent 目标版本；StudentSetup 已达标，但无法判断 Agent 是否需要更新。请发布带有 Agent 目标版本声明的正式发行，或人工维护。 ");
+
         if (setupComparison > 0 && agentComparison < 0)
             return Manual($"当前 StudentSetup {input.CurrentSetupVersion} 高于目标 {input.TargetSetupVersion}，但 Agent {input.CurrentAgentVersion} 低于目标 {input.TargetAgentVersion}；不能降级 Setup 覆盖修复。");
 
-        if (needsSoftwareUpdate && input.StudentUpdateProtocolVersion !=
-            WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+        if (needsSoftwareUpdate && !StudentAgentUpdateCompatibility.SupportsUpdateStatusProtocol(
+                input.CurrentAgentVersion, input.StudentUpdateProtocolVersion, input.ReleaseChannel))
             return Manual("当前 Agent 未签名报告受支持的原子更新协议；不会下发安装包。");
 
         var needsConfigurationSync = input.TeacherChannelConfigurationMatches != true;

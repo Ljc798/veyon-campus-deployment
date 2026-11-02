@@ -1123,8 +1123,9 @@ public static class WebsitePolicyAgentInstaller
             string? recoveryBootstrapRefusalReason = null;
             if (pendingTransaction is { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
                 string.Equals(transaction.PreviousSetupVersion, installedStudentSetupVersion, StringComparison.Ordinal) &&
-                string.Equals(transaction.ConfigurationFingerprint, expectedConfigFingerprint,
-                    StringComparison.OrdinalIgnoreCase) &&
+                (string.Equals(transaction.ConfigurationFingerprint, expectedConfigFingerprint,
+                     StringComparison.OrdinalIgnoreCase) ||
+                 StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(transaction, config)) &&
                 ApplicationReleaseClient.CompareVersions(BuildVersion, transaction.PreviousAgentVersion) >= 0 &&
                 transaction.UpdatedUtc <= DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(1)))
             {
@@ -1930,6 +1931,17 @@ public static class WebsitePolicyAgentInstaller
             !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
             throw new InvalidDataException("SYSTEM Agent 启动任务没有绑定已核验的校区配置和受限权限。");
         return task.Config;
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal static WebsitePolicyAgentConfig ReadVerifiedManagedAgentConfiguration(string configPath)
+    {
+        var config = ReadManagedAgentConfiguration(configPath);
+        VerifyConfigPathIdentity(Path.GetFullPath(configPath), config);
+        ValidateInstalledAgentTrustConfiguration(config);
+        if (string.IsNullOrWhiteSpace(StudentAgentIdentityKeyStore.ReadFingerprint(configPath)))
+            throw new InvalidDataException("学生 Agent 身份密钥未通过本机身份绑定核验。");
+        return config;
     }
 
     /// <summary>Moves only the two verified recovery tasks from the old managed Agent to its repaired successor.</summary>
@@ -4083,6 +4095,13 @@ public sealed class WebsitePolicyAgent
             (config.StudentSystemPolicyPublicKeyPem ?? "") + "\n" +
             string.Join(";", config.TeacherChannelEndpoints ?? Array.Empty<string>()) + "\n" +
             (config.TeacherChannelRootCertificateBase64 ?? ""))));
+
+    /// <summary>Exact fingerprint formula shipped with StudentSetup v1.1.40.</summary>
+    internal static string LegacyV140ConfigFingerprint(WebsitePolicyAgentConfig config) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? "") + "\n" +
+            config.DeploymentId + "\n" + config.ApplicationVersion + "\n" + (config.ApplicationPolicyPublicKeyPem ?? "") + "\n" +
+            (config.StudentSystemPolicyPublicKeyPem ?? ""))));
 
     public static string GetRuntimeVersion()
     {

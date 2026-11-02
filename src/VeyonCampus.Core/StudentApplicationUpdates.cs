@@ -112,19 +112,35 @@ public enum StudentAgentUpdateTransportMode
 /// <summary>Capability-based compatibility for the trusted /v1/update entry point.</summary>
 public static class StudentAgentUpdateCompatibility
 {
+    private static readonly string[] TrustedHistoricalAgentVersions = ["0.4.55", "0.4.56"];
+
+    public static bool SupportsUpdateStatusProtocol(string agentRuntimeVersion,
+        int? studentUpdateProtocolVersion, string releaseChannel)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
+        if (studentUpdateProtocolVersion == WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+            return true;
+        return studentUpdateProtocolVersion is null && (releaseChannel is "stable" or "") &&
+               IsTrustedHistoricalAgentVersion(agentRuntimeVersion);
+    }
+
+    public static bool IsTrustedHistoricalAgentVersion(string agentRuntimeVersion)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
+        return TrustedHistoricalAgentVersions.Any(version =>
+            ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, version) == 0);
+    }
+
     public static StudentAgentUpdateTransportMode SelectTransport(string agentRuntimeVersion,
         int? studentUpdateProtocolVersion, int? downloadRequestProtocolVersion, string releaseChannel,
         string? developerReleaseKeyFingerprint = null, string? expectedDeveloperReleaseKeyFingerprint = null,
         string? localTestKeyFingerprint = null, string? expectedLocalTestKeyFingerprint = null,
         bool capabilityReportsPinnedKey = false)
     {
-        _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
-        if (studentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
-            return StudentAgentUpdateTransportMode.Unsupported;
-
         if (releaseChannel == "local-test")
         {
-            if (downloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion ||
+            if (studentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion ||
+                downloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion ||
                 string.IsNullOrWhiteSpace(expectedLocalTestKeyFingerprint) ||
                 !string.Equals(localTestKeyFingerprint, expectedLocalTestKeyFingerprint,
                     StringComparison.OrdinalIgnoreCase))
@@ -133,6 +149,8 @@ public static class StudentAgentUpdateCompatibility
         }
 
         if (releaseChannel is not ("stable" or ""))
+            return StudentAgentUpdateTransportMode.Unsupported;
+        if (!SupportsUpdateStatusProtocol(agentRuntimeVersion, studentUpdateProtocolVersion, releaseChannel))
             return StudentAgentUpdateTransportMode.Unsupported;
         if (capabilityReportsPinnedKey &&
             (string.IsNullOrWhiteSpace(expectedDeveloperReleaseKeyFingerprint) ||
@@ -151,9 +169,10 @@ public static class StudentAgentUpdateCompatibility
         }
         if (downloadRequestProtocolVersion is not null)
             return StudentAgentUpdateTransportMode.Unsupported;
-        // Atomic protocol v1 predates signed per-device download requests. It is safe to use
-        // the existing trusted HTTP update route when the Agent signed status confirms v1;
-        // the full release signature and installer digest are still verified by that Agent.
+        // Historical 0.4.55/0.4.56 Agents can fall back to the signed /v1/update command
+        // when they do not expose a signed-download capability endpoint. Their release
+        // verifier accepts the stable schema-3 manifest and still checks its signature/digest.
+        // Schema-4 local-test releases are excluded above.
         return StudentAgentUpdateTransportMode.LegacySignedHttp;
     }
 
@@ -166,7 +185,7 @@ public static class StudentAgentUpdateCompatibility
         bool capabilityReportsPinnedKey = false)
     {
         var reportedUpdateProtocol = studentUpdateProtocolVersion?.ToString(CultureInfo.InvariantCulture) ?? "未上报";
-        if (studentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+        if (!SupportsUpdateStatusProtocol(agentRuntimeVersion, studentUpdateProtocolVersion, releaseChannel))
             return $"学生 Agent {agentRuntimeVersion} 未报告受支持的原子更新协议 v1（回执：{reportedUpdateProtocol}）；未发送安装包。";
 
         if (releaseChannel == "local-test")
@@ -968,7 +987,7 @@ public sealed record StudentApplicationUpdatePushResult(string Target, bool Succ
     bool RolledBack = false, bool PendingVerification = false);
 
 public sealed record StudentApplicationUpdateSourceVersions(string StudentSetupVersion, string AgentVersion,
-    int StudentUpdateProtocolVersion, string ConfigurationFingerprint = "",
+    int? StudentUpdateProtocolVersion, string ConfigurationFingerprint = "",
     string? TargetSetupVersion = null, string? TargetAgentVersion = null, string ReleaseChannel = "stable");
 
 public sealed record StudentApplicationUpdateProgress(string Target, int CompletedTargets, int TotalTargets,
@@ -1397,9 +1416,8 @@ public static class StudentApplicationUpdateTransport
                 var pinnedKey = trustStore.FindTrustedPublicKey(campusId, target);
                 if (pinnedKey is null)
                     throw new InvalidDataException("此电脑尚未固定可信 Agent 身份，不能远程自动更新。");
-                if (sourceVersions is null || !sourceVersions.TryGetValue(target, out var source) ||
-                    source.StudentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
-                    throw new InvalidDataException("缺少可信的更新前版本或原子更新协议能力读回；已停止下发。");
+                if (sourceVersions is null || !sourceVersions.TryGetValue(target, out var source))
+                    throw new InvalidDataException("缺少可信的更新前版本读回；已停止下发。");
                 var downloadCapability = await ReadDownloadRequestCapabilityAsync(client,
                     target, campusId, campusPrivateKey, pinnedKey, cancellationToken).ConfigureAwait(false);
                 var releaseChannel = source.ReleaseChannel is "local-test" ? "local-test" : "stable";
@@ -1408,8 +1426,14 @@ public static class StudentApplicationUpdateTransport
                     : null;
                 var capabilityReportsPinnedKey = downloadCapability is
                     { AgentProductVersion: not null } or { CoreAssemblyVersion: not null };
+                if (downloadCapability?.StudentUpdateProtocolVersion is { } capabilityUpdateProtocol &&
+                    source.StudentUpdateProtocolVersion is { } statusUpdateProtocol &&
+                    capabilityUpdateProtocol != statusUpdateProtocol)
+                    throw new InvalidDataException("更新能力回执中的原子更新协议与预检状态不一致；未下发更新命令。");
+                var effectiveUpdateProtocolVersion = source.StudentUpdateProtocolVersion ??
+                                                     downloadCapability?.StudentUpdateProtocolVersion;
                 var transportMode = StudentAgentUpdateCompatibility.SelectTransport(source.AgentVersion,
-                    source.StudentUpdateProtocolVersion, downloadCapability?.DownloadRequestProtocolVersion,
+                    effectiveUpdateProtocolVersion, downloadCapability?.DownloadRequestProtocolVersion,
                     releaseChannel, downloadCapability?.DeveloperReleasePublicKeyFingerprint,
                     releaseChannel == "stable" ? ApplicationReleaseTrust.GetPinnedPublicKeyFingerprint() : null,
                     downloadCapability?.LocalTestReleasePublicKeyFingerprint, expectedTestKeyFingerprint,
@@ -1431,9 +1455,6 @@ public static class StudentApplicationUpdateTransport
                     downloadCapability.AgentRuntimeVersion is { } reportedRuntimeVersion &&
                     !string.Equals(capabilityProductVersion, reportedRuntimeVersion, StringComparison.Ordinal))
                     throw new InvalidDataException("Agent 运行版本与 Agent 程序集产品版本不一致；本次未下发更新命令。");
-                if (downloadCapability?.StudentUpdateProtocolVersion is { } capabilityUpdateProtocol &&
-                    capabilityUpdateProtocol != source.StudentUpdateProtocolVersion)
-                    throw new InvalidDataException("更新能力回执中的原子更新协议与预检状态不一致；未下发更新命令。");
                 if (downloadCapability?.ConfigurationFingerprint is { } capabilityConfigFingerprint &&
                     !string.Equals(capabilityConfigFingerprint, source.ConfigurationFingerprint,
                         StringComparison.OrdinalIgnoreCase))
@@ -2084,13 +2105,17 @@ public static class StudentApplicationUpdateTransport
         var healthIsValid = status.Health is
             { RunningAsSystem: true, ManagedTaskMatchesAgent: true, ManagedTaskAclRestricted: true } health &&
             string.Equals(health.UpdateTransactionState, "committed", StringComparison.Ordinal);
+        var configFingerprintMatches = string.IsNullOrWhiteSpace(source.ConfigurationFingerprint) ||
+            string.Equals(status.ConfigFingerprint, source.ConfigurationFingerprint,
+                StringComparison.OrdinalIgnoreCase) ||
+            (source.StudentSetupVersion == "1.1.40" && source.AgentVersion == "0.4.55" &&
+             string.Equals(transaction.State, "committed", StringComparison.Ordinal) && healthIsValid &&
+             string.Equals(status.AgentVersion, transaction.TargetAgentVersion, StringComparison.Ordinal));
         return string.Equals(transaction.TargetSetupVersion, targetSetupVersion, StringComparison.Ordinal) &&
                targetAgentMatches &&
                string.Equals(status.StudentSetupVersion, transaction.TargetSetupVersion, StringComparison.Ordinal) &&
                string.Equals(status.AgentVersion, transaction.TargetAgentVersion, StringComparison.Ordinal) &&
-               (string.IsNullOrWhiteSpace(source.ConfigurationFingerprint) ||
-                string.Equals(status.ConfigFingerprint, source.ConfigurationFingerprint,
-                    StringComparison.OrdinalIgnoreCase)) && healthIsValid;
+               configFingerprintMatches && healthIsValid;
     }
 
     private static StudentApplicationUpdatePushResult CreateCommittedUpdateResult(string campusId, string target,

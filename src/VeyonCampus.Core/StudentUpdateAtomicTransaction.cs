@@ -455,8 +455,7 @@ public static class StudentUpdateAtomicTransaction
         out string refusalReason)
     {
         if (!OperatingSystem.IsWindows() || record.State != StudentUpdateTransactionState.RecoveryRequired ||
-            !string.Equals(record.ConfigurationFingerprint, configurationFingerprint,
-                StringComparison.OrdinalIgnoreCase) || installedAgentVersion is null ||
+            installedAgentVersion is null ||
             !string.Equals(installedAgentVersion, record.PreviousAgentVersion, StringComparison.Ordinal))
         {
             refusalReason = "当前 SYSTEM Agent 版本或校区配置指纹与失败事务不一致。";
@@ -466,6 +465,12 @@ public static class StudentUpdateAtomicTransaction
         string installedSetupVersion;
         try
         {
+            if (!string.Equals(GetExpectedConfigurationFingerprintForAgent(configPath, record,
+                    installedAgentVersion), configurationFingerprint, StringComparison.OrdinalIgnoreCase))
+            {
+                refusalReason = "当前 SYSTEM Agent 健康指纹与受信任配置的匹配结果不一致。";
+                return false;
+            }
             installedSetupVersion = ReadVerifiedInstalledSetupVersion();
             var previousSetup = GetPreviousInstallationDirectory(record);
             PathLinkSecurity.RejectLinksAllowingMissingComponents(previousSetup);
@@ -572,10 +577,11 @@ public static class StudentUpdateAtomicTransaction
                 !string.Equals(WebsitePolicyAgent.GetRuntimeVersion(), currentAgentVersion,
                     StringComparison.Ordinal) ||
                 !string.Equals(WebsitePolicyAgent.ConfigFingerprint(
-                    WebsitePolicyAgentInstaller.ReadManagedAgentConfiguration(configPath)),
-                    record.ConfigurationFingerprint, StringComparison.OrdinalIgnoreCase) ||
+                    WebsitePolicyAgentInstaller.ReadVerifiedManagedAgentConfiguration(configPath)),
+                    GetExpectedConfigurationFingerprintForAgent(configPath, record, currentAgentVersion),
+                    StringComparison.OrdinalIgnoreCase) ||
                 !WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2),
-                    record.ConfigurationFingerprint, currentAgentVersion))
+                    GetExpectedConfigurationFingerprintForAgent(configPath, record, currentAgentVersion), currentAgentVersion))
                 return false;
 
             WebsitePolicyAgentInstaller.VerifyStudentUpdateRecoveryTasks(expectedCurrentAgent, configPath);
@@ -653,11 +659,42 @@ public static class StudentUpdateAtomicTransaction
         var actualAgentPath = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);
         if (!PathEquals(actualAgentPath, expectedAgentPath))
             throw new InvalidDataException("提交前 SYSTEM Agent 任务没有指向事务目标版本。");
+        var expectedFingerprint = GetExpectedConfigurationFingerprintForAgent(configPath, record,
+            record.TargetAgentVersion);
         if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(5),
-                record.ConfigurationFingerprint, record.TargetAgentVersion))
+                expectedFingerprint, record.TargetAgentVersion))
             throw new TimeoutException("提交前 SYSTEM Agent 目标版本或配置指纹健康读回已失效。");
         var committed = Advance(configPath, record, StudentUpdateTransactionState.Committed);
         TryCleanupCommittedTransaction(configPath, committed);
+    }
+
+    internal static bool MatchesTrustedV140ConfigurationFingerprint(StudentUpdateTransactionRecord record,
+        WebsitePolicyAgentConfig config)
+    {
+        if (!string.Equals(record.PreviousSetupVersion, "1.1.40", StringComparison.Ordinal) ||
+            config.TeacherChannelEndpoints is { Count: > 0 } ||
+            !string.IsNullOrEmpty(config.TeacherChannelRootCertificateBase64))
+            return false;
+        return string.Equals(record.ConfigurationFingerprint,
+            WebsitePolicyAgent.LegacyV140ConfigFingerprint(config), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [SupportedOSPlatform("windows")]
+    internal static string GetExpectedConfigurationFingerprintForAgent(string configPath,
+        StudentUpdateTransactionRecord record, string agentVersion)
+    {
+        var config = WebsitePolicyAgentInstaller.ReadVerifiedManagedAgentConfiguration(configPath);
+        var currentFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+        if (string.Equals(record.ConfigurationFingerprint, currentFingerprint, StringComparison.OrdinalIgnoreCase))
+            return currentFingerprint;
+        if (MatchesTrustedV140ConfigurationFingerprint(record, config))
+        {
+            if (string.Equals(agentVersion, record.PreviousAgentVersion, StringComparison.Ordinal))
+                return record.ConfigurationFingerprint;
+            if (string.Equals(agentVersion, record.TargetAgentVersion, StringComparison.Ordinal))
+                return currentFingerprint;
+        }
+        throw new InvalidDataException("更新事务配置指纹与当前受信任校区配置不匹配；未忽略或改写指纹。");
     }
 
     public static void Rollback(string configPath, StudentUpdateTransactionRecord record, Exception cause)
@@ -695,12 +732,14 @@ public static class StudentUpdateAtomicTransaction
                 throw new AggregateException("学生更新期间至少一项安装组件未能恢复。",
                     new[] { taskRestoreFailure, setupRestoreFailure }.OfType<Exception>());
 
+            var previousConfigFingerprint = GetExpectedConfigurationFingerprintForAgent(configPath, record,
+                record.PreviousAgentVersion);
             if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2),
-                    record.ConfigurationFingerprint, record.PreviousAgentVersion))
+                    previousConfigFingerprint, record.PreviousAgentVersion))
             {
                 WebsitePolicyAgentInstaller.StartCurrentAgentTask(configPath);
                 if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(30),
-                        record.ConfigurationFingerprint, record.PreviousAgentVersion))
+                        previousConfigFingerprint, record.PreviousAgentVersion))
                     throw new TimeoutException("旧版本 SYSTEM Agent 未通过版本与配置指纹健康读回。");
             }
             if (!PathEquals(WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath), previousAgentPath))
@@ -870,8 +909,10 @@ public static class StudentUpdateAtomicTransaction
             var expectedAgentPath = GetAgentExecutablePath(record.TargetAgentVersion);
             if (!PathEquals(WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath), expectedAgentPath))
                 return false;
+            var expectedFingerprint = GetExpectedConfigurationFingerprintForAgent(configPath, record,
+                record.TargetAgentVersion);
             return WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(90),
-                record.ConfigurationFingerprint, record.TargetAgentVersion);
+                expectedFingerprint, record.TargetAgentVersion);
         }
         catch (Exception)
         { return false; }

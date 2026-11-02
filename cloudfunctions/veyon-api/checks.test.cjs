@@ -213,6 +213,8 @@ function createMockCloudBase() {
       application_policy_capability: 1,
       legacy_signature: releaseSignature,
       legacy_system_policy_signature: releaseSignature,
+      student_agent_version: '0.4.57',
+      student_agent_target_signature: releaseSignature,
       published_at: '2026-09-30T01:00:00Z',
       status: 'published'
     },
@@ -830,6 +832,25 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.deepEqual(latestV3Result.release.manifest.policyCapabilities,
       { applicationPolicy: 1, studentSystemPolicy: 1 });
     assert.equal(latestV3Result.release.signature, releaseSignature);
+    assert.equal(Object.hasOwn(latestV3Result, 'studentAgentTarget'), false,
+      'legacy release endpoints must not change the Student Agent command manifest');
+
+    const latestV4Response = await originalFetch(
+      `${baseUrl}/v4/releases/latest?role=StudentSetup&architecture=win-x64`);
+    assert.equal(latestV4Response.status, 200);
+    const latestV4Result = await latestV4Response.json();
+    assert.equal(latestV4Result.release.manifest.schemaVersion, 3,
+      'the student Agent still receives the legacy-verifiable stable manifest');
+    assert.equal(latestV4Result.release.signature, releaseSignature);
+    assert.deepEqual(latestV4Result.studentAgentTarget.manifest, {
+      schemaVersion: 1,
+      purpose: 'VeyonCampus.StudentSetup.AgentTarget.v1',
+      product: 'VeyonCampus.StudentSetup',
+      setupVersion: '1.10.0',
+      installerSha256: 'B'.repeat(64),
+      studentAgentVersion: '0.4.57'
+    });
+    assert.equal(latestV4Result.studentAgentTarget.signature, releaseSignature);
 
     const fileUpdateLatestResponse = await originalFetch(
       `${baseUrl}/v1/file-updates/latest?role=StudentSetup&architecture=win-x64&channel=stable`);
@@ -1649,6 +1670,17 @@ test('v5 package and release migrations retain legacy protocols while adding pol
   assert.match(applicationReleaseMigration, /publish_application_release_v3/);
   assert.match(applicationReleaseMigration, /p_application_policy_capability/);
   assert.match(applicationReleaseMigration, /TO service_role/);
+
+  const agentTargetMigration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261102120000_support_signed_student_agent_targets.sql`,
+    'utf8');
+  assert.match(agentTargetMigration, /student_agent_target_signature/);
+  assert.match(agentTargetMigration, /installer SHA-256/);
+  assert.match(agentTargetMigration, /publish_application_release_v4/);
+  assert.match(agentTargetMigration, /bind_application_release_agent_target_v1/);
+  assert.match(agentTargetMigration, /matching published StudentSetup release was not found/);
+  assert.match(agentTargetMigration, /FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(agentTargetMigration, /TO service_role/);
 });
 
 test('v6 migration adds its own package object namespace and keeps publish restrictions', () => {
@@ -1679,7 +1711,8 @@ test('CloudBase function deployment requires package and release migrations whil
     '20261006120000',
     '20261008100000',
     '20261016120000',
-    '20261021140000'
+    '20261021140000',
+    '20261102120000'
   ];
   let previousIndex = -1;
   for (const migration of requiredMigrations) {
@@ -1721,6 +1754,7 @@ test('API policy permits required paths while the handler authorizes admin datab
   assert.ok(policy.includes('"/v1/releases/latest"'));
   assert.ok(policy.includes('"/v2/releases/latest"'));
   assert.ok(policy.includes('"/v3/releases/latest"'));
+  assert.ok(policy.includes('"/v4/releases/latest"'));
   assert.ok(policy.includes('"/v1/file-updates/latest"'));
   assert.ok(policy.includes('"/v1/deployment-packages"'));
   assert.ok(policy.includes('startswith(input.request.path, "/v1/releases/"'));
@@ -1766,7 +1800,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/releases/{releaseId}/artifact',
     '/v1/telemetry/teacher/operations',
     '/v2/releases/latest',
-    '/v3/releases/latest'
+    '/v3/releases/latest',
+    '/v4/releases/latest'
   ].sort());
   const teacherHeartbeat = specification.slice(specification.indexOf('  /v1/heartbeat/teacher:\n'));
   assert.match(teacherHeartbeat, /'404': \{ \$ref: '#\/components\/responses\/NotFound' \}/);
@@ -1785,6 +1820,8 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
   const releaseV3 = specification.slice(specification.indexOf('  /v3/releases/latest:\n'));
   assert.ok(releaseV3.includes('applicationPolicy'));
   assert.ok(releaseV3.includes('studentSystemPolicy'));
+  const releaseV4 = specification.slice(specification.indexOf('  /v4/releases/latest:\n'));
+  assert.ok(releaseV4.includes('StudentAgentTarget'));
   const fileUpdateLatest = specification.slice(
     specification.indexOf('  /v1/file-updates/latest:\n'),
     specification.indexOf('  /v1/releases/{releaseId}/artifact:\n')

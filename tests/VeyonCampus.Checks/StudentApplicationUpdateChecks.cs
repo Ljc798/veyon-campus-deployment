@@ -24,6 +24,7 @@ internal static class StudentApplicationUpdateChecks
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
         CheckSetupAndAgentVersionIndependence();
+        CheckLegacyV140ConfigFingerprintMigration();
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
@@ -45,6 +46,7 @@ internal static class StudentApplicationUpdateChecks
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
         CheckSetupAndAgentVersionIndependence();
+        CheckLegacyV140ConfigFingerprintMigration();
         CheckAtomicTransactionTerminalStates();
         CheckAtomicJournalRejectsStaleRecords();
         CheckStagingDirectoryCleanupGate();
@@ -416,6 +418,16 @@ internal static class StudentApplicationUpdateChecks
                StudentAgentUpdateTransportMode.LegacySignedHttp);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", 1, null, "stable") ==
                StudentAgentUpdateTransportMode.LegacySignedHttp);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, null, "stable") ==
+               StudentAgentUpdateTransportMode.LegacySignedHttp);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, 1, "stable") ==
+               StudentAgentUpdateTransportMode.SignedDownloadV1);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, 1, "stable") ==
+               StudentAgentUpdateTransportMode.SignedDownloadV1);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", null, null, "local-test") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", 2, null, "stable") ==
+               StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "stable") ==
                StudentAgentUpdateTransportMode.SignedDownloadV1);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.57", 1, 1, "stable",
@@ -429,8 +441,6 @@ internal static class StudentApplicationUpdateChecks
                StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, null, "stable",
                    null, officialKeyFingerprint, capabilityReportsPinnedKey: true) ==
-               StudentAgentUpdateTransportMode.Unsupported);
-        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, null, "stable") ==
                StudentAgentUpdateTransportMode.Unsupported);
         Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 99, "stable") ==
                StudentAgentUpdateTransportMode.Unsupported);
@@ -493,9 +503,17 @@ internal static class StudentApplicationUpdateChecks
             configMatches: true));
         Expect(noOp.Kind == StudentMaintenancePlanKind.NoOp && !noOp.NeedsConfigurationSync);
 
-        var unsupportedOldAgent = StudentMaintenancePlanner.Create(Input(protocol: null));
+        var supportedHistoricalAgent = StudentMaintenancePlanner.Create(Input(protocol: null));
+        Expect(supportedHistoricalAgent.Kind == StudentMaintenancePlanKind.UpdateThenConfiguration &&
+               supportedHistoricalAgent.UpdateTransport == StudentMaintenanceTransport.TrustedLegacyHttp);
+
+        var unsupportedOldAgent = StudentMaintenancePlanner.Create(Input(agent: "0.4.50", protocol: null));
         Expect(unsupportedOldAgent.Kind == StudentMaintenancePlanKind.ManualRequired &&
                !unsupportedOldAgent.NeedsSoftwareUpdate);
+
+        var unknownStableTarget = StudentMaintenancePlanner.Create(Input(setup: "1.1.57", agent: "0.4.56",
+            targetAgent: null, protocol: 1));
+        Expect(unknownStableTarget.Kind == StudentMaintenancePlanKind.ManualRequired);
 
         var pendingTransaction = StudentMaintenancePlanner.Create(Input(transaction: "inProgress"));
         Expect(pendingTransaction.Kind == StudentMaintenancePlanKind.RecoveryRequired &&
@@ -578,6 +596,32 @@ internal static class StudentApplicationUpdateChecks
         Expect(!CanMigrateLegacyAlias(legacyRecord, "1.2.0", "0.4.55"));
         Expect(!CanMigrateLegacyAlias(legacyRecord with { State = StudentUpdateTransactionState.SetupInstalled },
             "1.2.0", "0.4.57"));
+    }
+
+    private static void CheckLegacyV140ConfigFingerprintMigration()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var config = new WebsitePolicyAgentConfig("ExampleCampus", "campus-public-key",
+            DeploymentId: Guid.Parse("00112233-4455-6677-8899-aabbccddeeff"),
+            ApplicationVersion: "1.1.40", ApplicationPolicyPublicKeyPem: "application-public-key",
+            StudentSystemPolicyPublicKeyPem: "system-public-key");
+        var legacyFingerprint = WebsitePolicyAgent.LegacyV140ConfigFingerprint(config);
+        var record = new StudentUpdateTransactionRecord(1, Guid.NewGuid(), new string('a', 24),
+            "1.1.40", "1.1.57", "0.4.55", "0.4.57",
+            "VeyonCampus-Student-Setup-1.1.57-win-x64.exe", legacyFingerprint, new string('b', 64),
+            now, now, StudentUpdateTransactionState.ActivationPending);
+
+        Expect(StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(record, config));
+        Expect(!StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(
+            record with { ConfigurationFingerprint = new string('c', 64) }, config));
+        Expect(!StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(record,
+            config with { PublicKeyPem = "different-campus-key" }));
+        Expect(!StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(record,
+            config with { TeacherChannelEndpoints = ["https://teacher.example.invalid/"] }));
+        Expect(!StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(record with
+        {
+            PreviousSetupVersion = "1.1.41"
+        }, config));
     }
 
     private static void CheckSetupAndAgentVersionIndependence()

@@ -10502,7 +10502,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             // Stable release manifests intentionally keep the Setup product version separate from
             // the Agent runtime version. The Agent payload version is verified on the student PC
             // after Setup installs it; only channels whose signed manifest declares it can preflight it.
-            var targetAgentVersion = release.Manifest.StudentAgentVersion;
+            var targetAgentVersion = release.Manifest.StudentAgentVersion ??
+                                     latest.StudentAgentTarget?.Manifest.StudentAgentVersion;
             _studentUpdateTargetAgentVersion = targetAgentVersion;
             artifactSizeBytes = release.Manifest.SizeBytes;
             ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
@@ -10546,7 +10547,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     StudentUpdateProtocolVersion: status.StudentUpdateProtocolVersion,
                     UpdateTransactionState: status.UpdateTransaction?.State,
                     TeacherChannelConfigurationMatches: null,
-                    HasAuthenticatedAgentChannel: StudentAgentChannelHub.IsConnected(campus, target)));
+                    HasAuthenticatedAgentChannel: StudentAgentChannelHub.IsConnected(campus, target),
+                    ReleaseChannel: release.Manifest.ReleaseChannel ?? "stable"));
                 if (plan.Kind == StudentMaintenancePlanKind.RecoveryRequired)
                 {
                     _studentMaintenanceRecoveryTargets.Add(NormalizeTargetKey(target));
@@ -10580,11 +10582,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 row?.SetCheckingVersions($"{plan.Reason} 当前 StudentSetup {status.StudentSetupVersion} · SYSTEM Agent {status.AgentVersion}；目标 StudentSetup {release.Manifest.Version} / {targetAgentDescriptionForDisplay}；通道 {plan.UpdateTransport}。");
                 var sourceSetupVersion = status.StudentSetupVersion
                     ?? throw new InvalidDataException("规划需要更新，但学生端未返回 StudentSetup 产品版本。未发送安装器。");
-                var sourceUpdateProtocolVersion = status.StudentUpdateProtocolVersion
-                    ?? throw new InvalidDataException("规划需要更新，但学生端未返回原子更新协议版本。未发送安装器。");
                 rolloutTargetsToUpdate.Add(target);
                 var sourceVersions = new StudentApplicationUpdateSourceVersions(
-                    sourceSetupVersion, status.AgentVersion, sourceUpdateProtocolVersion,
+                    sourceSetupVersion, status.AgentVersion, status.StudentUpdateProtocolVersion,
                     status.ConfigFingerprint, release.Manifest.Version, targetAgentVersion,
                     release.Manifest.ReleaseChannel ?? "stable");
                 updateSourceVersions[target] = sourceVersions;

@@ -186,6 +186,32 @@ internal static class ApplicationReleaseChecks
         var aheadResult = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.11.0");
         Expect(!aheadResult.IsNewer && aheadResult.Release?.Manifest.Version == "1.10.0");
 
+        var studentReleaseId = Guid.NewGuid();
+        var studentManifest = new ApplicationReleaseManifest(3, "VeyonCampus.StudentSetup", "StudentSetup",
+            "1.10.0", "win-x64", "VeyonCampus-Student-Setup-1.10.0-win-x64.exe",
+            artifactBytes.LongLength, Convert.ToHexString(SHA256.HashData(artifactBytes)),
+            new Uri(apiBase, $"v1/releases/{studentReleaseId:D}/artifact").AbsoluteUri,
+            new ApplicationReleasePolicyCapabilities(1, 1));
+        var studentRelease = Sign(studentManifest, signingKey);
+        var agentTargetManifest = new ApplicationReleaseAgentTargetManifest(1,
+            ApplicationReleaseClient.StudentAgentTargetPurpose, "VeyonCampus.StudentSetup", "1.10.0",
+            studentManifest.Sha256, "0.4.57");
+        var agentTargetSignature = signingKey.SignData(
+            ApplicationReleaseClient.CreateCanonicalStudentAgentTargetPayload(agentTargetManifest),
+            HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+        var agentTarget = new ApplicationReleaseAgentTargetEnvelope(agentTargetManifest,
+            "RSA-PSS-SHA256", Convert.ToBase64String(agentTargetSignature));
+        var studentClient = new ApplicationReleaseClient(apiBase,
+            new HttpClient(new FixtureHandler(apiBase, studentRelease, artifactBytes, agentTarget)), publicKeyPem);
+        var studentLatest = await studentClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "1.9.0");
+        Expect(studentLatest.StudentAgentTarget?.Manifest.StudentAgentVersion == "0.4.57");
+        Reject(() => studentClient.EvaluateLatest(studentRelease, ApplicationReleaseRole.StudentSetup, "1.9.0",
+            agentTarget with { Manifest = agentTargetManifest with { InstallerSha256 = new string('A', 64) } }));
+        Reject(() => studentClient.EvaluateLatest(studentRelease, ApplicationReleaseRole.StudentSetup, "1.9.0",
+            agentTarget with { Signature = Convert.ToBase64String(new byte[256]) }));
+        Reject(() => studentClient.EvaluateLatest(release, ApplicationReleaseRole.TeacherConsole, "1.9.0",
+            agentTarget));
+
         var stagingDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-release-check-" + Guid.NewGuid().ToString("N"));
         try
         {
@@ -303,16 +329,17 @@ internal static class ApplicationReleaseChecks
         throw new InvalidOperationException("Invalid application release artifact was accepted.");
     }
 
-    private sealed class FixtureHandler(Uri apiBase, ApplicationReleaseEnvelope release, byte[] artifactBytes)
+    private sealed class FixtureHandler(Uri apiBase, ApplicationReleaseEnvelope release, byte[] artifactBytes,
+        ApplicationReleaseAgentTargetEnvelope? studentAgentTarget = null)
         : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             var requestUri = request.RequestUri ?? throw new InvalidOperationException("Fixture request URL missing.");
-            if (requestUri.AbsolutePath == "/v3/releases/latest")
+            if (requestUri.AbsolutePath == "/v4/releases/latest")
             {
-                var body = JsonSerializer.Serialize(new { release });
+                var body = JsonSerializer.Serialize(new { release, studentAgentTarget });
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(body, Encoding.UTF8, "application/json")

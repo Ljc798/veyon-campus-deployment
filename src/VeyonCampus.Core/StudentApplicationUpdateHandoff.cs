@@ -128,6 +128,13 @@ public static class StudentApplicationUpdateHandoff
                 !string.Equals(transaction.ConfigurationFingerprint, configFingerprint,
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("学生更新事务记录与 Agent 更新助手参数不匹配。");
+            var verifiedConfig = WebsitePolicyAgentInstaller.ReadVerifiedManagedAgentConfiguration(configPath);
+            var currentConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(verifiedConfig);
+            if (!string.Equals(transaction.ConfigurationFingerprint, currentConfigFingerprint,
+                    StringComparison.OrdinalIgnoreCase) &&
+                !StudentUpdateAtomicTransaction.MatchesTrustedV140ConfigurationFingerprint(transaction, verifiedConfig))
+                throw new InvalidDataException("学生更新事务的原始配置指纹与当前校区身份或配置内容不匹配；未执行历史格式迁移。");
+            configFingerprint = currentConfigFingerprint;
             StudentUpdateAtomicTransaction.VerifyTargetSetupInstalled(transaction);
             var expectedHelperPath = GetUpdateHelperPath(
                 Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), transaction.TargetSetupVersion);
@@ -169,8 +176,10 @@ public static class StudentApplicationUpdateHandoff
                     transaction = StudentUpdateAtomicTransaction.RebaseLegacySetupVersionAgentAlias(configPath,
                         transaction, targetVersion, bundledAgentVersion);
                     WebsitePolicyAgentInstaller.StartCurrentAgentTask(configPath);
+                    var restoredAgentFingerprint = StudentUpdateAtomicTransaction
+                        .GetExpectedConfigurationFingerprintForAgent(configPath, transaction, bundledAgentVersion);
                     if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(30),
-                            configFingerprint, bundledAgentVersion))
+                            restoredAgentFingerprint, bundledAgentVersion))
                         throw new TimeoutException("StudentSetup 已更新，但恢复后的现有 Agent 未通过配置和健康检查。");
                     StudentUpdateAtomicTransaction.Commit(configPath, transaction);
                     TryRemoveLegacySetupVersionAlias(setupAgentDirectory, targetVersion, configPath, commandId);
@@ -193,6 +202,8 @@ public static class StudentApplicationUpdateHandoff
             WebsitePolicyAgentInstaller.ValidateAgentUpdateRollbackPaths(expectedAgentPath,
                 previousAgentPath, configPath, targetVersion, previousVersion);
 
+            configFingerprint = StudentUpdateAtomicTransaction.GetExpectedConfigurationFingerprintForAgent(
+                configPath, transaction, targetVersion);
             var activationResult = ExecuteAgentActivation(processId, startTicks, expectedAgentPath, configPath,
                 configFingerprint, targetVersion, commandId, transaction);
             if (activationResult == 0 && aliasDirectoryToClean is not null)
