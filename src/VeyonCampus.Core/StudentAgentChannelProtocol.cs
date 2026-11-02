@@ -25,11 +25,23 @@ public static class StudentAgentChannelProtocol
 {
     public const int CurrentVersion = 1;
     public const string WebSocketPath = "/api/student-agent/channel";
+    public const string WebSocketSubProtocolV1 = "veyon-campus-agent-channel.v1";
     public const string Purpose = "VeyonCampus.StudentAgentChannel.Hello.v1";
     public const int MaximumMessageBytes = 8 * 1024 * 1024;
     public const int MaximumRequestBodyBytes = 4 * 1024 * 1024;
     public const int MaximumResponseBodyBytes = 4 * 1024 * 1024;
     public static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(20);
+
+    public static string? SelectWebSocketSubProtocol(IEnumerable<string> requestedSubProtocols)
+    {
+        ArgumentNullException.ThrowIfNull(requestedSubProtocols);
+        return requestedSubProtocols.Contains(WebSocketSubProtocolV1, StringComparer.Ordinal)
+            ? WebSocketSubProtocolV1
+            : null;
+    }
+
+    public static bool IsCompatibleNegotiatedSubProtocol(string? subProtocol) =>
+        subProtocol is null or WebSocketSubProtocolV1;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -58,6 +70,15 @@ public static class StudentAgentChannelProtocol
                 throw new InvalidDataException("教师连接地址必须是唯一的私有 IPv4 HTTPS 地址。");
         }
         ValidateRootCertificate(rootCertificateBase64);
+    }
+
+    public static string? GetBootstrapConfigurationFingerprint(string campusId,
+        IReadOnlyList<string>? endpoints, string? rootCertificateBase64)
+    {
+        ValidateBootstrapConfiguration(campusId, endpoints, rootCertificateBase64);
+        if (endpoints is not { Count: > 0 } || string.IsNullOrWhiteSpace(rootCertificateBase64)) return null;
+        var canonical = campusId + "\n" + string.Join("\n", endpoints) + "\n" + rootCertificateBase64;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(canonical)));
     }
 
     public static X509Certificate2 ValidateRootCertificate(string rootCertificateBase64)
@@ -175,54 +196,25 @@ public static class StudentAgentChannelProtocol
 /// <summary>Routes existing HTTP-based Agent protocols through a live WebSocket when available.</summary>
 public static class StudentAgentChannelHub
 {
-    private sealed record Registration(Guid Id,
-        Func<StudentAgentChannelMessage, CancellationToken, Task<StudentAgentChannelMessage>> SendAsync);
+    private static readonly StudentAgentChannelRegistry Registry = new(
+        (campusId, target) => StudentAgentChannelSeenTargetStore.Mark(campusId, target),
+        StudentAgentChannelSeenTargetStore.Contains);
 
-    private static readonly ConcurrentDictionary<string, Registration> Online =
-        new(StringComparer.OrdinalIgnoreCase);
-    private static readonly ConcurrentDictionary<string, byte> PreviouslyConnected =
-        new(StringComparer.OrdinalIgnoreCase);
+    public static bool HasConnectedBefore(string campusId, string target) =>
+        Registry.HasConnectedBefore(campusId, target);
 
-    public static bool HasConnectedBefore(string target)
-    {
-        var normalized = ClassroomEventCryptography.NormalizeSingleTarget(target);
-        return PreviouslyConnected.ContainsKey(normalized) ||
-               StudentAgentChannelSeenTargetStore.Contains(normalized);
-    }
+    public static bool IsConnected(string campusId, string target) => Registry.IsConnected(campusId, target);
 
-    public static bool IsConnected(string target)
-    {
-        var normalized = ClassroomEventCryptography.NormalizeSingleTarget(target);
-        return Online.ContainsKey(normalized);
-    }
+    public static IDisposable Register(string campusId, string target,
+        Func<StudentAgentChannelMessage, CancellationToken, Task<StudentAgentChannelMessage>> sendAsync) =>
+        Registry.Register(campusId, target, sendAsync);
 
-    public static IDisposable Register(string target,
-        Func<StudentAgentChannelMessage, CancellationToken, Task<StudentAgentChannelMessage>> sendAsync)
-    {
-        ArgumentNullException.ThrowIfNull(sendAsync);
-        var normalized = ClassroomEventCryptography.NormalizeSingleTarget(target);
-        var registration = new Registration(Guid.NewGuid(), sendAsync);
-        try { StudentAgentChannelSeenTargetStore.Mark(normalized); }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-            InvalidDataException or System.Security.SecurityException or NotSupportedException)
-        {
-            Trace.TraceError("Could not persist student channel target {0}: {1}", normalized, exception);
-        }
-        Online[normalized] = registration;
-        PreviouslyConnected[normalized] = 0;
-        return new RegistrationLease(normalized, registration.Id);
-    }
-
-    public static async Task<StudentAgentChannelMessage> SendAsync(string target,
+    public static Task<StudentAgentChannelMessage> SendAsync(string campusId, string target,
         StudentAgentChannelMessage message, CancellationToken cancellationToken = default)
-    {
-        var normalized = ClassroomEventCryptography.NormalizeSingleTarget(target);
-        if (!Online.TryGetValue(normalized, out var registration))
-            throw new HttpRequestException("学生 Agent 已离线；请求留待学生端下次连接后同步。");
-        return await registration.SendAsync(message, cancellationToken).ConfigureAwait(false);
-    }
+        => Registry.SendAsync(campusId, target, message, cancellationToken);
 
-    public static async Task<HttpResponseMessage> SendHttpAsync(string target, HttpRequestMessage request,
+    public static async Task<HttpResponseMessage> SendHttpAsync(string campusId, string target,
+        HttpRequestMessage request,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -244,7 +236,7 @@ public static class StudentAgentChannelHub
             Headers: headers, Body: body);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var result = await SendAsync(target, channelRequest, timeout.Token).ConfigureAwait(false);
+        var result = await SendAsync(campusId, target, channelRequest, timeout.Token).ConfigureAwait(false);
         if (result.Type != "http-response" || result.RequestId != requestId || result.StatusCode is < 100 or > 599 ||
             result.Body is { Length: > StudentAgentChannelProtocol.MaximumResponseBodyBytes })
             throw new InvalidDataException("学生 Agent 返回的连接响应无效。");
@@ -266,14 +258,86 @@ public static class StudentAgentChannelHub
         return response;
     }
 
-    private sealed class RegistrationLease(string target, Guid registrationId) : IDisposable
+}
+
+internal readonly record struct StudentAgentChannelKey(string CampusId, string Target);
+
+internal sealed class StudentAgentChannelKeyComparer : IEqualityComparer<StudentAgentChannelKey>
+{
+    public static readonly StudentAgentChannelKeyComparer Instance = new();
+
+    public bool Equals(StudentAgentChannelKey left, StudentAgentChannelKey right) =>
+        string.Equals(left.CampusId, right.CampusId, StringComparison.Ordinal) &&
+        string.Equals(left.Target, right.Target, StringComparison.OrdinalIgnoreCase);
+
+    public int GetHashCode(StudentAgentChannelKey key) =>
+        HashCode.Combine(StringComparer.Ordinal.GetHashCode(key.CampusId),
+            StringComparer.OrdinalIgnoreCase.GetHashCode(key.Target));
+}
+
+internal sealed class StudentAgentChannelRegistry(
+    Action<string, string> persistSeenTarget,
+    Func<string, string, bool> hasPersistedSeenTarget)
+{
+    private sealed record Registration(Guid Id,
+        Func<StudentAgentChannelMessage, CancellationToken, Task<StudentAgentChannelMessage>> SendAsync);
+
+    private readonly ConcurrentDictionary<StudentAgentChannelKey, Registration> _online =
+        new(StudentAgentChannelKeyComparer.Instance);
+    private readonly ConcurrentDictionary<StudentAgentChannelKey, byte> _previouslyConnected =
+        new(StudentAgentChannelKeyComparer.Instance);
+
+    public bool HasConnectedBefore(string campusId, string target)
+    {
+        var key = CreateKey(campusId, target);
+        return _previouslyConnected.ContainsKey(key) || hasPersistedSeenTarget(key.CampusId, key.Target);
+    }
+
+    public bool IsConnected(string campusId, string target) => _online.ContainsKey(CreateKey(campusId, target));
+
+    public IDisposable Register(string campusId, string target,
+        Func<StudentAgentChannelMessage, CancellationToken, Task<StudentAgentChannelMessage>> sendAsync)
+    {
+        ArgumentNullException.ThrowIfNull(sendAsync);
+        var key = CreateKey(campusId, target);
+        var registration = new Registration(Guid.NewGuid(), sendAsync);
+        try { persistSeenTarget(key.CampusId, key.Target); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            InvalidDataException or System.Security.SecurityException or NotSupportedException)
+        {
+            Trace.TraceError("Could not persist student channel target {0}/{1}: {2}",
+                key.CampusId, key.Target, exception);
+        }
+        _online[key] = registration;
+        _previouslyConnected[key] = 0;
+        return new RegistrationLease(this, key, registration.Id);
+    }
+
+    public async Task<StudentAgentChannelMessage> SendAsync(string campusId, string target,
+        StudentAgentChannelMessage message, CancellationToken cancellationToken = default)
+    {
+        var key = CreateKey(campusId, target);
+        if (!_online.TryGetValue(key, out var registration))
+            throw new HttpRequestException("学生 Agent 当前离线；本次请求未发送，请在 Agent 重新连接后重试。");
+        return await registration.SendAsync(message, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static StudentAgentChannelKey CreateKey(string campusId, string target)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return new StudentAgentChannelKey(campusId,
+            ClassroomEventCryptography.NormalizeSingleTarget(target));
+    }
+
+    private sealed class RegistrationLease(StudentAgentChannelRegistry owner, StudentAgentChannelKey key,
+        Guid registrationId) : IDisposable
     {
         private int _disposed;
         public void Dispose()
         {
             if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
-            if (Online.TryGetValue(target, out var current) && current.Id == registrationId)
-                Online.TryRemove(new KeyValuePair<string, Registration>(target, current));
+            if (owner._online.TryGetValue(key, out var current) && current.Id == registrationId)
+                owner._online.TryRemove(new KeyValuePair<StudentAgentChannelKey, Registration>(key, current));
         }
     }
 }
@@ -291,32 +355,32 @@ internal static class StudentAgentChannelSeenTargetStore
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow
     };
-    private static HashSet<string>? _targets;
+    private static HashSet<StudentAgentChannelKey>? _targets;
     private static string PathName => Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
         "VeyonCampus", "StudentAgentChannel", "targets.json");
 
-    public static bool Contains(string target)
+    public static bool Contains(string campusId, string target)
     {
-        lock (Gate) return ReadTargets().Contains(target);
+        lock (Gate) return ReadTargets().Contains(CreateKey(campusId, target));
     }
 
-    public static void Mark(string target)
+    public static void Mark(string campusId, string target)
     {
         lock (Gate)
         {
             var targets = ReadTargets();
-            if (!targets.Add(target)) return;
+            if (!targets.Add(CreateKey(campusId, target))) return;
             if (targets.Count > 5000)
                 throw new InvalidDataException("学生连接历史超过允许的电脑数量。");
             WriteTargets(targets);
         }
     }
 
-    private static HashSet<string> ReadTargets()
+    private static HashSet<StudentAgentChannelKey> ReadTargets()
     {
         if (_targets is not null) return _targets;
         var path = PathName;
-        if (!File.Exists(path)) return _targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(path)) return _targets = new HashSet<StudentAgentChannelKey>(StudentAgentChannelKeyComparer.Instance);
         PathLinkSecurity.RejectLinks(path);
         var info = new FileInfo(path);
         if (info.Length is <= 0 or > MaximumFileBytes)
@@ -325,19 +389,30 @@ internal static class StudentAgentChannelSeenTargetStore
         PolicyJson.RejectDuplicateFields(bytes);
         var document = System.Text.Json.JsonSerializer.Deserialize<SeenTargetsDocument>(bytes, JsonOptions)
                        ?? throw new InvalidDataException("学生连接历史文件为空。");
-        if (document.SchemaVersion != 1 || document.Targets is null || document.Targets.Count > 5000)
-            throw new InvalidDataException("学生连接历史文件版本或电脑数量无效。");
-        var targets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var rawTarget in document.Targets)
+        var targets = new HashSet<StudentAgentChannelKey>(StudentAgentChannelKeyComparer.Instance);
+        if (document.SchemaVersion == 1 && document.Targets is { Count: <= 5000 } legacyTargets)
         {
-            var normalized = ClassroomEventCryptography.NormalizeSingleTarget(rawTarget);
-            if (normalized != rawTarget || !targets.Add(normalized))
-                throw new InvalidDataException("学生连接历史包含无效或重复的电脑名称。");
+            // A v1 entry has no campus identity; treating it as shared history would cross campus boundaries.
+            foreach (var rawTarget in legacyTargets)
+            {
+                var normalized = ClassroomEventCryptography.NormalizeSingleTarget(rawTarget);
+                if (normalized != rawTarget)
+                    throw new InvalidDataException("旧版学生连接历史包含无效电脑名称。");
+            }
+            return _targets = targets;
+        }
+        if (document.SchemaVersion != 2 || document.Entries is not { Count: <= 5000 } entries)
+            throw new InvalidDataException("学生连接历史文件版本或电脑数量无效。");
+        foreach (var entry in entries)
+        {
+            var key = CreateKey(entry.CampusId, entry.Target);
+            if (key.Target != entry.Target || !targets.Add(key))
+                throw new InvalidDataException("学生连接历史包含无效或重复的校区/电脑组合。");
         }
         return _targets = targets;
     }
 
-    private static void WriteTargets(IReadOnlyCollection<string> targets)
+    private static void WriteTargets(IReadOnlyCollection<StudentAgentChannelKey> targets)
     {
         var path = Path.GetFullPath(PathName);
         var directory = Path.GetDirectoryName(path)
@@ -345,7 +420,9 @@ internal static class StudentAgentChannelSeenTargetStore
         Directory.CreateDirectory(directory);
         PathLinkSecurity.RejectLinks(directory);
         var bytes = System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(
-            new SeenTargetsDocument(1, targets.Order(StringComparer.OrdinalIgnoreCase).ToArray()), JsonOptions);
+            new SeenTargetsDocument(2, null, targets.OrderBy(key => key.CampusId, StringComparer.Ordinal)
+                .ThenBy(key => key.Target, StringComparer.OrdinalIgnoreCase)
+                .Select(key => new SeenTargetEntry(key.CampusId, key.Target)).ToArray()), JsonOptions);
         if (bytes.Length > MaximumFileBytes)
             throw new InvalidDataException("学生连接历史文件超过大小限制。");
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
@@ -367,20 +444,34 @@ internal static class StudentAgentChannelSeenTargetStore
         }
     }
 
-    private sealed record SeenTargetsDocument(int SchemaVersion, IReadOnlyList<string> Targets);
+    private static StudentAgentChannelKey CreateKey(string campusId, string target)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return new StudentAgentChannelKey(campusId,
+            ClassroomEventCryptography.NormalizeSingleTarget(target));
+    }
+
+    private sealed record SeenTargetsDocument(int SchemaVersion, IReadOnlyList<string>? Targets = null,
+        IReadOnlyList<SeenTargetEntry>? Entries = null);
+    private sealed record SeenTargetEntry(string CampusId, string Target);
 }
 
 /// <summary>
-/// Routes teacher control traffic only over the authenticated student-initiated channel. A narrowly
-/// scoped legacy option is reserved for an explicit first-time identity discovery operation.
+/// Routes teacher control traffic over the authenticated student-initiated channel when available.
+/// Explicitly opted-in, signed compatibility operations may fall back to direct LAN HTTP while that
+/// channel is unavailable.
 /// </summary>
 public sealed class StudentAgentChannelHttpMessageHandler : DelegatingHandler
 {
+    private readonly string _campusId;
     private readonly bool _allowLegacyDirectFallback;
+    private readonly bool _allowDirectFallbackWhenChannelOffline;
 
-    public StudentAgentChannelHttpMessageHandler(bool allowLegacyDirectFallback = false)
+    public StudentAgentChannelHttpMessageHandler(string campusId, bool allowLegacyDirectFallback = false,
+        bool allowDirectFallbackWhenChannelOffline = false)
         : base(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) =>
-        _allowLegacyDirectFallback = allowLegacyDirectFallback;
+        (_campusId, _allowLegacyDirectFallback, _allowDirectFallbackWhenChannelOffline) =
+        (ValidateCampus(campusId), allowLegacyDirectFallback, allowDirectFallbackWhenChannelOffline);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
         CancellationToken cancellationToken)
@@ -390,10 +481,23 @@ public sealed class StudentAgentChannelHttpMessageHandler : DelegatingHandler
             !IPAddress.TryParse(uri.Host, out _) && Uri.CheckHostName(uri.Host) != UriHostNameType.Dns)
             return base.SendAsync(request, cancellationToken);
         var target = uri.Host;
-        if (StudentAgentChannelHub.IsConnected(target) || StudentAgentChannelHub.HasConnectedBefore(target))
-            return StudentAgentChannelHub.SendHttpAsync(target, request, cancellationToken);
-        if (_allowLegacyDirectFallback)
+        if (StudentAgentChannelHub.IsConnected(_campusId, target))
+            return StudentAgentChannelHub.SendHttpAsync(_campusId, target, request, cancellationToken);
+        if (ShouldUseDirectFallback(StudentAgentChannelHub.HasConnectedBefore(_campusId, target),
+                _allowLegacyDirectFallback, _allowDirectFallbackWhenChannelOffline))
             return base.SendAsync(request, cancellationToken);
+        if (StudentAgentChannelHub.HasConnectedBefore(_campusId, target))
+            throw new HttpRequestException("学生 Agent 当前离线；本次请求未发送，请在 Agent 重新连接后重试。");
         throw new HttpRequestException("学生 Agent 尚未建立教师端长连接；已快速停止请求，不等待直连超时。请确认学生端已应用最新校区配置包并在线。");
+    }
+
+    internal static bool ShouldUseDirectFallback(bool hasConnectedBefore,
+        bool allowLegacyDirectFallback, bool allowDirectFallbackWhenChannelOffline) =>
+        allowDirectFallbackWhenChannelOffline || (!hasConnectedBefore && allowLegacyDirectFallback);
+
+    private static string ValidateCampus(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return campusId;
     }
 }

@@ -208,6 +208,7 @@
           <StackPanel Spacing="8" IsVisible="{Binding IsWindowsTeacherHost}">
             <TextBlock Text="校区名称" FontWeight="SemiBold" />
             <TextBox Text="{Binding CampusId, Mode=TwoWay}" PlaceholderText="例如：一号校区" />
+            <TextBlock Text="{Binding CampusSetupHint}" Classes="muted" TextWrapping="Wrap" />
             <TextBlock Text="电脑编号前缀" FontWeight="SemiBold" />
             <TextBox Text="{Binding RoomPrefix, Mode=TwoWay}" PlaceholderText="例如：PC-" />
           </StackPanel>

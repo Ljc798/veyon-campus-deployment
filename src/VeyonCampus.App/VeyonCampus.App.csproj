@@ -3,6 +3,7 @@
     <OutputType Condition="$([MSBuild]::IsOSPlatform('Windows'))">WinExe</OutputType>
     <OutputType Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Exe</OutputType>
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
+    <VeyonCampusEnableLocalTestUpdateUi Condition="'$(VeyonCampusEnableLocalTestUpdateUi)' == ''">false</VeyonCampusEnableLocalTestUpdateUi>
     <VeyonCampusClassroomQuickControlPilot Condition="'$(VeyonCampusClassroomQuickControlPilot)' == ''">false</VeyonCampusClassroomQuickControlPilot>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
@@ -10,6 +11,7 @@
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.TeacherConsole</VeyonCampusProduct>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(DefineConstants);STUDENT_SETUP_APP</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">$(DefineConstants);TEACHER_CONSOLE</DefineConstants>
+    <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEnableLocalTestUpdateUi)' == 'true'">$(DefineConstants);VEYONCAMPUS_LOCAL_TEST_UPDATE_UI</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
@@ -91,12 +93,14 @@
     <AvaloniaXaml Remove="StudentSetupWindow.axaml" />
     <AvaloniaXaml Remove="StudentCloudPackageWindow.axaml" />
     <AvaloniaXaml Remove="StudentSetupCleanupConfirmationWindow.axaml" />
+    <AvaloniaXaml Remove="StudentAgentUpdateProgressWindow.axaml" />
     <Compile Remove="StudentSetupWindow.axaml.cs" />
     <AvaloniaXaml Remove="StudentSetupUpdateWindow.axaml" />
     <Compile Remove="StudentSetupUpdateWindow.axaml.cs" />
     <Compile Remove="StudentSetupUpdateViewModel.cs" />
     <Compile Remove="StudentCloudPackageWindow.axaml.cs" />
     <Compile Remove="StudentSetupCleanupConfirmationWindow.axaml.cs" />
+    <Compile Remove="StudentAgentUpdateProgressWindow.axaml.cs" />
     <Compile Remove="MainViewModel.cs" />
   </ItemGroup>
 
@@ -138,7 +142,7 @@
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Agent/VeyonCampus.Agent.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;AppHostDotNetSearch=Global;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false;VeyonCampusStudentAgentBuild=true"
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)WebsitePolicyAgent/;UseAppHost=true;AppHostDotNetSearch=Global;VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusTestReleasePublicKeyPath=$(VeyonCampusTestReleasePublicKeyPath);VeyonCampusCoreLockFile=$(VeyonCampusCoreLockFile);VeyonCampusIncludeInstaller=false;VeyonCampusStudentAgentBuild=true"
              RemoveProperties="Version" />
   </Target>
 
@@ -163,21 +167,21 @@
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Companion/VeyonCampus.Companion.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)StudentCompanion/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)StudentCompanion/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusTestReleasePublicKeyPath=$(VeyonCampusTestReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="PublishEdgePolicyExecutor" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != '' and '$(VeyonCampusRole)' == 'StudentSetup'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgePolicyExecutor/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)EdgePolicyExecutor/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusTestReleasePublicKeyPath=$(VeyonCampusTestReleasePublicKeyPath);VeyonCampusCoreLockFile=packages.win-x64.lock.json;VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="PublishElevatedWorker" AfterTargets="Publish"
           Condition="'$(RuntimeIdentifier)' != '' and '$(RuntimeIdentifier)' != 'osx-arm64'">
     <MSBuild Projects="$(MSBuildThisFileDirectory)../VeyonCampus.Worker/VeyonCampus.Worker.csproj"
              Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusIncludeInstaller=false" />
+             Properties="Configuration=$(Configuration);RuntimeIdentifier=$(RuntimeIdentifier);SelfContained=$(SelfContained);PublishDir=$(PublishDir)Worker/;UseAppHost=true;AppHostDotNetSearch=Global;Version=$(Version);VeyonCampusReleasePublicKeyPath=$(VeyonCampusReleasePublicKeyPath);VeyonCampusTestReleasePublicKeyPath=$(VeyonCampusTestReleasePublicKeyPath);VeyonCampusIncludeInstaller=false" />
   </Target>
 
   <Target Name="WriteVeyonCampusRoleMetadata" AfterTargets="Publish">

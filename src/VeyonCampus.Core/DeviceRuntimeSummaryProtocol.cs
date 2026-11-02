@@ -128,7 +128,8 @@ public static class StudentAgentRuntimeSummaryCryptography
             !summary.ApplicationSupported && summary.ApplicationExpiresUtc is not null ||
             summary.SystemPolicySupported != (summary.SystemPolicyRevision is not null) ||
             summary.SystemPolicySupported != (summary.SystemPolicyPending is not null) ||
-            summary.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or "needsReview"))
+            summary.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or
+                "superseded" or "needsReview"))
             throw new InvalidDataException("学生 Agent 轻量运行摘要字段无效。");
 
         if (summary.InputGuard is { } guard)
@@ -176,7 +177,7 @@ public static class StudentAgentRuntimeSummaryTransport
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new StudentAgentChannelHttpMessageHandler();
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId);
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         var tasks = validated.Select(async target =>
         {

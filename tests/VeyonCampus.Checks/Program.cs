@@ -60,6 +60,26 @@ if (args is ["--mobile-control-api-fixtures"])
     return;
 }
 
+if (args is ["--student-update-recovery-state-fixtures"])
+{
+    StudentApplicationUpdateChecks.RunRecoveryStateFixtures();
+    Console.WriteLine("PASS Student Agent recovery superseding state and version fences");
+    return;
+}
+
+if (args is ["--student-agent-channel-fixtures"])
+{
+    await StudentAgentChannelChecks.RunAsync();
+    return;
+}
+
+if (args is ["--student-application-update-fixtures"])
+{
+    StudentApplicationUpdateChecks.RunCompatibilityFixtures();
+    Console.WriteLine("PASS Student Agent capability matrix, version binding, rebase safety, and handoff rollback fixtures");
+    return;
+}
+
 if (args is ["--mobile-policy-mode-fixtures"])
 {
     var cases = new (string? Mode, int Blocked, int Allowed, WebsitePolicyMode Expected)[]

@@ -44,7 +44,17 @@ public sealed record StudentApplicationUpdateDownloadCapabilityResponse(
     string CampusId,
     Guid Nonce,
     DateTimeOffset CollectedUtc,
-    int DownloadRequestProtocolVersion);
+    int DownloadRequestProtocolVersion,
+    int? StudentUpdateProtocolVersion = null,
+    string? StudentSetupVersion = null,
+    string? AgentRuntimeVersion = null,
+    string? AgentProductVersion = null,
+    string? CoreAssemblyVersion = null,
+    string? DeveloperReleasePublicKeyFingerprint = null,
+    string? LocalTestReleasePublicKeyFingerprint = null,
+    bool? TeacherChannelConfigurationReady = null,
+    string? TeacherChannelConfigurationFingerprint = null,
+    string? ConfigurationFingerprint = null);
 
 public static class StudentApplicationUpdateDownloadCapabilityCryptography
 {
@@ -63,7 +73,143 @@ public static class StudentApplicationUpdateDownloadCapabilityCryptography
             response.CollectedUtc < now.AddMinutes(-10) ||
             response.DownloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion)
             throw new InvalidDataException("学生更新下载能力回执无效或不受支持。");
+        ValidateOptionalVersion(response.StudentSetupVersion, "StudentSetup 产品版本");
+        ValidateOptionalVersion(response.AgentRuntimeVersion, "Agent 运行版本");
+        ValidateOptionalVersion(response.AgentProductVersion, "Agent 产品版本");
+        ValidateOptionalVersion(response.CoreAssemblyVersion, "Core 程序集版本");
+        ValidateOptionalFingerprint(response.DeveloperReleasePublicKeyFingerprint, "正式发行公钥指纹");
+        ValidateOptionalFingerprint(response.LocalTestReleasePublicKeyFingerprint, "本机测试发行公钥指纹");
+        ValidateOptionalFingerprint(response.TeacherChannelConfigurationFingerprint, "教师连接配置指纹");
+        ValidateOptionalFingerprint(response.ConfigurationFingerprint, "学生 Agent 配置指纹");
+        if (response.StudentUpdateProtocolVersion is < 1 or > 32767 ||
+            (response.TeacherChannelConfigurationReady == true) !=
+            (response.TeacherChannelConfigurationFingerprint is not null))
+            throw new InvalidDataException("学生更新协议或教师连接配置能力字段无效。");
     }
+
+    private static void ValidateOptionalVersion(string? value, string label)
+    {
+        if (value is null) return;
+        if (string.IsNullOrWhiteSpace(value) || value.Length > 64)
+            throw new InvalidDataException(label + "字段无效。");
+        _ = ApplicationReleaseClient.CompareVersions(value, value);
+    }
+
+    private static void ValidateOptionalFingerprint(string? value, string label)
+    {
+        if (value is not null && !Regex.IsMatch(value, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException(label + "格式无效。");
+    }
+}
+
+public enum StudentAgentUpdateTransportMode
+{
+    Unsupported,
+    SignedDownloadV1,
+    LegacySignedHttp
+}
+
+/// <summary>Capability-based compatibility for the trusted /v1/update entry point.</summary>
+public static class StudentAgentUpdateCompatibility
+{
+    public static StudentAgentUpdateTransportMode SelectTransport(string agentRuntimeVersion,
+        int? studentUpdateProtocolVersion, int? downloadRequestProtocolVersion, string releaseChannel,
+        string? developerReleaseKeyFingerprint = null, string? expectedDeveloperReleaseKeyFingerprint = null,
+        string? localTestKeyFingerprint = null, string? expectedLocalTestKeyFingerprint = null,
+        bool capabilityReportsPinnedKey = false)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
+        if (studentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+            return StudentAgentUpdateTransportMode.Unsupported;
+
+        if (releaseChannel == "local-test")
+        {
+            if (downloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion ||
+                string.IsNullOrWhiteSpace(expectedLocalTestKeyFingerprint) ||
+                !string.Equals(localTestKeyFingerprint, expectedLocalTestKeyFingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+                return StudentAgentUpdateTransportMode.Unsupported;
+            return StudentAgentUpdateTransportMode.SignedDownloadV1;
+        }
+
+        if (releaseChannel is not ("stable" or ""))
+            return StudentAgentUpdateTransportMode.Unsupported;
+        if (capabilityReportsPinnedKey &&
+            (string.IsNullOrWhiteSpace(expectedDeveloperReleaseKeyFingerprint) ||
+             string.IsNullOrWhiteSpace(developerReleaseKeyFingerprint) ||
+             !string.Equals(developerReleaseKeyFingerprint, expectedDeveloperReleaseKeyFingerprint,
+                 StringComparison.OrdinalIgnoreCase)))
+            return StudentAgentUpdateTransportMode.Unsupported;
+        if (downloadRequestProtocolVersion == StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion)
+        {
+            if (developerReleaseKeyFingerprint is not null &&
+                (expectedDeveloperReleaseKeyFingerprint is null ||
+                 !string.Equals(developerReleaseKeyFingerprint, expectedDeveloperReleaseKeyFingerprint,
+                     StringComparison.OrdinalIgnoreCase)))
+                return StudentAgentUpdateTransportMode.Unsupported;
+            return StudentAgentUpdateTransportMode.SignedDownloadV1;
+        }
+        if (downloadRequestProtocolVersion is not null)
+            return StudentAgentUpdateTransportMode.Unsupported;
+        // Atomic protocol v1 predates signed per-device download requests. It is safe to use
+        // the existing trusted HTTP update route when the Agent signed status confirms v1;
+        // the full release signature and installer digest are still verified by that Agent.
+        return StudentAgentUpdateTransportMode.LegacySignedHttp;
+    }
+
+    public static string DescribeUnsupported(string agentRuntimeVersion,
+        int? studentUpdateProtocolVersion,
+        StudentApplicationUpdateDownloadCapabilityResponse? capability,
+        string releaseChannel,
+        string? expectedDeveloperReleaseKeyFingerprint = null,
+        string? expectedLocalTestKeyFingerprint = null,
+        bool capabilityReportsPinnedKey = false)
+    {
+        var reportedUpdateProtocol = studentUpdateProtocolVersion?.ToString(CultureInfo.InvariantCulture) ?? "未上报";
+        if (studentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
+            return $"学生 Agent {agentRuntimeVersion} 未报告受支持的原子更新协议 v1（回执：{reportedUpdateProtocol}）；未发送安装包。";
+
+        if (releaseChannel == "local-test")
+        {
+            if (capability is null)
+                return $"学生 Agent {agentRuntimeVersion} 未返回签名的本机测试下载能力回执；测试包未下发。请在快照上本地修复 Student Agent 后重试。";
+
+            if (capability.DownloadRequestProtocolVersion != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion)
+                return $"学生 Agent {agentRuntimeVersion} 的签名下载协议为 v{capability.DownloadRequestProtocolVersion}，本机测试包要求 v1；测试包未下发。";
+
+            if (string.IsNullOrWhiteSpace(expectedLocalTestKeyFingerprint))
+                return "教师端测试包没有固定本机测试发行公钥；测试包未下发。请使用与目标包配套的教师端测试包。";
+
+            if (string.IsNullOrWhiteSpace(capability.LocalTestReleasePublicKeyFingerprint))
+                return $"学生 Agent {agentRuntimeVersion} 的签名能力回执未报告本机测试发行公钥；测试包未下发。请在快照上安装配套引导包并修复 Student Agent。";
+
+            if (!string.Equals(capability.LocalTestReleasePublicKeyFingerprint, expectedLocalTestKeyFingerprint,
+                    StringComparison.OrdinalIgnoreCase))
+                return $"学生 Agent {agentRuntimeVersion} 报告的本机测试公钥指纹 {FingerprintPrefix(capability.LocalTestReleasePublicKeyFingerprint)} 与教师端期望值 {FingerprintPrefix(expectedLocalTestKeyFingerprint)} 不一致；测试包未下发。请使用同一测试公钥构建的教师端、学生引导包和目标包。";
+
+            return "学生 Agent 的本机测试更新能力不完整；测试包未下发。";
+        }
+
+        if (capability?.DownloadRequestProtocolVersion is { } downloadProtocol &&
+            downloadProtocol != StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion)
+            return $"学生 Agent {agentRuntimeVersion} 的签名下载协议为 v{downloadProtocol}，教师端要求 v1；未发送安装包。";
+
+        if (capabilityReportsPinnedKey)
+        {
+            if (string.IsNullOrWhiteSpace(expectedDeveloperReleaseKeyFingerprint))
+                return "教师端没有固定正式发行公钥，不能向此 Agent 下发正式更新。";
+            if (string.IsNullOrWhiteSpace(capability?.DeveloperReleasePublicKeyFingerprint))
+                return $"学生 Agent {agentRuntimeVersion} 没有签名报告正式发行公钥；未发送安装包。请先修复 Student Agent。";
+            if (!string.Equals(capability.DeveloperReleasePublicKeyFingerprint,
+                    expectedDeveloperReleaseKeyFingerprint, StringComparison.OrdinalIgnoreCase))
+                return $"学生 Agent {agentRuntimeVersion} 报告的正式发行公钥指纹 {FingerprintPrefix(capability.DeveloperReleasePublicKeyFingerprint)} 与教师端期望值 {FingerprintPrefix(expectedDeveloperReleaseKeyFingerprint)} 不一致；未发送安装包。";
+        }
+
+        return $"学生 Agent {agentRuntimeVersion} 的更新能力与正式发行通道不兼容；未发送安装包。";
+    }
+
+    private static string FingerprintPrefix(string fingerprint) =>
+        fingerprint.Length <= 12 ? fingerprint : fingerprint[..12];
 }
 
 public sealed class StudentApplicationUpdateDownloadRequestSigner
@@ -429,6 +575,7 @@ public static class StudentApplicationUpdateProcessor
                 command.CommandId, StudentUpdatePhase.TeacherOffer, teacherOfferStartedUtc,
                 teacherOfferStartedTimestamp);
             var manifest = command.Release.Manifest;
+            var releaseAgentVersion = manifest.StudentAgentVersion;
             var installDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
                 "Veyon Campus", "Student");
             // Named Mutex is thread-affine; limit the preflight lock to this synchronous section.
@@ -448,8 +595,10 @@ public static class StudentApplicationUpdateProcessor
                 ApplicationReleaseCompatibility.EnsureSupports(manifest,
                     WindowsApplicationPolicyStateStore.HasAnyActiveState(),
                     WindowsStudentSystemPolicyAgent.HasAnyActiveState());
-                var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
-                if (versionComparison == 0 && agentComparison <= 0)
+                var agentComparison = releaseAgentVersion is null
+                    ? 1
+                    : ApplicationReleaseClient.CompareVersions(releaseAgentVersion, currentAgentVersion);
+                if (versionComparison == 0 && releaseAgentVersion is not null && agentComparison <= 0)
                 {
                     teacherOfferTiming.Complete();
                     return RecordNoChange(command, configPath, config, currentVersion, currentAgentVersion);
@@ -531,9 +680,13 @@ public static class StudentApplicationUpdateProcessor
                 ApplicationReleaseCompatibility.EnsureSupports(manifest,
                     WindowsApplicationPolicyStateStore.HasAnyActiveState(),
                     WindowsStudentSystemPolicyAgent.HasAnyActiveState());
-                var agentComparison = ApplicationReleaseClient.CompareVersions(manifest.Version, currentAgentVersion);
-                var targetAgentVersion = agentComparison > 0 ? manifest.Version : currentAgentVersion;
-                if (versionComparison == 0 && agentComparison <= 0)
+                var agentComparison = releaseAgentVersion is null
+                    ? 1
+                    : ApplicationReleaseClient.CompareVersions(releaseAgentVersion, currentAgentVersion);
+                var targetAgentVersion = releaseAgentVersion is not null && agentComparison > 0
+                    ? releaseAgentVersion
+                    : currentAgentVersion;
+                if (versionComparison == 0 && releaseAgentVersion is not null && agentComparison <= 0)
                 {
                     prepareAndBackupTiming.Complete();
                     return RecordNoChange(command, configPath, config, currentVersion, currentAgentVersion);
@@ -600,6 +753,22 @@ public static class StudentApplicationUpdateProcessor
                     StudentUpdateTransactionState.SetupInstalled);
                 setupInstallTiming.Complete();
                 var installedVersion = manifest.Version;
+                var agentSourceDirectory = Path.Combine(installDirectory, "WebsitePolicyAgent");
+                var sourceExecutable = Path.Combine(agentSourceDirectory, "VeyonCampus.Agent.exe");
+                PathLinkSecurity.RejectLinks(agentSourceDirectory);
+                PathLinkSecurity.RejectLinks(sourceExecutable);
+                PathLinkSecurity.RejectLinks(Path.ChangeExtension(sourceExecutable, ".dll"));
+                var bundledAgentVersion = WorkerInstallationGuard.GetAssemblyProductVersion(sourceExecutable);
+                if (releaseAgentVersion is not null &&
+                    !string.Equals(releaseAgentVersion, bundledAgentVersion, StringComparison.Ordinal))
+                    throw new InvalidDataException("已签名发行清单中的 Agent 版本与 StudentSetup 内置 Agent 程序集版本不一致；已停止切换。 ");
+                if (ApplicationReleaseClient.CompareVersions(bundledAgentVersion, currentAgentVersion) < 0)
+                    throw new InvalidDataException("StudentSetup 内置 Agent 低于当前 SYSTEM Agent；为防止降级，已回滚本次安装。 ");
+                if (!string.Equals(transaction.TargetAgentVersion, bundledAgentVersion, StringComparison.Ordinal))
+                    transaction = StudentUpdateAtomicTransaction.RebaseTargetAgentVersion(configPath, transaction,
+                        transaction.TargetAgentVersion, bundledAgentVersion);
+                agentComparison = ApplicationReleaseClient.CompareVersions(bundledAgentVersion,
+                    currentAgentVersion);
                 if (agentComparison <= 0)
                 {
                     using (var healthTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
@@ -619,13 +788,12 @@ public static class StudentApplicationUpdateProcessor
                         agentRestartPending: false);
                 }
 
-                var agentSourceDirectory = Path.Combine(installDirectory, "WebsitePolicyAgent");
                 StagedWebsitePolicyAgentUpdate stagedAgentUpdate;
                 using (var agentStageTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
                            command.CommandId, StudentUpdatePhase.AgentStage))
                 {
                     stagedAgentUpdate = WebsitePolicyAgentInstaller.StageAgentUpdate(agentSourceDirectory,
-                        manifest.Version, configPath);
+                        targetAgentVersion, configPath);
                     transaction = StudentUpdateAtomicTransaction.Advance(configPath, transaction,
                         StudentUpdateTransactionState.AgentStaged);
                     agentStageTiming.Complete();
@@ -638,18 +806,18 @@ public static class StudentApplicationUpdateProcessor
                     WebsitePolicyAgentInstaller.ActivateStagedAgentUpdate(stagedAgentUpdate.TargetExecutablePath,
                         stagedAgentUpdate.PreviousExecutablePath, configPath);
                     StudentApplicationUpdateHandoff.Start(stagedAgentUpdate.TargetExecutablePath,
-                        stagedAgentUpdate.PreviousExecutablePath, configPath, manifest.Version, currentAgentVersion,
+                        stagedAgentUpdate.PreviousExecutablePath, configPath, targetAgentVersion, currentAgentVersion,
                         configFingerprint, command.CommandId);
                     activationTiming.Complete();
                 }
                 return CreateResult(command, installedVersion, currentAgentVersion,
-                    $"StudentSetup {installedVersion} 已读回；Student Agent {manifest.Version} 正在切换并重启。",
+                    $"StudentSetup {installedVersion} 已读回；Student Agent {targetAgentVersion} 正在切换并重启。",
                     agentRestartPending: true);
             }
             catch (Exception updateFailure)
             {
                 if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
-                        StudentUpdateTransactionState.RolledBack))
+                        StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
                 {
                     using var rollbackTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
                         command.CommandId, StudentUpdatePhase.Rollback);
@@ -714,7 +882,7 @@ public static class StudentApplicationUpdateProcessor
         {
             var current = StudentUpdateAtomicTransaction.Read(configPath);
             if (current is not null && current.State is not (StudentUpdateTransactionState.Committed or
-                    StudentUpdateTransactionState.RolledBack))
+                    StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
             {
                 try { StudentUpdateAtomicTransaction.Rollback(configPath, current, commitFailure); }
                 catch (Exception rollbackFailure)
@@ -797,10 +965,11 @@ public static class StudentApplicationUpdateProcessor
 
 public sealed record StudentApplicationUpdatePushResult(string Target, bool Succeeded, string Detail,
     bool NeedsReview = false, StudentAgentIdentityTrustCandidate? IdentityCandidate = null,
-    bool RolledBack = false);
+    bool RolledBack = false, bool PendingVerification = false);
 
 public sealed record StudentApplicationUpdateSourceVersions(string StudentSetupVersion, string AgentVersion,
-    int StudentUpdateProtocolVersion);
+    int StudentUpdateProtocolVersion, string ConfigurationFingerprint = "",
+    string? TargetSetupVersion = null, string? TargetAgentVersion = null, string ReleaseChannel = "stable");
 
 public sealed record StudentApplicationUpdateProgress(string Target, int CompletedTargets, int TotalTargets,
     string Stage, IReadOnlyList<StudentUpdatePhaseTiming>? PhaseTimings = null, Guid? CommandId = null,
@@ -1195,7 +1364,7 @@ public static class StudentApplicationUpdateTransport
     private const int MaximumResultBytes = StudentAgentResponseCryptography.MaximumEnvelopeBytes;
 
     public static async Task<IReadOnlyList<StudentApplicationUpdatePushResult>> PushAsync(
-        IEnumerable<string> targets, string campusId, string expectedAgentVersion, RSA campusPrivateKey,
+        IEnumerable<string> targets, string campusId, string expectedSetupVersion, RSA campusPrivateKey,
         Func<string, string, int?, CancellationToken,
             Task<(Guid CommandId, string SignedCommand)>> createSignedCommand,
         CancellationToken cancellationToken = default,
@@ -1205,12 +1374,13 @@ public static class StudentApplicationUpdateTransport
     {
         ArgumentNullException.ThrowIfNull(targets);
         ArgumentNullException.ThrowIfNull(campusPrivateKey);
-        ArgumentException.ThrowIfNullOrWhiteSpace(expectedAgentVersion);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedSetupVersion);
         ArgumentNullException.ThrowIfNull(createSignedCommand);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        _ = ApplicationReleaseClient.CompareVersions(expectedAgentVersion, expectedAgentVersion);
+        _ = ApplicationReleaseClient.CompareVersions(expectedSetupVersion, expectedSetupVersion);
         var validatedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
-        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback: true,
+            allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = RequestTimeout };
         using var concurrencyLimit = new SemaphoreSlim(8, 8);
         var completedTargets = 0;
@@ -1230,8 +1400,49 @@ public static class StudentApplicationUpdateTransport
                 if (sourceVersions is null || !sourceVersions.TryGetValue(target, out var source) ||
                     source.StudentUpdateProtocolVersion != WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion)
                     throw new InvalidDataException("缺少可信的更新前版本或原子更新协议能力读回；已停止下发。");
-                var downloadRequestProtocolVersion = await ReadDownloadRequestProtocolVersionAsync(client,
+                var downloadCapability = await ReadDownloadRequestCapabilityAsync(client,
                     target, campusId, campusPrivateKey, pinnedKey, cancellationToken).ConfigureAwait(false);
+                var releaseChannel = source.ReleaseChannel is "local-test" ? "local-test" : "stable";
+                var expectedTestKeyFingerprint = releaseChannel == "local-test"
+                    ? ApplicationReleaseTrust.GetPinnedTestPublicKeyFingerprint()
+                    : null;
+                var capabilityReportsPinnedKey = downloadCapability is
+                    { AgentProductVersion: not null } or { CoreAssemblyVersion: not null };
+                var transportMode = StudentAgentUpdateCompatibility.SelectTransport(source.AgentVersion,
+                    source.StudentUpdateProtocolVersion, downloadCapability?.DownloadRequestProtocolVersion,
+                    releaseChannel, downloadCapability?.DeveloperReleasePublicKeyFingerprint,
+                    releaseChannel == "stable" ? ApplicationReleaseTrust.GetPinnedPublicKeyFingerprint() : null,
+                    downloadCapability?.LocalTestReleasePublicKeyFingerprint, expectedTestKeyFingerprint,
+                    capabilityReportsPinnedKey);
+                if (transportMode == StudentAgentUpdateTransportMode.Unsupported)
+                    throw new InvalidDataException(StudentAgentUpdateCompatibility.DescribeUnsupported(
+                        source.AgentVersion, source.StudentUpdateProtocolVersion, downloadCapability,
+                        releaseChannel,
+                        releaseChannel == "stable" ? ApplicationReleaseTrust.GetPinnedPublicKeyFingerprint() : null,
+                        expectedTestKeyFingerprint, capabilityReportsPinnedKey));
+                var downloadRequestProtocolVersion = downloadCapability?.DownloadRequestProtocolVersion;
+                if (downloadCapability?.AgentRuntimeVersion is { } capabilityRuntimeVersion &&
+                    !string.Equals(capabilityRuntimeVersion, source.AgentVersion, StringComparison.Ordinal))
+                    throw new InvalidDataException("更新能力回执中的 Agent 运行版本与预检状态不一致；未下发更新命令。");
+                if (downloadCapability?.StudentSetupVersion is { } capabilitySetupVersion &&
+                    !string.Equals(capabilitySetupVersion, source.StudentSetupVersion, StringComparison.Ordinal))
+                    throw new InvalidDataException("更新能力回执中的 StudentSetup 版本与预检状态不一致；未下发更新命令。");
+                if (downloadCapability?.AgentProductVersion is { } capabilityProductVersion &&
+                    downloadCapability.AgentRuntimeVersion is { } reportedRuntimeVersion &&
+                    !string.Equals(capabilityProductVersion, reportedRuntimeVersion, StringComparison.Ordinal))
+                    throw new InvalidDataException("Agent 运行版本与 Agent 程序集产品版本不一致；本次未下发更新命令。");
+                if (downloadCapability?.StudentUpdateProtocolVersion is { } capabilityUpdateProtocol &&
+                    capabilityUpdateProtocol != source.StudentUpdateProtocolVersion)
+                    throw new InvalidDataException("更新能力回执中的原子更新协议与预检状态不一致；未下发更新命令。");
+                if (downloadCapability?.ConfigurationFingerprint is { } capabilityConfigFingerprint &&
+                    !string.Equals(capabilityConfigFingerprint, source.ConfigurationFingerprint,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("更新能力回执中的校区配置指纹与预检状态不一致；未下发更新命令。");
+                progress?.Report(new StudentApplicationUpdateProgress(target,
+                    Volatile.Read(ref completedTargets), validatedTargets.Count,
+                    transportMode == StudentAgentUpdateTransportMode.LegacySignedHttp
+                        ? "使用已固定身份的旧版签名 HTTP 更新通道"
+                        : "使用已固定身份的签名下载更新通道"));
                 var command = await createSignedCommand(target, pinnedKey, downloadRequestProtocolVersion,
                     cancellationToken).ConfigureAwait(false);
                 if (command.CommandId == Guid.Empty || string.IsNullOrWhiteSpace(command.SignedCommand))
@@ -1282,8 +1493,8 @@ public static class StudentApplicationUpdateTransport
                         cancellationToken, progress, () => Volatile.Read(ref completedTargets),
                         validatedTargets.Count, maxWait: TimeSpan.FromSeconds(20),
                         allowStatusPolling: false).ConfigureAwait(false);
-                    return ResolveUncertainUpdateResult(target, uncertainReadback, source,
-                        expectedAgentVersion,
+                    return ResolveUncertainUpdateResult(campusId, target, uncertainReadback, source,
+                        expectedSetupVersion,
                         exception is TaskCanceledException
                             ? "等待学生端更新响应超时。"
                             : "教师端没有收到学生端更新响应。");
@@ -1308,8 +1519,8 @@ public static class StudentApplicationUpdateTransport
                         () => Volatile.Read(ref completedTargets), validatedTargets.Count,
                         cancellationToken).ConfigureAwait(false);
                     if (latePreflightFailure is not null) return latePreflightFailure;
-                    return ResolveUncertainUpdateResult(target, emptyReceiptReadback, source,
-                        expectedAgentVersion,
+                    return ResolveUncertainUpdateResult(campusId, target, emptyReceiptReadback, source,
+                        expectedSetupVersion,
                         "学生 Agent 返回了空的更新签名回执；已停止长时间等待并在 15 秒内核对事务状态。");
                 }
                 if (response.StatusCode is not (HttpStatusCode.OK or HttpStatusCode.Accepted))
@@ -1354,11 +1565,11 @@ public static class StudentApplicationUpdateTransport
                     if (failedReadback is { State: "committed" } committed)
                     {
                         var committedTarget = committed.MatchesPinnedKey &&
-                            MatchesCommittedVersions(committed.Status, source, expectedAgentVersion);
+                            MatchesCommittedVersions(committed.Status, source, expectedSetupVersion);
                         if (committedTarget)
-                            return new StudentApplicationUpdatePushResult(target, true,
-                                "StudentSetup 与 Student Agent 的本次签名事务已确认提交。",
-                                IdentityCandidate: committed.IdentityCandidate);
+                            return CreateCommittedUpdateResult(campusId, target, committed.Status,
+                                committed.IdentityCandidate, source,
+                                "StudentSetup 与 Student Agent 的本次签名事务已确认提交。");
                     }
                     if (failedReadback is { State: "needsReview" } ||
                         failedReadback is { State: "inProgress" } || failedReadback is null ||
@@ -1374,7 +1585,8 @@ public static class StudentApplicationUpdateTransport
                 var verifiedUpdate = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(resultText,
                     pinnedKey);
                 StudentApplicationUpdateResponseCryptography.Validate(verifiedUpdate.Payload, campusId,
-                    command.CommandId, expectedAgentVersion, restartPending, DateTimeOffset.UtcNow);
+                    command.CommandId, source.TargetSetupVersion ?? expectedSetupVersion,
+                    source.TargetAgentVersion, restartPending, DateTimeOffset.UtcNow);
                 var updateIdentity = CreateIdentityCandidate(target, campusId, verifiedUpdate, pinnedKey);
                 if (restartPending)
                 {
@@ -1395,16 +1607,17 @@ public static class StudentApplicationUpdateTransport
                     if (readback.State == "committed")
                     {
                         var targetVersionsMatch = MatchesCommittedVersions(readback.Status, source,
-                            expectedAgentVersion) &&
+                            expectedSetupVersion) &&
                             string.Equals(readback.Status.AgentVersion, verifiedUpdate.Payload.AgentVersion,
                                 StringComparison.Ordinal);
                         var succeeded = readback.MatchesPinnedKey && verifiedUpdate.MatchesPinnedKey &&
                                         targetVersionsMatch;
-                        return new StudentApplicationUpdatePushResult(target, succeeded,
-                            succeeded
-                                ? $"StudentSetup 与 Student Agent {expectedAgentVersion} 均已通过本次签名事务确认提交。"
-                                : "事务报告已提交，但签名身份或最终版本与目标不一致；需人工核对。",
-                            NeedsReview: !succeeded, IdentityCandidate: candidate);
+                        return succeeded
+                            ? CreateCommittedUpdateResult(campusId, target, readback.Status, candidate, source,
+                                $"StudentSetup {readback.Status.StudentSetupVersion} 与 Student Agent {readback.Status.AgentVersion} 均已通过本次签名事务确认提交。")
+                            : new StudentApplicationUpdatePushResult(target, false,
+                                "事务报告已提交，但签名身份或最终版本与目标不一致；需人工核对。",
+                                NeedsReview: true, IdentityCandidate: candidate);
                     }
                     if (readback.State == "rolledBack")
                     {
@@ -1429,15 +1642,17 @@ public static class StudentApplicationUpdateTransport
                 if (completedReadback is { State: "committed" } committedReadback)
                 {
                     var committed = verifiedUpdate.MatchesPinnedKey && committedReadback.MatchesPinnedKey &&
-                                   MatchesCommittedVersions(committedReadback.Status, source, expectedAgentVersion) &&
+                                   MatchesCommittedVersions(committedReadback.Status, source, expectedSetupVersion) &&
                                    string.Equals(committedReadback.Status.AgentVersion,
                                        verifiedUpdate.Payload.AgentVersion, StringComparison.Ordinal);
-                    return new StudentApplicationUpdatePushResult(target, committed,
-                        committed
-                            ? verifiedUpdate.Payload.Message
-                            : "事务报告已提交，但签名身份或最终版本与事务清单不一致；需人工核对。",
-                        NeedsReview: !committed,
-                        IdentityCandidate: committedReadback.IdentityCandidate ?? updateIdentity);
+                    return committed
+                        ? CreateCommittedUpdateResult(campusId, target, committedReadback.Status,
+                            committedReadback.IdentityCandidate ?? updateIdentity, source,
+                            verifiedUpdate.Payload.Message)
+                        : new StudentApplicationUpdatePushResult(target, false,
+                            "事务报告已提交，但签名身份或最终版本与事务清单不一致；需人工核对。",
+                            NeedsReview: true,
+                            IdentityCandidate: committedReadback.IdentityCandidate ?? updateIdentity);
                 }
                 if (completedReadback is { State: "rolledBack" } completedRollback)
                 {
@@ -1489,7 +1704,8 @@ public static class StudentApplicationUpdateTransport
         return Array.AsReadOnly(await Task.WhenAll(tasks).ConfigureAwait(false));
     }
 
-    private static async Task<int?> ReadDownloadRequestProtocolVersionAsync(HttpClient client, string target,
+    private static async Task<StudentApplicationUpdateDownloadCapabilityResponse?> ReadDownloadRequestCapabilityAsync(
+        HttpClient client, string target,
         string campusId, RSA campusPrivateKey, string pinnedAgentPublicKeyPem,
         CancellationToken cancellationToken)
     {
@@ -1515,7 +1731,7 @@ public static class StudentApplicationUpdateTransport
             throw new InvalidDataException("学生更新下载能力回执与已固定的 Agent 身份不一致。");
         StudentApplicationUpdateDownloadCapabilityCryptography.Validate(verified.Payload, campusId,
             request.Nonce, DateTimeOffset.UtcNow);
-        return verified.Payload.DownloadRequestProtocolVersion;
+        return verified.Payload;
     }
 
     private static async Task MonitorUpdateProgressWhilePostPendingAsync(HttpClient client, string target,
@@ -1556,7 +1772,7 @@ public static class StudentApplicationUpdateTransport
                     campusPrivateKey, pinnedAgentPublicKeyPem, commandId, cancellationToken)
                     .ConfigureAwait(false);
                 if (readback is not null && (!waitForProgress || readback.State is
-                        "committed" or "rolledBack" or "needsReview"))
+                        "committed" or "rolledBack" or "superseded" or "needsReview"))
                 {
                     await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
                         campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "succeeded", progress,
@@ -1585,7 +1801,7 @@ public static class StudentApplicationUpdateTransport
         {
             var finalReadback = await TryReadUpdateTerminalOnceAsync(client, target, campusId,
                 campusPrivateKey, pinnedAgentPublicKeyPem, commandId, cancellationToken).ConfigureAwait(false);
-            if (finalReadback is { State: "committed" or "rolledBack" or "needsReview" })
+            if (finalReadback is { State: "committed" or "rolledBack" or "superseded" or "needsReview" })
             {
                 await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
                     campusPrivateKey, commandId, receiptStartedUtc, waitTimer, "succeeded", progress,
@@ -1649,9 +1865,13 @@ public static class StudentApplicationUpdateTransport
         {
             var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
                 campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, commandId);
-            var signedRequest = WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey);
-            using var content = new StringContent(signedRequest, Encoding.UTF8, "application/json");
-            using var response = await client.PostAsync(address, content, attempt.Token).ConfigureAwait(false);
+            using var outgoing = new HttpRequestMessage(HttpMethod.Post, address)
+            {
+                Content = new StringContent(WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey),
+                    Encoding.UTF8, "application/json")
+            };
+            outgoing.Headers.TryAddWithoutValidation(WebsitePolicyStatusTransport.HealthSnapshotRequestHeader, "1");
+            using var response = await client.SendAsync(outgoing, attempt.Token).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode) return null;
             var resultText = await ReadBoundedTextAsync(response.Content, attempt.Token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(resultText)) return null;
@@ -1846,16 +2066,55 @@ public static class StudentApplicationUpdateTransport
     }
 
     private static bool MatchesCommittedVersions(StudentAgentStatusResponse status,
-        StudentApplicationUpdateSourceVersions source, string expectedVersion)
+        StudentApplicationUpdateSourceVersions source, string expectedSetupVersion)
     {
         var transaction = status.UpdateTransaction;
         if (transaction is null) return false;
-        var expectedTargetAgentVersion = ApplicationReleaseClient.CompareVersions(source.AgentVersion,
-            expectedVersion) > 0 ? source.AgentVersion : expectedVersion;
-        return string.Equals(transaction.TargetSetupVersion, expectedVersion, StringComparison.Ordinal) &&
-               string.Equals(transaction.TargetAgentVersion, expectedTargetAgentVersion, StringComparison.Ordinal) &&
+        var targetSetupVersion = source.TargetSetupVersion ?? expectedSetupVersion;
+        var targetAgentVersion = source.TargetAgentVersion;
+        var targetAgentMatches = targetAgentVersion is null
+            ? transaction.TargetAgentVersion is { } transactionTargetAgentVersion &&
+              string.Equals(transactionTargetAgentVersion, status.AgentVersion, StringComparison.Ordinal) &&
+              ApplicationReleaseClient.CompareVersions(transactionTargetAgentVersion, source.AgentVersion) >= 0
+            : string.Equals(transaction.TargetAgentVersion,
+                ApplicationReleaseClient.CompareVersions(source.AgentVersion, targetAgentVersion) > 0
+                    ? source.AgentVersion
+                    : targetAgentVersion,
+                StringComparison.Ordinal);
+        var healthIsValid = status.Health is
+            { RunningAsSystem: true, ManagedTaskMatchesAgent: true, ManagedTaskAclRestricted: true } health &&
+            string.Equals(health.UpdateTransactionState, "committed", StringComparison.Ordinal);
+        return string.Equals(transaction.TargetSetupVersion, targetSetupVersion, StringComparison.Ordinal) &&
+               targetAgentMatches &&
                string.Equals(status.StudentSetupVersion, transaction.TargetSetupVersion, StringComparison.Ordinal) &&
-               string.Equals(status.AgentVersion, transaction.TargetAgentVersion, StringComparison.Ordinal);
+               string.Equals(status.AgentVersion, transaction.TargetAgentVersion, StringComparison.Ordinal) &&
+               (string.IsNullOrWhiteSpace(source.ConfigurationFingerprint) ||
+                string.Equals(status.ConfigFingerprint, source.ConfigurationFingerprint,
+                    StringComparison.OrdinalIgnoreCase)) && healthIsValid;
+    }
+
+    private static StudentApplicationUpdatePushResult CreateCommittedUpdateResult(string campusId, string target,
+        StudentAgentStatusResponse status, StudentAgentIdentityTrustCandidate? identityCandidate,
+        StudentApplicationUpdateSourceVersions source, string successDetail)
+    {
+        if (!StudentAgentChannelHub.IsConnected(campusId, target))
+        {
+            var healthDetail = status.Health is { RunningAsSystem: true, ManagedTaskMatchesAgent: true,
+                ManagedTaskAclRestricted: true }
+                ? "SYSTEM 任务、ACL 和 Agent 健康状态通过。"
+                : "签名事务已提交并核验配置指纹；历史 Agent 未提供完整健康快照。";
+            return new StudentApplicationUpdatePushResult(target, false,
+                $"{successDetail} {healthDetail} 教师长连接尚未恢复，当前标记为“待验证”。" +
+                "请确认教师端服务在线及学生机教师地址/TLS 根证书配置；可在“设备与更新 → 配置同步”重新应用连接配置。",
+                IdentityCandidate: identityCandidate, PendingVerification: true);
+        }
+
+        var verifiedHealth = status.Health is null
+            ? "历史 Agent 未提供健康快照；已通过签名事务提交和当前设备状态回执核验。"
+            : "SYSTEM 任务、受限 ACL 和 Agent 健康状态均已验证。";
+        return new StudentApplicationUpdatePushResult(target, true,
+            $"{successDetail} 配置指纹匹配；{verifiedHealth}教师长连接已建立。",
+            IdentityCandidate: identityCandidate);
     }
 
     private static string FormatUpdateHttpFailure(HttpStatusCode statusCode, string responseBody)
@@ -1867,15 +2126,14 @@ public static class StudentApplicationUpdateTransport
             : $"HTTP {(int)statusCode}：{detail}";
     }
 
-    private static StudentApplicationUpdatePushResult ResolveUncertainUpdateResult(string target,
-        UpdateTerminalReadback? readback, StudentApplicationUpdateSourceVersions source, string expectedVersion,
+    private static StudentApplicationUpdatePushResult ResolveUncertainUpdateResult(string campusId, string target,
+        UpdateTerminalReadback? readback, StudentApplicationUpdateSourceVersions source, string expectedSetupVersion,
         string failureDetail)
     {
         if (readback is { State: "committed" } committed && committed.MatchesPinnedKey &&
-            MatchesCommittedVersions(committed.Status, source, expectedVersion))
-            return new StudentApplicationUpdatePushResult(target, true,
-                "虽未收到更新 HTTP 响应，但签名事务已确认提交，且目标版本读回一致。",
-                IdentityCandidate: committed.IdentityCandidate);
+            MatchesCommittedVersions(committed.Status, source, expectedSetupVersion))
+            return CreateCommittedUpdateResult(campusId, target, committed.Status, committed.IdentityCandidate, source,
+                "虽未收到更新 HTTP 响应，但签名事务、安装版本和健康读回均已确认提交。");
         if (readback is { State: "rolledBack" } rolledBack)
         {
             var restored = rolledBack.MatchesPinnedKey && MatchesRolledBackVersions(rolledBack.Status, source);
@@ -1885,6 +2143,11 @@ public static class StudentApplicationUpdateTransport
                     : $"{failureDetail}；事务报告已回滚，但恢复后的版本或签名身份不一致，需人工核对。",
                 NeedsReview: !restored, IdentityCandidate: rolledBack.IdentityCandidate, RolledBack: restored);
         }
+        if (readback is { State: "superseded" } superseded)
+            return new StudentApplicationUpdatePushResult(target, false,
+                $"较新的 StudentSetup {superseded.Status.StudentSetupVersion} 与 Agent {superseded.Status.AgentVersion} 已核验；" +
+                "本次较旧版本更新已由现有安装取代，没有覆盖当前版本。请刷新状态后重新选择更新版本。",
+                NeedsReview: true, IdentityCandidate: superseded.IdentityCandidate);
         return new StudentApplicationUpdatePushResult(target, false,
             readback is { State: "needsReview" }
                 ? "学生端更新事务需要人工核对；恢复材料已保留。"

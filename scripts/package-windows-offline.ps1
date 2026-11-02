@@ -7,11 +7,13 @@ param(
     [string]$TestVersionOverride,
     [string]$FileUpdateHelperDirectory,
     [string]$ReleasePublicKeyPath,
+    [string]$TestReleasePublicKeyPath,
     [string]$EdgeExtensionId,
     [string]$ZipPath,
     [switch]$EdgeRealtimeGatePassed,
     [switch]$EdgeRealtimeManualTest,
     [switch]$ClassroomQuickControlManualTest,
+    [switch]$EnableLocalTestStudentUpdateUi,
     [switch]$SkipRestore,
     [switch]$Clean
 )
@@ -291,6 +293,9 @@ else {
 if ([string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
     $ReleasePublicKeyPath = [Environment]::GetEnvironmentVariable('VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH')
 }
+if ([string]::IsNullOrWhiteSpace($TestReleasePublicKeyPath)) {
+    $TestReleasePublicKeyPath = [Environment]::GetEnvironmentVariable('VEYONCAMPUS_TEST_RELEASE_PUBLIC_KEY_PATH')
+}
 $releasePublicKeyFullPath = $null
 $releasePublicKeyFingerprint = $null
 if (-not [string]::IsNullOrWhiteSpace($ReleasePublicKeyPath)) {
@@ -339,6 +344,46 @@ console.log(crypto.createHash('sha256')
     finally {
         Remove-Item Env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE -ErrorAction SilentlyContinue
     }
+}
+
+$testReleasePublicKeyFullPath = $null
+$testReleasePublicKeyFingerprint = $null
+if (-not [string]::IsNullOrWhiteSpace($TestReleasePublicKeyPath)) {
+    if ([IO.Path]::IsPathRooted($TestReleasePublicKeyPath)) {
+        $testReleasePublicKeyFullPath = [IO.Path]::GetFullPath($TestReleasePublicKeyPath)
+    }
+    else {
+        $testReleasePublicKeyFullPath = [IO.Path]::GetFullPath((Join-Path $repoRoot $TestReleasePublicKeyPath))
+    }
+    if (-not (Test-Path -LiteralPath $testReleasePublicKeyFullPath -PathType Leaf)) {
+        throw "找不到本机测试发行 PEM 公钥：$testReleasePublicKeyFullPath"
+    }
+    $testReleasePublicKeyText = Get-Content -LiteralPath $testReleasePublicKeyFullPath -Raw -Encoding UTF8
+    if ($testReleasePublicKeyText.IndexOf('PRIVATE KEY', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        throw '安装器只能嵌入本机测试发行公钥，不能嵌入测试私钥。'
+    }
+    if (-not $releasePublicKeyFullPath) {
+        throw '本机测试构建还必须嵌入线上正式 Developer Release 公钥，以保持线上正式版更新可用。'
+    }
+    $nodeCommand = Get-Command node.exe -ErrorAction SilentlyContinue
+    if (-not $nodeCommand) { throw 'Node.js is required to validate the local test release RSA public key.' }
+    $env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE = $testReleasePublicKeyFullPath
+    try {
+        $testNodeValidationOutput = @(& $nodeCommand.Source -e $nodeSource)
+        if ($LASTEXITCODE -ne 0 -or $testNodeValidationOutput.Count -ne 1 -or
+            ([string]$testNodeValidationOutput[0]) -notmatch '^[0-9A-Fa-f]{64}$') {
+            throw '本机测试发行 RSA 公钥校验失败。'
+        }
+        $testReleasePublicKeyFingerprint = ([string]$testNodeValidationOutput[0]).Trim().ToUpperInvariant()
+        Write-Host "Validated local test release public key (SPKI SHA-256 $testReleasePublicKeyFingerprint)."
+    }
+    finally {
+        Remove-Item Env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE -ErrorAction SilentlyContinue
+    }
+}
+if ($EnableLocalTestStudentUpdateUi -and
+    ($Role -ne 'TeacherConsole' -or [string]::IsNullOrWhiteSpace($testReleasePublicKeyFullPath))) {
+    throw 'EnableLocalTestStudentUpdateUi 仅用于嵌入本机测试公钥的 TeacherConsole 测试包。'
 }
 
 function ConvertTo-InnoPascalStringLiteral {
@@ -513,6 +558,9 @@ if (-not $SkipRestore) {
         if ($releasePublicKeyFullPath) {
             $agentRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
         }
+        if ($testReleasePublicKeyFullPath) {
+            $agentRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+        }
         Invoke-Dotnet $agentRestoreArguments
 
         $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
@@ -520,6 +568,9 @@ if (-not $SkipRestore) {
             '-p:VeyonCampusIncludeInstaller=false')
         if ($releasePublicKeyFullPath) {
             $companionRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+        }
+        if ($testReleasePublicKeyFullPath) {
+            $companionRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
         }
         Invoke-Dotnet $companionRestoreArguments
 
@@ -534,6 +585,9 @@ if (-not $SkipRestore) {
         if ($releasePublicKeyFullPath) {
             $inputGuardRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
         }
+        if ($testReleasePublicKeyFullPath) {
+            $inputGuardRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+        }
         Invoke-Dotnet $inputGuardRestoreArguments
     }
 
@@ -542,6 +596,9 @@ if (-not $SkipRestore) {
         '-p:VeyonCampusTargetRuntime=win-x64')
     if ($releasePublicKeyFullPath) {
         $restoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+    }
+    if ($testReleasePublicKeyFullPath) {
+        $restoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
     }
     if ($EdgeExtensionId) { $restoreArguments += "-p:VeyonCampusEdgeExtensionId=$EdgeExtensionId" }
     if ($EdgeRealtimeGatePassed) { $restoreArguments += '-p:VeyonCampusEdgeRealtimeGatePassed=true' }
@@ -562,6 +619,12 @@ $publishArguments = @('publish', $appProjectPath, '-c', 'Release', '-r', 'win-x6
     '-o', $publishDirectory)
 if ($releasePublicKeyFullPath) {
     $publishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+}
+if ($testReleasePublicKeyFullPath) {
+    $publishArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+}
+if ($EnableLocalTestStudentUpdateUi) {
+    $publishArguments += '-p:VeyonCampusEnableLocalTestUpdateUi=true'
 }
 if ($EdgeExtensionId) { $publishArguments += "-p:VeyonCampusEdgeExtensionId=$EdgeExtensionId" }
 if ($EdgeRealtimeGatePassed) { $publishArguments += '-p:VeyonCampusEdgeRealtimeGatePassed=true' }
@@ -594,6 +657,9 @@ if ($Role -eq 'StudentSetup') {
         '-o', $inputGuardPublishDirectory)
     if ($releasePublicKeyFullPath) {
         $inputGuardPublishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+    }
+    if ($testReleasePublicKeyFullPath) {
+        $inputGuardPublishArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
     }
     Invoke-Dotnet $inputGuardPublishArguments
 }
@@ -851,6 +917,11 @@ $releasePublicKeyBytes = if ($releasePublicKeyFullPath) { (Get-Item -LiteralPath
 $releasePublicKeySha256 = if ($releasePublicKeyFullPath) {
     (Get-FileHash -LiteralPath $releasePublicKeyFullPath -Algorithm SHA256).Hash.ToUpperInvariant()
 } else { $null }
+$testPublicKeyResourceName = 'VeyonCampus.Core.ApplicationTestReleasePublicKey.pem'
+$testPublicKeyBytes = if ($testReleasePublicKeyFullPath) { (Get-Item -LiteralPath $testReleasePublicKeyFullPath).Length } else { 0 }
+$testPublicKeySha256 = if ($testReleasePublicKeyFullPath) {
+    (Get-FileHash -LiteralPath $testReleasePublicKeyFullPath -Algorithm SHA256).Hash.ToUpperInvariant()
+} else { $null }
 foreach ($coreAssembly in $coreAssemblyPaths) {
     $verifyKeyArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
         '-p:NuGetAudit=false')
@@ -866,6 +937,19 @@ foreach ($coreAssembly in $coreAssemblyPaths) {
         $verifyKeyArguments += @('--expect-missing', $coreAssembly.FullName, $releasePublicKeyResourceName)
     }
     Invoke-Dotnet $verifyKeyArguments
+
+    $verifyTestKeyArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
+        '-p:NuGetAudit=false')
+    if ($SkipRestore) { $verifyTestKeyArguments += '--no-restore' }
+    $verifyTestKeyArguments += '--'
+    if ($testReleasePublicKeyFullPath) {
+        $verifyTestKeyArguments += @($coreAssembly.FullName, [string]$testPublicKeyBytes,
+            $testPublicKeySha256, $testPublicKeyResourceName)
+    }
+    else {
+        $verifyTestKeyArguments += @('--expect-missing', $coreAssembly.FullName, $testPublicKeyResourceName)
+    }
+    Invoke-Dotnet $verifyTestKeyArguments
 }
 
 $verifyEmbeddedResourceArguments = @('run', '--project', $resourceVerifierProjectPath, '-c', 'Release',
@@ -903,6 +987,9 @@ $helperRestoreArguments = @('restore', $updateHelperProjectPath, '-r', 'win-x64'
 if ($releasePublicKeyFullPath) {
     $helperRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
 }
+if ($testReleasePublicKeyFullPath) {
+    $helperRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+}
 if (-not $SkipRestore) {
     Invoke-Dotnet $helperRestoreArguments
 }
@@ -917,6 +1004,9 @@ $helperPublishArguments = @('publish', $updateHelperProjectPath, '-c', 'Release'
     '-o', $updateHelperOutputDirectory)
 if ($releasePublicKeyFullPath) {
     $helperPublishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+}
+if ($testReleasePublicKeyFullPath) {
+    $helperPublishArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
 }
 Invoke-Dotnet $helperPublishArguments
 $updateHelperExePath = Join-Path $updateHelperOutputDirectory 'VeyonCampus.UpdateHelper.exe'

@@ -6,12 +6,24 @@ using VeyonCampus.Core;
 
 internal static class StudentApplicationUpdateChecks
 {
+    public static void RunRecoveryStateFixtures()
+    {
+        CheckAtomicTransactionTerminalStates();
+        CheckSupersededRecoveryFacts();
+    }
+
     public static void Run()
     {
         CheckSignedCommand();
         CheckSignedAgentResponses();
         CheckCommandBoundStatusRequeryAndProgress();
         CheckDownloadCapabilityResponse();
+        CheckAgentUpdateCompatibilityMatrix();
+        CheckStudentMaintenancePlanner();
+        CheckInlineIdentityReviewActions();
+        CheckUpdateHelperVersionBinding();
+        CheckAgentVersionRebaseGuard();
+        CheckSetupAndAgentVersionIndependence();
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
         CheckPushFailureIsolation();
@@ -21,6 +33,22 @@ internal static class StudentApplicationUpdateChecks
         CheckUpdateHandoffRollback();
         CheckReplayStore();
         StudentApplicationUpdateArtifactTransferChecks.Run();
+    }
+
+    public static void RunCompatibilityFixtures()
+    {
+        CheckCommandBoundStatusRequeryAndProgress();
+        CheckDownloadCapabilityResponse();
+        CheckAgentUpdateCompatibilityMatrix();
+        CheckStudentMaintenancePlanner();
+        CheckInlineIdentityReviewActions();
+        CheckUpdateHelperVersionBinding();
+        CheckAgentVersionRebaseGuard();
+        CheckSetupAndAgentVersionIndependence();
+        CheckAtomicTransactionTerminalStates();
+        CheckAtomicJournalRejectsStaleRecords();
+        CheckStagingDirectoryCleanupGate();
+        CheckUpdateHandoffRollback();
     }
 
     private static void CheckAtomicTransactionTerminalStates()
@@ -36,14 +64,43 @@ internal static class StudentApplicationUpdateChecks
             (bool)(transitionMethod.Invoke(null, [current, next])
                    ?? throw new InvalidOperationException("Student atomic transaction transition result was empty."));
 
-        foreach (var terminal in new[] { StudentUpdateTransactionState.Committed, StudentUpdateTransactionState.RolledBack })
+        foreach (var terminal in new[] { StudentUpdateTransactionState.Committed, StudentUpdateTransactionState.RolledBack,
+                     StudentUpdateTransactionState.Superseded })
         foreach (var next in Enum.GetValues<StudentUpdateTransactionState>())
             Expect(!IsAllowed(terminal, next));
 
         Expect(IsAllowed(StudentUpdateTransactionState.Prepared, StudentUpdateTransactionState.RecoveryRequired));
         Expect(IsAllowed(StudentUpdateTransactionState.RollbackPending, StudentUpdateTransactionState.RecoveryRequired));
         Expect(IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending));
+        Expect(IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Superseded));
         Expect(!IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Committed));
+    }
+
+    private static void CheckSupersededRecoveryFacts()
+    {
+        var transactionType = typeof(StudentApplicationUpdateProcessor).Assembly.GetType(
+                                 "VeyonCampus.Core.StudentUpdateAtomicTransaction", throwOnError: true)
+                             ?? throw new InvalidOperationException("Student atomic transaction type was not found.");
+        var method = transactionType.GetMethod("HasSupersedingInstallationFacts",
+                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                     ?? throw new InvalidOperationException("Superseded transaction version fence was not found.");
+        bool IsEligible(StudentUpdateTransactionRecord record, string setupVersion, string agentVersion,
+            bool previousSetupPresent) =>
+            (bool)(method.Invoke(null,
+                [record, setupVersion, agentVersion, previousSetupPresent])
+                   ?? throw new InvalidOperationException("Superseded transaction version fence returned no result."));
+
+        var now = DateTimeOffset.UtcNow;
+        var record = new StudentUpdateTransactionRecord(1, Guid.NewGuid(), new string('a', 24),
+            "1.1.41", "1.1.42", "0.4.55", "1.1.42",
+            "VeyonCampus-Student-Setup-1.1.42-win-x64.exe", new string('b', 64), new string('c', 64),
+            now, now, StudentUpdateTransactionState.RecoveryRequired);
+        Expect(IsEligible(record, "1.1.45", "0.4.56", false));
+        Expect(!IsEligible(record, "1.1.42", "0.4.56", false));
+        Expect(!IsEligible(record, "1.1.45", "0.4.54", false));
+        Expect(!IsEligible(record, "1.1.45", "0.4.56", true));
+        Expect(!IsEligible(record with { State = StudentUpdateTransactionState.RollbackPending },
+            "1.1.45", "0.4.56", false));
     }
 
     private static void CheckStagingDirectoryCleanupGate()
@@ -63,6 +120,7 @@ internal static class StudentApplicationUpdateChecks
         Expect(CanCleanup(commandId, null, null));
         Expect(CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.Committed));
         Expect(CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.RolledBack));
+        Expect(CanCleanup(commandId, Guid.NewGuid(), StudentUpdateTransactionState.Superseded));
         Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.Committed));
         Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.SetupInstallationPending));
         Expect(!CanCleanup(commandId, commandId, StudentUpdateTransactionState.RecoveryRequired));
@@ -302,6 +360,8 @@ internal static class StudentApplicationUpdateChecks
         Expect(!row.CanRequery && row.StatusText == "正在重新核对终态");
         row.SetResult(false, needsReview: true, detail: "Agent 暂时不可用；请稍后重试。");
         Expect(row.CanRequery);
+        row.SetPendingVerification("等待长连接恢复");
+        Expect(row.StatusText == "待验证" && row.CanRequery);
     }
 
     private static void CheckDownloadCapabilityResponse()
@@ -324,6 +384,222 @@ internal static class StudentApplicationUpdateChecks
             "ExampleCampus", Guid.NewGuid(), now));
         Reject(() => StudentApplicationUpdateDownloadCapabilityCryptography.Validate(
             verified.Payload with { DownloadRequestProtocolVersion = 99 }, "ExampleCampus", nonce, now));
+
+        var fullyReported = response with
+        {
+            StudentUpdateProtocolVersion = 1,
+            StudentSetupVersion = "1.2.3",
+            AgentRuntimeVersion = "0.4.56",
+            AgentProductVersion = "0.4.56",
+            CoreAssemblyVersion = "0.4.53",
+            DeveloperReleasePublicKeyFingerprint = new string('A', 64),
+            TeacherChannelConfigurationReady = true,
+            TeacherChannelConfigurationFingerprint = new string('B', 64),
+            ConfigurationFingerprint = new string('C', 64)
+        };
+        StudentApplicationUpdateDownloadCapabilityCryptography.Validate(fullyReported,
+            "ExampleCampus", nonce, now);
+        Expect(fullyReported.StudentSetupVersion != fullyReported.AgentRuntimeVersion &&
+               fullyReported.AgentRuntimeVersion != fullyReported.CoreAssemblyVersion);
+        Reject(() => StudentApplicationUpdateDownloadCapabilityCryptography.Validate(
+            fullyReported with { TeacherChannelConfigurationFingerprint = null },
+            "ExampleCampus", nonce, now));
+    }
+
+    private static void CheckAgentUpdateCompatibilityMatrix()
+    {
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.50", null, null, "stable") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.51", null, null, "stable") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.53", 1, null, "stable") ==
+               StudentAgentUpdateTransportMode.LegacySignedHttp);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.55", 1, null, "stable") ==
+               StudentAgentUpdateTransportMode.LegacySignedHttp);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "stable") ==
+               StudentAgentUpdateTransportMode.SignedDownloadV1);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.57", 1, 1, "stable",
+                   new string('A', 64), new string('B', 64)) == StudentAgentUpdateTransportMode.Unsupported);
+        var officialKeyFingerprint = new string('A', 64);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "stable",
+                   officialKeyFingerprint, officialKeyFingerprint, capabilityReportsPinnedKey: true) ==
+               StudentAgentUpdateTransportMode.SignedDownloadV1);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 1, "stable",
+                   null, officialKeyFingerprint, capabilityReportsPinnedKey: true) ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, null, "stable",
+                   null, officialKeyFingerprint, capabilityReportsPinnedKey: true) ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", null, null, "stable") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.56", 1, 99, "stable") ==
+               StudentAgentUpdateTransportMode.Unsupported);
+
+        var testFingerprint = new string('D', 64);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.57", 1, null, "local-test",
+                   expectedLocalTestKeyFingerprint: testFingerprint) == StudentAgentUpdateTransportMode.Unsupported);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.1.0", 1, 1, "local-test",
+                   localTestKeyFingerprint: testFingerprint, expectedLocalTestKeyFingerprint: testFingerprint) ==
+               StudentAgentUpdateTransportMode.SignedDownloadV1);
+        Expect(StudentAgentUpdateCompatibility.SelectTransport("0.4.57", 1, 1, "local-test",
+                   localTestKeyFingerprint: new string('E', 64), expectedLocalTestKeyFingerprint: testFingerprint) ==
+               StudentAgentUpdateTransportMode.Unsupported);
+        var missingTestCapability = StudentAgentUpdateCompatibility.DescribeUnsupported("0.4.56", 1,
+            capability: null, releaseChannel: "local-test",
+            expectedLocalTestKeyFingerprint: testFingerprint);
+        Expect(missingTestCapability.Contains("未返回签名的本机测试下载能力回执", StringComparison.Ordinal));
+        var mismatchedTestCapability = new StudentApplicationUpdateDownloadCapabilityResponse(
+            StudentApplicationUpdateDownloadCapabilityCryptography.SchemaVersion,
+            StudentApplicationUpdateDownloadCapabilityCryptography.Purpose, "ExampleCampus", Guid.NewGuid(),
+            DateTimeOffset.UtcNow, StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion,
+            StudentUpdateProtocolVersion: 1,
+            LocalTestReleasePublicKeyFingerprint: new string('E', 64));
+        var mismatchedTestKeyReason = StudentAgentUpdateCompatibility.DescribeUnsupported("0.4.57", 1,
+            mismatchedTestCapability, "local-test", expectedLocalTestKeyFingerprint: testFingerprint);
+        Expect(mismatchedTestKeyReason.Contains(new string('E', 12), StringComparison.Ordinal) &&
+               mismatchedTestKeyReason.Contains(new string('D', 12), StringComparison.Ordinal) &&
+               mismatchedTestKeyReason.Contains("同一测试公钥", StringComparison.Ordinal));
+
+        Expect(StudentAgentChannelHttpMessageHandler.ShouldUseDirectFallback(true,
+            allowLegacyDirectFallback: false, allowDirectFallbackWhenChannelOffline: true));
+        Expect(!StudentAgentChannelHttpMessageHandler.ShouldUseDirectFallback(true,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: false));
+        Expect(StudentAgentChannelHttpMessageHandler.ShouldUseDirectFallback(false,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: false));
+    }
+
+    private static void CheckStudentMaintenancePlanner()
+    {
+        static StudentMaintenancePlanningInput Input(string? setup = "1.1.56", string? agent = "0.4.56",
+            string targetSetup = "1.1.57", string? targetAgent = "0.4.57", int? protocol = 1,
+            string? transaction = null, bool? configMatches = null, bool connected = false,
+            bool identityTrusted = true) => new(identityTrusted, setup, agent, targetSetup, targetAgent,
+                protocol, transaction, configMatches, connected);
+
+        var oldAgent = StudentMaintenancePlanner.Create(Input());
+        Expect(oldAgent.Kind == StudentMaintenancePlanKind.UpdateThenConfiguration &&
+               oldAgent.UpdateTransport == StudentMaintenanceTransport.TrustedLegacyHttp &&
+               oldAgent.NeedsSoftwareUpdate && oldAgent.NeedsConfigurationSync);
+
+        var connectedNewAgent = StudentMaintenancePlanner.Create(Input(connected: true));
+        Expect(connectedNewAgent.UpdateTransport == StudentMaintenanceTransport.AuthenticatedAgentChannel);
+
+        var configOnly = StudentMaintenancePlanner.Create(Input(setup: "1.1.57", agent: "0.4.57",
+            configMatches: false));
+        Expect(configOnly.Kind == StudentMaintenancePlanKind.ConfigurationOnly &&
+               !configOnly.NeedsSoftwareUpdate && configOnly.NeedsConfigurationSync);
+
+        var noOp = StudentMaintenancePlanner.Create(Input(setup: "1.1.57", agent: "0.4.57",
+            configMatches: true));
+        Expect(noOp.Kind == StudentMaintenancePlanKind.NoOp && !noOp.NeedsConfigurationSync);
+
+        var unsupportedOldAgent = StudentMaintenancePlanner.Create(Input(protocol: null));
+        Expect(unsupportedOldAgent.Kind == StudentMaintenancePlanKind.ManualRequired &&
+               !unsupportedOldAgent.NeedsSoftwareUpdate);
+
+        var pendingTransaction = StudentMaintenancePlanner.Create(Input(transaction: "inProgress"));
+        Expect(pendingTransaction.Kind == StudentMaintenancePlanKind.RecoveryRequired &&
+               !pendingTransaction.NeedsSoftwareUpdate && !pendingTransaction.NeedsConfigurationSync);
+
+        var identityChanged = StudentMaintenancePlanner.Create(Input(identityTrusted: false));
+        Expect(identityChanged.Kind == StudentMaintenancePlanKind.ManualRequired &&
+               !identityChanged.NeedsConfigurationSync);
+
+        var independentVersions = StudentMaintenancePlanner.Create(Input(setup: "1.1.58", agent: "0.4.56",
+            targetSetup: "1.1.57", targetAgent: "0.4.57"));
+        Expect(independentVersions.Kind == StudentMaintenancePlanKind.ManualRequired);
+
+        var agentOnlyUpdate = StudentMaintenancePlanner.Create(Input(setup: "1.1.57", agent: "0.4.56",
+            targetSetup: "1.1.57", targetAgent: "0.4.57"));
+        Expect(agentOnlyUpdate.Kind == StudentMaintenancePlanKind.UpdateThenConfiguration &&
+               agentOnlyUpdate.NeedsSoftwareUpdate);
+    }
+
+    private static void CheckInlineIdentityReviewActions()
+    {
+        var updateRow = new StudentApplicationUpdateTargetProgressItem("10.0.0.7", "student");
+        updateRow.SetResult(false, true, "Agent 身份需先核对；指纹与教师端信任记录不一致。");
+        Expect(updateRow.CanReviewIdentity);
+        updateRow.BeginIdentityReview();
+        Expect(!updateRow.CanReviewIdentity);
+        updateRow.CompleteIdentityReview();
+        Expect(!updateRow.CanReviewIdentity && updateRow.HasIdentityReviewStatus);
+
+        var configRow = new StudentConfigurationSyncTargetProgressItem("10.0.0.7", "student");
+        configRow.SetResult(false, true, "学生 Agent 身份尚未核对；配置未发送。");
+        Expect(configRow.CanReviewIdentity);
+        configRow.CompleteIdentityReview();
+        Expect(!configRow.CanReviewIdentity && configRow.HasIdentityReviewStatus);
+    }
+
+    private static void CheckUpdateHelperVersionBinding()
+    {
+        var helperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(
+            @"C:\Program Files", "1.2.3");
+        Expect(helperPath.EndsWith(Path.Combine("Updater", "Student", "1.2.3",
+            "VeyonCampus.UpdateHelper.exe"), StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static void CheckAgentVersionRebaseGuard()
+    {
+        var method = typeof(StudentUpdateAtomicTransaction).GetMethod("CanRebaseTargetAgentVersion",
+                         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                     ?? throw new InvalidOperationException("Agent target version rebase guard was not found.");
+        bool CanRebase(StudentUpdateTransactionRecord record, string expected, string actual) =>
+            (bool)(method.Invoke(null, [record, expected, actual])
+                   ?? throw new InvalidOperationException("Agent target version rebase guard returned no result."));
+
+        var now = DateTimeOffset.UtcNow;
+        var record = new StudentUpdateTransactionRecord(1, Guid.NewGuid(), new string('a', 24),
+            "1.1.0", "1.2.0", "0.4.56", "0.4.56",
+            "VeyonCampus-Student-Setup-1.2.0-win-x64.exe", new string('b', 64), new string('c', 64),
+            now, now, StudentUpdateTransactionState.SetupInstalled);
+        Expect(CanRebase(record, "0.4.56", "0.4.57"));
+        Expect(!CanRebase(record, "0.4.55", "0.4.57"));
+        Expect(!CanRebase(record, "0.4.56", "0.4.55"));
+        Expect(!CanRebase(record with { State = StudentUpdateTransactionState.AgentStaged },
+            "0.4.56", "0.4.57"));
+
+        var legacyMethod = typeof(StudentUpdateAtomicTransaction).GetMethod(
+                               "CanRebaseLegacySetupVersionAgentAlias",
+                               System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                           ?? throw new InvalidOperationException("Legacy Setup/Agent alias migration guard was not found.");
+        bool CanMigrateLegacyAlias(StudentUpdateTransactionRecord legacy, string alias, string actual) =>
+            (bool)(legacyMethod.Invoke(null, [legacy, alias, actual])
+                   ?? throw new InvalidOperationException("Legacy Setup/Agent alias guard returned no result."));
+        var legacyRecord = record with
+        {
+            TargetSetupVersion = "1.2.0",
+            TargetAgentVersion = "1.2.0",
+            State = StudentUpdateTransactionState.ActivationPending
+        };
+        Expect(CanMigrateLegacyAlias(legacyRecord, "1.2.0", "0.4.57"));
+        Expect(CanMigrateLegacyAlias(legacyRecord, "1.2.0", "0.4.56"));
+        Expect(!CanMigrateLegacyAlias(legacyRecord, "1.2.0", "0.4.55"));
+        Expect(!CanMigrateLegacyAlias(legacyRecord with { State = StudentUpdateTransactionState.SetupInstalled },
+            "1.2.0", "0.4.57"));
+    }
+
+    private static void CheckSetupAndAgentVersionIndependence()
+    {
+        var matcher = typeof(StudentApplicationUpdateTransport).GetMethod("MatchesCommittedVersions",
+                          System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+                      ?? throw new InvalidOperationException("Setup/Agent committed-version matcher was not found.");
+        var now = DateTimeOffset.UtcNow;
+        var source = new StudentApplicationUpdateSourceVersions("1.1.9", "0.4.56", 1,
+            "config-fingerprint", TargetAgentVersion: "0.4.57");
+        var status = new StudentAgentStatusResponse(1, "fixture", "ExampleCampus", Guid.NewGuid(), now,
+            "0.4.57", "config-fingerprint", null!, null,
+            StudentSetupVersion: "1.2.3",
+            UpdateTransaction: new StudentUpdateTransactionStatus(Guid.NewGuid(), "committed",
+                PreviousSetupVersion: "1.1.9", TargetSetupVersion: "1.2.3",
+                PreviousAgentVersion: "0.4.56", TargetAgentVersion: "0.4.57"),
+            Health: new StudentAgentHealthSnapshot(true, true, true, StudentVeyonServiceState.NotInstalled,
+                "committed", now));
+        bool Matches(string expectedSetupVersion) => (bool)(matcher.Invoke(null,
+            [status, source, expectedSetupVersion]) ?? false);
+
+        Expect(Matches("1.2.3") && !Matches("0.4.57"));
     }
 
     private static void CheckAgentIdentityTrustStore()

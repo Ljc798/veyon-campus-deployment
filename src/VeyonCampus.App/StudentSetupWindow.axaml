@@ -654,6 +654,13 @@
                                         AccessibleText="正在检查电脑环境" ToolTip.Tip="正在检查，请稍候" />
                 </Grid>
                 <TextBlock Text="{Binding CheckConclusionTitle}" FontSize="21" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                <ProgressBar IsIndeterminate="True" Height="8" MinWidth="180"
+                             HorizontalAlignment="Stretch"
+                             IsVisible="{Binding IsPreparingDeployment}"
+                             AutomationProperties.Name="正在检查电脑环境" />
+                <TextBlock Text="正在核对部署环境，请稍候。" Classes="muted"
+                           TextAlignment="Center" TextWrapping="Wrap"
+                           IsVisible="{Binding IsPreparingDeployment}" />
                 <TextBlock Text="{Binding CheckConclusionHint}" Classes="muted" TextAlignment="Center" TextWrapping="Wrap"
                            IsVisible="{Binding HasCheckConclusionHint}" />
               </StackPanel>
@@ -919,6 +926,18 @@
                     <Button Classes="primary" Content="更新/修复 Student Agent"
                             IsEnabled="{Binding CanInstallWebsitePolicyAgent}"
                             Click="InstallWebsitePolicyAgent" HorizontalAlignment="Left" />
+                    <Border Classes="status-panel info" Padding="10"
+                            IsVisible="{Binding IsStudentAgentInstallInProgress}">
+                      <StackPanel Spacing="7">
+                        <TextBlock Text="正在更新/修复 Student Agent" FontWeight="SemiBold" />
+                        <ProgressBar IsIndeterminate="True" Height="8" />
+                        <TextBlock Text="{Binding StudentAgentInstallElapsedText}" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="正在处理未完成的更新恢复、Agent 文件与 SYSTEM 计划任务，并检查健康状态。此过程可能持续一两分钟。"
+                                   Classes="muted" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Border>
+                    <TextBlock Text="{Binding WebsiteAgentInstallStatus}" Classes="muted"
+                               TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentInstallStatus}" />
                   </StackPanel>
                 </Border>
                 <Border Classes="status-panel info" Padding="12">
@@ -935,7 +954,6 @@
                     <Button Classes="danger" Content="移除学生端限制…" IsEnabled="{Binding CanRemoveWebsitePolicyAgent}" Click="RemoveWebsitePolicyAgent" HorizontalAlignment="Left" />
                   </StackPanel>
                 </Border>
-                <TextBlock Text="{Binding WebsiteAgentInstallStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentInstallStatus}" />
                 <TextBlock Text="{Binding WebsiteAgentRemovalStatus}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasWebsiteAgentRemovalStatus}" />
                 <TextBlock Text="{Binding StudentDeploymentVerificationText}" Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasStudentDeploymentVerification}" />
                 <Button Content="查看配置与验证详情  ›" Classes="tertiary" Click="OpenDetails" Tag="7" HorizontalAlignment="Left" IsVisible="{Binding HasLoadedPackage}" />

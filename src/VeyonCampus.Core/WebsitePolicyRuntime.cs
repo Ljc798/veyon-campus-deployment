@@ -850,7 +850,8 @@ public static class WebsitePolicyAgentInstaller
                 if (updateTransaction is not null) updateTransactions.Add((item.Path, updateTransaction));
             }
             foreach (var updateTransaction in updateTransactions.Where(item => item.Record.State is not
-                         (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)))
+                         (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+                             StudentUpdateTransactionState.Superseded)))
                 RunStudentUpdateRecoveryTask(updateTransaction.Path);
 
             task = ReadTaskForRemoval();
@@ -858,7 +859,8 @@ public static class WebsitePolicyAgentInstaller
             {
                 var unfinishedTransaction = StudentUpdateAtomicTransaction.Read(updateTransaction.Path);
                 if (unfinishedTransaction is null || unfinishedTransaction.State is
-                    StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+                    StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+                    StudentUpdateTransactionState.Superseded)
                     continue;
                 return new(step, ExecutionPlan.NeedsReview,
                     $"学生端更新事务仍处于 {unfinishedTransaction.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
@@ -1014,6 +1016,11 @@ public static class WebsitePolicyAgentInstaller
         if (record is null || record.State is StudentUpdateTransactionState.Committed or
                 StudentUpdateTransactionState.RolledBack)
             return;
+        if (record.State == StudentUpdateTransactionState.Superseded)
+        {
+            StudentUpdateAtomicTransaction.EnsureSupersededRecoveryCleanup(fullConfigPath);
+            return;
+        }
 
         var expectedArguments = "--recover-student-update " + Quote(fullConfigPath);
         string? recoveryTaskName = null;
@@ -1046,7 +1053,7 @@ public static class WebsitePolicyAgentInstaller
             Thread.Sleep(TimeSpan.FromMilliseconds(500));
             var current = StudentUpdateAtomicTransaction.Read(fullConfigPath);
             if (current is null || current.State is StudentUpdateTransactionState.Committed or
-                    StudentUpdateTransactionState.RolledBack)
+                    StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded)
                 return;
         }
 
@@ -1081,6 +1088,8 @@ public static class WebsitePolicyAgentInstaller
         string? previousAgentFilesBackup = null;
         string? targetDirectory = null;
         var changedInstallation = false;
+        var recoveryTasksNeedResume = false;
+        StudentUpdateTransactionRecord? recoveryBootstrapTransaction = null;
 
         if (!OperatingSystem.IsWindows())
             return new(step, ExecutionPlan.Failed, "学生网站策略代理更新仅支持 Windows。");
@@ -1109,18 +1118,35 @@ public static class WebsitePolicyAgentInstaller
             var originalConfigBytes = File.ReadAllBytes(configPath);
             var expectedConfigFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
             var pendingTransaction = StudentUpdateAtomicTransaction.Read(configPath);
+            var installedAgentVersion = ReadInstalledAgentVersion();
             var installedStudentSetupVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
-            var recoveryBootstrapTransaction = pendingTransaction is
-                { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
+            string? recoveryBootstrapRefusalReason = null;
+            if (pendingTransaction is { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
                 string.Equals(transaction.PreviousSetupVersion, installedStudentSetupVersion, StringComparison.Ordinal) &&
                 string.Equals(transaction.ConfigurationFingerprint, expectedConfigFingerprint,
                     StringComparison.OrdinalIgnoreCase) &&
                 ApplicationReleaseClient.CompareVersions(BuildVersion, transaction.PreviousAgentVersion) >= 0 &&
-                transaction.UpdatedUtc <= DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(1))
-                ? transaction
-                : null;
+                transaction.UpdatedUtc <= DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(1)))
+            {
+                recoveryBootstrapTransaction = transaction;
+            }
+            else if (pendingTransaction is { State: StudentUpdateTransactionState.RecoveryRequired } stuckTransaction &&
+                     ApplicationReleaseClient.CompareVersions(BuildVersion, stuckTransaction.PreviousAgentVersion) >= 0)
+            {
+                if (StudentUpdateAtomicTransaction.CanBootstrapSupersededRecovery(configPath, stuckTransaction,
+                        expectedConfigFingerprint, installedAgentVersion, out var refusalReason))
+                    recoveryBootstrapTransaction = stuckTransaction;
+                else
+                    recoveryBootstrapRefusalReason = refusalReason;
+            }
             if (recoveryBootstrapTransaction is null)
             {
+                if (pendingTransaction is { State: StudentUpdateTransactionState.RecoveryRequired } &&
+                    recoveryBootstrapRefusalReason is not null)
+                    return new(step, ExecutionPlan.NeedsReview,
+                        "旧学生更新事务仍处于 RecoveryRequired，暂时无法安全接管：" + recoveryBootstrapRefusalReason +
+                        " 未启动旧恢复任务，也没有改动 Agent、策略或恢复文件。请根据此原因修正后重试。" );
+
                 stage = "恢复未完成的学生更新事务";
                 RunStudentUpdateRecoveryTask(configPath);
                 StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
@@ -1168,6 +1194,14 @@ public static class WebsitePolicyAgentInstaller
                 "VeyonCampus", "WebsitePolicyAgent", InstalledVersionDirectory);
             targetExecutable = Path.Combine(targetDirectory, "VeyonCampus.Agent.exe");
             var repairCurrentVersion = previousTask is not null && PathEquals(previousTask.ExecutablePath, targetExecutable);
+            if (recoveryBootstrapTransaction?.State == StudentUpdateTransactionState.RecoveryRequired)
+            {
+                stage = "暂停周期恢复任务，避免与 Agent 修复并发";
+                recoveryTasksNeedResume = true;
+                PauseStudentUpdateRecoveryTasksForAgentUpdate(
+                    StudentUpdateAtomicTransaction.GetAgentExecutablePath(
+                        recoveryBootstrapTransaction.PreviousAgentVersion), configPath);
+            }
             changedInstallation = true;
             previousAgentFilesBackup = InstallOrRepairApplicationFiles(sourceDirectory, targetDirectory,
                 preserveRollbackBackup: repairCurrentVersion);
@@ -1176,6 +1210,13 @@ public static class WebsitePolicyAgentInstaller
             EnsureUrlReservation();
             EnsureFirewallRule(targetExecutable);
             EnsureScheduledTask(targetExecutable, configPath);
+            if (recoveryBootstrapTransaction?.State == StudentUpdateTransactionState.RecoveryRequired)
+            {
+                stage = "切换已核验的 SYSTEM 恢复任务";
+                RebindStudentUpdateRecoveryTasksForAgentUpdate(
+                    StudentUpdateAtomicTransaction.GetAgentExecutablePath(
+                        recoveryBootstrapTransaction.PreviousAgentVersion), targetExecutable, configPath);
+            }
 
             stage = "启动并核验 Student Agent";
             if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), expectedConfigFingerprint))
@@ -1202,6 +1243,14 @@ public static class WebsitePolicyAgentInstaller
                 throw new IOException("更新后的 SYSTEM 任务、配置或任务权限读回不匹配。");
             WebsitePolicyFirewall.Verify();
 
+            if (recoveryBootstrapTransaction?.State == StudentUpdateTransactionState.RecoveryRequired)
+            {
+                stage = "收敛被较新版本取代的更新事务";
+                RunStudentUpdateRecoveryTask(configPath);
+                StudentUpdateAtomicTransaction.EnsureSupersededRecoveryCleanup(configPath);
+                StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+            }
+
             var backupCleanupDetail = "";
             if (previousAgentFilesBackup is not null && TryDeleteAgentFilesBackup(previousAgentFilesBackup, targetDirectory))
                 previousAgentFilesBackup = null;
@@ -1212,6 +1261,8 @@ public static class WebsitePolicyAgentInstaller
                 $"Student Agent 已更新/修复到 {BuildVersion}；原校区、网站/应用/系统策略信任密钥和配置均已保留，SYSTEM 任务、权限、防火墙及健康检查通过。" +
                 (recoveryBootstrapTransaction is null
                     ? ""
+                    : recoveryBootstrapTransaction.State == StudentUpdateTransactionState.RecoveryRequired
+                    ? $" 已核验 StudentSetup {StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion()} 高于失败事务目标，并由健康 Agent {BuildVersion} 收敛旧事务；恢复任务和旧恢复材料已清理。"
                     : $" 回滚恢复修复码 TXR-2 已部署（StudentSetup {installedStudentSetupVersion}；Student Agent {BuildVersion}）；已保留中断事务的恢复材料，修复后的 Agent 会在下次更新或计划恢复任务中先执行回滚。") +
                 backupCleanupDetail);
         }
@@ -1222,8 +1273,10 @@ public static class WebsitePolicyAgentInstaller
         {
             var recoveryDetail = changedInstallation
                 ? TryRestoreAfterLocalAgentUpdateFailure(previousTask, configPath, targetExecutable,
-                    previousAgentFilesBackup, targetDirectory, config)
+                    previousAgentFilesBackup, targetDirectory, config, recoveryBootstrapTransaction)
                 : "";
+            if (recoveryTasksNeedResume && configPath is not null)
+                recoveryDetail += TryReenableStudentUpdateRecoveryTasksForActiveAgent(configPath);
             return new(step, ExecutionPlan.NeedsReview,
                 $"Student Agent 在“{stage}”阶段未完成：{exception.Message}{recoveryDetail}");
         }
@@ -1254,7 +1307,7 @@ public static class WebsitePolicyAgentInstaller
     [SupportedOSPlatform("windows")]
     private static string TryRestoreAfterLocalAgentUpdateFailure(AgentTaskForRemoval? previousTask,
         string? configPath, string? targetExecutable, string? previousAgentFilesBackup, string? targetDirectory,
-        WebsitePolicyAgentConfig? config)
+        WebsitePolicyAgentConfig? config, StudentUpdateTransactionRecord? recoveryBootstrapTransaction)
     {
         if (previousTask?.Config is null || configPath is null || config is null ||
             !File.Exists(previousTask.ExecutablePath))
@@ -1273,6 +1326,10 @@ public static class WebsitePolicyAgentInstaller
             EnsureUrlReservation();
             EnsureFirewallRule(previousTask.ExecutablePath);
             EnsureScheduledTask(previousTask.ExecutablePath, configPath);
+            if (recoveryBootstrapTransaction?.State == StudentUpdateTransactionState.RecoveryRequired &&
+                targetExecutable is not null)
+                RestoreStudentUpdateRecoveryTasksAfterFailedAgentUpdate(previousTask.ExecutablePath,
+                    targetExecutable, configPath);
             if (!WaitForAgentHealth(TimeSpan.FromSeconds(1), WebsitePolicyAgent.ConfigFingerprint(config)))
                 StartScheduledTask();
             if (!WaitForAgentHealth(TimeSpan.FromSeconds(12), WebsitePolicyAgent.ConfigFingerprint(config)))
@@ -1632,6 +1689,44 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
+    public static bool StagedAgentMatchesSetupPayload(string sourceDirectory, string stagedAgentVersion)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        _ = ApplicationReleaseClient.CompareVersions(stagedAgentVersion, stagedAgentVersion);
+        var expectedSourceDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "Veyon Campus", "Student", "WebsitePolicyAgent");
+        var expectedStagedDirectory = StudentUpdateAtomicTransaction.GetAgentExecutablePath(stagedAgentVersion);
+        var stagedDirectory = Path.GetDirectoryName(expectedStagedDirectory)!;
+        if (!PathEquals(sourceDirectory, expectedSourceDirectory))
+            throw new InvalidDataException("旧版 Agent 迁移的源文件必须来自固定 StudentSetup 安装目录。");
+        PathLinkSecurity.RejectLinks(expectedSourceDirectory);
+        PathLinkSecurity.RejectLinks(stagedDirectory);
+        return DirectoryTreesEqual(expectedSourceDirectory, stagedDirectory);
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RemoveLegacyAgentSetupVersionAlias(string sourceDirectory, string aliasVersion,
+        string configPath)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理更新仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("旧版 Agent 目录清理只能由 SYSTEM 更新助手执行。");
+        _ = ApplicationReleaseClient.CompareVersions(aliasVersion, aliasVersion);
+        var aliasExecutable = StudentUpdateAtomicTransaction.GetAgentExecutablePath(aliasVersion);
+        var aliasDirectory = Path.GetDirectoryName(aliasExecutable)!;
+        var activeExecutable = ReadManagedAgentExecutablePath(configPath);
+        if (PathEquals(activeExecutable, aliasExecutable))
+            throw new InvalidDataException("旧版 Setup 版本别名仍是 SYSTEM Agent 任务目标；拒绝删除。");
+        if (!StagedAgentMatchesSetupPayload(sourceDirectory, aliasVersion))
+            throw new InvalidDataException("旧版 Setup 版本别名与当前已安装 StudentSetup 内置 Agent 不一致；保留现场供核对。");
+        PathLinkSecurity.RejectLinks(aliasDirectory);
+        Directory.Delete(aliasDirectory, recursive: true);
+    }
+
+    [SupportedOSPlatform("windows")]
     public static void RegisterStudentUpdateRecoveryTasks(string recoveryAgentExecutablePath, string configPath)
     {
         if (!OperatingSystem.IsWindows())
@@ -1655,7 +1750,7 @@ public static class WebsitePolicyAgentInstaller
         RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryTaskName, "/SC", "ONSTART", fullAgentPath,
             fullConfigPath);
         RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryWatchdogTaskName, "/SC", "MINUTE", fullAgentPath,
-            fullConfigPath, "/MO", "1");
+            fullConfigPath, ["/MO", "1"]);
     }
 
     [SupportedOSPlatform("windows")]
@@ -1826,16 +1921,170 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
+    public static WebsitePolicyAgentConfig ReadManagedAgentConfiguration(string configPath)
+    {
+        var fullConfigPath = Path.GetFullPath(configPath);
+        var task = ReadTaskForRemoval()
+                   ?? throw new InvalidDataException("SYSTEM Agent 启动任务缺失。");
+        if (!PathEquals(task.ConfigPath, fullConfigPath) || task.Config is null ||
+            !HasRestrictedScheduledTaskAcl(ScheduledTaskName))
+            throw new InvalidDataException("SYSTEM Agent 启动任务没有绑定已核验的校区配置和受限权限。");
+        return task.Config;
+    }
+
+    /// <summary>Moves only the two verified recovery tasks from the old managed Agent to its repaired successor.</summary>
+    public static void RebindStudentUpdateRecoveryTasksForAgentUpdate(string expectedPreviousAgentPath,
+        string updatedAgentPath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows() || !IsElevated())
+            throw new UnauthorizedAccessException("切换 SYSTEM 更新恢复任务需要 Windows 管理员权限。");
+
+        var previous = Path.GetFullPath(expectedPreviousAgentPath);
+        var updated = Path.GetFullPath(updatedAgentPath);
+        var fullConfig = Path.GetFullPath(configPath);
+        PathLinkSecurity.RejectLinks(previous);
+        PathLinkSecurity.RejectLinks(updated);
+        PathLinkSecurity.RejectLinks(fullConfig);
+        var activeAgent = ReadManagedAgentExecutablePath(fullConfig);
+        if (!PathEquals(activeAgent, updated) || !File.Exists(updated) ||
+            !WorkerInstallationGuard.ProductVersionMatches(updated, BuildVersion))
+            throw new InvalidDataException("新 SYSTEM Agent 尚未通过任务路径和程序版本核验；没有切换恢复任务。");
+
+        VerifyStudentUpdateRecoveryTasks(previous, fullConfig);
+        StopRunningScheduledTask(StudentUpdateRecoveryTaskName);
+        StopRunningScheduledTask(StudentUpdateRecoveryWatchdogTaskName);
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryTaskName, "/SC", "ONSTART", updated,
+            fullConfig, allowedExistingAgentPaths: [previous]);
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryWatchdogTaskName, "/SC", "MINUTE", updated,
+            fullConfig, ["/MO", "1"], [previous]);
+        VerifyStudentUpdateRecoveryTasks(updated, fullConfig);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void PauseStudentUpdateRecoveryTasksForAgentUpdate(string expectedAgentPath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows() || !IsElevated())
+            throw new UnauthorizedAccessException("暂停 SYSTEM 更新恢复任务需要 Windows 管理员权限。");
+
+        var expectedAgent = Path.GetFullPath(expectedAgentPath);
+        var fullConfig = Path.GetFullPath(configPath);
+        VerifyStudentUpdateRecoveryTasks(expectedAgent, fullConfig);
+        try
+        {
+            foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+                SetStudentUpdateRecoveryTaskEnabled(taskName, enabled: false);
+            foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+                StopRunningScheduledTask(taskName);
+            VerifyStudentUpdateRecoveryTasks(expectedAgent, fullConfig);
+        }
+        catch (Exception pauseException) when (pauseException is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            try
+            {
+                foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+                    SetStudentUpdateRecoveryTaskEnabled(taskName, enabled: true);
+            }
+            catch (Exception resumeException) when (resumeException is IOException or UnauthorizedAccessException or
+                                                    InvalidDataException or InvalidOperationException or
+                                                    System.ComponentModel.Win32Exception)
+            {
+                throw new IOException("暂停 SYSTEM 更新恢复任务未完成，且无法确认已重新启用；请检查任务计划程序。",
+                    new AggregateException(pauseException, resumeException));
+            }
+            throw;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string TryReenableStudentUpdateRecoveryTasksForActiveAgent(string configPath)
+    {
+        try
+        {
+            var fullConfig = Path.GetFullPath(configPath);
+            var activeAgent = ReadManagedAgentExecutablePath(fullConfig);
+            VerifyStudentUpdateRecoveryTasks(activeAgent, fullConfig);
+            foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+                SetStudentUpdateRecoveryTaskEnabled(taskName, enabled: true);
+            VerifyStudentUpdateRecoveryTasks(activeAgent, fullConfig);
+            return " SYSTEM 更新恢复任务已确认并重新启用。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            return " SYSTEM 更新恢复任务未能按当前 Agent 核验并重新启用，请在管理员维护中重试并检查任务计划程序。";
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void SetStudentUpdateRecoveryTaskEnabled(string taskName, bool enabled)
+    {
+        var changed = Run("schtasks.exe", ["/Change", "/TN", taskName, enabled ? "/ENABLE" : "/DISABLE"]);
+        if (changed.ExitCode != 0)
+            throw new IOException($"无法{(enabled ? "重新启用" : "暂停")} SYSTEM 更新恢复任务 {taskName}。" +
+                                 (changed.Stderr.Length > 0 ? " " + TruncateDiagnostic(changed.Stderr) : ""));
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static void RestoreStudentUpdateRecoveryTasksAfterFailedAgentUpdate(string restoredAgentPath,
+        string attemptedAgentPath, string configPath)
+    {
+        if (!OperatingSystem.IsWindows() || !IsElevated())
+            throw new UnauthorizedAccessException("恢复 SYSTEM 更新恢复任务需要 Windows 管理员权限。");
+
+        var restored = Path.GetFullPath(restoredAgentPath);
+        var attempted = Path.GetFullPath(attemptedAgentPath);
+        var fullConfig = Path.GetFullPath(configPath);
+        var activeAgent = ReadManagedAgentExecutablePath(fullConfig);
+        var restoredVersion = Path.GetFileName(Path.GetDirectoryName(restored));
+        if (!PathEquals(activeAgent, restored) || !IsManagedAgentExecutablePath(restored) ||
+            !File.Exists(restored) || string.IsNullOrWhiteSpace(restoredVersion) ||
+            !WorkerInstallationGuard.ProductVersionMatches(restored, restoredVersion) ||
+            !PathEquals(attempted, StudentUpdateAtomicTransaction.GetAgentExecutablePath(BuildVersion)))
+            throw new InvalidDataException("回退后的 SYSTEM Agent 或尝试升级的 Agent 路径未通过核验；未修改恢复任务。");
+
+        var permittedActions = new[] { restored, attempted };
+        var expectedArguments = "--recover-student-update " + Quote(fullConfig);
+        foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+        {
+            var action = ReadScheduledTaskAction(taskName);
+            if (action is not null &&
+                (!string.Equals(action.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                 !permittedActions.Any(path => PathEquals(path, action.ExecutablePath)) ||
+                 !string.Equals(action.Arguments, expectedArguments, StringComparison.Ordinal) ||
+                 !HasRestrictedScheduledTaskAcl(taskName)))
+                throw new InvalidDataException($"SYSTEM 更新恢复任务 {taskName} 指向未核验的 Agent；拒绝覆盖。");
+        }
+
+        StopRunningScheduledTask(StudentUpdateRecoveryTaskName);
+        StopRunningScheduledTask(StudentUpdateRecoveryWatchdogTaskName);
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryTaskName, "/SC", "ONSTART", restored,
+            fullConfig, allowedExistingAgentPaths: permittedActions);
+        RegisterStudentUpdateRecoveryTask(StudentUpdateRecoveryWatchdogTaskName, "/SC", "MINUTE", restored,
+            fullConfig, ["/MO", "1"], permittedActions);
+        VerifyStudentUpdateRecoveryTasks(restored, fullConfig);
+    }
+
+    [SupportedOSPlatform("windows")]
     private static void RegisterStudentUpdateRecoveryTask(string taskName, string scheduleSwitch,
-        string scheduleValue, string agentPath, string configPath, params string[] extraScheduleArguments)
+        string scheduleValue, string agentPath, string configPath, string[]? extraScheduleArguments = null,
+        string[]? allowedExistingAgentPaths = null)
     {
         var expectedArguments = "--recover-student-update " + Quote(configPath);
         var existing = ReadScheduledTaskAction(taskName);
-        if (existing is not null && (!string.Equals(existing.UserId, "S-1-5-18", StringComparison.Ordinal) ||
-                                     !PathEquals(existing.ExecutablePath, agentPath) ||
-                                     !string.Equals(existing.Arguments, expectedArguments, StringComparison.Ordinal) ||
-                                     !HasRestrictedScheduledTaskAcl(taskName)))
-            throw new InvalidDataException($"同名 SYSTEM 更新恢复任务 {taskName} 不属于当前事务；未覆盖。");
+        if (existing is not null)
+        {
+            var permittedAgentAction = PathEquals(existing.ExecutablePath, agentPath) ||
+                                       allowedExistingAgentPaths is not null &&
+                                       allowedExistingAgentPaths.Any(path => PathEquals(existing.ExecutablePath, path));
+            if (!string.Equals(existing.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                !permittedAgentAction ||
+                !string.Equals(existing.Arguments, expectedArguments, StringComparison.Ordinal) ||
+                !HasRestrictedScheduledTaskAcl(taskName))
+                throw new InvalidDataException($"同名 SYSTEM 更新恢复任务 {taskName} 不属于已核验的旧/新 Agent；未覆盖。");
+        }
 
         var commandLine = Quote(agentPath) + " " + expectedArguments;
         var arguments = new List<string>
@@ -1843,12 +2092,13 @@ public static class WebsitePolicyAgentInstaller
             "/Create", "/TN", taskName, scheduleSwitch, scheduleValue, "/RU", "SYSTEM", "/RL", "HIGHEST",
             "/TR", commandLine
         };
-        arguments.AddRange(extraScheduleArguments);
+        if (extraScheduleArguments is not null) arguments.AddRange(extraScheduleArguments);
         arguments.Add("/F");
         var created = Run("schtasks.exe", arguments);
         if (created.ExitCode != 0)
             throw new IOException($"无法注册 SYSTEM 更新恢复任务 {taskName}。");
         ProtectScheduledTaskAcl(taskName);
+        SetStudentUpdateRecoveryTaskEnabled(taskName, enabled: true);
         var readback = ReadScheduledTaskAction(taskName);
         if (readback is null || !string.Equals(readback.UserId, "S-1-5-18", StringComparison.Ordinal) ||
             !PathEquals(readback.ExecutablePath, agentPath) ||
@@ -2335,7 +2585,7 @@ public static class WebsitePolicyAgentInstaller
             return Path.GetExtension(name).ToLowerInvariant() is ".dll" or ".exe" or ".json" or ".config" or ".dat" or ".jpg";
     }
 
-    private static WebsitePolicyAgentConfig? ReadExistingConfig(string path)
+    internal static WebsitePolicyAgentConfig? ReadExistingConfig(string path)
     {
         if (!File.Exists(path)) return null;
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
@@ -2344,7 +2594,7 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
-    private static void WriteSecureConfig(string path, byte[] bytes)
+    internal static void WriteSecureConfig(string path, byte[] bytes)
     {
         var tempPath = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
@@ -2636,7 +2886,7 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
-    private static bool PublicKeysEqual(string leftPem, string rightPem)
+    internal static bool PublicKeysEqual(string leftPem, string rightPem)
     {
         using var left = RSA.Create();
         using var right = RSA.Create();
@@ -3570,7 +3820,7 @@ public static class WebsitePolicyTransport
         if (validated.Any(target => !policies.ContainsKey(target)) || policies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台网站策略信封必须完整匹配每一台目标电脑。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback: true);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>
@@ -3766,6 +4016,7 @@ public sealed class WebsitePolicyAgent
     public const int Port = 39174;
     public const string ListenPrefix = "http://+:39174/";
     public const string PolicyPath = "/v1/policy";
+    public const string ConfigurationSyncPath = "/v1/configuration/sync";
     public const string StatusPath = "/v1/status";
     public const string StatusPathV2 = "/v2/status";
     public const string StatusPathV3 = "/v3/status";
@@ -3836,17 +4087,11 @@ public sealed class WebsitePolicyAgent
     public static string GetRuntimeVersion()
     {
         var executablePath = Environment.ProcessPath;
-        var version = executablePath is null ? null : Path.GetFileName(Path.GetDirectoryName(executablePath));
-        if (version is null) return "unknown";
-        try
-        {
-            _ = ApplicationReleaseClient.CompareVersions(version, version);
-            return version;
-        }
-        catch (InvalidDataException)
-        {
-            return "unknown";
-        }
+        if (executablePath is null) return "unknown";
+        try { return WorkerInstallationGuard.GetAssemblyProductVersion(executablePath); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or ArgumentException)
+        { return "unknown"; }
     }
 
     [SupportedOSPlatform("windows")]
@@ -3894,6 +4139,7 @@ public sealed class WebsitePolicyAgent
             edgePolicyRefreshSignal, cancellationToken).ConfigureAwait(false);
         ReconcileRefreshQueueAtStartup(configPath, config.CampusId, edgePolicyRefreshSignal);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var teacherChannelSupervisor = new StudentAgentTeacherChannelSupervisor();
         var classroomStatus = new ClassroomStatusAgentState();
         var classroomEvents = new ClassroomEventGrantState();
         var edgeApplyResults = new EdgeWebsitePolicyApplyResultState();
@@ -3911,13 +4157,13 @@ public sealed class WebsitePolicyAgent
         {
             try
             {
-                await StudentAgentTeacherChannelClient.RunAsync(configPath, config, agentIdentityKey,
+                await teacherChannelSupervisor.RunAsync(configPath, agentIdentityKey,
                     shutdown.Token).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { }
             catch (Exception exception) when (exception is InvalidDataException or IOException or
                 UnauthorizedAccessException or CryptographicException or HttpRequestException or
-                PlatformNotSupportedException)
+                JsonException or PlatformNotSupportedException)
             {
                 WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel",
                     Guid.NewGuid().ToString("N")[..12], exception);
@@ -3938,7 +4184,7 @@ public sealed class WebsitePolicyAgent
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
                     agentIdentityKey, classroomStatus, classroomEvents, browserRestartSignal,
-                    edgePolicyRefreshSignal, edgeApplyResults, inputGuardState, shutdown);
+                    edgePolicyRefreshSignal, edgeApplyResults, inputGuardState, teacherChannelSupervisor, shutdown);
                 continue;
             }
 
@@ -4048,14 +4294,23 @@ public sealed class WebsitePolicyAgent
         StudentAgentEdgePolicyRefreshSignalState edgePolicyRefreshSignal,
         EdgeWebsitePolicyApplyResultState edgeApplyResults,
         StudentInputGuardAgentState inputGuardState,
+        StudentAgentTeacherChannelSupervisor teacherChannelSupervisor,
         CancellationTokenSource agentShutdown)
     {
         var cancellationToken = agentShutdown.Token;
         using var response = context.Response;
         try
         {
+            config = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath) ?? config;
             if (context.Request.HttpMethod == "POST" && IsCommandEndpoint(context.Request.Url?.AbsolutePath))
                 AcceptCommandNonce(context.Request, DateTimeOffset.UtcNow);
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == ConfigurationSyncPath)
+            {
+                await HandleConfigurationSyncAsync(context, configPath, config, agentIdentityKey,
+                    teacherChannelSupervisor, cancellationToken).ConfigureAwait(false);
+                return;
+            }
             if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/health")
             {
                 response.Headers["X-VeyonCampus-Agent-Config"] = ConfigFingerprint(config);
@@ -4479,11 +4734,34 @@ public sealed class WebsitePolicyAgent
                 if (capabilityRequest.SchemaVersion != 4 || capabilityRequest.UpdateCommandId is not null)
                     throw new InvalidDataException("学生更新下载能力请求必须使用无命令编号的状态协议 v4。");
                 AcceptStatusNonce(capabilityRequest.Nonce, capabilityRequest.IssuedUtc, now);
+                string? teacherChannelFingerprint = null;
+                try
+                {
+                    teacherChannelFingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(
+                        config.CampusId, config.TeacherChannelEndpoints,
+                        config.TeacherChannelRootCertificateBase64);
+                }
+                catch (InvalidDataException)
+                {
+                    // Report an incomplete channel configuration as a capability that needs repair;
+                    // it must not make the trusted HTTP update entry disappear.
+                }
                 var capabilityResponse = new StudentApplicationUpdateDownloadCapabilityResponse(
                     StudentApplicationUpdateDownloadCapabilityCryptography.SchemaVersion,
                     StudentApplicationUpdateDownloadCapabilityCryptography.Purpose, config.CampusId,
                     capabilityRequest.Nonce, now,
-                    StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion);
+                    StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion,
+                    WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion,
+                    StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
+                    GetRuntimeVersion(), WebsitePolicyAgentInstaller.BuildVersion,
+                    typeof(WebsitePolicyAgentInstaller).Assembly.GetName().Version?.ToString(3),
+                    ApplicationReleaseTrust.HasPinnedPublicKey
+                        ? ApplicationReleaseTrust.GetPinnedPublicKeyFingerprint()
+                        : null,
+                    ApplicationReleaseTrust.HasPinnedTestPublicKey
+                        ? ApplicationReleaseTrust.GetPinnedTestPublicKeyFingerprint()
+                        : null,
+                    teacherChannelFingerprint is not null, teacherChannelFingerprint, ConfigFingerprint(config));
                 var signedCapabilityResponse = StudentAgentResponseCryptography.Sign(capabilityResponse,
                     agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedCapabilityResponse),
@@ -4992,7 +5270,7 @@ public sealed class WebsitePolicyAgent
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.Security.SecurityException or InvalidOperationException or
                                           CryptographicException or HttpRequestException or OperationCanceledException or
-                                          System.ComponentModel.Win32Exception or TimeoutException)
+                                          System.ComponentModel.Win32Exception or TimeoutException or JsonException)
         {
             var operation = AgentOperationName(context.Request.Url?.AbsolutePath);
             var diagnosticId = Guid.NewGuid().ToString("N")[..12];
@@ -5021,8 +5299,81 @@ public sealed class WebsitePolicyAgent
         return Encoding.UTF8.GetString(buffer.ToArray());
     }
 
+    [SupportedOSPlatform("windows")]
+    private static async Task HandleConfigurationSyncAsync(HttpListenerContext context, string configPath,
+        WebsitePolicyAgentConfig config, RSA agentIdentityKey,
+        StudentAgentTeacherChannelSupervisor teacherChannelSupervisor, CancellationToken cancellationToken)
+    {
+        if (context.Request.ContentLength64 is > StudentAgentConfigurationSyncCryptography.MaximumEnvelopeBytes)
+        {
+            await RespondAsync(context.Response, 413, "configuration sync too large", cancellationToken)
+                .ConfigureAwait(false);
+            return;
+        }
+
+        var signedCommand = await ReadBoundedAsync(context.Request.InputStream,
+            StudentAgentConfigurationSyncCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
+        var nonce = ReadCommandNonce(context.Request)
+                    ?? throw new InvalidDataException("配置同步命令缺少请求随机数。");
+        var command = StudentAgentConfigurationSyncCryptography.Verify(signedCommand, config.PublicKeyPem,
+            config.CampusId, nonce, DateTimeOffset.UtcNow);
+        var localFingerprint = StudentAgentResponseCryptography.GetFingerprint(
+            agentIdentityKey.ExportSubjectPublicKeyInfoPem());
+        if (!string.Equals(command.ExpectedAgentFingerprint, localFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("配置同步命令目标与当前学生 Agent 身份不匹配；未写入配置。");
+        var changed = false;
+        await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+            StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+            var current = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
+                          ?? throw new InvalidDataException("学生网站策略代理配置不存在。");
+            if (!string.Equals(current.CampusId, config.CampusId, StringComparison.Ordinal) ||
+                !WebsitePolicyAgentInstaller.PublicKeysEqual(current.PublicKeyPem, config.PublicKeyPem))
+                throw new InvalidDataException("学生端校区或网站策略信任身份已变化；拒绝配置同步。需先核对设备身份。");
+
+            StudentAgentChannelProtocol.ValidateBootstrapConfiguration(command.CampusId,
+                command.TeacherChannelEndpoints, command.TeacherChannelRootCertificateBase64);
+            var sameEndpoints = current.TeacherChannelEndpoints is { } existingEndpoints &&
+                                existingEndpoints.SequenceEqual(command.TeacherChannelEndpoints,
+                                    StringComparer.Ordinal);
+            var sameRoot = string.Equals(current.TeacherChannelRootCertificateBase64,
+                command.TeacherChannelRootCertificateBase64, StringComparison.Ordinal);
+            changed = !sameEndpoints || !sameRoot;
+            if (changed)
+            {
+                var updated = current with
+                {
+                    TeacherChannelEndpoints = Array.AsReadOnly(command.TeacherChannelEndpoints.ToArray()),
+                    TeacherChannelRootCertificateBase64 = command.TeacherChannelRootCertificateBase64
+                };
+                WebsitePolicyAgentInstaller.WriteSecureConfig(configPath,
+                    JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions));
+            }
+        }
+        finally { ApplyGate.Release(); }
+
+        var acknowledgement = changed ? "configuration synced; reconnect pending" : "configuration already current";
+        await RespondCommandAcknowledgementAsync(context.Response, context.Request, 200, acknowledgement,
+            config.CampusId, signedCommand, agentIdentityKey, cancellationToken).ConfigureAwait(false);
+        if (changed)
+        {
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(2)).ConfigureAwait(false);
+                    teacherChannelSupervisor.RequestReload();
+                }
+                catch (ObjectDisposedException) { }
+            }, CancellationToken.None);
+        }
+    }
+
     private static string AgentOperationName(string? path) => path switch
     {
+        ConfigurationSyncPath => "教师连接配置同步",
         StudentUpdatePath => "更新",
         ApplicationInventoryPath => "软件清单读取",
         StudentAccountsPath => "学生账户读取",
@@ -5130,7 +5481,7 @@ public sealed class WebsitePolicyAgent
         return nonce;
     }
 
-    private static bool IsCommandEndpoint(string? path) => path is PolicyPath or ApplicationPolicyPath or
+    private static bool IsCommandEndpoint(string? path) => path is ConfigurationSyncPath or PolicyPath or ApplicationPolicyPath or
         StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath or StudentAccountsPath or
         ApplicationCatalogPath or ApplicationCatalogDetailsPath or
         HealthRepairPath or EdgePolicyModePath or InputGuardCommandPath;

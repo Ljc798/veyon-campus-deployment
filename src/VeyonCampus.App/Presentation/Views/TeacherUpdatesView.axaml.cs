@@ -7,13 +7,31 @@ public partial class TeacherUpdatesView : UserControl
 {
     public TeacherUpdatesView() => InitializeComponent();
 
+    public void ScrollToSection(string sectionName)
+    {
+        GetSectionControl(sectionName)?.BringIntoView();
+    }
+
+    public Control? GetSectionControl(string sectionName) => sectionName switch
+    {
+        "teacher-update" => this.FindControl<Control>("TeacherUpdateSection"),
+        "student-maintenance" or "student-update" => this.FindControl<Control>("StudentUpdateSection"),
+        "configuration-sync" => this.FindControl<Control>("ConfigurationSyncSection"),
+        _ => null
+    };
+
     public event EventHandler<RoutedEventArgs>? CheckTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? DownloadTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? ExportOfflineTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? VerifyOfflineTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? InstallOfflineTeacherUpdateRequested;
     public event EventHandler<RoutedEventArgs>? TrustStudentAgentIdentitiesRequested;
+    public event EventHandler<RoutedEventArgs>? MaintainStudentDevicesRequested;
     public event EventHandler<RoutedEventArgs>? DeployStudentUpdateRequested;
+    public event EventHandler<RoutedEventArgs>? SelectLocalStudentTestInstallerRequested;
+    public event EventHandler<RoutedEventArgs>? SyncStudentConfigurationRequested;
+    public event EventHandler<RoutedEventArgs>? ReviewConfigurationIdentityRequested;
+    public event EventHandler<RoutedEventArgs>? ReviewStudentUpdateIdentityRequested;
     public event EventHandler<RoutedEventArgs>? SelectAllStudentUpdateTargetsRequested;
     public event EventHandler<RoutedEventArgs>? ClearStudentUpdateTargetsRequested;
     public event EventHandler<RoutedEventArgs>? ExportStudentUpdatePerformanceReportRequested;
@@ -37,8 +55,23 @@ public partial class TeacherUpdatesView : UserControl
     private void RequestTrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
         TrustStudentAgentIdentitiesRequested?.Invoke(sender, e);
 
+    private void RequestMaintainStudentDevices(object? sender, RoutedEventArgs e) =>
+        MaintainStudentDevicesRequested?.Invoke(sender, e);
+
     private void RequestDeployStudentUpdate(object? sender, RoutedEventArgs e) =>
         DeployStudentUpdateRequested?.Invoke(sender, e);
+
+    private void RequestSelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e) =>
+        SelectLocalStudentTestInstallerRequested?.Invoke(sender, e);
+
+    private void RequestSyncStudentConfiguration(object? sender, RoutedEventArgs e) =>
+        SyncStudentConfigurationRequested?.Invoke(sender, e);
+
+    private void RequestReviewConfigurationIdentity(object? sender, RoutedEventArgs e) =>
+        ReviewConfigurationIdentityRequested?.Invoke(sender, e);
+
+    private void RequestReviewStudentUpdateIdentity(object? sender, RoutedEventArgs e) =>
+        ReviewStudentUpdateIdentityRequested?.Invoke(sender, e);
 
     private void RequestSelectAllStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
         SelectAllStudentUpdateTargetsRequested?.Invoke(sender, e);

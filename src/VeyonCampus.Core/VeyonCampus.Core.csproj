@@ -13,6 +13,7 @@
   </Target>
   <PropertyGroup>
     <VeyonCampusReleasePublicKeyPath Condition="'$(VeyonCampusReleasePublicKeyPath)' == ''">$(VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH)</VeyonCampusReleasePublicKeyPath>
+    <VeyonCampusTestReleasePublicKeyPath Condition="'$(VeyonCampusTestReleasePublicKeyPath)' == ''">$(VEYONCAMPUS_TEST_RELEASE_PUBLIC_KEY_PATH)</VeyonCampusTestReleasePublicKeyPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(VeyonCampusCoreLockFile)' != ''">
     <NuGetLockFilePath>$(MSBuildProjectDirectory)/$(VeyonCampusCoreLockFile)</NuGetLockFilePath>
@@ -25,10 +26,17 @@
     <EmbeddedResource Include="$(VeyonCampusReleasePublicKeyPath)"
                       LogicalName="VeyonCampus.Core.ApplicationReleasePublicKey.pem"
                       Condition="'$(VeyonCampusReleasePublicKeyPath)' != ''" />
+    <EmbeddedResource Include="$(VeyonCampusTestReleasePublicKeyPath)"
+                      LogicalName="VeyonCampus.Core.ApplicationTestReleasePublicKey.pem"
+                      Condition="'$(VeyonCampusTestReleasePublicKeyPath)' != ''" />
   </ItemGroup>
 
   <Target Name="ValidateApplicationReleasePublicKey" BeforeTargets="CoreCompile"
           Condition="'$(VeyonCampusReleasePublicKeyPath)' != '' and !Exists('$(VeyonCampusReleasePublicKeyPath)')">
     <Error Text="VeyonCampusReleasePublicKeyPath must point to the pinned Developer Release PEM public key." />
+  </Target>
+  <Target Name="ValidateApplicationTestReleasePublicKey" BeforeTargets="CoreCompile"
+          Condition="'$(VeyonCampusTestReleasePublicKeyPath)' != '' and !Exists('$(VeyonCampusTestReleasePublicKeyPath)')">
+    <Error Text="VeyonCampusTestReleasePublicKeyPath must point to the local test Developer Release PEM public key." />
   </Target>
 </Project>

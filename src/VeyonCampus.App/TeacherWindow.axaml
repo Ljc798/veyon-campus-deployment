@@ -71,7 +71,12 @@
             VerifyOfflineTeacherUpdateRequested="VerifyOfflineTeacherUpdate"
             InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
             TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
+            MaintainStudentDevicesRequested="MaintainStudentDevices"
             DeployStudentUpdateRequested="DeployStudentUpdate"
+            SelectLocalStudentTestInstallerRequested="SelectLocalStudentTestInstaller"
+            SyncStudentConfigurationRequested="SyncStudentConfiguration"
+            ReviewConfigurationIdentityRequested="ReviewConfigurationIdentity"
+            ReviewStudentUpdateIdentityRequested="ReviewStudentUpdateIdentity"
             SelectAllStudentUpdateTargetsRequested="SelectAllStudentUpdateTargets"
             ClearStudentUpdateTargetsRequested="ClearStudentUpdateTargets"
             ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport"
@@ -247,6 +252,16 @@
     <Style Selector="Button.quick-control-choice.active:pointerover">
       <Setter Property="Background" Value="#E4EEF8" />
       <Setter Property="BorderBrush" Value="#78A9D5" />
+    </Style>
+    <Style Selector="Button.updates-nav-card.active">
+      <Setter Property="Background" Value="#E7F2FB" />
+      <Setter Property="Foreground" Value="#14528A" />
+      <Setter Property="BorderBrush" Value="#78A9D5" />
+      <Setter Property="FontWeight" Value="SemiBold" />
+    </Style>
+    <Style Selector="Button.updates-nav-card.active:pointerover">
+      <Setter Property="Background" Value="#DDECF8" />
+      <Setter Property="BorderBrush" Value="#5596CF" />
     </Style>
     <Style Selector="Button.quick-control-choice.needs-review">
       <Setter Property="Background" Value="#FFF8E8" />
@@ -428,7 +443,58 @@
           </Border>
         </StackPanel>
       </Border>
+      <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.Surface}" Padding="16,8"
+              IsVisible="{Binding IsUpdatesPage}">
+        <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Button x:Name="UpdatesNavStatus" Classes="secondary updates-nav-card active" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateDeviceStatusSection">
+              <StackPanel Spacing="2">
+                <TextBlock Text="设备状态" FontWeight="SemiBold" />
+                <TextBlock Text="概览与在线情况" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="UpdatesNavAlerts" Classes="secondary updates-nav-card" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateDeviceAlertsSection"
+                    IsVisible="{Binding HasDeviceHealthAlerts}">
+              <StackPanel Spacing="2">
+                <TextBlock Text="需要处理" FontWeight="SemiBold" />
+                <TextBlock Text="问题与修复入口" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="UpdatesNavRoster" Classes="secondary updates-nav-card" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateStudentRosterSection">
+              <StackPanel Spacing="2">
+                <TextBlock Text="学生电脑" FontWeight="SemiBold" />
+                <TextBlock Text="名单与单机状态" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="UpdatesNavMaintenance" Classes="secondary updates-nav-card" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateMaintenanceSection">
+              <StackPanel Spacing="2">
+                <TextBlock Text="维护工具" FontWeight="SemiBold" />
+                <TextBlock Text="诊断与批量工具" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="UpdatesNavTeacher" Classes="secondary updates-nav-card" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateTeacherUpdateSection">
+              <StackPanel Spacing="2">
+                <TextBlock Text="教师端更新" FontWeight="SemiBold" />
+                <TextBlock Text="控制台版本管理" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+            <Button x:Name="UpdatesNavStudent" Classes="secondary updates-nav-card" MinWidth="120"
+                    Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateStudentMaintenanceSection">
+              <StackPanel Spacing="2">
+                <TextBlock Text="学生端维护" FontWeight="SemiBold" />
+                <TextBlock Text="Agent 更新与连接同步" Classes="muted" FontSize="11" />
+              </StackPanel>
+            </Button>
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
       <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                    ScrollChanged="TeacherContentScrollChanged"
                     Background="{DynamicResource Teacher.Color.Background}">
             <ContentControl x:Name="TeacherPageHost" Content="{Binding}"
                       HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top" />

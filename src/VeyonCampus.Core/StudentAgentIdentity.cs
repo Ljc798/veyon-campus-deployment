@@ -36,6 +36,10 @@ public static class StudentApplicationUpdateResponseCryptography
 
     public static void Validate(StudentApplicationUpdateResponse response, string campusId, Guid commandId,
         string expectedVersion, bool restartPending, DateTimeOffset nowUtc)
+        => Validate(response, campusId, commandId, expectedVersion, expectedVersion, restartPending, nowUtc);
+
+    public static void Validate(StudentApplicationUpdateResponse response, string campusId, Guid commandId,
+        string expectedSetupVersion, string? expectedAgentVersion, bool restartPending, DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(response);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
@@ -53,7 +57,9 @@ public static class StudentApplicationUpdateResponseCryptography
             response.CommandId == Guid.Empty || response.CommandId != commandId ||
             response.CompletedUtc.Offset != TimeSpan.Zero || response.CompletedUtc > now.AddMinutes(2) ||
             response.CompletedUtc < now.Subtract(MaximumResponseAge) ||
-            !string.Equals(response.StudentSetupVersion, expectedVersion, StringComparison.Ordinal) ||
+            !string.Equals(response.StudentSetupVersion, expectedSetupVersion, StringComparison.Ordinal) ||
+            (expectedAgentVersion is not null &&
+             !string.Equals(response.AgentVersion, expectedAgentVersion, StringComparison.Ordinal)) ||
             response.AgentRestartPending != restartPending || string.IsNullOrWhiteSpace(response.Message) ||
             response.Message.Length > 2048)
             throw new InvalidDataException("学生 Agent 更新回执与本次命令、版本、校区或 HTTP 状态不匹配。");

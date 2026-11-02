@@ -31,7 +31,9 @@ public sealed record ApplicationReleaseManifest(
     [property: JsonPropertyName("sizeBytes")] long SizeBytes,
     [property: JsonPropertyName("sha256")] string Sha256,
     [property: JsonPropertyName("downloadUrl")] string DownloadUrl,
-    [property: JsonPropertyName("policyCapabilities")] ApplicationReleasePolicyCapabilities? PolicyCapabilities = null);
+    [property: JsonPropertyName("policyCapabilities")] ApplicationReleasePolicyCapabilities? PolicyCapabilities = null,
+    [property: JsonPropertyName("studentAgentVersion")] string? StudentAgentVersion = null,
+    [property: JsonPropertyName("releaseChannel")] string? ReleaseChannel = null);
 
 public sealed record ApplicationReleaseEnvelope(
     [property: JsonPropertyName("manifest")] ApplicationReleaseManifest Manifest,
@@ -68,6 +70,13 @@ public static class ApplicationReleaseCompatibility
 public static class ApplicationReleaseTrust
 {
     public const string PublicKeyResourceName = "VeyonCampus.Core.ApplicationReleasePublicKey.pem";
+    public const string TestPublicKeyResourceName = "VeyonCampus.Core.ApplicationTestReleasePublicKey.pem";
+
+    public static bool HasPinnedPublicKey =>
+        typeof(ApplicationReleaseTrust).Assembly.GetManifestResourceInfo(PublicKeyResourceName) is not null;
+
+    public static bool HasPinnedTestPublicKey =>
+        typeof(ApplicationReleaseTrust).Assembly.GetManifestResourceInfo(TestPublicKeyResourceName) is not null;
 
     public static string LoadPinnedPublicKeyPem()
     {
@@ -93,6 +102,33 @@ public static class ApplicationReleaseTrust
         using var publicKey = RSA.Create();
         publicKey.ImportFromPem(LoadPinnedPublicKeyPem());
         return Convert.ToHexString(SHA256.HashData(publicKey.ExportSubjectPublicKeyInfo()));
+    }
+
+    public static string GetPinnedTestPublicKeyFingerprint()
+    {
+        using var publicKey = RSA.Create();
+        publicKey.ImportFromPem(LoadPinnedTestPublicKeyPem());
+        return Convert.ToHexString(SHA256.HashData(publicKey.ExportSubjectPublicKeyInfo()));
+    }
+
+    public static string LoadPinnedTestPublicKeyPem()
+    {
+        using var stream = typeof(ApplicationReleaseTrust).Assembly.GetManifestResourceStream(TestPublicKeyResourceName)
+                           ?? throw new InvalidOperationException(
+                               "此测试版未嵌入本地测试发行公钥；不能选择本机测试更新源。请使用测试发行公钥重新构建 TeacherConsole 和 StudentSetup。");
+        using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
+        var publicKeyPem = reader.ReadToEnd();
+        if (publicKeyPem.Contains("PRIVATE KEY", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("本地测试发行验证器只能包含公钥，不能包含私钥。");
+        using var publicKey = RSA.Create();
+        try { publicKey.ImportFromPem(publicKeyPem); }
+        catch (CryptographicException exception)
+        {
+            throw new InvalidDataException("嵌入的本地测试发行公钥无效。", exception);
+        }
+        if (publicKey.KeySize is < 2048 or > 4096)
+            throw new InvalidDataException("本地测试发行 RSA 公钥位长不受支持。");
+        return publicKeyPem;
     }
 }
 
@@ -483,12 +519,17 @@ public sealed class ApplicationReleaseClient
                 writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities!.StudentSystemPolicy);
                 writer.WriteEndObject();
             }
-            else if (manifest.SchemaVersion == 3)
+            else if (manifest.SchemaVersion is 3 or 4)
             {
                 writer.WriteStartObject("policyCapabilities");
                 writer.WriteNumber("applicationPolicy", manifest.PolicyCapabilities!.ApplicationPolicy);
                 writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities.StudentSystemPolicy);
                 writer.WriteEndObject();
+            }
+            if (manifest.SchemaVersion == 4)
+            {
+                writer.WriteString("studentAgentVersion", manifest.StudentAgentVersion);
+                writer.WriteString("releaseChannel", manifest.ReleaseChannel);
             }
             writer.WriteEndObject();
         }
@@ -509,20 +550,29 @@ public sealed class ApplicationReleaseClient
             ? "VeyonCampus.TeacherConsole"
             : "VeyonCampus.StudentSetup";
         var roleFileName = expectedRole == ApplicationReleaseRole.TeacherConsole ? "Teacher" : "Student";
-        if (manifest.SchemaVersion is not (1 or 2 or 3) || manifest.Role != roleName || manifest.Product != product ||
+        var isLocalTest = string.Equals(manifest.ReleaseChannel, "local-test", StringComparison.Ordinal);
+        var isStable = manifest.ReleaseChannel is null or "stable";
+        if (manifest.SchemaVersion is not (1 or 2 or 3 or 4) || manifest.Role != roleName || manifest.Product != product ||
             manifest.Architecture != "win-x64" || !IsSemanticVersion(manifest.Version) ||
             manifest.FileName != $"VeyonCampus-{roleFileName}-Setup-{manifest.Version}-win-x64.exe" ||
             manifest.SizeBytes is < 1 or > MaximumArtifactBytes ||
             manifest.Sha256 is null || !Regex.IsMatch(manifest.Sha256, "^[A-F0-9]{64}$", RegexOptions.CultureInvariant) ||
             release.SignatureAlgorithm != SignatureAlgorithm || string.IsNullOrEmpty(release.Signature) ||
             release.PublishedAt == default ||
+            (!isStable && !isLocalTest) ||
+            (manifest.SchemaVersion < 4 && (!isStable || manifest.StudentAgentVersion is not null)) ||
+            (manifest.SchemaVersion == 4 && (!isLocalTest || manifest.PolicyCapabilities is null ||
+                manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
+                manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767 ||
+                manifest.StudentAgentVersion is null || !IsSemanticVersion(manifest.StudentAgentVersion))) ||
             (manifest.SchemaVersion == 1 && manifest.PolicyCapabilities is not null) ||
             (manifest.SchemaVersion == 2 && (manifest.PolicyCapabilities is null ||
                 manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
                 manifest.PolicyCapabilities.ApplicationPolicy != 0)) ||
             (manifest.SchemaVersion == 3 && (manifest.PolicyCapabilities is null ||
                 manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
-                manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767)))
+                manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767)) ||
+            (manifest.SchemaVersion is 1 or 2 or 3 && manifest.ReleaseChannel is not null))
             throw new InvalidDataException("发布清单的角色、版本、文件或签名元数据无效。");
 
         if (!Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||
@@ -547,11 +597,15 @@ public sealed class ApplicationReleaseClient
         {
             throw new InvalidDataException("发布清单签名编码无效。", exception);
         }
-        using var publicKey = ImportPublicKey(publicKeyPem);
+        using var publicKey = ImportPublicKey(isLocalTest
+            ? ApplicationReleaseTrust.LoadPinnedTestPublicKeyPem()
+            : publicKeyPem);
         if (signature.Length != publicKey.KeySize / 8 ||
             !publicKey.VerifyData(CreateCanonicalPayload(manifest), signature,
                 HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
-            throw new InvalidDataException("Developer Release 签名无效；已拒绝此版本。");
+            throw new InvalidDataException(isLocalTest
+                ? "本地测试发行签名无效；已拒绝此版本。"
+                : "Developer Release 签名无效；已拒绝此版本。");
     }
 
     private async Task<HttpResponseMessage> SendArtifactRequestAsync(Uri requestUri,

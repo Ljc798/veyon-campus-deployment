@@ -6,10 +6,15 @@ namespace VeyonCampus.App;
 
 internal sealed class TeacherAgentChannelConnection : IAsyncDisposable
 {
+    private const int MaximumRetiredRequestIds = 256;
+    private static readonly TimeSpan RetiredRequestLifetime = TimeSpan.FromMinutes(2);
     private readonly WebSocket _socket;
     private readonly SemaphoreSlim _sendGate = new(1, 1);
     private readonly SemaphoreSlim _requestLimit = new(16, 16);
     private readonly ConcurrentDictionary<Guid, TaskCompletionSource<StudentAgentChannelMessage>> _pending = new();
+    private readonly object _retiredGate = new();
+    private readonly Queue<Guid> _retiredOrder = new();
+    private readonly Dictionary<Guid, DateTimeOffset> _retiredRequestIds = [];
     private DateTimeOffset _lastHeartbeatUtc = DateTimeOffset.UtcNow;
     private int _disposed;
 
@@ -28,12 +33,18 @@ internal sealed class TeacherAgentChannelConnection : IAsyncDisposable
                 TaskCreationOptions.RunContinuationsAsynchronously);
             if (!_pending.TryAdd(requestId, pending))
                 throw new InvalidOperationException("教师连接请求 ID 重复。");
+            var sent = false;
             try
             {
                 await SendAsync(request, cancellationToken).ConfigureAwait(false);
+                sent = true;
                 return await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
             }
-            finally { _pending.TryRemove(requestId, out _); }
+            finally
+            {
+                if (sent && !pending.Task.IsCompleted) RememberRetiredRequest(requestId);
+                _pending.TryRemove(requestId, out _);
+            }
         }
         finally { _requestLimit.Release(); }
     }
@@ -70,12 +81,61 @@ internal sealed class TeacherAgentChannelConnection : IAsyncDisposable
                 continue;
             }
             if (message.Type == "http-response" && message.RequestId is { } requestId &&
-                _pending.TryGetValue(requestId, out var pending))
+                requestId != Guid.Empty && message.StatusCode is >= 100 and <= 599 &&
+                message.Body is not { Length: > StudentAgentChannelProtocol.MaximumResponseBodyBytes })
             {
-                pending.TrySetResult(message);
-                continue;
+                if (_pending.TryGetValue(requestId, out var pending))
+                {
+                    pending.TrySetResult(message);
+                    continue;
+                }
+                if (ConsumeRetiredRequest(requestId)) continue;
             }
             throw new InvalidDataException("学生 Agent 发送了未知或无对应请求的连接消息。");
+        }
+    }
+
+    private void RememberRetiredRequest(Guid requestId)
+    {
+        lock (_retiredGate)
+        {
+            var now = DateTimeOffset.UtcNow;
+            PruneRetiredRequests(now);
+            if (_retiredRequestIds.ContainsKey(requestId)) return;
+            while (_retiredRequestIds.Count >= MaximumRetiredRequestIds && _retiredOrder.TryDequeue(out var oldest))
+                _retiredRequestIds.Remove(oldest);
+            _retiredRequestIds[requestId] = now + RetiredRequestLifetime;
+            _retiredOrder.Enqueue(requestId);
+            if (_retiredOrder.Count > MaximumRetiredRequestIds * 2)
+            {
+                var retained = _retiredOrder.Where(_retiredRequestIds.ContainsKey).ToArray();
+                _retiredOrder.Clear();
+                foreach (var retainedId in retained) _retiredOrder.Enqueue(retainedId);
+            }
+        }
+    }
+
+    private bool ConsumeRetiredRequest(Guid requestId)
+    {
+        lock (_retiredGate)
+        {
+            PruneRetiredRequests(DateTimeOffset.UtcNow);
+            return _retiredRequestIds.Remove(requestId);
+        }
+    }
+
+    private void PruneRetiredRequests(DateTimeOffset now)
+    {
+        while (_retiredOrder.TryPeek(out var requestId))
+        {
+            if (!_retiredRequestIds.TryGetValue(requestId, out var expiresUtc))
+            {
+                _retiredOrder.Dequeue();
+                continue;
+            }
+            if (expiresUtc > now) break;
+            _retiredOrder.Dequeue();
+            _retiredRequestIds.Remove(requestId);
         }
     }
 

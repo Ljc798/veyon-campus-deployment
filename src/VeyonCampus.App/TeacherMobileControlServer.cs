@@ -2207,9 +2207,19 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             return;
         }
 
+        var requestedSubProtocols = context.WebSockets.WebSocketRequestedProtocols;
+        var selectedSubProtocol = StudentAgentChannelProtocol.SelectWebSocketSubProtocol(requestedSubProtocols);
+        if (requestedSubProtocols.Count > 0 && selectedSubProtocol is null)
+        {
+            context.Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
         using var handshakeTimeout = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
         handshakeTimeout.CancelAfter(TimeSpan.FromSeconds(8));
-        using var socket = await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false);
+        using var socket = selectedSubProtocol is null
+            ? await context.WebSockets.AcceptWebSocketAsync().ConfigureAwait(false)
+            : await context.WebSockets.AcceptWebSocketAsync(selectedSubProtocol).ConfigureAwait(false);
         var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
         await SendAgentChannelMessageAsync(socket, new StudentAgentChannelMessage(
             StudentAgentChannelProtocol.CurrentVersion, "challenge", CurrentCampusId(), Nonce: nonce),
@@ -2241,30 +2251,24 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         if (matchingPins.Length != 1 ||
             !StudentAgentChannelProtocol.VerifyHello(hello, campusId, nonce, matchingPins[0].PublicKeyPem))
         {
-            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
-            await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "untrusted agent",
-                CancellationToken.None).ConfigureAwait(false);
+            await CloseRejectedAgentChannelAsync(socket, "untrusted agent", handshakeTimeout.Token)
+                .ConfigureAwait(false);
             return;
         }
 
         var target = matchingPins[0].Target;
-        lock (_classroomGate)
+        if (!StudentAgentChannelAdmissionPolicy.CanAdmitPinnedAgent(campusId, matchingPins[0].CampusId, target))
         {
-            if (_classroomCampusId != campusId || _classroomSessionId is null ||
-                !_classroomTargets.Contains(target))
-            {
-                context.Response.StatusCode = StatusCodes.Status404NotFound;
-                _ = socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, "no active classroom",
-                    CancellationToken.None);
-                return;
-            }
+            await CloseRejectedAgentChannelAsync(socket, "campus identity mismatch", handshakeTimeout.Token)
+                .ConfigureAwait(false);
+            return;
         }
 
         await SendAgentChannelMessageAsync(socket, new StudentAgentChannelMessage(
             StudentAgentChannelProtocol.CurrentVersion, "ready", campusId, target),
             handshakeTimeout.Token).ConfigureAwait(false);
         var connection = new TeacherAgentChannelConnection(socket);
-        using var registration = StudentAgentChannelHub.Register(target, connection.SendHttpAsync);
+        using var registration = StudentAgentChannelHub.Register(campusId, target, connection.SendHttpAsync);
         try { _studentAgentChannelConnected?.Invoke(target); }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
             UnauthorizedAccessException or InvalidOperationException or ObjectDisposedException)
@@ -2282,6 +2286,19 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             // The registration is removed on exit. The student reconnects with bounded backoff.
         }
         finally { await connection.DisposeAsync().ConfigureAwait(false); }
+    }
+
+    internal static async Task CloseRejectedAgentChannelAsync(WebSocket socket, string reason,
+        CancellationToken cancellationToken)
+    {
+        if (socket.State is not (WebSocketState.Open or WebSocketState.CloseReceived)) return;
+        try
+        {
+            await socket.CloseAsync(WebSocketCloseStatus.PolicyViolation, reason, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is WebSocketException or OperationCanceledException or
+            ObjectDisposedException) { }
     }
 
     private static async Task SendAgentChannelMessageAsync(WebSocket socket,
@@ -4514,4 +4531,17 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
 
     internal sealed class MobileAuthorizationException(string message) : Exception(message);
     internal sealed class MobileRateLimitException(string message) : Exception(message);
+}
+
+internal static class StudentAgentChannelAdmissionPolicy
+{
+    internal static bool CanAdmitPinnedAgent(string currentCampusId, string pinnedCampusId, string target)
+    {
+        if (!string.Equals(currentCampusId, pinnedCampusId, StringComparison.Ordinal)) return false;
+        try
+        {
+            return ClassroomEventCryptography.NormalizeSingleTarget(target) == target;
+        }
+        catch (InvalidDataException) { return false; }
+    }
 }

@@ -13,6 +13,20 @@ public partial class TeacherHealthView : UserControl
         DeviceHealthRowsList.ContainerFromItem(row)?.BringIntoView();
     }
 
+    public void ScrollToSection(string sectionName)
+    {
+        GetSectionControl(sectionName)?.BringIntoView();
+    }
+
+    public Control? GetSectionControl(string sectionName) => sectionName switch
+    {
+        "status" => this.FindControl<Control>("DeviceStatusSection"),
+        "alerts" => this.FindControl<Control>("DeviceAlertsSection"),
+        "students" => this.FindControl<Control>("StudentRosterSection"),
+        "maintenance" => this.FindControl<Control>("DeviceMaintenanceSection"),
+        _ => null
+    };
+
     public event EventHandler<RoutedEventArgs>? AcknowledgeDeviceHealthAlertRequested;
     public event EventHandler<RoutedEventArgs>? OpenStudentRosterRequested;
     public event EventHandler<RoutedEventArgs>? EnsureSelectedVeyonServicesRunningRequested;

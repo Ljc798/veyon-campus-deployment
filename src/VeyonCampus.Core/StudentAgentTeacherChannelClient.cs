@@ -1,11 +1,14 @@
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Security;
 using System.Net.WebSockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace VeyonCampus.Core;
 
@@ -29,21 +32,46 @@ public static class StudentAgentTeacherChannelClient
         ArgumentNullException.ThrowIfNull(agentIdentityKey);
         StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
             config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
-        if (config.TeacherChannelEndpoints is not { Count: > 0 } endpoints ||
-            config.TeacherChannelRootCertificateBase64 is not { Length: > 0 } rootBase64)
-            return;
-
-        using var teacherRoot = StudentAgentChannelProtocol.ValidateRootCertificate(rootBase64);
+        var originalTrust = config;
         var failureCount = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
+            WebsitePolicyAgentConfig latestConfig;
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(configPath, cancellationToken).ConfigureAwait(false);
+                latestConfig = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(bytes,
+                    WebsitePolicyAgent.JsonOptions)
+                    ?? throw new InvalidDataException("学生网站策略代理配置为空。");
+                latestConfig = ValidateReconnectConfiguration(originalTrust, latestConfig);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                InvalidDataException or CryptographicException or JsonException or ArgumentException)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel-config",
+                    Guid.NewGuid().ToString("N")[..12], exception);
+                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+                continue;
+            }
+
+            if (latestConfig.TeacherChannelEndpoints is not { Count: > 0 } endpoints ||
+                latestConfig.TeacherChannelRootCertificateBase64 is not { Length: > 0 } rootBase64)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+                continue;
+            }
+
+            using var teacherRoot = StudentAgentChannelProtocol.ValidateRootCertificate(rootBase64);
             var connected = false;
             foreach (var endpoint in endpoints)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    await ConnectAndServeAsync(configPath, config, endpoint, teacherRoot,
+                    await ConnectAndServeAsync(configPath, latestConfig, endpoint, teacherRoot,
                         agentIdentityKey, cancellationToken).ConfigureAwait(false);
                     connected = true;
                     failureCount = 0;
@@ -72,6 +100,21 @@ public static class StudentAgentTeacherChannelClient
         }
     }
 
+    internal static WebsitePolicyAgentConfig ValidateReconnectConfiguration(
+        WebsitePolicyAgentConfig trustedConfiguration, WebsitePolicyAgentConfig candidate)
+    {
+        ArgumentNullException.ThrowIfNull(trustedConfiguration);
+        ArgumentNullException.ThrowIfNull(candidate);
+        WebsitePolicySigningKeyStore.ValidateCampusId(candidate.CampusId);
+        if (!string.Equals(candidate.CampusId, trustedConfiguration.CampusId, StringComparison.Ordinal) ||
+            !WebsitePolicyAgentInstaller.PublicKeysEqual(candidate.PublicKeyPem,
+                trustedConfiguration.PublicKeyPem))
+            throw new InvalidDataException("教师地址重载不能改变学生 Agent 已固定的校区身份或签名公钥。");
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(candidate.CampusId,
+            candidate.TeacherChannelEndpoints, candidate.TeacherChannelRootCertificateBase64);
+        return candidate;
+    }
+
     private static async Task ConnectAndServeAsync(string configPath, WebsitePolicyAgentConfig config,
         string endpoint, X509Certificate2 teacherRoot, RSA agentIdentityKey,
         CancellationToken cancellationToken)
@@ -79,12 +122,15 @@ public static class StudentAgentTeacherChannelClient
         var uri = BuildWebSocketUri(endpoint);
         using var socket = new ClientWebSocket();
         using var sendGate = new SemaphoreSlim(1, 1);
+        socket.Options.AddSubProtocol(StudentAgentChannelProtocol.WebSocketSubProtocolV1);
         socket.Options.KeepAliveInterval = StudentAgentChannelProtocol.HeartbeatInterval;
         socket.Options.RemoteCertificateValidationCallback = (_, certificate, chain, errors) =>
             ValidateTeacherCertificate(certificate, chain, errors, teacherRoot);
         using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         connectTimeout.CancelAfter(TimeSpan.FromSeconds(8));
         await socket.ConnectAsync(uri, connectTimeout.Token).ConfigureAwait(false);
+        if (!StudentAgentChannelProtocol.IsCompatibleNegotiatedSubProtocol(socket.SubProtocol))
+            throw new InvalidDataException("教师端选择了不受支持的 Agent 通道子协议。");
 
         var challenge = StudentAgentChannelProtocol.Deserialize(
             await ReceiveMessageAsync(socket, connectTimeout.Token).ConfigureAwait(false));
@@ -101,7 +147,10 @@ public static class StudentAgentTeacherChannelClient
         _ = ClassroomEventCryptography.NormalizeSingleTarget(ready.Target);
 
         using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var receiveTask = ReceiveLoopAsync(configPath, socket, sendGate, sessionLifetime.Token);
+        await using var requestDispatcher = new StudentAgentChannelRequestDispatcher(
+            (request, token) => ForwardRequestAsync(configPath, socket, request, sendGate, token),
+            (message, token) => SendMessageAsync(socket, message, sendGate, token));
+        var receiveTask = ReceiveLoopAsync(socket, requestDispatcher, sessionLifetime.Token);
         var heartbeatTask = HeartbeatLoopAsync(socket, sendGate, sessionLifetime.Token);
         var completed = await Task.WhenAny(receiveTask, heartbeatTask).ConfigureAwait(false);
         sessionLifetime.Cancel();
@@ -110,6 +159,7 @@ public static class StudentAgentTeacherChannelClient
         {
             try { await Task.WhenAll(receiveTask, heartbeatTask).ConfigureAwait(false); }
             catch (OperationCanceledException) when (sessionLifetime.IsCancellationRequested) { }
+            await requestDispatcher.DrainAsync().ConfigureAwait(false);
         }
         if (socket.State is WebSocketState.Open or WebSocketState.CloseReceived)
         {
@@ -122,8 +172,8 @@ public static class StudentAgentTeacherChannelClient
         }
     }
 
-    private static async Task ReceiveLoopAsync(string configPath, ClientWebSocket socket,
-        SemaphoreSlim sendGate, CancellationToken cancellationToken)
+    private static async Task ReceiveLoopAsync(ClientWebSocket socket,
+        StudentAgentChannelRequestDispatcher requestDispatcher, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -132,8 +182,7 @@ public static class StudentAgentTeacherChannelClient
             if (message.Type == "heartbeat-ack") continue;
             if (message.Type != "http-request")
                 throw new InvalidDataException("教师端发送了未知连接消息。");
-            await ForwardRequestAsync(configPath, socket, message, sendGate, cancellationToken)
-                .ConfigureAwait(false);
+            await requestDispatcher.DispatchAsync(message, cancellationToken).ConfigureAwait(false);
         }
     }
 
@@ -282,5 +331,172 @@ public static class StudentAgentTeacherChannelClient
             Query = ""
         };
         return builder.Uri;
+    }
+}
+
+/// <summary>Runs independent HTTP requests concurrently while keeping WebSocket receives serialized.</summary>
+internal sealed class StudentAgentChannelRequestDispatcher : IAsyncDisposable
+{
+    internal const int MaximumConcurrentRequests = 16;
+    private readonly SemaphoreSlim _requestLimit = new(MaximumConcurrentRequests, MaximumConcurrentRequests);
+    private readonly ConcurrentDictionary<Guid, Task> _inFlight = new();
+    private readonly Func<StudentAgentChannelMessage, CancellationToken, Task> _forwardAsync;
+    private readonly Func<StudentAgentChannelMessage, CancellationToken, Task> _sendAsync;
+    private int _disposed;
+
+    public StudentAgentChannelRequestDispatcher(
+        Func<StudentAgentChannelMessage, CancellationToken, Task> forwardAsync,
+        Func<StudentAgentChannelMessage, CancellationToken, Task> sendAsync)
+    {
+        _forwardAsync = forwardAsync ?? throw new ArgumentNullException(nameof(forwardAsync));
+        _sendAsync = sendAsync ?? throw new ArgumentNullException(nameof(sendAsync));
+    }
+
+    public async Task DispatchAsync(StudentAgentChannelMessage request, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (Volatile.Read(ref _disposed) != 0)
+            throw new ObjectDisposedException(nameof(StudentAgentChannelRequestDispatcher));
+        if (request.Type != "http-request" || request.RequestId is not { } requestId || requestId == Guid.Empty)
+            throw new InvalidDataException("教师转发请求缺少有效请求编号。");
+
+        if (!_requestLimit.Wait(0))
+        {
+            await _sendAsync(new StudentAgentChannelMessage(StudentAgentChannelProtocol.CurrentVersion,
+                "http-response", RequestId: requestId, StatusCode: 503,
+                Body: Encoding.UTF8.GetBytes("student agent is busy")), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_inFlight.TryAdd(requestId, completion.Task))
+        {
+            _requestLimit.Release();
+            throw new InvalidDataException("教师连接重复使用了正在处理的请求编号。");
+        }
+
+        _ = RunRequestAsync(request, requestId, completion, cancellationToken);
+    }
+
+    private async Task RunRequestAsync(StudentAgentChannelMessage request, Guid requestId,
+        TaskCompletionSource completion, CancellationToken cancellationToken)
+    {
+        // Give DispatchAsync time to publish the tracked task before a fast local request can finish.
+        await Task.Yield();
+        try
+        {
+            await _forwardAsync(request, cancellationToken).ConfigureAwait(false);
+            completion.TrySetResult();
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
+        }
+        finally
+        {
+            _inFlight.TryRemove(requestId, out _);
+            _requestLimit.Release();
+        }
+    }
+
+    public async Task DrainAsync()
+    {
+        while (true)
+        {
+            var active = _inFlight.Values.ToArray();
+            if (active.Length == 0) return;
+            await Task.WhenAll(active).ConfigureAwait(false);
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        try { await DrainAsync().ConfigureAwait(false); }
+        finally { _requestLimit.Dispose(); }
+    }
+}
+
+/// <summary>Reloads the SYSTEM Agent's teacher connection after a verified bootstrap sync.</summary>
+public sealed class StudentAgentTeacherChannelSupervisor
+{
+    private readonly object _gate = new();
+    private readonly Channel<bool> _reload = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+    {
+        SingleReader = true,
+        SingleWriter = false,
+        FullMode = BoundedChannelFullMode.DropWrite
+    });
+    private CancellationTokenSource? _activeSession;
+
+    public void RequestReload()
+    {
+        CancellationTokenSource? active;
+        lock (_gate)
+        {
+            active = _activeSession;
+            _reload.Writer.TryWrite(true);
+        }
+        try { active?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    public async Task RunAsync(string configPath, RSA agentIdentityKey,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
+        ArgumentNullException.ThrowIfNull(agentIdentityKey);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (_gate) _activeSession = session;
+            try
+            {
+                var bytes = await File.ReadAllBytesAsync(configPath, cancellationToken).ConfigureAwait(false);
+                var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(bytes, WebsitePolicyAgent.JsonOptions)
+                             ?? throw new InvalidDataException("学生网站策略代理配置为空。");
+                if (config.TeacherChannelEndpoints is not { Count: > 0 } ||
+                    string.IsNullOrWhiteSpace(config.TeacherChannelRootCertificateBase64))
+                {
+                    await _reload.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                var running = StudentAgentTeacherChannelClient.RunAsync(configPath, config, agentIdentityKey,
+                    session.Token);
+                using var reloadReadLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var reload = _reload.Reader.ReadAsync(reloadReadLifetime.Token).AsTask();
+                var completed = await Task.WhenAny(running, reload).ConfigureAwait(false);
+                if (completed == reload)
+                {
+                    session.Cancel();
+                    try { await running.ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (session.IsCancellationRequested) { }
+                    await reload.ConfigureAwait(false);
+                }
+                else
+                {
+                    try { await running.ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (session.IsCancellationRequested) { }
+                    reloadReadLifetime.Cancel();
+                    try { await reload.ConfigureAwait(false); }
+                    catch (OperationCanceledException) when (reloadReadLifetime.IsCancellationRequested) { }
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                InvalidDataException or CryptographicException or JsonException or PlatformNotSupportedException)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel",
+                    Guid.NewGuid().ToString("N")[..12], exception);
+                try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            }
+            finally
+            {
+                lock (_gate)
+                    if (ReferenceEquals(_activeSession, session)) _activeSession = null;
+            }
+        }
     }
 }

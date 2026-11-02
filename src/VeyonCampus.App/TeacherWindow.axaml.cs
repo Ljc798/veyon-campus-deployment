@@ -63,6 +63,7 @@ public partial class TeacherWindow : Window
                 ? null
                 : (target, token) => veyonControlPlane.CaptureScreenAsync(_model.CampusId, target, token));
         InitializeComponent();
+        SetUpdatesNavigationActive("status");
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
         KeyDown += TeacherWindowKeyDown;
@@ -534,7 +535,7 @@ public partial class TeacherWindow : Window
                 {
                     var connectedTargetIds = context.TargetIds
                         .Where(pair => targetIdsNeedingRelease.Contains(pair.Value) &&
-                                       StudentAgentChannelHub.IsConnected(pair.Key))
+                                        StudentAgentChannelHub.IsConnected(context.CampusId, pair.Key))
                         .Select(pair => pair.Value).Distinct().ToArray();
                     if (connectedTargetIds.Length == 0)
                     {
@@ -558,7 +559,7 @@ public partial class TeacherWindow : Window
                         {
                             var offlinePendingCount = context.TargetIds
                                 .Where(pair => stillPending.Any(item => item.TargetId == pair.Value) &&
-                                               !StudentAgentChannelHub.IsConnected(pair.Key))
+                                               !StudentAgentChannelHub.IsConnected(context.CampusId, pair.Key))
                                 .Select(pair => pair.Value).Distinct().Count();
                             _classroomScopeWaitingForAgentConnections = offlinePendingCount > 0;
                             _model.SetClassroomQuickControlSessionNotice(offlinePendingCount > 0
@@ -573,7 +574,7 @@ public partial class TeacherWindow : Window
                     {
                         _classroomScopeWaitingForAgentConnections = context.TargetIds
                             .Where(pair => targetIdsNeedingRelease.Contains(pair.Value))
-                            .Any(pair => !StudentAgentChannelHub.IsConnected(pair.Key));
+                            .Any(pair => !StudentAgentChannelHub.IsConnected(context.CampusId, pair.Key));
                         _model.SetClassroomQuickControlSessionNotice(
                             "课堂范围恢复未确认；状态已保留，学生端连接后会继续。" + exception.Message);
                         return;
@@ -1119,6 +1120,72 @@ public partial class TeacherWindow : Window
             var scroll = this.FindControl<ScrollViewer>("TeacherContentScroll");
             if (scroll is not null) scroll.Offset = new Avalonia.Vector(0, 0);
         }
+    }
+
+    private void TeacherContentScrollChanged(object? sender, ScrollChangedEventArgs e) =>
+        SynchronizeUpdatesNavigationHighlight();
+
+    private void NavigateDeviceStatusSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("status");
+    private void NavigateDeviceAlertsSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("alerts");
+    private void NavigateStudentRosterSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("students");
+    private void NavigateMaintenanceSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("maintenance");
+    private void NavigateTeacherUpdateSection(object? sender, RoutedEventArgs e) => NavigateUpdatesSection("teacher-update");
+    private void NavigateStudentMaintenanceSection(object? sender, RoutedEventArgs e) => NavigateUpdatesSection("student-maintenance");
+
+    private void NavigateHealthSection(string section)
+    {
+        SetUpdatesNavigationActive(section);
+        TeacherPageHost.GetVisualDescendants().OfType<TeacherHealthView>().FirstOrDefault()?.ScrollToSection(section);
+    }
+
+    private void NavigateUpdatesSection(string section)
+    {
+        SetUpdatesNavigationActive(section);
+        TeacherPageHost.GetVisualDescendants().OfType<TeacherUpdatesView>().FirstOrDefault()?.ScrollToSection(section);
+    }
+
+    private void SynchronizeUpdatesNavigationHighlight()
+    {
+        if (!_model.IsUpdatesPage) return;
+        var scroll = this.FindControl<ScrollViewer>("TeacherContentScroll");
+        if (scroll is null) return;
+        var health = TeacherPageHost.GetVisualDescendants().OfType<TeacherHealthView>().FirstOrDefault();
+        var updates = TeacherPageHost.GetVisualDescendants().OfType<TeacherUpdatesView>().FirstOrDefault();
+        if (health is null || updates is null) return;
+
+        var threshold = Math.Clamp(scroll.Bounds.Height * 0.38, 120, 280);
+        var active = "status";
+        var sections = new (string Key, Control? Target)[]
+        {
+            ("status", health.GetSectionControl("status")),
+            ("alerts", health.GetSectionControl("alerts")),
+            ("students", health.GetSectionControl("students")),
+            ("maintenance", health.GetSectionControl("maintenance")),
+            ("teacher-update", updates.GetSectionControl("teacher-update")),
+            ("student-maintenance", updates.GetSectionControl("student-maintenance"))
+        };
+        foreach (var (key, target) in sections)
+        {
+            if (target is null || !target.IsVisible) continue;
+            var position = target.TranslatePoint(new Point(0, 0), scroll);
+            if (position is { } point && point.Y <= threshold) active = key;
+        }
+        SetUpdatesNavigationActive(active);
+    }
+
+    private void SetUpdatesNavigationActive(string section)
+    {
+        var buttons = new (string Key, string Name)[]
+        {
+            ("status", "UpdatesNavStatus"),
+            ("alerts", "UpdatesNavAlerts"),
+            ("students", "UpdatesNavRoster"),
+            ("maintenance", "UpdatesNavMaintenance"),
+            ("teacher-update", "UpdatesNavTeacher"),
+            ("student-maintenance", "UpdatesNavStudent")
+        };
+        foreach (var (key, name) in buttons)
+            this.FindControl<Button>(name)?.Classes.Set("active", key == section);
     }
 
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
@@ -2215,6 +2282,113 @@ public partial class TeacherWindow : Window
     {
         if (await EnsureTeacherAgentChannelStartedAsync())
             await _model.DeployStudentUpdateAsync();
+    }
+
+    private async void MaintainStudentDevices(object? sender, RoutedEventArgs e)
+    {
+        // The trusted legacy HTTP path can update older Agents even if the new teacher
+        // WebSocket listener cannot start. Continue the signed maintenance flow; connection
+        // verification will remain pending until the listener is available.
+        await EnsureTeacherAgentChannelStartedAsync();
+        await _model.MaintainStudentDevicesAsync();
+    }
+
+    private async void SelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择本机测试 StudentSetup 更新目标（需与 .release.json 清单配套；不要选择一次性引导包）",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("本机测试 StudentSetup")
+                    {
+                        Patterns = ["VeyonCampus-Student-Setup-*-win-x64.exe"]
+                    }
+                ]
+            });
+            if (files.Count == 0) return;
+            using var file = files[0];
+            var path = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportLocalStudentTestReleaseSelectionError("所选文件没有可访问的本地路径。");
+                return;
+            }
+            await _model.SelectLocalTestStudentSetupInstallerAsync(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            _model.ReportLocalStudentTestReleaseSelectionError(exception.Message);
+        }
+    }
+
+    private async void SyncStudentConfiguration(object? sender, RoutedEventArgs e)
+    {
+        if (await EnsureTeacherAgentChannelStartedAsync())
+            await _model.SyncStudentConfigurationAsync();
+    }
+
+    private async void ReviewConfigurationIdentity(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StudentConfigurationSyncTargetProgressItem row } ||
+            !row.CanReviewIdentity) return;
+        row.BeginIdentityReview();
+        await ReviewStudentAgentIdentityInlineAsync(row.Target, row.SetIdentityReviewStatus,
+            row.CompleteIdentityReview);
+    }
+
+    private async void ReviewStudentUpdateIdentity(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: StudentApplicationUpdateTargetProgressItem row } ||
+            !row.CanReviewIdentity) return;
+        row.BeginIdentityReview();
+        await ReviewStudentAgentIdentityInlineAsync(row.Target, row.SetIdentityReviewStatus,
+            row.CompleteIdentityReview);
+    }
+
+    private async Task ReviewStudentAgentIdentityInlineAsync(string target, Action<string> setStatus,
+        Action complete)
+    {
+        var discoveries = await _model.DiscoverStudentAgentIdentityAsync(target);
+        var discovery = discoveries.SingleOrDefault();
+        if (discovery?.Candidate is not { } candidate)
+        {
+            setStatus(discovery?.Detail ?? "未取得可验证的 Agent 身份；信任记录没有更改。请检查学生机在线状态和 TCP 39174。" );
+            return;
+        }
+
+        if (discovery.MatchesPinnedKey)
+        {
+            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: false);
+            complete();
+            return;
+        }
+
+        setStatus(candidate.PreviouslyPinnedFingerprint is null
+            ? "已收到签名身份。请与学生机现场显示的指纹核对后确认。"
+            : "Agent 指纹发生变化。请先现场核对新旧指纹；确认前不会轮换信任记录。");
+        if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries))
+        {
+            setStatus("身份核对已取消；没有更改信任记录。");
+            return;
+        }
+
+        try
+        {
+            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);
+            complete();
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException)
+        {
+            setStatus("身份固定失败：" + exception.Message);
+            await ShowStudentAgentTrustErrorAsync(exception.Message);
+        }
     }
 
     private async void RecheckStudentUpdateResult(object? sender, RoutedEventArgs e)

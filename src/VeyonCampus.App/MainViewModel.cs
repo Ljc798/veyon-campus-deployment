@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
+using Avalonia.Threading;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.App;
@@ -58,8 +59,13 @@ public sealed class MainViewModel : INotifyPropertyChanged
 #endif
     private string _studentDeploymentVerificationText = "", _websiteAgentRemovalStatus = "", _websiteAgentInstallStatus = "";
     private string _studentAgentVersionStatus = "";
+    private string _studentAgentInstallElapsedText = "", _studentAgentInstallProgressText = "", _studentAgentInstallResultText = "";
+    private double _studentAgentInstallProgressPercent;
     private string? _studentAgentInstalledVersion;
-    private bool _isCheckingStudentAgentVersion, _studentAgentVersionChecked, _studentAgentVersionCheckSucceeded;
+    private bool _isCheckingStudentAgentVersion, _studentAgentVersionChecked, _studentAgentVersionCheckSucceeded,
+        _isInstallingStudentAgent;
+    private DateTimeOffset _studentAgentInstallStartedUtc;
+    private readonly DispatcherTimer _studentAgentInstallProgressTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
@@ -105,6 +111,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _installerStore = installerStore ?? new VeyonInstallerStore();
         // The Mac build is only a UI preview; Windows deployment uses the cross-process task lock.
         _lease = OperatingSystem.IsWindows() ? new NamedPipeTaskLease() : new TaskLease();
+        _studentAgentInstallProgressTimer.Tick += RefreshStudentAgentInstallElapsed;
         DeploymentStateBackup.CleanupStaleTemporaryExports(DeploymentRunLog.GetDefaultRoot());
         LoadLatestExecutionHistory();
 #if !STUDENT_SETUP_APP
@@ -528,6 +535,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set { _websiteAgentInstallStatus = value; Changed(); Changed(nameof(HasWebsiteAgentInstallStatus)); }
     }
     public bool HasWebsiteAgentInstallStatus => WebsiteAgentInstallStatus.Length > 0;
+    public bool IsStudentAgentInstallInProgress => _isInstallingStudentAgent;
+    public string StudentAgentInstallElapsedText => _studentAgentInstallElapsedText;
+    public string StudentAgentInstallProgressText => _studentAgentInstallProgressText;
+    public double StudentAgentInstallProgressPercent => _studentAgentInstallProgressPercent;
+    public string StudentAgentInstallResultText => _studentAgentInstallResultText;
+    public bool HasStudentAgentInstallResult => !string.IsNullOrWhiteSpace(StudentAgentInstallResultText);
     public bool CanCheckStudentAgentVersion => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent &&
         !IsExecuting && !_isCheckingStudentAgentVersion;
     public bool CanInstallWebsitePolicyAgent => CanOpenMaintenance && OperatingSystem.IsWindows() && IsStudent &&
@@ -1200,7 +1213,20 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         if (!CanInstallWebsitePolicyAgent) return;
         if (!TryBeginExclusiveTask()) return;
-        WebsiteAgentInstallStatus = $"正在更新/修复 Student Agent 到 {WebsitePolicyAgentInstaller.BuildVersion}…";
+        _isInstallingStudentAgent = true;
+        _studentAgentInstallStartedUtc = DateTimeOffset.UtcNow;
+        _studentAgentInstallElapsedText = "已运行 00:00。正在等待管理员维护任务启动。";
+        _studentAgentInstallProgressPercent = 5;
+        _studentAgentInstallProgressText = "处理进度 5% · 正在启动管理员维护任务";
+        _studentAgentInstallResultText = "";
+        Changed(nameof(IsStudentAgentInstallInProgress));
+        Changed(nameof(StudentAgentInstallElapsedText));
+        Changed(nameof(StudentAgentInstallProgressPercent));
+        Changed(nameof(StudentAgentInstallProgressText));
+        Changed(nameof(StudentAgentInstallResultText));
+        Changed(nameof(HasStudentAgentInstallResult));
+        _studentAgentInstallProgressTimer.Start();
+        WebsiteAgentInstallStatus = $"正在启动管理员维护任务，目标 Student Agent 版本：{WebsitePolicyAgentInstaller.BuildVersion}。";
         StudentDeploymentVerificationText = "";
         _studentDeploymentVerification = null;
         try
@@ -1222,12 +1248,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
                 WebsiteAgentInstallStatus = string.IsNullOrWhiteSpace(result.Detail)
                     ? $"Student Agent {WebsitePolicyAgentInstaller.BuildVersion} 已就绪，安装与健康状态核验通过。"
                     : result.Detail;
+                SetStudentAgentInstallResult(WebsiteAgentInstallStatus, succeeded: true);
             }
             else
             {
                 _studentAgentVersionChecked = false;
                 _studentAgentVersionCheckSucceeded = false;
                 WebsiteAgentInstallStatus = "Agent 更新/修复未完成：" + result.Detail;
+                SetStudentAgentInstallResult(WebsiteAgentInstallStatus, succeeded: false);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -1236,14 +1264,50 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _studentAgentVersionChecked = false;
             _studentAgentVersionCheckSucceeded = false;
             WebsiteAgentInstallStatus = "Agent 更新/修复未完成：" + exception.Message;
+            SetStudentAgentInstallResult(WebsiteAgentInstallStatus, succeeded: false);
         }
         catch (Exception exception)
         {
             _studentAgentVersionChecked = false;
             _studentAgentVersionCheckSucceeded = false;
             WebsiteAgentInstallStatus = "Agent 更新/修复遇到问题：" + exception.Message;
+            SetStudentAgentInstallResult(WebsiteAgentInstallStatus, succeeded: false);
         }
-        finally { EndExclusiveTask(); NotifyStudentAgentVersionChanged(); }
+        finally
+        {
+            _studentAgentInstallProgressTimer.Stop();
+            _isInstallingStudentAgent = false;
+            Changed(nameof(IsStudentAgentInstallInProgress));
+            EndExclusiveTask();
+            NotifyStudentAgentVersionChanged();
+        }
+    }
+
+    private void RefreshStudentAgentInstallElapsed(object? sender, EventArgs e)
+    {
+        if (!_isInstallingStudentAgent) return;
+        var elapsed = DateTimeOffset.UtcNow - _studentAgentInstallStartedUtc;
+        var minutes = (int)elapsed.TotalMinutes;
+        _studentAgentInstallProgressPercent = Math.Min(92, 5 + elapsed.TotalSeconds * 1.45);
+        _studentAgentInstallProgressText = $"处理进度 {_studentAgentInstallProgressPercent:0}% · 后台任务仍在运行";
+        _studentAgentInstallElapsedText = $"已运行 {minutes:00}:{elapsed.Seconds:00}。正在等待管理员任务返回，请保持窗口打开。";
+        Changed(nameof(StudentAgentInstallElapsedText));
+        Changed(nameof(StudentAgentInstallProgressText));
+        Changed(nameof(StudentAgentInstallProgressPercent));
+    }
+
+    private void SetStudentAgentInstallResult(string result, bool succeeded)
+    {
+        _studentAgentInstallResultText = result;
+        Changed(nameof(StudentAgentInstallResultText));
+        Changed(nameof(HasStudentAgentInstallResult));
+        if (succeeded)
+        {
+            _studentAgentInstallProgressPercent = 100;
+            _studentAgentInstallProgressText = "处理进度 100% · 操作已完成";
+            Changed(nameof(StudentAgentInstallProgressPercent));
+            Changed(nameof(StudentAgentInstallProgressText));
+        }
     }
 
     private int BeginEnvironmentCheck()

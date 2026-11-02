@@ -60,8 +60,12 @@ function canonicalPayload(manifest) {
     sha256: manifest.sha256,
     downloadUrl: manifest.downloadUrl
   };
-  if (manifest.schemaVersion === 2 || manifest.schemaVersion === 3)
+  if (manifest.schemaVersion === 2 || manifest.schemaVersion === 3 || manifest.schemaVersion === 4)
     payload.policyCapabilities = manifest.policyCapabilities;
+  if (manifest.schemaVersion === 4) {
+    payload.studentAgentVersion = manifest.studentAgentVersion;
+    payload.releaseChannel = manifest.releaseChannel;
+  }
   return Buffer.from(JSON.stringify(payload), 'utf8');
 }
 

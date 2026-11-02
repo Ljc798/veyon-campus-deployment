@@ -30,7 +30,7 @@
       </StackPanel>
     </Border>
 
-    <Border Classes="section-card">
+    <Border x:Name="DeviceStatusSection" Classes="section-card">
       <StackPanel Spacing="16">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
           <TextBlock Text="设备状态" Classes="section-title" VerticalAlignment="Center" />
@@ -93,7 +93,7 @@
       </StackPanel>
     </Border>
 
-    <Border Classes="section-card" IsVisible="{Binding HasDeviceHealthAlerts}">
+    <Border x:Name="DeviceAlertsSection" Classes="section-card" IsVisible="{Binding HasDeviceHealthAlerts}">
       <Border.Styles>
         <floweryTheme:DaisyUITheme />
       </Border.Styles>
@@ -148,7 +148,7 @@
       </StackPanel>
     </Border>
 
-    <Border Classes="section-card">
+    <Border x:Name="StudentRosterSection" Classes="section-card">
       <StackPanel Spacing="12">
         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
           <TextBlock Text="学生电脑" Classes="section-title" VerticalAlignment="Center" />
@@ -264,7 +264,7 @@
       </StackPanel>
     </Border>
 
-    <Border Classes="section-card" Padding="8">
+    <Border x:Name="DeviceMaintenanceSection" Classes="section-card" Padding="8">
       <Expander Header="维护工具与诊断记录" Theme="{StaticResource App.DetailExpander}">
         <StackPanel Spacing="12" Margin="12,4,12,12">
           <TextBlock Text="{Binding DeviceHealthStatus}" Classes="supporting-copy" />

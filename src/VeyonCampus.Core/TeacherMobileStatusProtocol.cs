@@ -119,7 +119,8 @@ public static class WebsitePolicyStatusCryptography
         }
         if (response.Health is { } health &&
             (request.SchemaVersion != 4 || !Enum.IsDefined(health.VeyonServiceState) ||
-             health.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or "needsReview") ||
+             health.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or
+                 "superseded" or "needsReview") ||
              health.CollectedUtc.Offset != TimeSpan.Zero))
             throw new InvalidDataException("学生 Agent 健康快照字段无效。");
         if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
@@ -164,7 +165,7 @@ public static class WebsitePolicyStatusCryptography
                 (request.UpdateCommandId is { } commandId &&
                  (response.UpdateTransaction!.CommandId != commandId ||
                   response.UpdateTransaction.State is not ("inProgress" or "committed" or "rolledBack" or
-                      "needsReview" or "notFound") ||
+                      "superseded" or "needsReview" or "notFound") ||
                   !IsValidTransactionVersions(response.UpdateTransaction))) ||
                 transaction is { State: "committed" } &&
                     (response.StudentSetupVersion != transaction.TargetSetupVersion ||
@@ -236,7 +237,7 @@ public static class WebsitePolicyStatusTransport
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
         bool includeHealthSnapshot = false, Guid? updateCommandId = null,
-        bool allowLegacyDirectFallback = false)
+        bool allowLegacyDirectFallback = false, bool allowDirectFallbackWhenChannelOffline = false)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
@@ -248,7 +249,8 @@ public static class WebsitePolicyStatusTransport
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
         }).ToArray();
-        using var handler = new StudentAgentChannelHttpMessageHandler(allowLegacyDirectFallback);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback,
+            allowDirectFallbackWhenChannelOffline);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = outgoing.Select(async outgoingRequest =>
@@ -336,9 +338,10 @@ public static class WebsitePolicyStatusTransport
                 {
                     TaskCanceledException => $"连接学生 Agent 超时（{endpoint}）。请确认学生端 Agent 正在运行、电脑地址正确，且教师电脑可访问 TCP {WebsitePolicyAgent.Port}。学生端防火墙默认只允许同一子网；跨网段时需由管理员配置规则。此超时表示未收到 Agent 回应，暂时没有身份可供首次信任确认。Veyon Master 能看到电脑不代表策略通道已连通。",
                     HttpRequestException when exception.Message.Contains("教师端长连接", StringComparison.Ordinal) ||
-                                               exception.Message.Contains("学生 Agent 已离线", StringComparison.Ordinal) =>
+                                               exception.Message.Contains("学生 Agent 已离线", StringComparison.Ordinal) ||
+                                               exception.Message.Contains("学生 Agent 当前离线", StringComparison.Ordinal) =>
                         $"学生 Agent 的教师端更新通道当前不可用：{exception.Message} 请确认教师端连接服务正在运行，学生端已应用包含教师端连接配置的校区包并在线。",
-                    HttpRequestException => $"无法通过教师端连接通道读取学生 Agent 状态（{endpoint}）：{exception.Message} 请确认教师端连接服务正在运行，学生端已应用包含教师端连接配置的校区包并在线。",
+                    HttpRequestException => $"无法连接学生 Agent（{endpoint}）：{exception.Message} 请确认学生电脑在线、Agent 正在运行，且教师电脑可访问 TCP {WebsitePolicyAgent.Port}。如果使用教师长连接，也请确认连接服务和学生端连接配置正常。",
                     _ => "读取状态失败：" + exception.Message
                 };
                 return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,

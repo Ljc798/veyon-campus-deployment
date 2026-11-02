@@ -38,8 +38,8 @@ public static class StudentApplicationUpdateHandoff
         if (!File.Exists(expectedAgentPath))
             throw new FileNotFoundException("ProgramData 中缺少已暂存的新 Agent。", expectedAgentPath);
 
-        var helperPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-            "Veyon Campus", "Updater", "Student", targetVersion, HelperFileName);
+        var helperPath = GetUpdateHelperPath(
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), transaction.TargetSetupVersion);
         PathLinkSecurity.RejectLinks(helperPath);
         if (!File.Exists(helperPath))
             throw new FileNotFoundException("StudentSetup 安装器没有部署对应版本的更新助手。", helperPath);
@@ -81,6 +81,14 @@ public static class StudentApplicationUpdateHandoff
         }
     }
 
+    internal static string GetUpdateHelperPath(string programFilesDirectory, string studentSetupVersion)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(programFilesDirectory);
+        _ = ApplicationReleaseClient.CompareVersions(studentSetupVersion, studentSetupVersion);
+        return Path.Combine(programFilesDirectory,
+            "Veyon Campus", "Updater", "Student", studentSetupVersion, HelperFileName);
+    }
+
     public static int RunHelper(string[] args)
     {
         if (!OperatingSystem.IsWindows()) return 2;
@@ -111,13 +119,6 @@ public static class StudentApplicationUpdateHandoff
             if (!Regex.IsMatch(configFingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
                 throw new InvalidDataException("新 Agent 健康读回指纹无效。");
 
-            var expectedAgentPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "VeyonCampus", "WebsitePolicyAgent", targetVersion, "VeyonCampus.Agent.exe");
-            EnsureSamePath(agentPath, expectedAgentPath,
-                "更新助手拒绝启动非固定版本目录中的 Agent。");
-            PathLinkSecurity.RejectLinks(expectedAgentPath);
-            WebsitePolicyAgentInstaller.ValidateAgentUpdateRollbackPaths(expectedAgentPath,
-                previousAgentPath, configPath, targetVersion, previousVersion);
             var transaction = StudentUpdateAtomicTransaction.Read(configPath)
                               ?? throw new InvalidDataException("缺少学生更新原子事务记录。");
             if (transaction.CommandId != commandId ||
@@ -127,9 +128,76 @@ public static class StudentApplicationUpdateHandoff
                 !string.Equals(transaction.ConfigurationFingerprint, configFingerprint,
                     StringComparison.OrdinalIgnoreCase))
                 throw new InvalidDataException("学生更新事务记录与 Agent 更新助手参数不匹配。");
+            StudentUpdateAtomicTransaction.VerifyTargetSetupInstalled(transaction);
+            var expectedHelperPath = GetUpdateHelperPath(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), transaction.TargetSetupVersion);
+            EnsureSamePath(Environment.ProcessPath ?? "", expectedHelperPath,
+                "更新助手不属于本次已验真的 StudentSetup 版本目录。");
 
-            return ExecuteAgentActivation(processId, startTicks, expectedAgentPath, configPath, configFingerprint,
-                targetVersion, commandId, transaction);
+            var expectedAgentPath = StudentUpdateAtomicTransaction.GetAgentExecutablePath(targetVersion);
+            EnsureSamePath(agentPath, expectedAgentPath,
+                "更新助手拒绝启动非固定版本目录中的 Agent。");
+            PathLinkSecurity.RejectLinks(expectedAgentPath);
+            var aliasDirectoryToClean = (string?)null;
+            WebsitePolicyAgentInstaller.WaitForManagedAgentExit(processId, startTicks, TimeSpan.FromMinutes(2));
+
+            var setupAgentDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Veyon Campus", "Student", "WebsitePolicyAgent");
+            var setupAgentExecutable = Path.Combine(setupAgentDirectory, "VeyonCampus.Agent.exe");
+            PathLinkSecurity.RejectLinks(setupAgentDirectory);
+            PathLinkSecurity.RejectLinks(setupAgentExecutable);
+            PathLinkSecurity.RejectLinks(Path.ChangeExtension(setupAgentExecutable, ".dll"));
+            var bundledAgentVersion = WorkerInstallationGuard.GetAssemblyProductVersion(setupAgentExecutable);
+            var legacySetupVersionAlias = string.Equals(targetVersion, transaction.TargetSetupVersion,
+                    StringComparison.Ordinal) &&
+                string.Equals(transaction.TargetAgentVersion, transaction.TargetSetupVersion,
+                    StringComparison.Ordinal) &&
+                !string.Equals(bundledAgentVersion, targetVersion, StringComparison.Ordinal);
+            if (legacySetupVersionAlias)
+            {
+                if (!string.Equals(WebsitePolicyAgentInstaller.BuildVersion, bundledAgentVersion,
+                        StringComparison.Ordinal) ||
+                    !WebsitePolicyAgentInstaller.StagedAgentMatchesSetupPayload(setupAgentDirectory, targetVersion))
+                    throw new InvalidDataException("旧版事务把 StudentSetup 版本当作 Agent 版本，但暂存 Agent 与已验签 Setup 内置文件不一致；已停止切换。");
+                if (ApplicationReleaseClient.CompareVersions(bundledAgentVersion, previousVersion) < 0)
+                    throw new InvalidDataException("StudentSetup 内置 Agent 低于现有 Agent；旧版别名事务不能安全升级。");
+
+                if (string.Equals(bundledAgentVersion, previousVersion, StringComparison.Ordinal))
+                {
+                    WebsitePolicyAgentInstaller.RestoreAgentTaskActionForTransaction(expectedAgentPath,
+                        previousAgentPath, configPath);
+                    transaction = StudentUpdateAtomicTransaction.RebaseLegacySetupVersionAgentAlias(configPath,
+                        transaction, targetVersion, bundledAgentVersion);
+                    WebsitePolicyAgentInstaller.StartCurrentAgentTask(configPath);
+                    if (!WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(30),
+                            configFingerprint, bundledAgentVersion))
+                        throw new TimeoutException("StudentSetup 已更新，但恢复后的现有 Agent 未通过配置和健康检查。");
+                    StudentUpdateAtomicTransaction.Commit(configPath, transaction);
+                    TryRemoveLegacySetupVersionAlias(setupAgentDirectory, targetVersion, configPath, commandId);
+                    return 0;
+                }
+
+                var staged = WebsitePolicyAgentInstaller.StageAgentUpdate(setupAgentDirectory,
+                    bundledAgentVersion, configPath);
+                WebsitePolicyAgentInstaller.RestoreAgentTaskActionForTransaction(expectedAgentPath,
+                    previousAgentPath, configPath);
+                transaction = StudentUpdateAtomicTransaction.RebaseLegacySetupVersionAgentAlias(configPath,
+                    transaction, targetVersion, bundledAgentVersion);
+                targetVersion = bundledAgentVersion;
+                agentPath = staged.TargetExecutablePath;
+                expectedAgentPath = StudentUpdateAtomicTransaction.GetAgentExecutablePath(targetVersion);
+                WebsitePolicyAgentInstaller.ActivateStagedAgentUpdate(expectedAgentPath,
+                    previousAgentPath, configPath);
+                aliasDirectoryToClean = args[6];
+            }
+            WebsitePolicyAgentInstaller.ValidateAgentUpdateRollbackPaths(expectedAgentPath,
+                previousAgentPath, configPath, targetVersion, previousVersion);
+
+            var activationResult = ExecuteAgentActivation(processId, startTicks, expectedAgentPath, configPath,
+                configFingerprint, targetVersion, commandId, transaction);
+            if (activationResult == 0 && aliasDirectoryToClean is not null)
+                TryRemoveLegacySetupVersionAlias(setupAgentDirectory, aliasDirectoryToClean, configPath, commandId);
+            return activationResult;
         }
         catch (Exception exception)
         {
@@ -139,7 +207,7 @@ public static class StudentApplicationUpdateHandoff
                 {
                     var transaction = StudentUpdateAtomicTransaction.Read(configPath);
                     if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
-                            StudentUpdateTransactionState.RolledBack))
+                            StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
                         StudentUpdateAtomicTransaction.Rollback(configPath, transaction, exception);
                 }
                 catch (Exception recoveryException)
@@ -152,6 +220,23 @@ public static class StudentApplicationUpdateHandoff
                 WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
             }
             return 1;
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void TryRemoveLegacySetupVersionAlias(string sourceDirectory, string aliasVersion,
+        string configPath, Guid commandId)
+    {
+        try
+        {
+            WebsitePolicyAgentInstaller.RemoveLegacyAgentSetupVersionAlias(sourceDirectory, aliasVersion,
+                configPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or ArgumentException or InvalidOperationException)
+        {
+            WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "legacy-agent-alias-cleanup",
+                commandId.ToString("N")[..12], exception);
         }
     }
 

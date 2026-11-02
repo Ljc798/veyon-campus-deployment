@@ -227,7 +227,14 @@ public partial class StudentSetupWindow : Window
     private async void RefreshVeyonStatus(object? sender, RoutedEventArgs e) => await _model.RefreshVeyonStatusAsync();
     private async void VerifyStudentDeployment(object? sender, RoutedEventArgs e) => await _model.VerifyStudentDeploymentAsync();
     private async void CheckStudentAgentVersion(object? sender, RoutedEventArgs e) => await _model.CheckStudentAgentVersionAsync();
-    private async void InstallWebsitePolicyAgent(object? sender, RoutedEventArgs e) => await _model.InstallWebsitePolicyAgentAsync();
+    private async void InstallWebsitePolicyAgent(object? sender, RoutedEventArgs e)
+    {
+        var operation = _model.InstallWebsitePolicyAgentAsync();
+        var dialog = new StudentAgentUpdateProgressWindow(_model);
+        var dialogTask = dialog.ShowDialog(this);
+        await operation;
+        await dialogTask;
+    }
     private async void RemoveWebsitePolicyAgent(object? sender, RoutedEventArgs e)
     {
         var confirmation = new StudentWebsiteAgentRemovalConfirmationWindow();

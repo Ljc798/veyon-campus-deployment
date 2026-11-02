@@ -17,7 +17,8 @@ public enum StudentUpdateTransactionState
     Committed,
     RollbackPending,
     RolledBack,
-    RecoveryRequired
+    RecoveryRequired,
+    Superseded
 }
 
 public sealed class StudentUpdateLockBusyException(string message) : IOException(message)
@@ -52,6 +53,15 @@ public static class StudentUpdateAtomicTransaction
     private const string ProductDirectoryName = "Veyon Campus";
     private const string AgentProductDirectoryName = "VeyonCampus";
     private const string AgentConfigurationDirectoryName = "WebsitePolicy";
+    private static readonly TimeSpan[] JournalSharingRetryDelays =
+    [
+        TimeSpan.FromMilliseconds(100),
+        TimeSpan.FromMilliseconds(250),
+        TimeSpan.FromMilliseconds(500),
+        TimeSpan.FromSeconds(1),
+        TimeSpan.FromSeconds(2),
+        TimeSpan.FromSeconds(3)
+    ];
     private static readonly TimeSpan StuckHandoffHelperTimeout = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan OrphanedInstallerStopTimeout = TimeSpan.FromSeconds(30);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -125,8 +135,11 @@ public static class StudentUpdateAtomicTransaction
         var campusHash = GetCampusHash(configPath);
         var existing = Read(configPath);
         if (existing is not null && existing.State is not (StudentUpdateTransactionState.Committed or
-                StudentUpdateTransactionState.RolledBack))
+                StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
             throw new InvalidDataException("检测到尚未结束的学生更新事务；必须先恢复或人工核对，不能覆盖事务记录。");
+        if (existing?.State == StudentUpdateTransactionState.Superseded &&
+            !TryCleanupSupersededTransaction(configPath, existing))
+            throw new IOException("已被更高版本取代的学生更新事务恢复材料尚未清理；本次更新未开始。");
 
         var now = DateTimeOffset.UtcNow;
         var record = new StudentUpdateTransactionRecord(CurrentSchemaVersion, commandId, campusHash,
@@ -148,15 +161,14 @@ public static class StudentUpdateAtomicTransaction
             !AgentFileSecurity.IsPrivate(journalDirectory, directory: true) ||
             !AgentFileSecurity.IsPrivate(journalPath, directory: false))
             throw new InvalidDataException("学生更新事务 journal 的 SYSTEM/Administrators ACL 无效；已保留恢复材料。");
-        var info = new FileInfo(journalPath);
-        if (info.Length is < 1 or > MaximumJournalBytes)
+        var journalBytes = ReadJournalBytes(journalPath);
+        if (journalBytes.LongLength is < 1 or > MaximumJournalBytes)
             throw new InvalidDataException("学生更新事务记录大小无效；已保留恢复材料并停止。");
 
         StudentUpdateTransactionRecord record;
         try
         {
-            record = JsonSerializer.Deserialize<StudentUpdateTransactionRecord>(File.ReadAllBytes(journalPath),
-                         JsonOptions)
+            record = JsonSerializer.Deserialize<StudentUpdateTransactionRecord>(journalBytes, JsonOptions)
                      ?? throw new InvalidDataException("学生更新事务记录为空；已保留恢复材料并停止。");
         }
         catch (JsonException exception)
@@ -179,6 +191,7 @@ public static class StudentUpdateAtomicTransaction
             {
                 StudentUpdateTransactionState.Committed => "committed",
                 StudentUpdateTransactionState.RolledBack => "rolledBack",
+                StudentUpdateTransactionState.Superseded => "superseded",
                 StudentUpdateTransactionState.RecoveryRequired => "needsReview",
                 _ => "inProgress"
             };
@@ -204,6 +217,7 @@ public static class StudentUpdateAtomicTransaction
                 null => "notFound",
                 StudentUpdateTransactionState.Committed => "committed",
                 StudentUpdateTransactionState.RolledBack => "rolledBack",
+                StudentUpdateTransactionState.Superseded => "superseded",
                 StudentUpdateTransactionState.RecoveryRequired => "needsReview",
                 _ => "inProgress"
             };
@@ -235,13 +249,95 @@ public static class StudentUpdateAtomicTransaction
         return updated;
     }
 
+    public static StudentUpdateTransactionRecord RebaseTargetAgentVersion(string configPath,
+        StudentUpdateTransactionRecord current, string expectedCurrentTargetAgentVersion,
+        string verifiedTargetAgentVersion)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        _ = ApplicationReleaseClient.CompareVersions(expectedCurrentTargetAgentVersion,
+            expectedCurrentTargetAgentVersion);
+        _ = ApplicationReleaseClient.CompareVersions(verifiedTargetAgentVersion, verifiedTargetAgentVersion);
+        ValidateRecord(configPath, current);
+        var persisted = Read(configPath);
+        if (!IsCurrentRecord(current, persisted))
+            throw new InvalidOperationException("学生更新事务记录已变化；拒绝重设 Agent 目标版本。");
+        if (!CanRebaseTargetAgentVersion(current, expectedCurrentTargetAgentVersion,
+                verifiedTargetAgentVersion))
+            throw new InvalidDataException("只能在 StudentSetup 安装后，将事务中的 Agent 目标重设为已验真的内置 Agent 版本，且不得降级。");
+
+        var updated = current with
+        {
+            TargetAgentVersion = verifiedTargetAgentVersion,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        Write(configPath, updated);
+        return updated;
+    }
+
+    public static StudentUpdateTransactionRecord RebaseLegacySetupVersionAgentAlias(string configPath,
+        StudentUpdateTransactionRecord current, string expectedSetupVersionAlias,
+        string verifiedAgentProductVersion)
+    {
+        ArgumentNullException.ThrowIfNull(current);
+        _ = ApplicationReleaseClient.CompareVersions(expectedSetupVersionAlias, expectedSetupVersionAlias);
+        _ = ApplicationReleaseClient.CompareVersions(verifiedAgentProductVersion, verifiedAgentProductVersion);
+        ValidateRecord(configPath, current);
+        var persisted = Read(configPath);
+        if (!IsCurrentRecord(current, persisted))
+            throw new InvalidOperationException("学生更新事务记录已变化；拒绝迁移旧版 Setup/Agent 版本别名。");
+        if (!CanRebaseLegacySetupVersionAgentAlias(current, expectedSetupVersionAlias,
+                verifiedAgentProductVersion))
+            throw new InvalidDataException("旧版 Agent 事务不符合 Setup/Agent 版本别名迁移条件；已停止切换。");
+        var updated = current with
+        {
+            TargetAgentVersion = verifiedAgentProductVersion,
+            UpdatedUtc = DateTimeOffset.UtcNow
+        };
+        Write(configPath, updated);
+        return updated;
+    }
+
+    internal static bool CanRebaseLegacySetupVersionAgentAlias(StudentUpdateTransactionRecord current,
+        string expectedSetupVersionAlias, string verifiedAgentProductVersion)
+    {
+        if (current.State != StudentUpdateTransactionState.ActivationPending ||
+            !string.Equals(current.TargetSetupVersion, expectedSetupVersionAlias, StringComparison.Ordinal) ||
+            !string.Equals(current.TargetAgentVersion, expectedSetupVersionAlias, StringComparison.Ordinal))
+            return false;
+        try
+        {
+            return ApplicationReleaseClient.CompareVersions(verifiedAgentProductVersion,
+                       current.PreviousAgentVersion) >= 0 &&
+                   !string.Equals(verifiedAgentProductVersion, expectedSetupVersionAlias, StringComparison.Ordinal);
+        }
+        catch (InvalidDataException) { return false; }
+    }
+
+    internal static bool CanRebaseTargetAgentVersion(StudentUpdateTransactionRecord current,
+        string expectedCurrentTargetAgentVersion, string verifiedTargetAgentVersion)
+    {
+        if (current.State != StudentUpdateTransactionState.SetupInstalled ||
+            !string.Equals(current.TargetAgentVersion, expectedCurrentTargetAgentVersion,
+                StringComparison.Ordinal))
+            return false;
+        try
+        {
+            return ApplicationReleaseClient.CompareVersions(verifiedTargetAgentVersion,
+                       current.PreviousAgentVersion) >= 0 &&
+                   ApplicationReleaseClient.CompareVersions(verifiedTargetAgentVersion,
+                       current.TargetAgentVersion) >= 0;
+        }
+        catch (InvalidDataException) { return false; }
+    }
+
     public static StudentUpdateTransactionRecord RecordRecoveryFailure(string configPath,
         StudentUpdateTransactionRecord current, Exception exception)
     {
         var persisted = Read(configPath);
         if (persisted is null || persisted.CommandId != current.CommandId)
             throw new InvalidOperationException("学生更新事务记录缺失或命令已变化；不能记录恢复状态。");
-        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+            StudentUpdateTransactionState.Superseded)
             return persisted;
         if (!IsCurrentRecord(current, persisted))
             throw new InvalidOperationException("学生更新事务记录已变化；不能覆盖更新后的恢复状态。");
@@ -277,7 +373,7 @@ public static class StudentUpdateAtomicTransaction
     {
         var record = Read(configPath);
         if (record is not null && record.State is not (StudentUpdateTransactionState.Committed or
-                StudentUpdateTransactionState.RolledBack))
+                StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
             throw new InvalidDataException($"学生端存在未完成的更新事务（{record.State}）；已阻止新更新以避免覆盖恢复数据。");
     }
 
@@ -344,6 +440,201 @@ public static class StudentUpdateAtomicTransaction
         { return false; }
     }
 
+    /// <summary>
+    /// Allows the installed StudentSetup to repair its bundled Agent when an older failed
+    /// transaction cannot roll back because its backup is gone, but a verified later Setup is
+    /// already active. This is deliberately narrower than normal transaction recovery.
+    /// </summary>
+    public static bool CanBootstrapSupersededRecovery(string configPath,
+        StudentUpdateTransactionRecord record, string configurationFingerprint, string? installedAgentVersion)
+        => CanBootstrapSupersededRecovery(configPath, record, configurationFingerprint, installedAgentVersion,
+            out _);
+
+    public static bool CanBootstrapSupersededRecovery(string configPath,
+        StudentUpdateTransactionRecord record, string configurationFingerprint, string? installedAgentVersion,
+        out string refusalReason)
+    {
+        if (!OperatingSystem.IsWindows() || record.State != StudentUpdateTransactionState.RecoveryRequired ||
+            !string.Equals(record.ConfigurationFingerprint, configurationFingerprint,
+                StringComparison.OrdinalIgnoreCase) || installedAgentVersion is null ||
+            !string.Equals(installedAgentVersion, record.PreviousAgentVersion, StringComparison.Ordinal))
+        {
+            refusalReason = "当前 SYSTEM Agent 版本或校区配置指纹与失败事务不一致。";
+            return false;
+        }
+
+        string installedSetupVersion;
+        try
+        {
+            installedSetupVersion = ReadVerifiedInstalledSetupVersion();
+            var previousSetup = GetPreviousInstallationDirectory(record);
+            PathLinkSecurity.RejectLinksAllowingMissingComponents(previousSetup);
+            var previousSetupBackupPresent = Directory.Exists(previousSetup) || File.Exists(previousSetup);
+            if (!HasSupersedingInstallationFacts(record, installedSetupVersion, installedAgentVersion,
+                    previousSetupBackupPresent))
+            {
+                refusalReason = GetSupersedingVersionFenceFailure(record, installedSetupVersion,
+                    installedAgentVersion, previousSetupBackupPresent);
+                return false;
+            }
+
+            var previousAgent = GetAgentExecutablePath(record.PreviousAgentVersion);
+            PathLinkSecurity.RejectLinks(previousAgent);
+            if (!File.Exists(previousAgent) ||
+                !WorkerInstallationGuard.ProductVersionMatches(previousAgent, record.PreviousAgentVersion))
+            {
+                refusalReason = "事务记录中的旧 Agent 文件缺失或版本不符，无法建立可信回滚点。";
+                return false;
+            }
+
+            var recoveryDirectory = GetRecoveryDirectory(record);
+            var stagingDirectory = Path.GetDirectoryName(GetInstallerPath(configPath, record))!;
+            VerifyOrRepairOptionalPrivateDirectory(recoveryDirectory);
+            VerifyOrRepairOptionalPrivateDirectory(stagingDirectory);
+            refusalReason = "";
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or JsonException or ArgumentException or
+                                           System.Security.SecurityException)
+        {
+            refusalReason = "无法安全核验旧更新事务材料：" + exception.Message;
+            return false;
+        }
+    }
+
+    internal static bool HasSupersedingInstallationFacts(StudentUpdateTransactionRecord record,
+        string installedSetupVersion, string installedAgentVersion, bool previousSetupBackupPresent)
+    {
+        return record.State == StudentUpdateTransactionState.RecoveryRequired &&
+               ApplicationReleaseClient.CompareVersions(record.TargetSetupVersion, record.PreviousSetupVersion) > 0 &&
+               ApplicationReleaseClient.CompareVersions(record.TargetAgentVersion, record.PreviousAgentVersion) > 0 &&
+               ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.TargetSetupVersion) > 0 &&
+               ApplicationReleaseClient.CompareVersions(installedAgentVersion, record.PreviousAgentVersion) >= 0 &&
+               !previousSetupBackupPresent;
+    }
+
+    private static string GetSupersedingVersionFenceFailure(StudentUpdateTransactionRecord record,
+        string installedSetupVersion, string installedAgentVersion, bool previousSetupBackupPresent)
+    {
+        if (ApplicationReleaseClient.CompareVersions(record.TargetSetupVersion, record.PreviousSetupVersion) <= 0)
+            return "失败事务的目标 StudentSetup 版本不是高于原版本的更新。";
+        if (ApplicationReleaseClient.CompareVersions(record.TargetAgentVersion, record.PreviousAgentVersion) <= 0)
+            return "失败事务的目标 Agent 版本不是高于原版本的更新。";
+        if (ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.TargetSetupVersion) <= 0)
+            return $"当前已安装 StudentSetup {installedSetupVersion} 没有高于失败事务目标 {record.TargetSetupVersion}。";
+        if (ApplicationReleaseClient.CompareVersions(installedAgentVersion, record.PreviousAgentVersion) < 0)
+            return $"当前 Agent {installedAgentVersion} 低于事务原版本 {record.PreviousAgentVersion}。";
+        if (previousSetupBackupPresent)
+            return "旧版 StudentSetup 回滚备份仍存在；应先由旧事务执行正常回滚。";
+        return "当前 StudentSetup、Agent 与失败事务的版本关系不满足安全接管条件。";
+    }
+
+    private static void VerifyOrRepairOptionalPrivateDirectory(string path)
+    {
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(path);
+        if (File.Exists(path))
+            throw new InvalidDataException($"学生更新事务目录路径被普通文件占用：{path}");
+        if (!Directory.Exists(path)) return;
+        EnsureNoReparsePointsInTree(path);
+        if (!AgentFileSecurity.IsPrivate(path, directory: true))
+            AgentFileSecurity.SecurePrivateDirectory(path);
+        if (!AgentFileSecurity.IsPrivate(path, directory: true))
+            throw new InvalidDataException($"学生更新事务目录 ACL 修复后仍不符合 SYSTEM/Administrators 独占要求：{path}");
+    }
+
+    /// <summary>Retries cleanup of a previously validated superseded transaction from an elevated UI.</summary>
+    public static void EnsureSupersededRecoveryCleanup(string configPath)
+    {
+        var record = Read(configPath);
+        if (record?.State != StudentUpdateTransactionState.Superseded) return;
+        if (!TryCleanupSupersededTransaction(configPath, record))
+            throw new IOException("更新事务已由更高版本接管，但恢复材料仍未清理；请稍后重试。");
+    }
+
+    private static bool TrySupersedeVerifiedRecovery(string configPath, StudentUpdateTransactionRecord record)
+    {
+        try
+        {
+            var installedSetupVersion = ReadVerifiedInstalledSetupVersion();
+            var currentAgentPath = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);
+            var currentAgentVersion = Path.GetFileName(Path.GetDirectoryName(currentAgentPath));
+            if (string.IsNullOrWhiteSpace(currentAgentVersion) ||
+                !HasSupersedingInstallationFacts(record, installedSetupVersion, currentAgentVersion,
+                    Directory.Exists(GetPreviousInstallationDirectory(record))))
+                return false;
+
+            var expectedCurrentAgent = GetAgentExecutablePath(currentAgentVersion);
+            if (!PathEquals(currentAgentPath, expectedCurrentAgent)) return false;
+            PathLinkSecurity.RejectLinks(expectedCurrentAgent);
+            if (!File.Exists(expectedCurrentAgent) ||
+                !WorkerInstallationGuard.ProductVersionMatches(expectedCurrentAgent, currentAgentVersion) ||
+                !string.Equals(WebsitePolicyAgent.GetRuntimeVersion(), currentAgentVersion,
+                    StringComparison.Ordinal) ||
+                !string.Equals(WebsitePolicyAgent.ConfigFingerprint(
+                    WebsitePolicyAgentInstaller.ReadManagedAgentConfiguration(configPath)),
+                    record.ConfigurationFingerprint, StringComparison.OrdinalIgnoreCase) ||
+                !WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2),
+                    record.ConfigurationFingerprint, currentAgentVersion))
+                return false;
+
+            WebsitePolicyAgentInstaller.VerifyStudentUpdateRecoveryTasks(expectedCurrentAgent, configPath);
+            var recoveryDirectory = GetRecoveryDirectory(record);
+            VerifyOrRepairOptionalPrivateDirectory(recoveryDirectory);
+
+            var superseded = Advance(configPath, record, StudentUpdateTransactionState.Superseded,
+                $"保留并核验了较新的 StudentSetup {installedSetupVersion} 与健康 Agent {currentAgentVersion}；" +
+                "旧更新的目标 Agent 和 StudentSetup 回滚副本均缺失，已安全结束旧事务。");
+            if (!TryCleanupSupersededTransaction(configPath, superseded))
+                throw new IOException("更新事务已安全收敛，但旧恢复材料尚未清理。");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or JsonException or ArgumentException or
+                                           System.Security.SecurityException or TimeoutException)
+        { return false; }
+    }
+
+    private static string ReadVerifiedInstalledSetupVersion()
+    {
+        var installDirectory = GetInstallDirectory();
+        PathLinkSecurity.RejectLinks(installDirectory);
+        EnsureNoReparsePointsInTree(installDirectory);
+        var version = ReadInstalledVersion(installDirectory);
+        var executable = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
+        if (!WorkerInstallationGuard.ProductVersionMatches(executable, version))
+            throw new InvalidDataException("活动 StudentSetup 角色标记与程序版本读回不匹配。");
+        return version;
+    }
+
+    private static bool TryCleanupSupersededTransaction(string configPath,
+        StudentUpdateTransactionRecord record)
+    {
+        try
+        {
+            // Keep the watchdog pointed at the new Agent until the terminal journal is written.
+            // Any interrupted cleanup is then safe to retry using the already verified newer Agent.
+            WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasksForConfig(configPath);
+            CleanupStagingDirectory(configPath, record);
+            var recoveryDirectory = GetRecoveryDirectory(record);
+            if (Directory.Exists(recoveryDirectory))
+            {
+                PathLinkSecurity.RejectLinks(recoveryDirectory);
+                EnsureNoReparsePointsInTree(recoveryDirectory);
+                Directory.Delete(recoveryDirectory, recursive: true);
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.ComponentModel.Win32Exception or
+                                          System.Security.SecurityException)
+        {
+            WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
+                new IOException("已收敛的学生更新事务恢复材料清理尚未完成。", exception));
+            return false;
+        }
+    }
+
     public static void VerifyTargetSetupInstalled(StudentUpdateTransactionRecord record)
     {
         PathLinkSecurity.RejectLinks(GetInstallDirectory());
@@ -374,7 +665,8 @@ public static class StudentUpdateAtomicTransaction
         var persisted = Read(configPath);
         if (persisted is null || persisted.CommandId != record.CommandId)
             throw new InvalidOperationException("学生更新事务记录缺失或命令已变化；拒绝执行过期回滚。");
-        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+        if (persisted.State is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+            StudentUpdateTransactionState.Superseded)
             return;
         record = persisted;
 
@@ -474,9 +766,19 @@ public static class StudentUpdateAtomicTransaction
                 throw new IOException("更新已回滚，但受保护失败候选清理仍未完成；暂不开始下一次更新。");
             return;
         }
+        if (record.State == StudentUpdateTransactionState.Superseded)
+        {
+            if (!TryCleanupSupersededTransaction(configPath, record))
+                throw new IOException("已被更高版本取代的更新已收敛，但恢复材料清理仍待重试。");
+            return;
+        }
 
         StopStuckHandoffHelper(configPath, record);
         StopOrphanedInstallerProcesses(configPath, record);
+
+        if (record.State == StudentUpdateTransactionState.RecoveryRequired &&
+            TrySupersedeVerifiedRecovery(configPath, record))
+            return;
 
         if (record.State == StudentUpdateTransactionState.ActivationPending && IsHandoffHelperRunning(record))
             return;
@@ -516,7 +818,8 @@ public static class StudentUpdateAtomicTransaction
     {
         var record = Read(configPath);
         if (record is null) return;
-        if (record.State is not (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack))
+        if (record.State is not (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+                StudentUpdateTransactionState.Superseded))
             throw new InvalidOperationException("学生更新事务尚未结束；卸载必须等到更新恢复或人工核对后再继续。");
         WebsitePolicyAgentInstaller.RemoveStudentUpdateRecoveryTasksForConfig(configPath);
         var recoveryDirectory = GetRecoveryDirectory(record);
@@ -744,7 +1047,8 @@ public static class StudentUpdateAtomicTransaction
     {
         if (journalCommandId is null) return true;
         if (journalCommandId == commandId) return false;
-        return journalState is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack;
+        return journalState is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+            StudentUpdateTransactionState.Superseded;
     }
 
     private static bool IsCurrentRecord(StudentUpdateTransactionRecord expected,
@@ -766,7 +1070,7 @@ public static class StudentUpdateAtomicTransaction
                 stream.Flush(flushToDisk: true);
             }
             AgentFileSecurity.SecurePrivateFile(temporaryPath);
-            File.Move(temporaryPath, journalPath, overwrite: true);
+            ReplaceJournalWithRetry(temporaryPath, journalPath);
             AgentFileSecurity.SecurePrivateFile(journalPath);
         }
         finally
@@ -775,6 +1079,49 @@ public static class StudentUpdateAtomicTransaction
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
     }
+
+    private static byte[] ReadJournalBytes(string journalPath)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                // Allow atomic replacement while a recovery task is reading the previous snapshot.
+                using var stream = new FileStream(journalPath, FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.SequentialScan);
+                if (stream.Length is < 1 or > MaximumJournalBytes)
+                    throw new InvalidDataException("学生更新事务记录大小无效；已保留恢复材料并停止。");
+                using var buffer = new MemoryStream((int)stream.Length);
+                stream.CopyTo(buffer);
+                return buffer.ToArray();
+            }
+            catch (IOException exception) when (IsJournalSharingViolation(exception) &&
+                                                attempt < JournalSharingRetryDelays.Length)
+            {
+                Thread.Sleep(JournalSharingRetryDelays[attempt]);
+            }
+        }
+    }
+
+    private static void ReplaceJournalWithRetry(string temporaryPath, string journalPath)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                File.Move(temporaryPath, journalPath, overwrite: true);
+                return;
+            }
+            catch (IOException exception) when (IsJournalSharingViolation(exception) &&
+                                                attempt < JournalSharingRetryDelays.Length)
+            {
+                Thread.Sleep(JournalSharingRetryDelays[attempt]);
+            }
+        }
+    }
+
+    private static bool IsJournalSharingViolation(IOException exception) =>
+        (exception.HResult & 0xFFFF) is 32 or 33;
 
     private static string GetJournalPath(string configPath)
     {
@@ -833,7 +1180,8 @@ public static class StudentUpdateAtomicTransaction
     private static bool IsTransitionAllowed(StudentUpdateTransactionState current,
         StudentUpdateTransactionState next)
     {
-        if (current is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack)
+        if (current is StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+            StudentUpdateTransactionState.Superseded)
             return false;
         if (next == StudentUpdateTransactionState.RecoveryRequired) return true;
 
@@ -856,6 +1204,7 @@ public static class StudentUpdateAtomicTransaction
             (StudentUpdateTransactionState.ActivationPending, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.RollbackPending, StudentUpdateTransactionState.RolledBack) => true,
             (StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending) => true,
+            (StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Superseded) => true,
             _ => false
         };
     }
