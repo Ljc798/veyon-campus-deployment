@@ -273,6 +273,7 @@ flowchart TD
 **执行记录（2026-11-03，未完成）：** 已新增[历史兼容性矩阵](maintenance/legacy-compatibility-matrix.md)，记录 tag 源码版本、公开发行页资产摘要、本地自动化证据及待验收项。源码中的 Agent 项目版本为 `1.1.40→0.4.55`、`1.1.41→0.4.55`、`1.1.44→0.4.56`，但历史安装器未下载，不能据此代替二进制读回。
 
 - 学生更新兼容夹具通过；CloudBase API 本地契约测试 `22/22` 通过，覆盖 mock v4、旧 v1–v3 响应和 migration 静态结构。默认 .NET 检查中的发布签名/摘要检查通过，但随后在 `IssueThirdRoundChecks` 因 `system policy guidance remains platform-specific` 失败，整套检查未通过。
+- `v1.1.40`、`v1.1.41`、`v1.1.44` 标签源码均只接受发行 Schema 1/2/3、默认使用 Developer Release 公钥，并保留 `/v1/update`；这是历史源码证据，不能代替安装二进制读回或实机签名/事务验证。
 - 本机没有可运行的 Windows VM，GitHub 安装包下载在 DNS 解析阶段超时；因此三个历史版本的二进制、39174 签名状态、`/v1/update`、事务回滚、1.1.40 指纹迁移/别名目录都没有真实 Windows 证据。
 - [cloudbaserc.json](../cloudbaserc.json) 仅配置 production `envId`，没有独立测试环境 ID。没有对 production 执行 CloudBase CLI、迁移或部署；migration、API 与 sidecar 在真实测试环境的状态仍未知。
 - **状态：`BLOCKED-BY-ENVIRONMENT`，不是通过。** 六项验收清单保持未勾选；提供可用 Windows VM/快照与独立 CloudBase 测试环境 `envId` 后，从 P0-02 继续，完成前不进入 P0-03。

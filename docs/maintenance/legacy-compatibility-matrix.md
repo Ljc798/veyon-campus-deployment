@@ -25,6 +25,12 @@
 
 当前兼容代码要求正式 `stable` 发行继续使用旧 Agent 可验签的 Schema 3；旧 Agent 走旧 `/v1/update` 时仍须验证稳定发行签名和摘要。`local-test` 需要 Schema 4、新更新协议和匹配的本机测试公钥指纹；测试夹具对缺失/不匹配能力返回不支持，不绕过验签。这是**当前代码的自动化行为**，不是在 0.4.55/0.4.56 二进制上的实测结果。
 
+### 历史标签源码边界（非二进制验收）
+
+对 `v1.1.40`、`v1.1.41`、`v1.1.44` 分别执行了 `git show <tag>:src/VeyonCampus.Core/ApplicationReleases.cs` 和 `git show <tag>:src/VeyonCampus.Core/WebsitePolicyRuntime.cs`：三份历史发行验证器均只接受 Schema 1/2/3，默认从 `ApplicationReleaseTrust.LoadPinnedPublicKeyPem()` 加载 Developer Release 公钥；三份历史运行时源码均保留 `StudentUpdatePath = "/v1/update"`。因此按**这些标签源码**，Schema 4 local-test manifest 不会进入旧发行验证器；正式 Schema 3 是可解析版本。
+
+这项核对没有读取已发布安装包的程序集，也没有对旧 Agent 实际使用的嵌入公钥、真实签名状态回执、TCP 39174 或完整更新事务做实机验证。实际发行包与标签源码是否一致仍待从下载后的二进制和 VM 读回确认。
+
 ## Windows VM 验收记录
 
 每行必须用真实历史安装器建快照，并从安装后的二进制读取版本。以下必测项均尚未运行：签名状态请求、TCP 39174、`/v1/update`、发行公钥和摘要校验、安装事务/回滚、稳定 Schema 3 升级、Schema 4 测试包拒绝、1.1.40 配置指纹恢复和旧 Setup 版本别名目录处理。
