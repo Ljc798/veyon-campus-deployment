@@ -614,7 +614,7 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 服务版本化目录与 Setup/Agent 版本目录分开；禁止误用 StudentSetup 版本充当 Maintenance 版本。
 - [ ] 升级期间保留原有信任根、设备身份、已接受事务与待处理状态；设计密钥轮换双信任窗口及最终退役条件。
 
-**实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。Maintenance 单独包会把 UpdateHelper 与服务放在同一版本目录。P3-01 新增专属签名命令、SYSTEM 私有暂存、版本切换、健康核验和旧服务回滚；Teacher provider/adapter 已接入 Coordinator/journal 与 Workflow，高级维护操作新增“仅更新 Maintenance 服务”入口，可单独执行该升级。当前仍是单一 Maintenance 更新事务，成功后没有自动接续 StudentSetup 更新的多阶段 operation。协议只接受当前 v1，尚未完成旧教师协议的最低兼容协商及密钥轮换。CloudBase migration 未部署；本轮按用户要求不构建、不测试、不打包，故无可安装测试包。状态：`WORKFLOW-WIRED; TEST-DEFERRED; VM-PENDING; FIELD-PENDING`。
+**实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。Maintenance 单独包会把 UpdateHelper 与服务放在同一版本目录。P3-01 新增专属签名命令、SYSTEM 私有暂存、版本切换、健康核验和旧服务回滚；Teacher provider/adapter 已接入 Coordinator/journal 与 Workflow，高级维护操作新增“仅更新 Maintenance 服务”入口，可单独执行该升级；发送前检查签名能力列表是否声明更新与事务查询命令，不兼容的旧服务不会收到新命令。当前仍是单一 Maintenance 更新事务，成功后没有自动接续 StudentSetup 更新的多阶段 operation。协议只接受当前 v1，尚未完成旧教师协议的最低兼容协商及密钥轮换。CloudBase migration 未部署；本轮按用户要求不构建、不测试、不打包，故无可安装测试包。状态：`WORKFLOW-WIRED; TEST-DEFERRED; VM-PENDING; FIELD-PENDING`。
 
 ### P3-02：恢复任务和健康自检
 

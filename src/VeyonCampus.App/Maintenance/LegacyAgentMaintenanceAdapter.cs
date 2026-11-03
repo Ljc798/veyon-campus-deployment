@@ -436,6 +436,13 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
                 "无法从签名 Maintenance 健康读回确认当前服务版本。", inspection.IdentityEvidence,
                 inspection.CurrentVersions, inspection.UpdateTransactionState);
+        var supportedCommands = inspection.Capabilities?.SupportedCommands;
+        if (supportedCommands is null ||
+            !supportedCommands.Contains("offerSignedMaintenanceServiceUpdate", StringComparer.Ordinal) ||
+            !supportedCommands.Contains("getMaintenanceServiceUpdateStatus", StringComparer.Ordinal))
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
+                "当前 Maintenance 服务的签名能力列表未声明自更新命令和事务查询；不会发送它不认识的更新协议。请先通过受信任 StudentSetup/引导升级安装支持自更新的 Maintenance。",
+                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
         if (plan.TargetMaintenanceServiceVersion is null)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.NoChanges,
                 "MaintenanceService 已是当前可用发行版本。", inspection.IdentityEvidence,
