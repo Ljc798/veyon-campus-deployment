@@ -7,6 +7,8 @@ on:
       - 'cloudbase/**'
       - 'cloudfunctions/veyon-api/**'
       - 'scripts/deploy-cloudbase-api.sh'
+      - 'scripts/apply-cloudbase-release-migrations.sh'
+      - 'scripts/apply-cloudbase-release-migrations.test.cjs'
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
       - 'scripts/check-file-update-release-catalog-postgres.sh'
@@ -22,6 +24,8 @@ on:
       - 'cloudbase/**'
       - 'cloudfunctions/veyon-api/**'
       - 'scripts/deploy-cloudbase-api.sh'
+      - 'scripts/apply-cloudbase-release-migrations.sh'
+      - 'scripts/apply-cloudbase-release-migrations.test.cjs'
       - 'scripts/check-download-rate-limit-postgres.sh'
       - 'scripts/check-release-heartbeat-migration-postgres.sh'
       - 'scripts/check-file-update-release-catalog-postgres.sh'
@@ -70,9 +74,13 @@ jobs:
           node --check scripts/generate-release-signing-key.cjs
           node --check scripts/verify-release-signing-key.cjs
           node --check scripts/release-signing-key.test.cjs
+          node --check scripts/apply-cloudbase-release-migrations.test.cjs
           node --check scripts/publish-application-release.cjs
+          bash -n scripts/apply-cloudbase-release-migrations.sh
       - name: Test release signing key generation and offline verification
         run: node --test scripts/release-signing-key.test.cjs
+      - name: Test allowlisted CloudBase release migration helper
+        run: node --test scripts/apply-cloudbase-release-migrations.test.cjs
       - name: Verify external installer downloads and metadata-only publishing
         run: node --test scripts/external-release-download.test.cjs
       - name: Run anonymous API and migration contract checks

@@ -1,6 +1,6 @@
 # 项目问题记录
 
-更新日期：2026-11-02。审查基线：`930af1a`；包含 P0-01 代码修正的当前提交：`13124e9`。
+更新日期：2026-11-03。审查基线：`930af1a`；包含 P0-01 代码修正的当前提交：`13124e9`。
 
 本目录集中记录本次讨论的问题，逐项补充证据、处理进度和验收结果。它是问题台账，不替代[项目任务主表](../开发路线与任务清单.md)。记录问题不代表已经修复；源码核查也不代表 Windows 实机复现。后续新问题每次单独追加一项。
 
@@ -21,6 +21,9 @@
 | 007  | 更新切换前的回执被按目标 Agent 版本校验          | 已有 review 提出，尚未在逐项对话展开；待修复验证 |
 | 008  | 未知目标 Agent 版本被当作无需更新                | 已有 review 提出，尚未在逐项对话展开；待修复验证 |
 | 009  | AppLocker 应用限制未覆盖商店和打包版游戏         | 本次单独补充；源码确认，Windows 效果待验收       |
+| 010  | 现场运行的 Agent 未由预期 SYSTEM 启动任务托管    | 用户 PowerShell 显示任务缺失但进程运行；待恢复及重启验收 |
+| 011  | 正式 StudentSetup 安装包没有内嵌 Authenticode 签名 | 三份已发布安装包的 PE 证书目录均为空；来源及摘要已实测，影响与发布策略待处理 |
+| 012  | CloudBase 迁移顺序冲突缺少安全的选择性应用路径   | allowlist helper 与离线夹具已写；CLI 和隔离环境验收未执行             |
 
 ## 001：稳定版更新可能使用错误的 Agent 暂存目标版本
 
@@ -98,3 +101,33 @@
 - **处理方向：** 增加针对实际包身份的打包应用规则，限定学生账户并保留正常系统应用；将禁止打开商店和禁止运行已安装游戏分别设计、显示和验收。
 - **验收要求：** 在实际 Windows 10/11 版本及学生账户上，分别验证打开商店、下载游戏、运行已安装纸牌、撤销恢复；记录系统版本、应用包身份及 AppLocker 执行日志。此处不承诺所有 Windows 版本均已支持或已通过。
 - **状态：** 功能覆盖缺口已由源码确认。本次只记录，未修改策略实现或运行 Windows 测试。
+
+## 010：现场运行的 Agent 未由预期 SYSTEM 启动任务托管
+
+- **现场证据：** 用户提供的管理员 PowerShell 输出为 `NO_MATCHING_TASKS`；同一轮进程清单显示 `VeyonCampus.Agent.exe` 正在运行，路径为 `C:\ProgramData\VeyonCampus\WebsitePolicyAgent\0.4.55\VeyonCampus.Agent.exe`。之后 Agent loopback 健康检查返回 `200 ready`。这证明当时进程可响应，不证明重启后的启动链或更新恢复链正常。
+- **源码依据：** [WebsitePolicyRuntime.cs](../../src/VeyonCampus.Core/WebsitePolicyRuntime.cs) 将 `VeyonCampus-WebsitePolicyAgent` 作为 SYSTEM 开机启动任务；Agent 健康快照在任务缺失时把 `taskMatchesAgent` 和 `taskAclRestricted` 标为 `false`。更新恢复任务的注册也要求主 SYSTEM Agent 任务已存在且动作、配置、ACL 均读回匹配。
+- **影响：** 现场进程的启动归属和持久性未得到确认。若缺少其他有效启动入口，注销或重启后 Agent 可能无法自动启动；恢复任务也不能通过预期主任务链注册。`200 ready` 单独不能代表已安装任务及恢复链完整。
+- **边界：** 当前证据没有证明 Agent 在重启后必然无法启动，也没有确认是否存在其他受支持的启动入口；应按“主任务缺失、启动/恢复完整性待验证”处理，不据此断言具体根因。
+- **处理方向：** 在 Windows 实机只读取证 Agent 主任务、恢复任务及 watchdog 的存在性、SYSTEM 身份、动作路径、配置路径和 ACL；查明当前进程由何处启动。若由安装修复恢复任务，需验证读回一致，并在维护窗口重启后检查 Agent 与恢复任务。
+- **验收要求：** 记录重启前后 PID、实际运行版本、签名健康状态、主任务及恢复任务读回；确认主任务缺失能在教师端被识别为安装不完整，而非仅显示 Agent 在线。
+- **状态：** 用户现场报告确认主任务查询无匹配项且 Agent 进程运行；来源未核实、重启行为未测试、修复未验收。本条记录问题，不执行远程修复或学生机变更。
+
+## 011：正式 StudentSetup 安装包没有内嵌 Authenticode 签名
+
+- **证据：** 实际下载的 `v1.1.40`、`v1.1.41`、`v1.1.44` GitHub Release 均标记为非预发布；对应 StudentSetup EXE 的 PE 头都显示 `CertificateTableRVA=0`、`CertificateTableSize=0`。三份文件的本地 SHA-256 均与 GitHub Release API 公布值一致；production `/v3` 返回的 1.1.44 安装包也与线上 manifest 一致。对应 GitHub Release 资产仅有 `SHA256SUMS` 和安装 EXE，没有 `.cat` 目录签名文件。摘要、`ProductVersion` 与 PE 证书目录读回见[历史兼容性矩阵](../maintenance/legacy-compatibility-matrix.md)。
+- **影响：** Windows 无法从安装器自身验证发布者证书；运行时可能显示“未知发布者”，SmartScreen 的发布者信誉也无法由该 EXE 的 Authenticode 签名提供。自动更新使用的 RSA-PSS 清单验签和 SHA-256 校验属于另一条信任链，不能给用户首次下载后手动启动的 EXE 添加 Windows 发布者身份。
+- **边界：** 当前 Beta 工作流文本明确提示安装器未 Authenticode 签名，但上述三个 GitHub Release 均非预发布，且 1.1.44 已出现在 production 发行目录。应明确稳定版的签名和下载发布政策；本条不声称 RSA 更新验签失效。
+- **处理方向：** 若这些安装包用于正式分发，在最终打包后由受控 Windows CI 使用组织证书签名；同时在下载页明确当前签名状态，避免把 Beta 的限制带入正式渠道。
+- **验收要求：** 从待发布的 GitHub 与 production 下载实际安装器，在 Windows 10/11 上读回 `Get-AuthenticodeSignature`，验证签名状态、发布者和信任链；改字节后签名必须失效。仅做 SHA-256 或 RSA 更新清单验签不算 Authenticode 验收。
+- **状态：** 三份已发布 StudentSetup 文件缺少内嵌 Authenticode 已由 PE 证书目录确认。是否作为新稳定发布门禁，以及现有线上下载页需要怎样标注，尚待处理；本次没有重新签名或替换发行包。
+
+## 012：CloudBase 迁移顺序冲突缺少安全的选择性应用路径
+
+- **证据：** 2026-11-03 对唯一配置的 production 环境执行只读 `tcb db pg migration up --dry-run --json`，结果为 `dryRun=true`、`executable=false`；待应用的目标迁移为 `20261021140000_create_file_update_release_catalog` 与 `20261102120000_support_signed_student_agent_targets`，同时报告本地 `20261010090000_add_daily_operations_reporting` 早于远端 ledger 最新版本。当前 CloudBase CLI 3.8.5 的本地帮助显示 `--include-all` 会允许 out-of-order migrations。dry-run 没有执行写入。
+- **源码依据：** [deploy-cloudbase-api.sh](../../scripts/deploy-cloudbase-api.sh) 说明 OperationsReporting 仍禁用，故意不把旧 `20261010090000` 列入部署必需迁移；[cloudbaserc.json](../../cloudbaserc.json) 将 `OperationsReporting__Enabled` 设为 `false`。该部署脚本只检查目标 migration 是否已应用，不应用 migration。目标 API 部署需要两条新迁移已在目标环境的 ledger 中。
+- **影响：** 当前没有已验证的流程能在隔离环境应用两条目标迁移，同时保证旧的禁用迁移不被意外执行。直接照默认 `migration up` 预演无法继续；盲用 `--include-all` 可能应用被部署脚本明确排除的 OperationsReporting migration，造成额外 schema/函数变更。
+- **边界：** 本次未尝试 `--include-all`、没有应用任何 migration，也没有改动 production。尚未证明该 CLI 选项实际会执行哪些文件；具体应用集合必须在安全、隔离的环境和明确迁移策略下确认。
+- **处理方向：** 明确可审计的迁移选择机制和版本 ledger 处理方式，使指定迁移按依赖顺序应用、其他禁用迁移保持未应用；在隔离 CloudBase 环境验证成功、失败回滚及重跑幂等性，再用于后续部署。
+- **代码进展：** 新增 [apply-cloudbase-release-migrations.sh](../../scripts/apply-cloudbase-release-migrations.sh) 和离线夹具 [apply-cloudbase-release-migrations.test.cjs](../../scripts/apply-cloudbase-release-migrations.test.cjs)。脚本构造只含两条目标 SQL 的临时 migration 目录，通过 CLI 支持的 `database.migrations` 路径配置执行预演；先核对远端必需基线并拒绝已含禁用 OperationsReporting migration 的环境；应用时必须提供目标环境 ID 的二次确认及精确 migration ID 清单，成功后再读回 ledger，并拒绝仓库配置的 production envId。离线夹具已加入 API contract CI，但本轮按用户要求未运行；CLI 在真实隔离环境中的迁移选择和执行结果仍待验收。
+- **验收要求：** 从与 production 相同迁移基线的隔离环境演练。验证只应用预期 migration ID、ledger 与 schema 一致、OperationsReporting 仍未部署/启用；故障中断后可安全续跑。部署脚本的 migration preflight 通过后再验收 v4 API 与发行签名。
+- **状态：** 选择性迁移代码为 `FIXED-CODE`，尚未通过 CLI/隔离环境验收；P0-02 的 CloudBase 部署前置仍未关闭，未对 production 写入。

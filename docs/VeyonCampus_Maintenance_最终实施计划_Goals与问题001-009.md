@@ -270,13 +270,17 @@ flowchart TD
 - [ ] 保存每台 VM 的初始/目标版本、签名通道、日志、事务文件、健康读回和最终结果；形成 `docs/maintenance/legacy-compatibility-matrix.md`。
 - [ ] 确认本次 `930af1a` 增加的 CloudBase SQL 迁移、API `/v4/releases/latest`、发行构建 sidecar 在测试环境正确部署并验签。**未部署云端修改前不得宣称发行查询已可用。**
 
-**执行记录（2026-11-03，未完成）：** 已新增[历史兼容性矩阵](maintenance/legacy-compatibility-matrix.md)，记录 tag 源码版本、公开发行页资产摘要、本地自动化证据及待验收项。源码中的 Agent 项目版本为 `1.1.40→0.4.55`、`1.1.41→0.4.55`、`1.1.44→0.4.56`，但历史安装器未下载，不能据此代替二进制读回。
+**执行记录（2026-11-03，未完成）：** 已新增[历史兼容性矩阵](maintenance/legacy-compatibility-matrix.md)，记录 tag 源码版本、公开发行页资产摘要、本地自动化证据及待验收项。源码中的 Agent 项目版本为 `1.1.40→0.4.55`、`1.1.41→0.4.55`、`1.1.44→0.4.56`。追加执行已下载并复算三个发行包的 SHA-256，但尚未从 Windows 安装后读回 Setup/Agent 二进制版本。
 
 - 学生更新兼容夹具通过；CloudBase API 本地契约测试 `22/22` 通过，覆盖 mock v4、旧 v1–v3 响应和 migration 静态结构。默认 .NET 检查中的发布签名/摘要检查通过，但随后在 `IssueThirdRoundChecks` 因 `system policy guidance remains platform-specific` 失败，整套检查未通过。
 - `v1.1.40`、`v1.1.41`、`v1.1.44` 标签源码均只接受发行 Schema 1/2/3、默认使用 Developer Release 公钥，并保留 `/v1/update`；这是历史源码证据，不能代替安装二进制读回或实机签名/事务验证。
-- 本机没有可运行的 Windows VM，GitHub 安装包下载在 DNS 解析阶段超时；因此三个历史版本的二进制、39174 签名状态、`/v1/update`、事务回滚、1.1.40 指纹迁移/别名目录都没有真实 Windows 证据。
-- [cloudbaserc.json](../cloudbaserc.json) 仅配置 production `envId`，没有独立测试环境 ID。没有对 production 执行 CloudBase CLI、迁移或部署；migration、API 与 sidecar 在真实测试环境的状态仍未知。
-- **状态：`BLOCKED-BY-ENVIRONMENT`，不是通过。** 六项验收清单保持未勾选；提供可用 Windows VM/快照与独立 CloudBase 测试环境 `envId` 后，从 P0-02 继续，完成前不进入 P0-03。
+- 本机没有可运行的 Windows VM，因此三个历史版本的安装器内部版本、39174 签名状态、`/v1/update`、事务回滚、1.1.40 指纹迁移/别名目录都没有真实 Windows 证据。初次用 `curl` 下载时 DNS 超时；追加执行通过仓库 Node DNS resolver 下载并匹配了三份公开摘要，但未运行安装器。
+- [cloudbaserc.json](../cloudbaserc.json) 仅配置 production `envId`，没有独立测试环境 ID。追加执行已对 production 做只读查询；migration 与 v4 API 实际状态见下方记录。没有对 production 执行迁移或部署。
+- **状态：`BLOCKED-BY-ENVIRONMENT`，不是通过。** 六项验收清单保持未勾选；真实 Windows VM/快照与独立 CloudBase 测试环境 `envId` 仍缺，完成前不进入 P0-03。
+
+**追加执行记录（2026-11-03，按用户要求进行真实环境只读测试）：** 仅配置的 CloudBase 环境 `veyon-control-d3gs8hmuyd09c00a7` 已确认是 production。`tcb db pg migration list --remote-only --json` 返回远端 21 项、最新 `20261018100000`；本地 `20261021140000_create_file_update_release_catalog.sql` 和 `20261102120000_support_signed_student_agent_targets.sql` 均未应用。`veyon-api` 云函数 Active（Nodejs20.19），修改时间 `2026-10-30`。线上 `/v4/releases/latest?role=StudentSetup&architecture=win-x64` 返回 404；线上 `/v3/...` 返回 200，当前 StudentSetup 为 `1.1.44`、Schema 3，不含 Agent target sidecar。通过 production `/v3` artifact 实际下载 1.1.44 安装包，68,144,138 字节，SHA-256 与线上 manifest 一致；另从历史 GitHub Release 实际下载 1.1.40/1.1.41 安装包，两者摘要都与 GitHub Release API 一致。三个安装器 PE `VERSIONINFO.ProductVersion` 均匹配其发行版本；PE 证书表 RVA/size 均为 0，即文件未嵌入 Authenticode 签名，没有可读的内嵌发布者证书链。安装器没有运行，安装后的 Agent 版本仍未读回。本机工作区缺少 Developer Release 公钥，真实 RSA 发行签名未验证。没有应用迁移或部署代码。该生产只读结果证实新发行功能尚未上线，不满足“测试环境部署并验签”的验收要求，也不改变六项未勾选状态；Windows VM 证据仍缺。生产迁移/API 部署需另行审查和授权；完成 P0-02 前不进入 P0-03。
+
+**执行补充（2026-11-03，按用户要求停止测试）：** 用户说明 Windows 设备尚未开机，要求不执行测试、由其自行测试。此后未连接 Windows App 中保存的主机、未运行 Windows 安装器或测试，也未向 CloudBase 写入。唯一新增的 CloudBase 操作为 `tcb db pg migration up --dry-run --json` 只读预演，结果为 `dryRun=true`、`executable=false`：两条目标 migration `20261021140000`、`20261102120000` 待应用；另报告本地旧 migration `20261010090000_add_daily_operations_reporting` 早于远端最新 migration。仓库部署脚本注明 OperationsReporting 仍禁用并排除此旧 migration；CLI `--include-all` 的实际选择集合未验证，因此新增问题 [012](../问题跟踪/README.md#012cloudbase-迁移顺序冲突缺少安全的选择性应用路径)。为解决这一前置阻塞，新增 [allowlist migration helper](../scripts/apply-cloudbase-release-migrations.sh)：只将两条目标 SQL 暴露给 CloudBase CLI 临时目录，先验证远端必需基线并拒绝已含禁用迁移的环境，默认只预演，拒绝仓库 production envId，应用时须二次确认 envId 和 migration ID，成功后读回远端 ledger；新增离线契约夹具并接入 API contract CI。脚本和夹具均未运行，隔离环境迁移选择/执行和 ledger 仍由用户按[自测清单](maintenance/P0-02-自测清单.md)验证。清单覆盖 Windows 版本读回、签名/39174、Schema 3、Schema 4 拒绝、事务回滚、1.1.40 指纹迁移、别名目录及 CloudBase 部署。P0-02 仍为 `BLOCKED-BY-ENVIRONMENT`，不进入 P0-03。
 
 ### P0-03：修复稳定版 Agent 暂存目标版本错配（**Issue 001**）
 
