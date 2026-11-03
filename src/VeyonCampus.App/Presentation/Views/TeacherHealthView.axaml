@@ -329,6 +329,11 @@
                         <TextBlock Text="{Binding ModuleText}" Classes="supporting-copy" />
                         <TextBlock Text="{Binding RevisionText}" Classes="device-row-detail" />
                         <TextBlock Text="{Binding LastReportedText}" Classes="muted" />
+                        <StackPanel Spacing="2" IsVisible="{Binding HasConfigurationFailureDetail}">
+                          <TextBlock Text="{Binding FailureStageText}" Classes="device-row-detail" />
+                          <TextBlock Text="{Binding FailureDetailText}" Classes="supporting-copy"
+                                     TextWrapping="Wrap" />
+                        </StackPanel>
                         <TextBlock Text="{Binding AdviceText}" Classes="supporting-copy" TextWrapping="Wrap" />
                       </StackPanel>
                     </Border>

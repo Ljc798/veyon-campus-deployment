@@ -10308,8 +10308,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                         continue;
                     var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(run.Device.RouteAddress),
                         run.Device.RouteAddress);
+                    var configurationRun = module == MaintenanceConfigurationModule.TeacherConnectivity
+                        ? journal.Runs.Where(candidate => candidate.Device.Key == run.Device.Key &&
+                            candidate.Plan is { SynchronizeConfiguration: true } candidatePlan &&
+                            string.Equals(candidatePlan.ConfigurationSha256, status.DesiredFingerprint,
+                                StringComparison.OrdinalIgnoreCase))
+                            .OrderByDescending(candidate => candidate.UpdatedUtc).FirstOrDefault()
+                        : null;
                     MaintenanceConfigurationItems.Add(new TeacherMaintenanceConfigurationItem(displayName,
-                        run.Device.RouteAddress, module, status));
+                        run.Device.RouteAddress, module, status, configurationRun));
                 }
             }
             Changed(nameof(HasMaintenanceConfigurationItems));
@@ -14672,7 +14679,8 @@ public sealed class PendingMaintenanceIdentityRotationItem(
 }
 
 public sealed class TeacherMaintenanceConfigurationItem(string displayName, string target,
-    MaintenanceConfigurationModule module, MaintenanceConfigurationReconciliationStatus status)
+    MaintenanceConfigurationModule module, MaintenanceConfigurationReconciliationStatus status,
+    MaintenanceRun? configurationRun)
 {
     public string DisplayName { get; } = displayName;
     public string Target { get; } = target;
@@ -14685,7 +14693,19 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
         MaintenanceConfigurationModule.RuntimeSettings => "运行参数",
         _ => module.ToString()
     };
-    public string StateText { get; } = status.State switch
+    private bool HasFailedConfigurationRun => status.State != MaintenanceConfigurationReconciliationState.InSync &&
+        configurationRun?.State is MaintenanceRunState.Failed or MaintenanceRunState.RolledBack or
+            MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ManualRequired;
+    public string StateText => HasFailedConfigurationRun && status.State != MaintenanceConfigurationReconciliationState.InSync
+        ? configurationRun!.State switch
+        {
+            MaintenanceRunState.Failed => "配置操作失败",
+            MaintenanceRunState.RolledBack => "配置操作已回滚",
+            MaintenanceRunState.RecoveryRequired => "配置操作需恢复",
+            MaintenanceRunState.ManualRequired => "配置操作需现场处理",
+            _ => "配置操作待核对"
+        }
+        : status.State switch
     {
         MaintenanceConfigurationReconciliationState.QueuedForDelivery => "等待发送",
         MaintenanceConfigurationReconciliationState.AwaitingReport => "等待回报",
@@ -14695,6 +14715,17 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
         MaintenanceConfigurationReconciliationState.InSync => "已同步",
         _ => status.State.ToString()
     };
+    public bool HasConfigurationFailureDetail => HasFailedConfigurationRun &&
+        configurationRun?.Transitions.LastOrDefault()?.Reason is { Length: > 0 };
+    public string FailureStageText => configurationRun?.Transitions.LastOrDefault()?.To switch
+    {
+        MaintenanceRunState.Failed => "失败阶段：配置同步/事务终态",
+        MaintenanceRunState.RolledBack => "失败阶段：配置事务回滚",
+        MaintenanceRunState.RecoveryRequired => "失败阶段：等待恢复核对",
+        MaintenanceRunState.ManualRequired => "失败阶段：需要人工处理",
+        _ => "最近配置事务仍在处理或已完成"
+    };
+    public string FailureDetailText => configurationRun?.Transitions.LastOrDefault()?.Reason ?? "";
     public string RevisionText => $"Desired r{status.DesiredRevision?.ToString() ?? "—"} / Reported r{status.ReportedRevision?.ToString() ?? "—"}";
     public string LastReportedText => status.LastReportedUtc is { } reported
         ? (status.State == MaintenanceConfigurationReconciliationState.InSync ? "最后同步 " : "最后回报 ") +
@@ -14702,6 +14733,14 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
         : "尚无学生端回报";
     public string AdviceText => status.State switch
     {
+        _ when HasFailedConfigurationRun && configurationRun?.State == MaintenanceRunState.RecoveryRequired =>
+            "建议：先核对同一配置事务与恢复记录，恢复完成前不要重发命令。",
+        _ when HasFailedConfigurationRun && configurationRun?.State == MaintenanceRunState.ManualRequired =>
+            "建议：暂停自动重试，按失败原因核对设备身份、配置兼容性和签名通道后现场处理。",
+        _ when HasFailedConfigurationRun && configurationRun?.State == MaintenanceRunState.RolledBack =>
+            "建议：确认回滚后设备状态，再修复失败原因并创建新的配置修订。",
+        _ when HasFailedConfigurationRun =>
+            "建议：先处理最近配置事务的失败阶段；核对完成后再创建新修订，不要重发未决 commandId。",
         MaintenanceConfigurationReconciliationState.QueuedForDelivery =>
             "建议：等待该固定身份设备重新认证连接；离线队列保留期内会尝试对账。",
         MaintenanceConfigurationReconciliationState.AwaitingReport =>
