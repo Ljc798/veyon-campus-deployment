@@ -39,7 +39,7 @@
 | 22 | CM-01 Desired/Reported 与 revision | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity revision、签名读回和 journal 已接通；其他配置模块尚未实施。 |
 | 23 | CM-02 自动配置同步与离线对账 | `PARTIAL-CODE; TEST-DEFERRED` | Maintenance 签名同步现同时写 Agent 配置、维护 bootstrap，在共享更新锁内拒绝活动更新，重启 SYSTEM Agent 并等待活动配置指纹；运行失败回滚两侧快照，断电中断由受保护恢复记录在服务启动时恢复旧快照。教师 journal 新增按固定 Agent 身份持久化的 TeacherConnectivity 待发送队列；Agent 通道或独立 Maintenance 服务通道认证重连后会触发一次对账，按学生端健康状态签发下一 revision 并同步，重复连接事件有本机并发抑制。已完成源码接线，未构建/测试/VM 验收；CM-02 的其他配置模块与验证仍未完成。 |
 | 24 | CM-03 Schema 迁移与回滚 | `PARTIAL-CODE; TEST-DEFERRED` | 修复 Schema 7 校区包归档器缺口；新增 Maintenance bootstrap Schema 1→2 显式迁移：保留原始字节快照、原子替换、核对 schema/revision/固定身份/配置指纹，失败时恢复原字节。Agent 本地主配置没有 schema 字段；校区包未来版本与 7→8→9 迁移语义尚未定义，未虚构目标 schema。未构建/测试/VM 验收。 |
-| 25 | CM-04 无包首次安全配对 | `NOT-IMPLEMENTED` | 设备身份/维护服务 pin 已有基础，但首次限时配对、教师明确批准及审计流程尚未接通。 |
+| 25 | CM-04 无包首次安全配对 | `PARTIAL-CODE; TEST-DEFERRED` | Agent 首次身份由 SYSTEM 生成并通过签名状态披露；教师首次固定仍需显式勾选确认。新增学生课堂助手 12 位身份核对码，并在教师首次信任/身份轮换对话中并列显示，帮助现场核对设备。仅覆盖已装有签名校区公钥/证书配置的设备；限时无包入网、首次公钥/证书/公开配置安全分发、审计记录与 VM 验收仍未完成。 |
 | 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；受控根密钥轮换、独立失败阶段/恢复建议视图仍未实现。 |
 | 27–37 | P3–P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 连续推进可执行代码/文档；测试、候选构建、隔离云、生产与现场门槛分开记录。 |
 
@@ -201,6 +201,7 @@
 - CM-05 教师结果摘要接线：逐台维护和事务恢复结果追加 TeacherConnectivity 对账状态、Desired/Reported revision 与最近签名读回时间；不会把本地 journal 中没有签名 Reported 证据的记录标成 InSync。其他配置模块、可操作的失败阶段/建议 UI 尚未覆盖；未构建/测试。
 - CM-03 Schema 7 归档修复：`CampusConfigurationArchive` 现允许 Schema 7，归档/解包固定文件清单纳入 `teacherChannel` TLS `.cer`，最大文件数从 7 调至 8；解析时验证 1–16 个教师端点、只允许根目录证书文件，并要求 files 清单与实际固定文件一致。Schema 3–6 原校验保留。此改动未运行构建或测试；Schema 7 包创建→上传归档→下载解包、重复字段/证书路径篡改拒绝均待后续测试。
 - CM-03 Maintenance bootstrap 本地迁移：服务读取既有 Schema 1 bootstrap 后，先按旧字段集合和当前 Agent/教师信任身份完整验证，再原子写入 Schema 2（revision 0），读回核验固定身份、配置指纹和 revision；写入/读回失败时用操作前原始字节快照恢复。当前仅落地这个有明确旧/新版本的模块迁移；Agent 主配置本身没有 schema 字段，校区包的 8/9 结构和迁移目标没有定义，因此未创建猜测性的通用 7→8→9 迁移。未构建/测试/VM 验收。
+- CM-04 首次身份现场确认基础：Student Companion 现从本机 SYSTEM Agent 的签名课堂状态读取其公钥指纹，显示分组的 12 位配对核对码；教师首次信任/身份变化窗口显示同一核对码并要求明确勾选现场设备名称/位置和核对码已核实，再由既有信任库固定身份。签名验证仍在短码比较前执行，IP/路由地址不会自动成为信任依据。此实现仅帮助已配置教师信任根的部署现场确认设备；没有实现无包的新设备 bootstrap、限时配对邀请或首次分发教师公钥/TLS 根，不能视为 CM-04 完成。未构建/测试/VM 验收。
 - CM-02 教师连接配置双写及离线重发：Maintenance 接收一条已验签命令后，在 StudentUpdate 原子锁内确认无活动更新，只修改 Agent 的 endpoints/TLS root 和独立 Maintenance bootstrap；保留校区身份、签名公钥、策略公钥等不可变字段。写入前先持久化 SYSTEM/Administrators 私有恢复记录，含设备 pin、目标 revision/fingerprint、原始 Agent 配置和原 bootstrap；Agent 与服务配置写完并重启健康读回后删除记录。运行时失败会恢复两侧旧快照；若断电/强杀留有记录，服务启动会等更新事务结束后恢复旧快照，再开放维护通道。签名同步回执带 Agent 配置指纹，教师端检查其格式。Teacher journal 现按固定 Agent 身份保存离线 TeacherConnectivity 目标；Agent 或 Maintenance WebSocket 经认证建立后触发重连对账，执行前确认无活动维护事务，revision 仍从签名健康读回产生。已补齐源码级自动重发接线；尚未证明实际重连、跨进程队列恢复或并发竞争，且只覆盖教师连接模块。未构建/测试/VM 验收。
 - 当前验证边界：本轮尚未构建安装包，用户现在没有可据此测试的 StudentSetup 安装包。完成代码实施后，仍需统一执行自动化检查与 Windows VM 安装/升级/回滚验收；随后才能打包给用户手动测试。Production 发布和真实校区推送仍是单独门槛。
 - P1-06 / Issue 009：`TeacherPolicyView.axaml` 已明确区分 EXE 运行限制、Store 可见/常规安装限制与已安装 Appx/MSIX 启动限制；不再暗示当前 AppLocker XML 能限制已安装游戏。没有变更 Appx 放行基线，也没有将范围说明当作现场验收；Edition 支持矩阵、实际 Store 下载/启动、策略撤销与系统必需包保护均 `VM-PENDING` / `NOT-TESTED`。

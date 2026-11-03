@@ -18,7 +18,8 @@ public sealed record StudentCompanionStatusSnapshot(
     string? RoomName = null,
     int TargetCount = 0,
     Guid? SessionId = null,
-    ClassroomMode? Mode = null);
+    ClassroomMode? Mode = null,
+    string? AgentIdentityFingerprint = null);
 
 /// <summary>Maps a small, read-only classroom status snapshot to student-facing text.</summary>
 public sealed class StudentCompanionViewModel : INotifyPropertyChanged
@@ -75,6 +76,18 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         StudentCompanionConnectionState.ConnectedWithoutClass => "教师端已连接",
         _ => "未连接"
     };
+
+    public string IdentityVerificationCode
+    {
+        get
+        {
+            var fingerprint = _snapshot.AgentIdentityFingerprint;
+            if (fingerprint is not { Length: 64 }) return "";
+            var code = fingerprint[..12];
+            return $"{code[..4]}-{code[4..8]}-{code[8..12]}";
+        }
+    }
+    public bool HasIdentityVerificationCode => IdentityVerificationCode.Length > 0;
 
     public bool HasClassroomSummary =>
         _snapshot.ConnectionState is StudentCompanionConnectionState.ConnectedWithoutClass or
@@ -197,6 +210,8 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         }
         Changed(nameof(StatusTitle));
         Changed(nameof(ClassroomSummary));
+        Changed(nameof(IdentityVerificationCode));
+        Changed(nameof(HasIdentityVerificationCode));
         Changed(nameof(HasClassroomSummary));
         Changed(nameof(IsClassroomActive));
         Changed(nameof(CanRequestHelp));
@@ -495,6 +510,9 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
 
     private static void Validate(StudentCompanionStatusSnapshot snapshot)
     {
+        if (snapshot.AgentIdentityFingerprint is { } fingerprint &&
+            (fingerprint.Length != 64 || fingerprint.Any(character => !Uri.IsHexDigit(character))))
+            throw new InvalidDataException("Student Agent 身份核对指纹无效。");
         switch (snapshot.ConnectionState)
         {
             case StudentCompanionConnectionState.Disconnected:

@@ -2172,7 +2172,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
         layout.Children.Add(new TextBlock
         {
-            Text = "请把学生电脑显示的指纹与下方内容对上。提示只会在教师端首次信任或检测到指纹变化时出现；固定记录保存在当前教师用户配置中，因此不同教师机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查学生电脑中的 Agent、网络和 TCP 39174 防火墙。",
+            Text = "首次信任时，请把学生电脑课堂助手显示的 12 位设备配对核对码与下方逐台结果对上，并确认现场设备名称/位置。密钥固定记录保存在当前教师用户配置中，因此不同教师机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查学生电脑中的 Agent、网络和 TCP 39174 防火墙。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         var rows = new StackPanel { Spacing = 8 };
@@ -2184,10 +2184,10 @@ public partial class TeacherWindow : Window
                 Text = candidate is null
                     ? $"{_model.GetWebsitePolicyStudentName(item.Target)}：未取得可验证身份 — {item.Detail}"
                     : item.MatchesPinnedKey
-                        ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 已固定\n{candidate.Fingerprint}"
+                        ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 已固定\n核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n{candidate.Fingerprint}"
                         : candidate.PreviouslyPinnedFingerprint is { } old
-                            ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新：{candidate.Fingerprint}"
-                            : $"{_model.GetWebsitePolicyStudentName(item.Target)} · 首次信任\n{candidate.Fingerprint}",
+                            ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n新指纹：{candidate.Fingerprint}"
+                            : $"{_model.GetWebsitePolicyStudentName(item.Target)} · 首次信任\n核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n指纹：{candidate.Fingerprint}",
                 TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                 FontFamily = "Consolas"
             });
@@ -2195,7 +2195,7 @@ public partial class TeacherWindow : Window
         layout.Children.Add(new ScrollViewer { Content = rows, Height = 220 });
         var verified = new CheckBox
         {
-            Content = "我确认这些指纹来自本次要管理的学生电脑。",
+            Content = "我已核对学生电脑课堂助手上的配对核对码，并确认现场设备名称/位置。",
             IsChecked = false
         };
         layout.Children.Add(verified);
@@ -2217,6 +2217,13 @@ public partial class TeacherWindow : Window
         layout.Children.Add(actions);
         dialog.Content = layout;
         return await dialog.ShowDialog<bool>(this);
+    }
+
+    private static string FormatAgentIdentityVerificationCode(string fingerprint)
+    {
+        if (fingerprint.Length != 64 || fingerprint.Any(character => !Uri.IsHexDigit(character)))
+            return "指纹无效";
+        return $"{fingerprint[..4]}-{fingerprint[4..8]}-{fingerprint[8..12]}";
     }
 
     private async Task ShowStudentAgentTrustErrorAsync(string message)

@@ -32,13 +32,15 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
     {
         var verified = StudentAgentResponseCryptography.Verify<ClassroomStatusSnapshot>(signedJson);
         var snapshot = verified.Payload;
+        var identityFingerprint = verified.Fingerprint;
         var now = nowUtc.ToUniversalTime();
         if (!snapshot.Connected)
         {
             if (snapshot.SessionId is not null || snapshot.RoomName is not null || snapshot.TargetCount != 0 ||
                 snapshot.ReceivedUtc is not null || snapshot.ExpiresUtc is not null || snapshot.Mode is not null)
                 throw new InvalidDataException("断开状态包含课堂数据。");
-            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected);
+            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected,
+                AgentIdentityFingerprint: identityFingerprint);
         }
 
         if (snapshot.ReceivedUtc is not { } received || snapshot.ExpiresUtc is not { } expires ||
@@ -47,13 +49,15 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
             expires - received > ClassroomStatusCryptography.MaximumLifetime)
             throw new InvalidDataException("课堂状态本机回执时间无效。");
         if (expires <= now)
-            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected);
+            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected,
+                AgentIdentityFingerprint: identityFingerprint);
 
         if (snapshot.SessionId is null)
         {
             if (snapshot.RoomName is not null || snapshot.TargetCount != 0 || snapshot.Mode is not null)
                 throw new InvalidDataException("无课堂状态包含教室信息。");
-            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ConnectedWithoutClass);
+            return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ConnectedWithoutClass,
+                AgentIdentityFingerprint: identityFingerprint);
         }
         if (snapshot.SessionId == Guid.Empty || string.IsNullOrWhiteSpace(snapshot.RoomName) ||
             snapshot.RoomName.Length > 100 || snapshot.RoomName != snapshot.RoomName.Trim() ||
@@ -61,7 +65,7 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
             snapshot.Mode is { } mode && !Enum.IsDefined(mode))
             throw new InvalidDataException("活动课堂状态无效。");
         return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.ClassroomActive,
-            snapshot.RoomName, snapshot.TargetCount, snapshot.SessionId, snapshot.Mode);
+            snapshot.RoomName, snapshot.TargetCount, snapshot.SessionId, snapshot.Mode, identityFingerprint);
     }
 
     public async ValueTask DisposeAsync()

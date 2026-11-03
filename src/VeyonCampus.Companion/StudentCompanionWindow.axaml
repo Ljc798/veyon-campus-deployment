@@ -29,6 +29,16 @@
         <TextBlock Text="{Binding StatusTitle}" FontSize="19" FontWeight="SemiBold"
                    Foreground="#172B4D" TextWrapping="Wrap" />
         <StackPanel Grid.Row="1" Margin="0,8,0,0" Spacing="7" VerticalAlignment="Center">
+          <StackPanel Orientation="Horizontal" Spacing="5"
+                      IsVisible="{Binding HasIdentityVerificationCode}">
+            <TextBlock Text="设备配对核对码：" FontSize="13" FontWeight="SemiBold"
+                       Foreground="#1769AA" />
+            <TextBlock Text="{Binding IdentityVerificationCode}" FontSize="13"
+                       FontWeight="Bold" FontFamily="Consolas" Foreground="#1769AA" />
+          </StackPanel>
+          <TextBlock Text="首次信任时，请将此码与教师端现场核对。"
+                     FontSize="11" Foreground="#73839A"
+                     IsVisible="{Binding HasIdentityVerificationCode}" TextWrapping="Wrap" />
           <TextBlock Text="{Binding HelpStatus}" FontSize="13" Foreground="#596B80"
                      IsVisible="{Binding HasHelpStatus}" TextWrapping="Wrap" />
           <Button Content="打开课堂网址" Height="38" HorizontalAlignment="Stretch"
