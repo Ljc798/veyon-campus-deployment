@@ -7,6 +7,7 @@ const { canonicalPayload } = require('./publish-application-release.cjs');
 
 const API_ROOT = 'https://veyon-control-d3gs8hmuyd09c00a7-1348081197.ap-shanghai.app.tcloudbase.com/';
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
+const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
 const MAINTENANCE_PROTOCOL_VERSION = 1;
 const VERSION_PATTERN = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-((?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 const REPOSITORY_ROOT = path.resolve(__dirname, '..');
@@ -19,17 +20,23 @@ async function sha256(filePath) {
 }
 
 function assertPrivateKeyOutsideRepository(privateKeyPath) {
-  const relative = path.relative(REPOSITORY_ROOT, privateKeyPath);
+  const realPath = fs.realpathSync.native(privateKeyPath);
+  const relative = path.relative(REPOSITORY_ROOT, realPath);
   if (!relative.startsWith('..') && !path.isAbsolute(relative))
     throw new Error('Keep the Developer Release private key outside the repository.');
+  const info = fs.lstatSync(privateKeyPath);
+  if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 ||
+      info.size < 1 || info.size > MAX_PRIVATE_KEY_BYTES)
+    throw new Error('Developer Release private key must be a small, regular, unlinked file.');
+  return realPath;
 }
 
 async function signLocalMaintenanceService(input) {
   const installer = path.resolve(input.installer || '');
-  const privateKeyPath = path.resolve(input.privateKey || '');
+  let privateKeyPath = path.resolve(input.privateKey || '');
   if (typeof input.passphrase !== 'string' || input.passphrase.length === 0)
     throw new Error('A private-key passphrase is required.');
-  assertPrivateKeyOutsideRepository(privateKeyPath);
+  privateKeyPath = assertPrivateKeyOutsideRepository(privateKeyPath);
 
   const info = fs.lstatSync(installer);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink > 1 ||
