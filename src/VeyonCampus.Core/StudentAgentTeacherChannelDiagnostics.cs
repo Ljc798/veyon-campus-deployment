@@ -41,6 +41,12 @@ public static class StudentAgentTeacherChannelDiagnostics
             {
                 PathLinkSecurity.RejectLinksAllowingMissingComponents(entry.Path);
                 if (!File.Exists(entry.Path)) return;
+                if (OperatingSystem.IsWindows() && !AgentFileSecurity.IsPrivate(entry.Path, directory: false))
+                {
+                    // Do not sign data that may have been modified through a user-writable ACL.
+                    AgentFileSecurity.SecurePrivateFile(entry.Path);
+                    return;
+                }
                 var info = new FileInfo(entry.Path);
                 if (info.Length is <= 0 or > MaximumBytes) return;
                 var snapshot = JsonSerializer.Deserialize<StudentAgentTeacherChannelDiagnosticsSnapshot>(
@@ -48,7 +54,8 @@ public static class StudentAgentTeacherChannelDiagnostics
                 if (snapshot is not null && Validate(snapshot)) entry.Snapshot = snapshot;
             }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              JsonException or InvalidDataException or ArgumentException)
+                                              JsonException or InvalidDataException or ArgumentException or
+                                              System.Security.SecurityException)
             { }
         }
     }
@@ -233,8 +240,10 @@ public static class StudentAgentTeacherChannelDiagnostics
                     stream.Write(bytes);
                     stream.Flush(flushToDisk: true);
                 }
+                if (OperatingSystem.IsWindows()) AgentFileSecurity.SecurePrivateFile(temporary);
                 PathLinkSecurity.RejectLinksAllowingMissingComponents(entry.Path);
                 File.Move(temporary, entry.Path, overwrite: true);
+                if (OperatingSystem.IsWindows()) AgentFileSecurity.SecurePrivateFile(entry.Path);
             }
             finally
             {
@@ -244,7 +253,8 @@ public static class StudentAgentTeacherChannelDiagnostics
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          ArgumentException or InvalidDataException)
+                                          ArgumentException or InvalidDataException or
+                                          System.Security.SecurityException)
         { }
     }
 
