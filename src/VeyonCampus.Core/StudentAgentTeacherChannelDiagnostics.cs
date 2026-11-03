@@ -101,13 +101,14 @@ public static class StudentAgentTeacherChannelDiagnostics
     {
         if (!AllowedFailureCodes.Contains(failureCode, StringComparer.Ordinal))
             failureCode = "NetworkFailure";
+        var failedUtc = DateTimeOffset.UtcNow;
         Mutate(configPath, current => current with
         {
             State = failureCode is "MissingEndpoint" or "MissingRootCertificate" or "InvalidConfiguration"
                 ? "unconfigured" : "disconnected",
             FailureCode = failureCode,
-            LastAttemptUtc = current.LastAttemptUtc ?? DateTimeOffset.UtcNow,
-            LastFailureUtc = DateTimeOffset.UtcNow,
+            LastAttemptUtc = failedUtc,
+            LastFailureUtc = failedUtc,
             Detail = DetailFor(failureCode)
         });
     }
