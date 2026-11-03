@@ -267,3 +267,10 @@
 - 新增 Windows `sign-release-installers` job，受 `production-release` 环境保护；正式/预发布标签必须签署并验证安装器，否则以 `SIGNING-BLOCKED` 停止发布。签名报告包含最终安装器 SHA-256、发布者与时间戳证书摘要，并作为 Release asset 和 `SHA256SUMS` 一并交付；只有签名通过的 artifact 能进入 stable/beta 发布 job。非发布分支的 CI 构建保持 unsigned 内部检查包。
 - GitHub release publisher 兼容旧资产集合，同时接受可选 Authenticode manifest，并将清单纳入发布文件集合和 `SHA256SUMS` 完整性校验。
 - 本轮没有 Authenticode 证书或环境权限，也未运行 PowerShell、SignTool、workflow、installer 或发布；因此仍是 `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED`。
+
+## 2026-11-03 连续实施补记：CM-05 Maintenance 服务身份密钥轮换审批
+
+- 已固定 Agent 身份的设备若报告新的 Maintenance 服务公钥，教师端先验证 Agent 签名登记和本次服务挑战证明，然后将旧/新 SHA-256 指纹与签名登记写入独立待审批清单；新密钥获教师明确批准前不接受服务通道。
+- 教师端维护概览显示设备名、完整旧/新指纹、请求时间和 Agent 授权说明，并提供批准/拒绝操作。批准时再次确认待审批条目、原服务 pin、当前 Agent 固定身份、签名登记有效期和候选公钥一致；首次建立信任仍不允许走轮换批准路径。无效/过期的旧 pin 请求不显示，批准时也会重新拒绝。
+- 活动服务 pin 与待审批队列分别原子写入；若批准后清理队列前意外中断，旧指纹过滤会隐藏过期队列项，重复审批则因 pin 已变化失败。该逻辑只覆盖 Maintenance 服务端身份轮换，不涵盖 Agent 身份、PolicyTrust 根密钥或全套密钥生命周期管理。
+- 本次仅做静态审阅；未构建、测试、运行 UI 或验证教师双实例并发/崩溃恢复。CM-05 其余事项与统一 Windows VM 验收仍待完成。

@@ -88,6 +88,20 @@ internal sealed partial class TeacherMobileControlService
                 return;
             }
 
+            var existingMaintenancePin = _maintenanceTrustStore.FindTrustedPin(agentPin.CampusId,
+                agentPin.Target, agentPin.Fingerprint);
+            if (existingMaintenancePin is not null &&
+                existingMaintenancePin.MaintenanceIdentityFingerprint !=
+                verifiedEnrollment.MaintenanceIdentityFingerprint)
+            {
+                _ = _maintenanceTrustStore.QueueKeyRotation(agentPin.Target, campusId, agentPin.Fingerprint,
+                    existingMaintenancePin.MaintenanceIdentityFingerprint, hello.SignedEnrollmentJson,
+                    DateTimeOffset.UtcNow);
+                await CloseRejectedMaintenanceChannelAsync(socket, "maintenance identity rotation awaits teacher approval",
+                    handshakeTimeout.Token).ConfigureAwait(false);
+                return;
+            }
+
             // First-time pinning occurs only after both the Agent-signed enrollment and a fresh
             // challenge signature prove the service possesses its separately stored private key.
             var maintenancePin = _maintenanceTrustStore.PinEnrollment(agentPin.Target, campusId,

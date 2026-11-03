@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using VeyonCampus.Core;
@@ -13,6 +14,16 @@ public sealed record MaintenanceServiceIdentityTrustPin(
     string MaintenancePublicKeyPem,
     DateTimeOffset PinnedUtc);
 
+public sealed record PendingMaintenanceServiceIdentityRotation(
+    string Target,
+    string CampusId,
+    string AgentIdentityFingerprint,
+    string PreviousMaintenanceIdentityFingerprint,
+    string CandidateMaintenanceIdentityFingerprint,
+    string CandidateMaintenancePublicKeyPem,
+    string SignedEnrollmentJson,
+    DateTimeOffset RequestedUtc);
+
 /// <summary>
 /// Teacher-side pins for Maintenance identities. A new key is admitted only through an
 /// enrollment signed by the already pinned Agent identity; changed keys require an explicit
@@ -22,6 +33,8 @@ public sealed class MaintenanceServiceTrustStore
 {
     private const int MaximumFileBytes = 1024 * 1024;
     private const int MaximumPins = 5000;
+    private const int MaximumPendingRotations = 1000;
+    private const int MaximumPendingEnrollmentBytes = 64 * 1024;
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
@@ -29,6 +42,7 @@ public sealed class MaintenanceServiceTrustStore
     };
 
     private readonly string _path;
+    private readonly string _pendingRotationPath;
     private readonly StudentAgentIdentityTrustStore _agentTrustStore;
     private readonly object _gate = new();
 
@@ -37,6 +51,7 @@ public sealed class MaintenanceServiceTrustStore
     {
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
         _path = path ?? DefaultPath;
+        _pendingRotationPath = _path + ".pending-rotations";
     }
 
     public static string DefaultPath => Path.Combine(
@@ -48,24 +63,149 @@ public sealed class MaintenanceServiceTrustStore
         lock (_gate) return Array.AsReadOnly(ReadPins().ToArray());
     }
 
-    public string? FindTrustedPublicKey(string campusId, string target, string agentIdentityFingerprint)
+    public IReadOnlyList<PendingMaintenanceServiceIdentityRotation> ListPendingRotations(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        lock (_gate)
+        {
+            var pins = ReadPins();
+            return Array.AsReadOnly(ReadPendingRotations().Where(item => item.CampusId == campusId &&
+                pins.Any(pin => pin.CampusId == item.CampusId && pin.Target == item.Target &&
+                    pin.AgentIdentityFingerprint == item.AgentIdentityFingerprint &&
+                    pin.MaintenanceIdentityFingerprint == item.PreviousMaintenanceIdentityFingerprint))
+                .ToArray());
+        }
+    }
+
+    public MaintenanceServiceIdentityTrustPin? FindTrustedPin(string campusId, string target,
+        string agentIdentityFingerprint)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var normalizedTarget = NormalizeTarget(target);
         var agentFingerprint = MaintenanceValidation.Fingerprint(agentIdentityFingerprint,
             nameof(agentIdentityFingerprint));
         lock (_gate)
-        {
             return ReadPins().SingleOrDefault(pin => pin.CampusId == campusId &&
                 string.Equals(pin.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(pin.AgentIdentityFingerprint, agentFingerprint, StringComparison.Ordinal))
-                ?.MaintenancePublicKeyPem;
+                string.Equals(pin.AgentIdentityFingerprint, agentFingerprint, StringComparison.Ordinal));
+    }
+
+    public string? FindTrustedPublicKey(string campusId, string target, string agentIdentityFingerprint)
+    {
+        return FindTrustedPin(campusId, target, agentIdentityFingerprint)?.MaintenancePublicKeyPem;
+    }
+
+    public PendingMaintenanceServiceIdentityRotation QueueKeyRotation(string target, string campusId,
+        string agentIdentityFingerprint, string expectedPreviousMaintenanceIdentityFingerprint,
+        string signedEnrollmentJson, DateTimeOffset? nowUtc = null)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var normalizedTarget = NormalizeTarget(target);
+        var agentFingerprint = MaintenanceValidation.Fingerprint(agentIdentityFingerprint,
+            nameof(agentIdentityFingerprint));
+        var previousFingerprint = MaintenanceValidation.Fingerprint(
+            expectedPreviousMaintenanceIdentityFingerprint, nameof(expectedPreviousMaintenanceIdentityFingerprint));
+        ArgumentException.ThrowIfNullOrWhiteSpace(signedEnrollmentJson);
+        if (Encoding.UTF8.GetByteCount(signedEnrollmentJson) is 0 or > MaximumPendingEnrollmentBytes)
+            throw new InvalidDataException("待审批 Maintenance 身份登记超过大小限制。");
+
+        var agentPublicKey = _agentTrustStore.FindTrustedPublicKey(campusId, normalizedTarget)
+                             ?? throw new InvalidDataException("Maintenance 密钥轮换没有固定的 Agent 授权根。");
+        if (!string.Equals(StudentAgentResponseCryptography.GetFingerprint(agentPublicKey), agentFingerprint,
+                StringComparison.Ordinal))
+            throw new InvalidDataException("Maintenance 密钥轮换的 Agent 身份不再匹配当前固定身份。");
+        var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        var verified = MaintenanceServiceIdentityStore.VerifyEnrollment(signedEnrollmentJson, agentPublicKey,
+            campusId, agentFingerprint, now);
+        if (verified.MaintenanceIdentityFingerprint == previousFingerprint)
+            throw new InvalidDataException("候选 Maintenance 密钥与现有固定密钥相同；无需轮换。");
+
+        lock (_gate)
+        {
+            var pin = ReadPins().SingleOrDefault(item => item.CampusId == campusId &&
+                item.Target == normalizedTarget && item.AgentIdentityFingerprint == agentFingerprint)
+                ?? throw new InvalidDataException("Maintenance 密钥轮换缺少现有固定服务密钥。");
+            if (pin.MaintenanceIdentityFingerprint != previousFingerprint)
+                throw new InvalidDataException("Maintenance 服务密钥在排队期间已变化；拒绝覆盖当前信任记录。");
+            var rotations = ReadPendingRotations().ToList();
+            var existingIndex = rotations.FindIndex(item => item.CampusId == campusId &&
+                item.Target == normalizedTarget && item.AgentIdentityFingerprint == agentFingerprint);
+            var candidate = new PendingMaintenanceServiceIdentityRotation(normalizedTarget, campusId,
+                agentFingerprint, previousFingerprint, verified.MaintenanceIdentityFingerprint,
+                verified.MaintenancePublicKeyPem, signedEnrollmentJson, now);
+            if (existingIndex >= 0) rotations.RemoveAt(existingIndex);
+            if (rotations.Count >= MaximumPendingRotations)
+                throw new InvalidDataException("待审批 Maintenance 密钥轮换数量达到上限。");
+            rotations.Add(candidate);
+            WritePendingRotations(rotations);
+            return candidate;
+        }
+    }
+
+    public MaintenanceServiceIdentityTrustPin ApproveKeyRotation(
+        PendingMaintenanceServiceIdentityRotation request, string expectedPreviousFingerprint,
+        string expectedCandidateFingerprint, DateTimeOffset? nowUtc = null)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var previousFingerprint = MaintenanceValidation.Fingerprint(expectedPreviousFingerprint,
+            nameof(expectedPreviousFingerprint));
+        var candidateFingerprint = MaintenanceValidation.Fingerprint(expectedCandidateFingerprint,
+            nameof(expectedCandidateFingerprint));
+        var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        lock (_gate)
+        {
+            var pending = ReadPendingRotations().SingleOrDefault(item => item.CampusId == request.CampusId &&
+                item.Target == request.Target && item.AgentIdentityFingerprint == request.AgentIdentityFingerprint &&
+                item.PreviousMaintenanceIdentityFingerprint == previousFingerprint &&
+                item.CandidateMaintenanceIdentityFingerprint == candidateFingerprint)
+                ?? throw new InvalidDataException("待审批密钥轮换请求已不存在或与确认内容不匹配。");
+            var pin = ReadPins().SingleOrDefault(item => item.CampusId == pending.CampusId &&
+                item.Target == pending.Target && item.AgentIdentityFingerprint == pending.AgentIdentityFingerprint)
+                ?? throw new InvalidDataException("待审批密钥轮换缺少原有固定密钥；拒绝首次信任新密钥。");
+            if (pin.MaintenanceIdentityFingerprint != previousFingerprint)
+                throw new InvalidDataException("现有固定密钥已变化；待审批轮换请求已过期。");
+            var agentPublicKey = _agentTrustStore.FindTrustedPublicKey(pending.CampusId, pending.Target)
+                                 ?? throw new InvalidDataException("待审批密钥轮换缺少固定 Agent 授权根。");
+            if (!string.Equals(StudentAgentResponseCryptography.GetFingerprint(agentPublicKey),
+                    pending.AgentIdentityFingerprint, StringComparison.Ordinal))
+                throw new InvalidDataException("待审批密钥轮换的 Agent 身份发生变化；拒绝批准。");
+            var verified = MaintenanceServiceIdentityStore.VerifyEnrollment(pending.SignedEnrollmentJson,
+                agentPublicKey, pending.CampusId, pending.AgentIdentityFingerprint, now);
+            if (verified.MaintenanceIdentityFingerprint != candidateFingerprint ||
+                verified.MaintenancePublicKeyPem != pending.CandidateMaintenancePublicKeyPem)
+                throw new InvalidDataException("新 Maintenance 公钥与 Agent 签名授权内容不匹配。");
+
+            var rotated = PinEnrollmentCore(pending.Target, pending.CampusId, pending.AgentIdentityFingerprint,
+                pending.SignedEnrollmentJson, allowKeyRotation: true, now);
+            WritePendingRotations(ReadPendingRotations().Where(item => item.CampusId != pending.CampusId ||
+                item.Target != pending.Target || item.AgentIdentityFingerprint != pending.AgentIdentityFingerprint)
+                .ToArray());
+            return rotated;
+        }
+    }
+
+    public bool RejectKeyRotation(PendingMaintenanceServiceIdentityRotation request)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        lock (_gate)
+        {
+            var rotations = ReadPendingRotations().ToList();
+            var count = rotations.RemoveAll(item => item.CampusId == request.CampusId &&
+                item.Target == request.Target && item.AgentIdentityFingerprint == request.AgentIdentityFingerprint &&
+                item.CandidateMaintenanceIdentityFingerprint == request.CandidateMaintenanceIdentityFingerprint);
+            if (count > 0) WritePendingRotations(rotations);
+            return count > 0;
         }
     }
 
     public MaintenanceServiceIdentityTrustPin PinEnrollment(string target, string campusId,
-        string agentIdentityFingerprint, string signedEnrollmentJson, bool allowKeyRotation = false,
-        DateTimeOffset? nowUtc = null)
+        string agentIdentityFingerprint, string signedEnrollmentJson, DateTimeOffset? nowUtc = null) =>
+        PinEnrollmentCore(target, campusId, agentIdentityFingerprint, signedEnrollmentJson,
+            allowKeyRotation: false, nowUtc ?? DateTimeOffset.UtcNow);
+
+    private MaintenanceServiceIdentityTrustPin PinEnrollmentCore(string target, string campusId,
+        string agentIdentityFingerprint, string signedEnrollmentJson, bool allowKeyRotation,
+        DateTimeOffset nowUtc)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var normalizedTarget = NormalizeTarget(target);
@@ -80,7 +220,7 @@ public sealed class MaintenanceServiceTrustStore
             throw new InvalidDataException("Maintenance 登记的 Agent 身份与教师端当前设备固定身份不匹配。");
 
         var verified = MaintenanceServiceIdentityStore.VerifyEnrollment(signedEnrollmentJson,
-            agentPublicKey, campusId, agentFingerprint, nowUtc ?? DateTimeOffset.UtcNow);
+            agentPublicKey, campusId, agentFingerprint, nowUtc);
         lock (_gate)
         {
             var pins = ReadPins().ToList();
@@ -102,7 +242,7 @@ public sealed class MaintenanceServiceTrustStore
 
             var pin = new MaintenanceServiceIdentityTrustPin(normalizedTarget, campusId, agentFingerprint,
                 verified.MaintenanceIdentityFingerprint, verified.MaintenancePublicKeyPem,
-                (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime());
+                nowUtc.ToUniversalTime());
             pins.Add(pin);
             WritePins(pins);
             return pin;
@@ -170,6 +310,50 @@ public sealed class MaintenanceServiceTrustStore
         return document.Pins;
     }
 
+    private IReadOnlyList<PendingMaintenanceServiceIdentityRotation> ReadPendingRotations()
+    {
+        if (!File.Exists(_pendingRotationPath)) return Array.Empty<PendingMaintenanceServiceIdentityRotation>();
+        PathLinkSecurity.RejectLinks(_pendingRotationPath);
+        var info = new FileInfo(_pendingRotationPath);
+        if (info.Length is <= 0 or > MaximumFileBytes)
+            throw new InvalidDataException("Maintenance 待审批密钥轮换清单大小无效。");
+        var bytes = File.ReadAllBytes(_pendingRotationPath);
+        PolicyJson.RejectDuplicateFields(bytes);
+        var document = JsonSerializer.Deserialize<PendingRotationDocument>(bytes, JsonOptions)
+                       ?? throw new InvalidDataException("Maintenance 待审批密钥轮换清单为空。");
+        if (document.SchemaVersion != 1 || document.Requests is null ||
+            document.Requests.Count > MaximumPendingRotations)
+            throw new InvalidDataException("Maintenance 待审批密钥轮换清单版本或条目数无效。");
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var request in document.Requests)
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(request.CampusId);
+            var target = NormalizeTarget(request.Target);
+            var agentFingerprint = MaintenanceValidation.Fingerprint(request.AgentIdentityFingerprint,
+                nameof(request.AgentIdentityFingerprint));
+            var previousFingerprint = MaintenanceValidation.Fingerprint(
+                request.PreviousMaintenanceIdentityFingerprint, nameof(request.PreviousMaintenanceIdentityFingerprint));
+            var candidateFingerprint = MaintenanceValidation.Fingerprint(
+                request.CandidateMaintenanceIdentityFingerprint, nameof(request.CandidateMaintenanceIdentityFingerprint));
+            using var candidateKey = RSA.Create();
+            candidateKey.ImportFromPem(request.CandidateMaintenancePublicKeyPem);
+            var canonicalCandidatePem = candidateKey.ExportSubjectPublicKeyInfoPem();
+            var identity = request.CampusId + "\n" + target + "\n" + agentFingerprint;
+            if (request.Target != target || request.AgentIdentityFingerprint != agentFingerprint ||
+                request.PreviousMaintenanceIdentityFingerprint != previousFingerprint ||
+                request.CandidateMaintenanceIdentityFingerprint != candidateFingerprint ||
+                request.CandidateMaintenancePublicKeyPem != canonicalCandidatePem ||
+                StudentAgentResponseCryptography.GetFingerprint(canonicalCandidatePem) != candidateFingerprint ||
+                previousFingerprint == candidateFingerprint || request.RequestedUtc.Offset != TimeSpan.Zero ||
+                string.IsNullOrWhiteSpace(request.SignedEnrollmentJson) ||
+                Encoding.UTF8.GetByteCount(request.SignedEnrollmentJson) is 0 or > MaximumPendingEnrollmentBytes ||
+                !seen.Add(identity))
+                throw new InvalidDataException("Maintenance 待审批密钥轮换条目无效或重复。");
+        }
+        return document.Requests;
+    }
+
     private void WritePins(IReadOnlyCollection<MaintenanceServiceIdentityTrustPin> pins)
     {
         var fullPath = Path.GetFullPath(_path);
@@ -200,6 +384,38 @@ public sealed class MaintenanceServiceTrustStore
         }
     }
 
+    private void WritePendingRotations(IReadOnlyCollection<PendingMaintenanceServiceIdentityRotation> requests)
+    {
+        var fullPath = Path.GetFullPath(_pendingRotationPath);
+        var directory = Path.GetDirectoryName(fullPath)
+                        ?? throw new InvalidDataException("Maintenance 待审批轮换目录无效。");
+        Directory.CreateDirectory(directory);
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(fullPath);
+        PathLinkSecurity.RejectLinks(directory);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new PendingRotationDocument(1, requests.ToArray()),
+            JsonOptions);
+        if (bytes.Length > MaximumFileBytes)
+            throw new InvalidDataException("Maintenance 待审批密钥轮换清单超过大小限制。");
+        var temporary = fullPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (var stream = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None,
+                       16 * 1024, FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            PathLinkSecurity.RejectLinks(directory);
+            File.Move(temporary, fullPath, overwrite: true);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
     private static string NormalizeTarget(string target)
     {
         var normalized = WebsitePolicyTransport.NormalizeTargets([target]);
@@ -208,4 +424,6 @@ public sealed class MaintenanceServiceTrustStore
     }
 
     private sealed record TrustDocument(int SchemaVersion, IReadOnlyList<MaintenanceServiceIdentityTrustPin> Pins);
+    private sealed record PendingRotationDocument(int SchemaVersion,
+        IReadOnlyList<PendingMaintenanceServiceIdentityRotation> Requests);
 }

@@ -303,8 +303,39 @@
                     Click="RequestRefreshMaintenanceOverview" IsEnabled="{Binding !IsExecuting}" />
           </Grid>
           <TextBlock Text="{Binding MaintenanceOverviewSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding MaintenanceIdentityRotationStatus}" Classes="supporting-copy"
+                     TextWrapping="Wrap" IsVisible="{Binding HasMaintenanceIdentityRotationStatus}" />
           <TextBlock Text="本机记录中没有待恢复、失败或待核对的维护事务。"
                      Classes="supporting-copy" IsVisible="{Binding !HasMaintenanceIssueItems}" />
+          <StackPanel Spacing="8" IsVisible="{Binding HasPendingMaintenanceIdentityRotations}">
+            <TextBlock Text="待审批的 Maintenance 服务密钥轮换" Classes="component-title" />
+            <TextBlock Text="新密钥由已固定的 Agent 身份签名授权，但不会自动替换旧密钥。请核对现场变更后再批准；未批准前维护服务通道保持拒绝。"
+                       Classes="supporting-copy" TextWrapping="Wrap" />
+            <ItemsControl ItemsSource="{Binding PendingMaintenanceIdentityRotations}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:PendingMaintenanceIdentityRotationItem">
+                  <Border Classes="device-row" Margin="0,0,0,7">
+                    <StackPanel Spacing="6">
+                      <TextBlock Text="{Binding DisplayName}" Classes="device-row-name" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding Target}" Classes="muted" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding RequestedText}" Classes="muted" />
+                      <TextBlock Text="{Binding AuthorizationText}" Classes="supporting-copy" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding PreviousFingerprintText}"
+                                 Classes="device-row-detail" FontFamily="Consolas" TextWrapping="Wrap" />
+                      <TextBlock Text="{Binding CandidateFingerprintText}"
+                                 Classes="device-row-detail" FontFamily="Consolas" TextWrapping="Wrap" />
+                      <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button Classes="primary" Content="核对并批准轮换"
+                                Click="RequestApproveMaintenanceIdentityRotation" IsEnabled="{Binding CanAct}" />
+                        <Button Classes="tertiary" Content="拒绝请求"
+                                Click="RequestRejectMaintenanceIdentityRotation" IsEnabled="{Binding CanAct}" />
+                      </StackPanel>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
           <StackPanel Spacing="8" IsVisible="{Binding HasMaintenanceIssueItems}">
             <TextBlock Text="最近仍需处理的设备" Classes="component-title" />
             <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">

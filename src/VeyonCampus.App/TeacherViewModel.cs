@@ -191,6 +191,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly TeacherMaintenanceWorkflow? _maintenanceWorkflow;
     private readonly MaintenanceRunStore _maintenanceRunStore = new();
+    private readonly MaintenanceServiceTrustStore _maintenanceIdentityTrustStore = new();
     private readonly string? _releaseClientError;
     private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
     private readonly string? _teacherHeartbeatClientError;
@@ -4026,6 +4027,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string MaintenanceEventReportExportStatus { get; private set; } = "";
     public ObservableCollection<TeacherMaintenanceIssueItem> MaintenanceIssueItems { get; } = [];
     public bool HasMaintenanceIssueItems => MaintenanceIssueItems.Count > 0;
+    public ObservableCollection<PendingMaintenanceIdentityRotationItem> PendingMaintenanceIdentityRotations { get; } = [];
+    public bool HasPendingMaintenanceIdentityRotations => PendingMaintenanceIdentityRotations.Count > 0;
+    public string MaintenanceIdentityRotationStatus { get; private set; } = "";
+    public bool HasMaintenanceIdentityRotationStatus => !string.IsNullOrWhiteSpace(MaintenanceIdentityRotationStatus);
     public string MaintenanceOverviewSummary { get; private set; } = "尚未读取本机 Maintenance 记录。";
     public bool UseLocalTestStudentUpdateSource
     {
@@ -10251,6 +10256,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var campusId = CampusId.Trim();
             if (string.IsNullOrWhiteSpace(campusId))
             {
+                PendingMaintenanceIdentityRotations.Clear();
+                Changed(nameof(HasPendingMaintenanceIdentityRotations));
                 MaintenanceOverviewSummary = "尚未设置当前校区；没有读取维护记录。";
                 Changed(nameof(MaintenanceOverviewSummary));
                 return;
@@ -10281,6 +10288,16 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.First().StudentName,
                     StringComparer.OrdinalIgnoreCase);
+            PendingMaintenanceIdentityRotations.Clear();
+            foreach (var rotation in _maintenanceIdentityTrustStore.ListPendingRotations(campusId)
+                         .OrderByDescending(item => item.RequestedUtc))
+            {
+                var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(rotation.Target),
+                    rotation.Target);
+                PendingMaintenanceIdentityRotations.Add(new PendingMaintenanceIdentityRotationItem(rotation,
+                    displayName));
+            }
+            Changed(nameof(HasPendingMaintenanceIdentityRotations));
             foreach (var run in latestRuns.Where(run => run.State is not
                          (MaintenanceRunState.Completed or MaintenanceRunState.NoChanges)))
             {
@@ -10295,11 +10312,64 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasMaintenanceIssueItems));
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-            InvalidDataException or InvalidOperationException)
+            InvalidDataException or InvalidOperationException or CryptographicException or ArgumentException or
+            System.Security.SecurityException or System.Text.Json.JsonException)
         {
+            PendingMaintenanceIdentityRotations.Clear();
+            Changed(nameof(HasPendingMaintenanceIdentityRotations));
             MaintenanceOverviewSummary = "无法读取本机 Maintenance 概览；原维护记录未修改。";
             Changed(nameof(MaintenanceOverviewSummary));
         }
+    }
+
+    public async Task ApproveMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (!item.CanAct) return;
+        item.SetBusy(true);
+        try
+        {
+            _ = _maintenanceIdentityTrustStore.ApproveKeyRotation(item.Request,
+                item.PreviousFingerprint, item.CandidateFingerprint);
+            MaintenanceIdentityRotationStatus = "已批准该设备的 Maintenance 服务密钥轮换；服务重新连接后会继续身份核验。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or
+                                          CryptographicException or ArgumentException)
+        {
+            MaintenanceIdentityRotationStatus = "Maintenance 密钥轮换未批准：" + exception.Message;
+        }
+        finally
+        {
+            item.SetBusy(false);
+            await RefreshMaintenanceOverviewAsync();
+        }
+        Changed(nameof(MaintenanceIdentityRotationStatus));
+        Changed(nameof(HasMaintenanceIdentityRotationStatus));
+    }
+
+    public async Task RejectMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (!item.CanAct) return;
+        item.SetBusy(true);
+        try
+        {
+            _ = _maintenanceIdentityTrustStore.RejectKeyRotation(item.Request);
+            MaintenanceIdentityRotationStatus = "已拒绝该 Maintenance 服务密钥轮换请求；原固定密钥保持不变。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                          UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+        {
+            MaintenanceIdentityRotationStatus = "无法清除 Maintenance 密钥轮换请求：" + exception.Message;
+        }
+        finally
+        {
+            item.SetBusy(false);
+            await RefreshMaintenanceOverviewAsync();
+        }
+        Changed(nameof(MaintenanceIdentityRotationStatus));
+        Changed(nameof(HasMaintenanceIdentityRotationStatus));
     }
 
     public async Task RetryMaintenanceIssueAsync(TeacherMaintenanceIssueItem issue)
@@ -14499,6 +14569,34 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
     public bool CanAct => !_isBusy && targetIsCurrent && (CanRetry || CanRecheck);
     public string ActionText => CanRetry ? "重试此设备" : "继续核对事务";
     public bool IsBusy => _isBusy;
+
+    public void SetBusy(bool busy)
+    {
+        if (_isBusy == busy) return;
+        _isBusy = busy;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanAct)));
+    }
+}
+
+public sealed class PendingMaintenanceIdentityRotationItem(
+    PendingMaintenanceServiceIdentityRotation request, string displayName) : INotifyPropertyChanged
+{
+    private bool _isBusy;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public PendingMaintenanceServiceIdentityRotation Request { get; } = request;
+    public string Target => Request.Target;
+    public string DisplayName { get; } = displayName;
+    public string PreviousFingerprint => Request.PreviousMaintenanceIdentityFingerprint;
+    public string CandidateFingerprint => Request.CandidateMaintenanceIdentityFingerprint;
+    public string PreviousFingerprintText => "旧公钥：" + PreviousFingerprint;
+    public string CandidateFingerprintText => "新公钥：" + CandidateFingerprint;
+    public string RequestedText => "请求时间 " + Request.RequestedUtc.ToLocalTime().ToString(
+        "yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture);
+    public string AuthorizationText =>
+        "新公钥已由此设备当前固定的 Agent 身份签名授权；教师批准前不会接受新服务密钥。";
+    public bool IsBusy => _isBusy;
+    public bool CanAct => !_isBusy;
 
     public void SetBusy(bool busy)
     {

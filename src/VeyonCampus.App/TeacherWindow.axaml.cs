@@ -2350,6 +2350,70 @@ public partial class TeacherWindow : Window
     private async void RefreshMaintenanceOverview(object? sender, RoutedEventArgs e) =>
         await _model.RefreshMaintenanceOverviewAsync();
 
+    private async void ApproveMaintenanceIdentityRotation(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { DataContext: PendingMaintenanceIdentityRotationItem item } || !item.CanAct)
+            return;
+        if (!await ConfirmMaintenanceIdentityRotationAsync(item)) return;
+        await _model.ApproveMaintenanceIdentityRotationAsync(item);
+    }
+
+    private async void RejectMaintenanceIdentityRotation(object? sender, RoutedEventArgs e)
+    {
+        if (sender is Button { DataContext: PendingMaintenanceIdentityRotationItem item } && item.CanAct)
+            await _model.RejectMaintenanceIdentityRotationAsync(item);
+    }
+
+    private async Task<bool> ConfirmMaintenanceIdentityRotationAsync(
+        PendingMaintenanceIdentityRotationItem item)
+    {
+        var dialog = new Window
+        {
+            Title = "核对 Maintenance 服务密钥轮换",
+            Width = 720,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner
+        };
+        var verified = new CheckBox
+        {
+            Content = "我已根据现场变更记录核对目标设备及完整新旧指纹，并确认批准这次服务身份轮换。",
+            IsChecked = false
+        };
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
+        var approve = new Button { Content = "批准新服务密钥", IsDefault = true, MinWidth = 150, IsEnabled = false };
+        approve.Classes.Add("primary");
+        verified.IsCheckedChanged += (_, _) => approve.IsEnabled = verified.IsChecked == true;
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Spacing = 8,
+            Children = { cancel, approve }
+        };
+        cancel.Click += (_, _) => dialog.Close(false);
+        approve.Click += (_, _) => dialog.Close(true);
+        var layout = new StackPanel
+        {
+            Spacing = 12,
+            Margin = new Avalonia.Thickness(20),
+            Children =
+            {
+                new TextBlock
+                {
+                    Text = $"设备：{item.DisplayName} · {item.Target}\n\n原固定 Maintenance 指纹：\n{item.PreviousFingerprint}\n\nAgent 签名登记的新 Maintenance 指纹：\n{item.CandidateFingerprint}\n\n新指纹已由此设备当前固定的 Agent 身份签名授权。批准后本机信任库会替换该设备的旧 Maintenance 公钥；服务需重新连接后才会建立维护通道。",
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    FontFamily = "Consolas"
+                },
+                verified,
+                actions
+            }
+        };
+        dialog.Content = layout;
+        return await dialog.ShowDialog<bool>(this);
+    }
+
     private async void SelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e)
     {
         try
