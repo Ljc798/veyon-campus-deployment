@@ -418,7 +418,7 @@ public static class StudentAgentTeacherChannelClient
         }
     }
 
-    private static string? FingerprintConfiguration(WebsitePolicyAgentConfig config)
+    internal static string? FingerprintConfiguration(WebsitePolicyAgentConfig config)
     {
         try
         {
@@ -546,6 +546,7 @@ public sealed class StudentAgentTeacherChannelSupervisor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(agentIdentityKey);
+        StudentAgentTeacherChannelDiagnostics.Initialize(configPath);
         while (!cancellationToken.IsCancellationRequested)
         {
             using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -555,9 +556,14 @@ public sealed class StudentAgentTeacherChannelSupervisor
                 var bytes = await File.ReadAllBytesAsync(configPath, cancellationToken).ConfigureAwait(false);
                 var config = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(bytes, WebsitePolicyAgent.JsonOptions)
                              ?? throw new InvalidDataException("学生网站策略代理配置为空。");
+                StudentAgentTeacherChannelDiagnostics.RecordConfiguration(configPath,
+                    StudentAgentTeacherChannelClient.FingerprintConfiguration(config));
                 if (config.TeacherChannelEndpoints is not { Count: > 0 } ||
                     string.IsNullOrWhiteSpace(config.TeacherChannelRootCertificateBase64))
                 {
+                    StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
+                        config.TeacherChannelEndpoints is not { Count: > 0 }
+                            ? "MissingEndpoint" : "MissingRootCertificate");
                     await _reload.Reader.ReadAsync(cancellationToken).ConfigureAwait(false);
                     continue;
                 }
@@ -585,10 +591,16 @@ public sealed class StudentAgentTeacherChannelSupervisor
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                InvalidDataException or CryptographicException or JsonException or PlatformNotSupportedException)
+                InvalidDataException or CryptographicException or JsonException or PlatformNotSupportedException or
+                ArgumentException)
             {
+                var classified = exception is StudentAgentTeacherChannelFailureException
+                    ? exception
+                    : new StudentAgentTeacherChannelFailureException("InvalidConfiguration", exception);
+                StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
+                    StudentAgentTeacherChannelDiagnostics.ClassifyFailure(classified));
                 WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel",
-                    Guid.NewGuid().ToString("N")[..12], exception);
+                    Guid.NewGuid().ToString("N")[..12], classified);
                 try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             }
