@@ -65,7 +65,9 @@
             CopyDeviceHealthFingerprintRequested="CopyDeviceHealthFingerprint"
             ToggleDeviceHealthFingerprintsRequested="ToggleDeviceHealthFingerprints"
             SelectAllDeviceTargetsRequested="SelectAllWebsitePolicyTargets"
-            ClearDeviceTargetsRequested="ClearWebsitePolicyTargets" />
+            ClearDeviceTargetsRequested="ClearWebsitePolicyTargets"
+            RetryMaintenanceIssueRequested="RetryMaintenanceIssue"
+            RefreshMaintenanceOverviewRequested="RefreshMaintenanceOverview" />
         <views:TeacherUpdatesView
             CheckTeacherUpdateRequested="CheckTeacherUpdate"
             DownloadTeacherUpdateRequested="DownloadTeacherUpdate"

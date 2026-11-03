@@ -46,6 +46,8 @@ public partial class TeacherHealthView : UserControl
     public event EventHandler<RoutedEventArgs>? ToggleDeviceHealthFingerprintsRequested;
     public event EventHandler<RoutedEventArgs>? SelectAllDeviceTargetsRequested;
     public event EventHandler<RoutedEventArgs>? ClearDeviceTargetsRequested;
+    public event EventHandler<RoutedEventArgs>? RetryMaintenanceIssueRequested;
+    public event EventHandler<RoutedEventArgs>? RefreshMaintenanceOverviewRequested;
 
     private void RequestAcknowledgeDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
         AcknowledgeDeviceHealthAlertRequested?.Invoke(sender, e);
@@ -103,4 +105,10 @@ public partial class TeacherHealthView : UserControl
 
     private void RequestClearDeviceTargets(object? sender, RoutedEventArgs e) =>
         ClearDeviceTargetsRequested?.Invoke(sender, e);
+
+    private void RequestRetryMaintenanceIssue(object? sender, RoutedEventArgs e) =>
+        RetryMaintenanceIssueRequested?.Invoke(sender, e);
+
+    private void RequestRefreshMaintenanceOverview(object? sender, RoutedEventArgs e) =>
+        RefreshMaintenanceOverviewRequested?.Invoke(sender, e);
 }

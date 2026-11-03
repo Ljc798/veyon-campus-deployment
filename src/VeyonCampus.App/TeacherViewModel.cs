@@ -4053,6 +4053,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { if (_studentMaintenanceStatus == value) return; _studentMaintenanceStatus = value; Changed(); }
     }
     public string MaintenanceEventReportExportStatus { get; private set; } = "";
+    public ObservableCollection<TeacherMaintenanceIssueItem> MaintenanceIssueItems { get; } = [];
+    public bool HasMaintenanceIssueItems => MaintenanceIssueItems.Count > 0;
+    public string MaintenanceOverviewSummary { get; private set; } = "尚未读取本机 Maintenance 记录。";
     public bool UseLocalTestStudentUpdateSource
     {
         get => _useLocalTestStudentUpdateSource;
@@ -10283,6 +10286,76 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally { _pendingMaintenanceSyncInFlight.TryRemove(key, out _); }
     }
 
+    public async Task RefreshMaintenanceOverviewAsync()
+    {
+        try
+        {
+            var campusId = CampusId.Trim();
+            if (string.IsNullOrWhiteSpace(campusId))
+            {
+                MaintenanceOverviewSummary = "尚未设置当前校区；没有读取维护记录。";
+                Changed(nameof(MaintenanceOverviewSummary));
+                return;
+            }
+            var journal = await _maintenanceRunStore.ReadAsync();
+            var retentionCutoff = DateTimeOffset.UtcNow - MaintenanceJournal.TerminalRunRetention;
+            var latestRuns = journal.Runs.Where(run => string.Equals(run.Device.CampusId, campusId,
+                    StringComparison.OrdinalIgnoreCase) && (!run.IsTerminal || run.UpdatedUtc >= retentionCutoff))
+                .GroupBy(run => run.Device.Key)
+                .Select(group => group.OrderByDescending(run => run.UpdatedUtc).First())
+                .ToArray();
+            var knownMaintenance = latestRuns.Count(run => run.State is not
+                    (MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired) &&
+                run.Capabilities?.Names.Contains("maintenance-service.v1", StringComparer.Ordinal) == true);
+            var knownLegacy = latestRuns.Count(run => run.State is not
+                    (MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired) &&
+                run.Capabilities is not null && !run.Capabilities.Names.Contains("maintenance-service.v1",
+                    StringComparer.Ordinal));
+            var needsField = latestRuns.Count(run => run.State is MaintenanceRunState.ManualRequired or
+                MaintenanceRunState.RecoveryRequired);
+            var unknown = latestRuns.Length - knownMaintenance - knownLegacy - needsField;
+            MaintenanceOverviewSummary = $"本校区本机记录 {latestRuns.Length} 台 · Maintenance {knownMaintenance} · Legacy {knownLegacy} · 需现场维护 {needsField}" +
+                (unknown > 0 ? $" · 能力未知/待核对 {unknown}" : "") + "。按每台最近一次维护事务统计。";
+            Changed(nameof(MaintenanceOverviewSummary));
+
+            MaintenanceIssueItems.Clear();
+            var currentTargets = WebsitePolicyTargetChoices.GroupBy(item => NormalizeTargetKey(item.Target),
+                    StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.First().StudentName,
+                    StringComparer.OrdinalIgnoreCase);
+            foreach (var run in latestRuns.Where(run => run.State is not
+                         (MaintenanceRunState.Completed or MaintenanceRunState.NoChanges)))
+            {
+                var target = run.Device.RouteAddress;
+                var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(target), target);
+                var detail = run.Transitions.LastOrDefault()?.Reason ?? "该设备的最近维护事务尚未完成。";
+                var versions = run.VerifiedCurrentVersions ?? run.CurrentVersions;
+                MaintenanceIssueItems.Add(new TeacherMaintenanceIssueItem(target, displayName, run.State,
+                    detail, run.UpdatedUtc, versions, run.Capabilities is not null, run.IsTerminal,
+                    currentTargets.ContainsKey(NormalizeTargetKey(target))));
+            }
+            Changed(nameof(HasMaintenanceIssueItems));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException)
+        {
+            MaintenanceOverviewSummary = "无法读取本机 Maintenance 概览；原维护记录未修改。";
+            Changed(nameof(MaintenanceOverviewSummary));
+        }
+    }
+
+    public async Task RetryMaintenanceIssueAsync(TeacherMaintenanceIssueItem issue)
+    {
+        ArgumentNullException.ThrowIfNull(issue);
+        if (!issue.CanAct) return;
+        issue.SetBusy(true);
+        try
+        {
+            await MaintainStudentDevicesAsync(null, [issue.Target]);
+        }
+        finally { issue.SetBusy(false); }
+    }
+
     public async Task MaintainStudentDevicesAsync()
     {
         await MaintainStudentDevicesAsync(null, null);
@@ -10296,7 +10369,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             MaintenanceOperationKind.SoftwareUpdate => CanDeployStudentUpdate,
             MaintenanceOperationKind.ConfigurationSync => CanSyncStudentConfiguration,
             MaintenanceOperationKind.MaintenanceServiceUpdate => CanMaintainStudentDevices,
-            _ => CanMaintainStudentDevices
+            _ => targetOverride is { Count: > 0 }
+                ? CanMaintainTargetOverride(targetOverride)
+                : CanMaintainStudentDevices
         };
         if (!canStart || !TryBeginExclusiveTask()) return;
         IReadOnlyList<string> selectedTargets = Array.Empty<string>();
@@ -10505,6 +10580,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             EndExclusiveTask();
             Changed(nameof(CanMaintainStudentDevices));
+            await RefreshMaintenanceOverviewAsync();
         }
     }
 
@@ -12238,6 +12314,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
             return WebsitePolicyTransport.NormalizeTargets(GetSelectedStudentUpdateTargets()).Count > 0;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
+        { return false; }
+    }
+
+    private bool CanMaintainTargetOverride(IReadOnlyCollection<string> targets)
+    {
+        if (!OperatingSystem.IsWindows() || IsExecuting) return false;
+        try
+        {
+            WebsitePolicySigningKeyStore.ValidateCampusId(CampusId.Trim());
+            var normalized = WebsitePolicyTransport.NormalizeTargets(targets);
+            if (normalized.Count != 1) return false;
+            return WebsitePolicyTargetChoices.Any(choice => string.Equals(
+                NormalizeTargetKey(choice.Target), NormalizeTargetKey(normalized[0]),
+                StringComparison.OrdinalIgnoreCase));
         }
         catch (Exception exception) when (exception is InvalidDataException or PlatformNotSupportedException)
         { return false; }
@@ -14964,6 +15056,59 @@ public sealed class StudentConfigurationSyncTargetProgressItem(string target, st
     }
 
     private void Raise(string? propertyName) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+}
+
+public sealed class TeacherMaintenanceIssueItem(string target, string displayName, MaintenanceRunState state,
+    string detail, DateTimeOffset updatedUtc, MaintenanceComponentVersions? versions,
+    bool hasVerifiedCapabilities, bool isTerminal, bool targetIsCurrent) : INotifyPropertyChanged
+{
+    private bool _isBusy;
+    public event PropertyChangedEventHandler? PropertyChanged;
+    public string Target { get; } = target;
+    public string DisplayName { get; } = displayName;
+    public MaintenanceRunState State { get; } = state;
+    public string Detail { get; } = detail;
+    public bool IsTargetUnavailable => !targetIsCurrent;
+    public DateTimeOffset UpdatedUtc { get; } = updatedUtc;
+    public string UpdatedText => "最近记录 " + UpdatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss",
+        CultureInfo.CurrentCulture);
+    public string StateText => State switch
+    {
+        MaintenanceRunState.PendingVerification => "待验证",
+        MaintenanceRunState.RecoveryRequired => "需要恢复",
+        MaintenanceRunState.ManualRequired => "需现场维护",
+        MaintenanceRunState.RolledBack => "已回滚",
+        MaintenanceRunState.Failed => "失败",
+        MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
+            MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing => "事务待核对",
+        _ => State.ToString()
+    };
+    public string VersionsText
+    {
+        get
+        {
+            if (versions is null) return "没有可显示的签名版本读回";
+            var values = new List<string>();
+            if (versions.StudentSetupVersion is not null) values.Add("Setup " + versions.StudentSetupVersion);
+            if (versions.AgentRuntimeVersion is not null) values.Add("Agent " + versions.AgentRuntimeVersion);
+            if (versions.MaintenanceVersion is not null) values.Add("Maintenance " + versions.MaintenanceVersion);
+            return values.Count == 0 ? "没有可显示的签名版本读回" : string.Join(" · ", values);
+        }
+    }
+    private bool CanRetry => hasVerifiedCapabilities && isTerminal &&
+        (State is MaintenanceRunState.Failed or MaintenanceRunState.RolledBack);
+    private bool CanRecheck => !isTerminal;
+    public bool CanAct => !_isBusy && targetIsCurrent && (CanRetry || CanRecheck);
+    public string ActionText => CanRetry ? "重试此设备" : "继续核对事务";
+    public bool IsBusy => _isBusy;
+
+    public void SetBusy(bool busy)
+    {
+        if (_isBusy == busy) return;
+        _isBusy = busy;
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanAct)));
+    }
 }
 
 public sealed class StudentApplicationUpdateTargetProgressItem(string target, string displayName) : INotifyPropertyChanged

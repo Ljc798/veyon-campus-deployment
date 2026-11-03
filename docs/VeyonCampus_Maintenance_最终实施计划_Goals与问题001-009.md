@@ -681,7 +681,9 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 日志具有容量、保留时间和清理策略；云端只上传业务需要的**聚合/必要状态**，优先保持局域网维护数据本地化。
 - [ ] 教师端可集中看到“已接管 Maintenance / 仍为 Legacy / 需现场维护”数量，并能对失败设备定向重试。
 
-**实施进度补记（2026-11-03，部分代码，未验收）：** Maintenance journal 写入时增加终态 run 清理，最多保留最近 500 条且不早于 180 天，活动事务不清理；高级维护操作增加本机匿名事件 JSON 导出（最多 500 条、512 KiB），剔除 campusId、固定设备身份、路由、operationId 和错误自由文本；当前批次状态可汇总已验证 Maintenance 服务、签名 Legacy Agent、需现场维护及未分类数量。报告内用短期 device alias 关联同一导出中的多条事件，不保留可跨导出关联的原始身份。仍未有全校问题列表或单条失败行直接定向重试；逐设备“重新核对”仅用于查询/恢复既有事务。清理仅在写 journal 时触发，Desired/Reported/Pending 配置记录保持原样。未构建、测试或 UI/隐私审计；P4-03 仍 `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED`。
+**实施进度补记（2026-11-03，部分代码，未验收）：** Maintenance journal 写入时增加终态 run 清理，最多保留最近 500 条且不早于 180 天，活动事务不清理；高级维护操作增加本机匿名事件 JSON 导出（最多 500 条、512 KiB），剔除 campusId、固定设备身份、路由、operationId 和错误自由文本；当前批次状态可汇总已验证 Maintenance 服务、签名 Legacy Agent、需现场维护及未分类数量。报告内用短期 device alias 关联同一导出中的多条事件，不保留可跨导出关联的原始身份。**截至本次续记之前**，设备概览全局问题列表和单条失败行定向重试尚未接入。清理仅在写 journal 时触发，Desired/Reported/Pending 配置记录保持原样。未构建、测试或 UI/隐私审计；P4-03 仍 `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED`。
+
+**实施进度续记（2026-11-03，未验收）：** 设备概览的“维护工具与诊断记录”增加本机 journal 运维概览，按当前校区每台设备最近一条事务分类，列出近期未完成/失败/回滚记录并显示版本与失败阶段。只对具有已验证能力且仍属于当前设备名单的 Failed/RolledBack 设备开放单台重试；活动事务使用既有 operationId 恢复，ManualRequired 不提供自动重试。该统计只覆盖本机 journal 已出现的设备，不代表所有校区或全体设备的实时状态；未构建、测试和 UI 验收，P4-03 仍为部分实施。
 
 ### P4-04：课堂功能发布门槛与现场回归闭环（`QA-01`、`QA-02`）
 

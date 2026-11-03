@@ -296,6 +296,50 @@
     <Border x:Name="DeviceMaintenanceSection" Classes="section-card" Padding="8">
       <Expander Header="维护工具与诊断记录" Theme="{StaticResource App.DetailExpander}">
         <StackPanel Spacing="12" Margin="12,4,12,12">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+            <TextBlock Text="本机 Maintenance 运维概览" Classes="component-title"
+                       VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="tertiary" Content="刷新本机记录"
+                    Click="RequestRefreshMaintenanceOverview" IsEnabled="{Binding !IsExecuting}" />
+          </Grid>
+          <TextBlock Text="{Binding MaintenanceOverviewSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <TextBlock Text="本机记录中没有待恢复、失败或待核对的维护事务。"
+                     Classes="supporting-copy" IsVisible="{Binding !HasMaintenanceIssueItems}" />
+          <StackPanel Spacing="8" IsVisible="{Binding HasMaintenanceIssueItems}">
+            <TextBlock Text="最近仍需处理的设备" Classes="component-title" />
+            <ScrollViewer MaxHeight="360" VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding MaintenanceIssueItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherMaintenanceIssueItem">
+                    <Border Classes="device-row" Margin="0,0,0,7">
+                      <StackPanel Spacing="5">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                          <StackPanel Spacing="3">
+                            <TextBlock Text="{Binding DisplayName}" Classes="device-row-name"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Target}" Classes="muted" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.WarningSubtle}"
+                                  CornerRadius="999" Padding="8,3" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StateText}" Foreground="{DynamicResource Teacher.Color.Warning}"
+                                       FontWeight="SemiBold" />
+                          </Border>
+                        </Grid>
+                        <TextBlock Text="{Binding UpdatedText}" Classes="muted" />
+                        <TextBlock Text="{Binding VersionsText}" Classes="muted" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding Detail}" Classes="device-row-detail" TextWrapping="Wrap" />
+                        <TextBlock Text="设备不在当前名单中；刷新名单后才能对其操作。"
+                                   Classes="muted" IsVisible="{Binding IsTargetUnavailable}" />
+                        <Button Classes="tertiary" Content="{Binding ActionText}"
+                                Click="RequestRetryMaintenanceIssue" IsEnabled="{Binding CanAct}"
+                                HorizontalAlignment="Left" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
           <TextBlock Text="{Binding DeviceHealthStatus}" Classes="supporting-copy" />
           <TextBlock Text="{Binding DeviceHealthCacheStatus}" Classes="supporting-copy" />
           <TextBlock Text="{Binding DeviceHealthBatchPreview}" Classes="supporting-copy" />

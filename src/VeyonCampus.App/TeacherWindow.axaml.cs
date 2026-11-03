@@ -145,6 +145,7 @@ public partial class TeacherWindow : Window
                 }
             }
             await _mobileControl.RestoreStartupStateAsync();
+            await _model.RefreshMaintenanceOverviewAsync();
             if (OperatingSystem.IsMacOS())
             {
                 await _model.RefreshMacTeacherLoginStartStatusAsync();
@@ -2338,6 +2339,16 @@ public partial class TeacherWindow : Window
         await EnsureTeacherAgentChannelStartedAsync();
         await _model.MaintainStudentDevicesAsync();
     }
+
+    private async void RetryMaintenanceIssue(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: TeacherMaintenanceIssueItem issue }) return;
+        await EnsureTeacherAgentChannelStartedAsync();
+        await _model.RetryMaintenanceIssueAsync(issue);
+    }
+
+    private async void RefreshMaintenanceOverview(object? sender, RoutedEventArgs e) =>
+        await _model.RefreshMaintenanceOverviewAsync();
 
     private async void SelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e)
     {
