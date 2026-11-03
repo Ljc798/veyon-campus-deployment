@@ -102,6 +102,8 @@
               <WrapPanel Orientation="Horizontal">
                 <Button Classes="secondary" Content="仅更新软件" Click="RequestDeployStudentUpdate"
                         IsEnabled="{Binding CanDeployStudentUpdate}" Margin="0,0,8,6" />
+                <Button Classes="secondary" Content="仅更新 Maintenance 服务" Click="RequestUpdateMaintenanceService"
+                        IsEnabled="{Binding CanMaintainStudentDevices}" Margin="0,0,8,6" />
                 <Button Classes="secondary" Content="仅同步教师连接配置" Click="RequestSyncStudentConfiguration"
                         IsEnabled="{Binding CanSyncStudentConfiguration}" Margin="0,0,8,6" />
               </WrapPanel>

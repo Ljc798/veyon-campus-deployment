@@ -320,6 +320,15 @@ public sealed class MaintenanceServiceWorker
     {
         try
         {
+            var releaseTransaction = MaintenanceServiceReleaseUpdateExecutor.ReadTransaction(configPath);
+            if (releaseTransaction is { State: "pending" or "inProgress" })
+            {
+                var releaseStatus = MaintenanceServiceReleaseUpdateExecutor.ReadStatus(configPath,
+                    releaseTransaction.CommandId, DateTimeOffset.UtcNow);
+                return "MaintenanceService startup recovery reconciled command " +
+                       releaseTransaction.CommandId.ToString("N") + " to state " +
+                       (releaseStatus?.State ?? "needsReview") + ".";
+            }
             var transaction = MaintenanceServiceUpdateExecutor.ReadTransaction(configPath);
             if (transaction is null || transaction.State is not ("pending" or "inProgress"))
                 return "Maintenance startup recovery found no interrupted service update.";

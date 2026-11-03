@@ -28,6 +28,7 @@ public partial class TeacherUpdatesView : UserControl
     public event EventHandler<RoutedEventArgs>? TrustStudentAgentIdentitiesRequested;
     public event EventHandler<RoutedEventArgs>? MaintainStudentDevicesRequested;
     public event EventHandler<RoutedEventArgs>? DeployStudentUpdateRequested;
+    public event EventHandler<RoutedEventArgs>? UpdateMaintenanceServiceRequested;
     public event EventHandler<RoutedEventArgs>? SelectLocalStudentTestInstallerRequested;
     public event EventHandler<RoutedEventArgs>? SyncStudentConfigurationRequested;
     public event EventHandler<RoutedEventArgs>? ReviewConfigurationIdentityRequested;
@@ -60,6 +61,9 @@ public partial class TeacherUpdatesView : UserControl
 
     private void RequestDeployStudentUpdate(object? sender, RoutedEventArgs e) =>
         DeployStudentUpdateRequested?.Invoke(sender, e);
+
+    private void RequestUpdateMaintenanceService(object? sender, RoutedEventArgs e) =>
+        UpdateMaintenanceServiceRequested?.Invoke(sender, e);
 
     private void RequestSelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e) =>
         SelectLocalStudentTestInstallerRequested?.Invoke(sender, e);

@@ -9,12 +9,21 @@ namespace VeyonCampus.App.Maintenance;
 public sealed record LegacyStudentSetupArtifact(string InstallerPath, Uri ApiBaseAddress,
     string DeveloperReleasePublicKeyPem, string? VerifiedAgentTargetVersion = null);
 
+public sealed record MaintenanceServiceReleaseArtifact(string InstallerPath, ApplicationReleaseEnvelope Release,
+    Uri ApiBaseAddress, string DeveloperReleasePublicKeyPem);
+
 public sealed record TeacherConnectivityConfiguration(IReadOnlyList<string> Endpoints,
     string RootCertificateBase64, string Fingerprint);
 
 public interface ILegacyStudentSetupArtifactProvider
 {
     Task<LegacyStudentSetupArtifact> GetVerifiedArtifactAsync(MaintenancePlan plan,
+        CancellationToken cancellationToken);
+}
+
+public interface IMaintenanceServiceReleaseArtifactProvider
+{
+    Task<MaintenanceServiceReleaseArtifact?> GetNewerMaintenanceServiceReleaseAsync(string currentVersion,
         CancellationToken cancellationToken);
 }
 
@@ -26,10 +35,14 @@ public interface ILegacyStudentSetupArtifactProvider
 public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
 {
     private readonly ILegacyStudentSetupArtifactProvider _artifactProvider;
+    private readonly IMaintenanceServiceReleaseArtifactProvider? _maintenanceServiceArtifactProvider;
     private readonly MaintenanceServiceTeacherClient _maintenanceServiceClient = new();
 
-    public LegacyAgentMaintenanceAdapter(ILegacyStudentSetupArtifactProvider artifactProvider) =>
+    public LegacyAgentMaintenanceAdapter(ILegacyStudentSetupArtifactProvider artifactProvider)
+    {
         _artifactProvider = artifactProvider ?? throw new ArgumentNullException(nameof(artifactProvider));
+        _maintenanceServiceArtifactProvider = artifactProvider as IMaintenanceServiceReleaseArtifactProvider;
+    }
 
     public async Task<MaintenanceAdapterInspection> InspectAsync(MaintenanceDeviceIdentity device,
         CancellationToken cancellationToken)
@@ -181,7 +194,7 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                 capabilities.SignedResponseSha256);
             return new MaintenanceAdapterInspection(true, versions, maintenanceCapabilities, identityEvidence,
                 capabilitiesEvidence,
-                "已通过独立 Maintenance 服务签名身份、受保护配置、SYSTEM 任务、版本和固定命令能力核验；该通道当前不支持安装包更新。",
+                "已通过独立 Maintenance 服务签名身份、受保护配置、SYSTEM 任务、版本和固定命令能力核验；教师端可经该通道提交已签名的 StudentSetup 或 MaintenanceService 更新。",
                 installed.Payload.TransactionState, StudentAgentChannelHub.IsConnected(device.CampusId,
                     device.RouteAddress), health.Response.CollectedUtc);
         }
@@ -394,6 +407,201 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             output.Add(ClassifyUpdateResult(plan, delivery, statusResult, commandId));
         }
         return Array.AsReadOnly(output.ToArray());
+    }
+
+    /// <summary>Runs the independent MaintenanceService release transaction for one authenticated service.</summary>
+    public async Task<MaintenanceAdapterResult> OfferMaintenanceServiceUpdateAsync(MaintenancePlan plan,
+        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
+        IProgress<MaintenanceCoordinatorProgress>? progress = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        var operationId = plan.OperationId;
+        var device = plan.Device;
+        if (plan.OperationKind != MaintenanceOperationKind.MaintenanceServiceUpdate ||
+            (plan.TargetMaintenanceServiceVersion is null) != (plan.TargetReleaseSha256 is null))
+            throw new InvalidDataException("MaintenanceService 检查计划的目标版本和发行 SHA-256 不匹配。");
+        ArgumentNullException.ThrowIfNull(beforeCommandSend);
+        if (!_maintenanceServiceClient.IsAvailable(device))
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
+                "Maintenance 独立身份或认证通道不可用；拒绝经 Legacy Agent 更新服务自身。", null);
+        if (_maintenanceServiceArtifactProvider is null)
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
+                "当前发行提供器未实现独立 MaintenanceService 包获取。", null);
+
+        using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
+        var inspection = await InspectAsync(device, cancellationToken).ConfigureAwait(false);
+        if (!inspection.IdentityVerified || inspection.CurrentVersions.MaintenanceVersion is not { } currentVersion ||
+            !string.Equals(currentVersion, plan.CurrentVersions.MaintenanceVersion, StringComparison.Ordinal))
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
+                "无法从签名 Maintenance 健康读回确认当前服务版本。", inspection.IdentityEvidence,
+                inspection.CurrentVersions, inspection.UpdateTransactionState);
+        if (plan.TargetMaintenanceServiceVersion is null)
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.NoChanges,
+                "MaintenanceService 已是当前可用发行版本。", inspection.IdentityEvidence,
+                inspection.CurrentVersions, inspection.UpdateTransactionState);
+
+        MaintenanceServiceReleaseArtifact? artifact;
+        try
+        {
+            artifact = await _maintenanceServiceArtifactProvider.GetNewerMaintenanceServiceReleaseAsync(
+                currentVersion, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException or TimeoutException or
+                                          InvalidOperationException or ArgumentException or HttpRequestException)
+        {
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.Failed,
+                "无法准备经过签名核验的 MaintenanceService 更新：" + Sanitize(exception.Message),
+                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
+        }
+        if (artifact is null)
+            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
+                "维护计划中的 MaintenanceService 目标已不再是可用的较新发行；请重新检查并生成计划。",
+                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
+
+        var release = artifact.Release;
+        var commandId = Guid.NewGuid();
+        var evidence = new MaintenanceEvidence("signed-maintenance-service-release",
+            device.PinnedIdentityFingerprint, release.Manifest.Sha256, commandId, DateTimeOffset.UtcNow);
+        var commandWasPrepared = false;
+        try
+        {
+            ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.MaintenanceService,
+                artifact.ApiBaseAddress, artifact.DeveloperReleasePublicKeyPem);
+            if (release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion ||
+                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0 ||
+                !string.Equals(release.Manifest.Version, plan.TargetMaintenanceServiceVersion,
+                    StringComparison.Ordinal) ||
+                !string.Equals(release.Manifest.Sha256, plan.TargetReleaseSha256,
+                    StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("MaintenanceService 发行版本、摘要或协议门槛与维护计划不匹配。");
+            await using var lanServer = StudentApplicationUpdateLanServer.Start(artifact.InstallerPath,
+                release.Manifest.Sha256, release.Manifest.SizeBytes);
+            var expiresUtc = DateTimeOffset.UtcNow.AddMinutes(4);
+            var downloadUri = await lanServer.GetDownloadUriAsync(device.RouteAddress, device.CampusId,
+                commandId, expiresUtc, targetAgentPublicKeyPem: null, cancellationToken: cancellationToken)
+                .ConfigureAwait(false);
+            var signedEnvelopeJson = JsonSerializer.Serialize(release);
+            var offer = await _maintenanceServiceClient.SendAsync<MaintenanceServiceReleaseUpdateReadbackPayload>(
+                device, operationId, commandId, MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate,
+                signingKey.PrivateKey,
+                beforeSend: async (preparedCommandId, signedCommandSha256, token) =>
+                {
+                    if (preparedCommandId != commandId)
+                        throw new InvalidDataException("MaintenanceService commandId 在签名前后发生变化。");
+                    await beforeCommandSend(new MaintenanceUpdateCommandPrepared(operationId, commandId,
+                        signedCommandSha256), token).ConfigureAwait(false);
+                    commandWasPrepared = true;
+                }, cancellationToken: cancellationToken,
+                releaseSha256: release.Manifest.Sha256,
+                signedReleaseEnvelopeJson: signedEnvelopeJson,
+                artifactTransferUrl: downloadUri.AbsoluteUri,
+                targetMaintenanceServiceVersion: release.Manifest.Version).ConfigureAwait(false);
+            if (offer.Response.ResultCode == "needsReview")
+                return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
+                    offer.Response.Detail, evidence, inspection.CurrentVersions, "needsReview",
+                    offer.Response.CollectedUtc);
+            if (offer.Response.ResultCode == "failed" || offer.Response.ResultCode == "notSupported")
+                return new MaintenanceAdapterResult(operationId,
+                    offer.Response.ResultCode == "notSupported" ? MaintenanceAdapterDisposition.ManualRequired :
+                    MaintenanceAdapterDisposition.Failed, offer.Response.Detail, evidence,
+                    inspection.CurrentVersions, null, offer.Response.CollectedUtc);
+            progress?.Report(new MaintenanceCoordinatorProgress(operationId, MaintenanceRunState.Updating,
+                "Maintenance Service 已接受独立签名更新；等待版本切换和健康核验。", 0, 1, commandId,
+                device.RouteAddress));
+            return await WaitForMaintenanceServiceReleaseAsync(operationId, device, commandId, release,
+                currentVersion, evidence, inspection.CurrentVersions, progress, cancellationToken)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException or TimeoutException or
+                                          InvalidOperationException or ArgumentException or HttpRequestException)
+        {
+            return new MaintenanceAdapterResult(operationId,
+                commandWasPrepared ? MaintenanceAdapterDisposition.PendingVerification :
+                    exception is InvalidDataException ? MaintenanceAdapterDisposition.ManualRequired :
+                    MaintenanceAdapterDisposition.Failed,
+                commandWasPrepared
+                    ? "MaintenanceService 更新命令已持久化；使用原 commandId 查询其独立版本事务。"
+                    : Sanitize(exception.Message), evidence, inspection.CurrentVersions,
+                commandWasPrepared ? "inProgress" : null, DateTimeOffset.UtcNow);
+        }
+    }
+
+    private async Task<MaintenanceAdapterResult> WaitForMaintenanceServiceReleaseAsync(Guid operationId,
+        MaintenanceDeviceIdentity device, Guid commandId, ApplicationReleaseEnvelope release,
+        string previousVersion, MaintenanceEvidence evidence, MaintenanceComponentVersions previousVersions,
+        IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddMinutes(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
+                var status = await _maintenanceServiceClient.SendAsync<MaintenanceServiceReleaseUpdateReadbackPayload>(
+                    device, operationId, commandId, MaintenanceProtocolV1Command.GetMaintenanceServiceUpdateStatus,
+                    signingKey.PrivateKey,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                var transaction = status.Payload?.Transaction;
+                var installed = status.Payload?.InstalledVersions;
+                if (transaction is not null && (transaction.CommandId != commandId ||
+                                                transaction.OperationId != operationId))
+                    return new MaintenanceAdapterResult(operationId,
+                        MaintenanceAdapterDisposition.RecoveryRequired,
+                        "MaintenanceService 事务读回没有绑定原 operationId/commandId。", evidence,
+                        previousVersions, "needsReview", status.Response.CollectedUtc);
+                if (transaction is { State: "committed" })
+                {
+                    var fresh = await InspectAsync(device, cancellationToken).ConfigureAwait(false);
+                    if (fresh.IdentityVerified && fresh.CurrentVersions.MaintenanceVersion is { } serviceVersion &&
+                        string.Equals(serviceVersion, release.Manifest.Version, StringComparison.Ordinal) &&
+                        fresh.Capabilities?.ProtocolVersion == release.Manifest.MaintenanceProtocolVersion &&
+                        installed?.RunningAsSystem == true)
+                        return new MaintenanceAdapterResult(operationId,
+                            MaintenanceAdapterDisposition.UpdateCommittedAndHealthy,
+                            "MaintenanceService 签名包已切换；SCM 路径、版本、SYSTEM 配置和认证健康通道均已读回。",
+                            new MaintenanceEvidence("signed-maintenance-service-committed",
+                                device.PinnedIdentityFingerprint, release.Manifest.Sha256, commandId,
+                                status.Response.CollectedUtc), fresh.CurrentVersions, transaction.State,
+                            status.Response.CollectedUtc);
+                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
+                        "MaintenanceService 事务报告完成，但新版本健康读回不一致；停止后续 Setup 更新。",
+                        evidence, fresh.CurrentVersions, transaction.State, status.Response.CollectedUtc);
+                }
+                if (transaction is { State: "rolledBack" })
+                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.UpdateRolledBack,
+                        "MaintenanceService 更新失败；已确认旧版本仍由 SCM 运行。", evidence,
+                        new MaintenanceComponentVersions(previousVersions.StudentSetupVersion,
+                            previousVersions.AgentRuntimeVersion, previousVersions.AgentAssemblyVersion,
+                            previousVersion), transaction.State,
+                        status.Response.CollectedUtc);
+                if (transaction is { State: "needsReview" } || status.Response.ResultCode == "needsReview")
+                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
+                        status.Response.Detail, evidence, previousVersions, "needsReview", status.Response.CollectedUtc);
+                if (status.Response.ResultCode == "failed")
+                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.Failed,
+                        status.Response.Detail, evidence, previousVersions, null, status.Response.CollectedUtc);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or CryptographicException or TimeoutException or
+                                              InvalidOperationException or ArgumentException or HttpRequestException)
+            {
+                // Service restart drops the authenticated socket; reconnect and query the same commandId.
+            }
+            progress?.Report(new MaintenanceCoordinatorProgress(operationId, MaintenanceRunState.WaitingForCommit,
+                "等待 Maintenance Service 重连并读回相同 commandId 的版本事务。", 0, 1, commandId,
+                device.RouteAddress));
+            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
+        }
+        return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.UpdatePendingVerification,
+            "MaintenanceService 正在切换或暂时离线；10 分钟内未取得签名终态，保留 commandId 待重新查询。",
+            evidence, previousVersions, "inProgress", DateTimeOffset.UtcNow);
     }
 
     public async Task<MaintenanceAdapterResult> SynchronizeConfigurationAsync(MaintenancePlan plan,

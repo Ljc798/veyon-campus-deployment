@@ -1,11 +1,14 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
+using Microsoft.Win32;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading;
+using VeyonCampus.Core.Maintenance;
 
 namespace VeyonCampus.Core;
 
@@ -173,6 +176,18 @@ public static class ApplicationReleaseUpdateHandoff
                 ApplyReleaseFromMaintenanceService(installerPath, configPath, currentVersion, commandId);
                 return 0;
             }
+            if (args is ["--maintenance-apply-service-release", var encodedInstallerPath,
+                    var encodedConfigPath, var commandIdText, var encodedCurrentVersion, var encodedTargetVersion])
+            {
+                var installerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedInstallerPath));
+                var configPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedConfigPath));
+                var currentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCurrentVersion));
+                var targetVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedTargetVersion));
+                if (!Guid.TryParseExact(commandIdText, "N", out var commandId) || commandId == Guid.Empty)
+                    throw new InvalidDataException("MaintenanceService 更新事务编号无效。");
+                ApplyMaintenanceServiceRelease(installerPath, configPath, commandId, currentVersion, targetVersion);
+                return 0;
+            }
             return 2;
         }
         catch (Exception exception)
@@ -231,6 +246,211 @@ public static class ApplicationReleaseUpdateHandoff
         using var helper = Process.Start(startInfo)
                            ?? throw new InvalidOperationException("无法启动 SYSTEM StudentSetup 更新助手。" );
     }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static void StartMaintenanceServiceReleaseHelper(string installerPath, string configPath, Guid commandId)
+    {
+        EnsureSystemIdentity();
+        if (commandId == Guid.Empty) throw new InvalidDataException("MaintenanceService 更新事务编号无效。");
+        var fullConfigPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+        EnsureSamePath(fullConfigPath, configPath, "MaintenanceService 更新配置路径不是当前唯一受信任 Agent 配置。");
+        var fullInstallerPath = Path.GetFullPath(installerPath);
+        EnsureMaintenanceServiceStagingPath(fullInstallerPath, fullConfigPath);
+        var transaction = MaintenanceServiceReleaseUpdateExecutor.ReadTransaction(fullConfigPath);
+        if (transaction is null || transaction.CommandId != commandId ||
+            transaction.State is not ("pending" or "inProgress"))
+            throw new InvalidDataException("MaintenanceService 更新助手找不到原 commandId 的待执行事务。");
+        var serviceExecutable = Path.GetFullPath(Environment.ProcessPath ??
+            throw new InvalidOperationException("无法确定当前 Maintenance 服务路径。"));
+        var helperPath = Path.Combine(Path.GetDirectoryName(serviceExecutable)!, HelperFileName);
+        PathLinkSecurity.RejectLinks(serviceExecutable);
+        PathLinkSecurity.RejectLinks(helperPath);
+        if (!File.Exists(helperPath))
+            throw new FileNotFoundException("当前 MaintenanceService 版本目录缺少独立 UpdateHelper。", helperPath);
+
+        var currentVersion = MaintenanceServiceCommandDispatcher.GetServiceVersion();
+        var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.MaintenanceService);
+        if (release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion ||
+            !string.Equals(release.Manifest.Version, transaction.TargetVersion, StringComparison.Ordinal) ||
+            !string.Equals(currentVersion, transaction.PreviousVersion, StringComparison.Ordinal))
+            throw new InvalidDataException("MaintenanceService 包、协议、当前版本与事务记录不一致。");
+        var startInfo = new ProcessStartInfo(helperPath)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(helperPath)!
+        };
+        startInfo.ArgumentList.Add("--maintenance-apply-service-release");
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(fullInstallerPath)));
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(fullConfigPath)));
+        startInfo.ArgumentList.Add(commandId.ToString("N"));
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(currentVersion)));
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(transaction.TargetVersion)));
+        using var helper = Process.Start(startInfo)
+                           ?? throw new InvalidOperationException("无法启动 MaintenanceService 版本化 SYSTEM UpdateHelper。");
+    }
+
+    private static void ApplyMaintenanceServiceRelease(string installerPath, string configPath, Guid commandId,
+        string currentVersion, string targetVersion)
+    {
+        EnsureSystemIdentity();
+        _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
+        _ = ApplicationReleaseClient.CompareVersions(targetVersion, targetVersion);
+        var canonicalConfigPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+        EnsureSamePath(canonicalConfigPath, configPath,
+            "UpdateHelper 的 MaintenanceService 配置路径不是当前唯一受信任 Agent 配置。");
+        var fullInstallerPath = Path.GetFullPath(installerPath);
+        EnsureMaintenanceServiceStagingPath(fullInstallerPath, canonicalConfigPath);
+        var helperExecutable = Path.GetFullPath(Environment.ProcessPath ??
+            throw new InvalidOperationException("无法确定 MaintenanceService UpdateHelper 路径。"));
+        var helperDirectory = Path.GetDirectoryName(helperExecutable)
+                              ?? throw new InvalidDataException("MaintenanceService UpdateHelper 目录无效。");
+        var serviceExecutable = Path.Combine(helperDirectory, "VeyonCampus.MaintenanceService.exe");
+        EnsureSamePath(helperExecutable, Path.Combine(helperDirectory, HelperFileName),
+            "MaintenanceService 更新必须由版本目录中的固定 UpdateHelper 执行。");
+        PathLinkSecurity.RejectLinks(helperExecutable);
+        PathLinkSecurity.RejectLinks(serviceExecutable);
+        var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.MaintenanceService);
+        if (!File.Exists(serviceExecutable) ||
+            !string.Equals(ReadProductVersion(serviceExecutable), currentVersion, StringComparison.Ordinal) ||
+            !string.Equals(release.Manifest.Version, targetVersion, StringComparison.Ordinal) ||
+            release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion)
+            throw new InvalidDataException("MaintenanceService Helper、源/目标版本或协议与签名包不一致。");
+        var transaction = MaintenanceServiceReleaseUpdateExecutor.ReadTransaction(canonicalConfigPath);
+        if (transaction is null || transaction.CommandId != commandId || transaction.State is not ("pending" or "inProgress") ||
+            !string.Equals(transaction.PreviousVersion, currentVersion, StringComparison.Ordinal) ||
+            !string.Equals(transaction.TargetVersion, targetVersion, StringComparison.Ordinal) ||
+            !string.Equals(transaction.ReleaseSha256, release.Manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("UpdateHelper 找不到与签名包匹配的 MaintenanceService commandId 事务。");
+
+        using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+        var updateState = StudentUpdateAtomicTransaction.ReadCurrentState(canonicalConfigPath);
+        if (updateState is "inProgress" or "needsReview")
+            throw new InvalidOperationException("StudentSetup/Agent 原子事务正在处理或需要恢复；MaintenanceService 更新不执行。");
+
+        using var currentProcess = Process.GetCurrentProcess();
+        MaintenanceServiceReleaseUpdateExecutor.MarkHelperStarted(canonicalConfigPath, commandId,
+            currentProcess.Id, currentProcess.StartTime.ToUniversalTime().Ticks);
+        try
+        {
+            _ = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.MaintenanceService);
+            var installerInfo = new ProcessStartInfo(fullInstallerPath)
+            {
+                Arguments = "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART",
+                CreateNoWindow = true,
+                UseShellExecute = false,
+                WorkingDirectory = Path.GetDirectoryName(fullInstallerPath)!
+            };
+            using var installer = Process.Start(installerInfo)
+                                  ?? throw new InvalidOperationException("无法启动签名 MaintenanceService 安装包。");
+            if (!installer.WaitForExit((int)TimeSpan.FromMinutes(15).TotalMilliseconds))
+            {
+                try { installer.Kill(entireProcessTree: true); }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException) { }
+                throw new TimeoutException("MaintenanceService 安装器超过 15 分钟；由旧版本执行回滚。");
+            }
+            if (installer.ExitCode != 0)
+                throw new InvalidOperationException($"MaintenanceService 安装器退出码为 {installer.ExitCode}。");
+
+            var targetExecutable = GetMaintenanceServiceExecutable(targetVersion);
+            VerifyMaintenanceServiceRelease(targetExecutable, targetVersion);
+            MaintenanceServiceReleaseUpdateExecutor.MarkCompleted(canonicalConfigPath, commandId, "committed");
+            MaintenanceServiceReleaseUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
+        }
+        catch (Exception updateFailure) when (updateFailure is IOException or UnauthorizedAccessException or
+                                               InvalidDataException or InvalidOperationException or TimeoutException or
+                                               Win32Exception or System.Security.SecurityException or ArgumentException)
+        {
+            Exception? rollbackFailure = null;
+            try
+            {
+                _ = RunServiceProcess(serviceExecutable, "--install-and-start-service", TimeSpan.FromMinutes(2));
+                VerifyMaintenanceServiceRelease(serviceExecutable, currentVersion);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or TimeoutException or
+                                              Win32Exception or System.Security.SecurityException or ArgumentException)
+            { rollbackFailure = exception; }
+
+            MaintenanceServiceReleaseUpdateExecutor.MarkCompleted(canonicalConfigPath, commandId,
+                rollbackFailure is null ? "rolledBack" : "needsReview");
+            if (rollbackFailure is null)
+                MaintenanceServiceReleaseUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
+            else
+                throw new IOException("MaintenanceService 更新失败且旧版本恢复未完成；保留事务和签名包供现场核对。",
+                    new AggregateException(updateFailure, rollbackFailure));
+            throw;
+        }
+    }
+
+    private static void VerifyMaintenanceServiceRelease(string executablePath, string expectedVersion)
+    {
+        var fullExecutablePath = Path.GetFullPath(executablePath);
+        PathLinkSecurity.RejectLinks(fullExecutablePath);
+        if (!File.Exists(fullExecutablePath) ||
+            !string.Equals(ReadProductVersion(fullExecutablePath), expectedVersion, StringComparison.Ordinal))
+            throw new InvalidDataException("MaintenanceService 版本化文件版本读回不匹配。");
+        var registeredImagePath = ReadMaintenanceServiceImagePath();
+        EnsureSamePath(registeredImagePath, fullExecutablePath,
+            "SCM Maintenance ImagePath 未指向目标版本化服务文件。");
+        if (RunServiceProcess(fullExecutablePath, "--verify-running", TimeSpan.FromSeconds(45)) != 0)
+            throw new InvalidOperationException("SCM 未报告目标 MaintenanceService 正在运行。");
+        if (RunServiceProcess(fullExecutablePath, "--verify-installation", TimeSpan.FromSeconds(45)) != 0)
+            throw new InvalidOperationException("MaintenanceService SYSTEM 配置和身份健康核验失败。");
+    }
+
+    private static string GetMaintenanceServiceExecutable(string version)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(version, version);
+        var executablePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "Veyon Campus", "MaintenanceService", "Versions", version, "VeyonCampus.MaintenanceService.exe");
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(executablePath);
+        return executablePath;
+    }
+
+    private static string ReadMaintenanceServiceImagePath()
+    {
+        using var serviceKey = Registry.LocalMachine.OpenSubKey(
+            @"SYSTEM\CurrentControlSet\Services\VeyonCampusMaintenanceService", writable: false);
+        var imagePath = serviceKey?.GetValue("ImagePath") as string;
+        if (string.IsNullOrWhiteSpace(imagePath))
+            throw new InvalidDataException("SCM Maintenance ImagePath 缺失。");
+        var value = imagePath.Trim();
+        if (value.StartsWith('"'))
+        {
+            var closingQuote = value.IndexOf('"', 1);
+            if (closingQuote <= 1) throw new InvalidDataException("SCM Maintenance ImagePath 引号无效。");
+            value = value[1..closingQuote];
+        }
+        else
+        {
+            var extension = value.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+            if (extension < 0) throw new InvalidDataException("SCM Maintenance ImagePath 缺少 EXE 文件名。");
+            value = value[..(extension + 4)];
+        }
+        return Path.GetFullPath(value);
+    }
+
+    private static int RunServiceProcess(string executablePath, string arguments, TimeSpan timeout)
+    {
+        using var process = Process.Start(new ProcessStartInfo(executablePath)
+        {
+            Arguments = arguments,
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(executablePath)!
+        }) ?? throw new InvalidOperationException("无法启动 MaintenanceService 健康核验命令。");
+        if (!process.WaitForExit(checked((int)timeout.TotalMilliseconds)))
+        {
+            try { process.Kill(entireProcessTree: true); }
+            catch (Exception exception) when (exception is Win32Exception or InvalidOperationException) { }
+            throw new TimeoutException("MaintenanceService 健康核验命令超时。");
+        }
+        return process.ExitCode;
+    }
+
+    private static string? ReadProductVersion(string executablePath) =>
+        FileVersionInfo.GetVersionInfo(executablePath).ProductVersion?.Split('+')[0];
 
     private static void ApplyReleaseAsCurrentUser(string installerPath, ApplicationReleaseRole role,
         int parentProcessId, long parentStartTicks, string currentVersion)

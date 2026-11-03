@@ -37,7 +37,8 @@ public sealed class TeacherMaintenanceWorkflow
         ArgumentNullException.ThrowIfNull(targets);
         if (!Enum.IsDefined(channel)) throw new ArgumentOutOfRangeException(nameof(channel));
         if (requestedOperation is { } requested && requested is not (MaintenanceOperationKind.FullMaintenance or
-                MaintenanceOperationKind.SoftwareUpdate or MaintenanceOperationKind.ConfigurationSync))
+                MaintenanceOperationKind.SoftwareUpdate or MaintenanceOperationKind.ConfigurationSync or
+                MaintenanceOperationKind.MaintenanceServiceUpdate))
             throw new ArgumentOutOfRangeException(nameof(requestedOperation));
         var normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
         var outcomes = new List<TeacherMaintenanceTargetResult>();
@@ -82,7 +83,8 @@ public sealed class TeacherMaintenanceWorkflow
         }
 
         if (devices.Count == 0) return Array.AsReadOnly(outcomes.ToArray());
-        if (requestedOperation != MaintenanceOperationKind.SoftwareUpdate)
+        if (requestedOperation is not (MaintenanceOperationKind.SoftwareUpdate or
+                MaintenanceOperationKind.MaintenanceServiceUpdate))
         {
             try
             {
@@ -157,12 +159,14 @@ public sealed class TeacherMaintenanceWorkflow
 
         var planableInspections = inspections.Where(item => item.State == MaintenanceRunState.CapabilitiesVerified)
             .ToArray();
+        var isMaintenanceServiceOperation = requestedOperation == MaintenanceOperationKind.MaintenanceServiceUpdate;
         var needsRelease = requestedOperation != MaintenanceOperationKind.ConfigurationSync &&
+                           !isMaintenanceServiceOperation &&
                            planableInspections.Length > 0;
         TeacherMaintenanceRelease? release = null;
         string? desiredChannelFingerprint = null;
         string? releaseFailure = null;
-        if (planableInspections.Length > 0 && (needsRelease || requestedOperation is null or
+        if (planableInspections.Length > 0 && !isMaintenanceServiceOperation && (needsRelease || requestedOperation is null or
                 MaintenanceOperationKind.FullMaintenance or MaintenanceOperationKind.ConfigurationSync))
         {
             try
@@ -183,6 +187,58 @@ public sealed class TeacherMaintenanceWorkflow
 
         foreach (var snapshot in inspections.Where(item => item.State == MaintenanceRunState.CapabilitiesVerified))
         {
+            if (isMaintenanceServiceOperation)
+            {
+                if (snapshot.Capabilities is null || snapshot.CurrentVersions?.MaintenanceVersion is not { } currentMaintenanceVersion)
+                {
+                    outcomes.Add(new TeacherMaintenanceTargetResult(snapshot.Device.RouteAddress, snapshot.OperationId,
+                        MaintenanceRunState.ManualRequired,
+                        "无法从独立签名读回确认 MaintenanceService 当前版本；未创建更新计划。",
+                        CurrentVersions: snapshot.CurrentVersions, Capabilities: snapshot.Capabilities,
+                        UpdateTransactionState: snapshot.UpdateTransactionState,
+                        AuthenticatedChannelConnected: snapshot.AuthenticatedChannelConnected,
+                        AuthenticatedChannelCheckedUtc: snapshot.AuthenticatedChannelCheckedUtc,
+                        TeacherChannelDiagnostics: snapshot.TeacherChannelDiagnostics));
+                    continue;
+                }
+
+                MaintenanceServiceReleaseArtifact? serviceArtifact;
+                try
+                {
+                    serviceArtifact = await _releases.GetNewerMaintenanceServiceReleaseAsync(
+                        currentMaintenanceVersion, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                                  InvalidDataException or CryptographicException or IOException or
+                                                  UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+                {
+                    outcomes.Add(new TeacherMaintenanceTargetResult(snapshot.Device.RouteAddress, snapshot.OperationId,
+                        MaintenanceRunState.Failed,
+                        "无法准备独立 MaintenanceService 候选发行：" + Sanitize(exception.Message),
+                        CurrentVersions: snapshot.CurrentVersions, Capabilities: snapshot.Capabilities,
+                        UpdateTransactionState: snapshot.UpdateTransactionState));
+                    continue;
+                }
+
+                var servicePlan = new MaintenancePlan(snapshot.OperationId, snapshot.Device,
+                    MaintenanceOperationKind.MaintenanceServiceUpdate, snapshot.CurrentVersions!,
+                    null, null, snapshot.Capabilities, serviceArtifact?.Release.Manifest.Sha256, null,
+                    MaintenanceReleaseChannel.Stable,
+                    serviceArtifact is null ? "检查 MaintenanceService 独立发行版本。" :
+                        "更新至签名 MaintenanceService 发行 " + serviceArtifact.Release.Manifest.Version + "。",
+                    DateTimeOffset.UtcNow, synchronizeConfiguration: false,
+                    targetMaintenanceServiceVersion: serviceArtifact?.Release.Manifest.Version);
+                var servicePlanEvidence = new MaintenanceEvidence("signed-maintenance-service-plan",
+                    snapshot.Device.PinnedIdentityFingerprint,
+                    serviceArtifact?.Release.Manifest.Sha256 ?? snapshot.Capabilities.SignedResponseSha256,
+                    null, snapshot.Capabilities.VerifiedUtc);
+                var servicePlanRun = await _coordinator.PlanAsync(snapshot.OperationId, servicePlan,
+                    servicePlanEvidence, servicePlan.Reason, cancellationToken).ConfigureAwait(false);
+                executableOperationIds.Add(servicePlanRun.OperationId);
+                continue;
+            }
+
             if ((needsRelease && release is null) ||
                 requestedOperation != MaintenanceOperationKind.ConfigurationSync && release is null ||
                 desiredChannelFingerprint is null || snapshot.Capabilities is null ||

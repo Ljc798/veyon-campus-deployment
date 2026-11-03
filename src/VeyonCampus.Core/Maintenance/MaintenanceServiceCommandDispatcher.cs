@@ -47,6 +47,10 @@ public sealed record MaintenanceServiceTransactionReadbackPayload(
     StudentUpdateTransactionStatus Transaction,
     MaintenanceServiceInstalledVersionsPayload InstalledVersions);
 
+public sealed record MaintenanceServiceReleaseUpdateReadbackPayload(
+    MaintenanceServiceReleaseUpdateTransaction? Transaction,
+    MaintenanceServiceInstalledVersionsPayload InstalledVersions);
+
 public sealed record MaintenanceServiceDispatchResult(string SignedResponseJson, bool ReconnectAfterResponse,
     Func<Task>? AfterResponseSent = null);
 
@@ -66,7 +70,9 @@ public sealed class MaintenanceServiceCommandDispatcher
         "offerSignedStudentSetupUpdate",
         "getTransactionStatus",
         "recoverPendingTransaction",
-        "syncTeacherEndpoint"
+        "syncTeacherEndpoint",
+        "offerSignedMaintenanceServiceUpdate",
+        "getMaintenanceServiceUpdateStatus"
     ];
     private static readonly string[] UnsupportedCommands = [];
     private static readonly JsonSerializerOptions PayloadJsonOptions = new()
@@ -113,6 +119,16 @@ public sealed class MaintenanceServiceCommandDispatcher
                 {
                     var offer = await MaintenanceServiceUpdateExecutor.PrepareOfferAsync(configPath, request,
                         now, cancellationToken).ConfigureAwait(false);
+                    resultCode = offer.ResultCode;
+                    detail = offer.Detail;
+                    payloadJson = offer.Payload is null ? null : SerializePayload(offer.Payload);
+                    afterResponseSent = offer.StartAfterResponseSent;
+                    reconnectAfterResponse = afterResponseSent is not null;
+                }
+                else if (request.Command == MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate)
+                {
+                    var offer = await MaintenanceServiceReleaseUpdateExecutor.PrepareOfferAsync(configPath,
+                        request, now, cancellationToken).ConfigureAwait(false);
                     resultCode = offer.ResultCode;
                     detail = offer.Detail;
                     payloadJson = offer.Payload is null ? null : SerializePayload(offer.Payload);
@@ -201,6 +217,22 @@ public sealed class MaintenanceServiceCommandDispatcher
                 return (resultCode, "已读取绑定 commandId 的学生更新事务及组件版本状态。",
                     SerializePayload(payload));
             }
+            case MaintenanceProtocolV1Command.GetMaintenanceServiceUpdateStatus:
+            {
+                var commandId = request.CommandId ?? throw new InvalidDataException("MaintenanceService 事务查询缺少 commandId。");
+                var status = MaintenanceServiceReleaseUpdateExecutor.ReadStatus(configPath, commandId, nowUtc);
+                var installed = ReadInstalledVersions(configPath, nowUtc);
+                if (status is null)
+                    return ("succeeded", "没有与该 commandId 匹配的 MaintenanceService 自更新事务。",
+                        SerializePayload(new MaintenanceServiceReleaseUpdateReadbackPayload(null, installed)));
+                return (status.State switch
+                    {
+                        "needsReview" => "needsReview",
+                        "pending" or "inProgress" => "pending",
+                        _ => "succeeded"
+                    }, "已读取绑定 commandId 的 MaintenanceService 独立发行更新事务。",
+                    SerializePayload(new MaintenanceServiceReleaseUpdateReadbackPayload(status, installed)));
+            }
             case MaintenanceProtocolV1Command.RecoverPendingTransaction:
                 return await RecoverAsync(configPath, request, nowUtc, cancellationToken).ConfigureAwait(false);
             case MaintenanceProtocolV1Command.SyncTeacherEndpoint:
@@ -219,6 +251,8 @@ public sealed class MaintenanceServiceCommandDispatcher
             }
             case MaintenanceProtocolV1Command.OfferSignedStudentSetupUpdate:
                 throw new InvalidOperationException("StudentSetup 更新命令未通过事务准备入口执行。" );
+            case MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate:
+                throw new InvalidOperationException("MaintenanceService 更新命令未通过事务准备入口执行。" );
             default:
                 return ("notSupported", "该 Maintenance 命令当前未实现。", null);
         }
@@ -229,6 +263,20 @@ public sealed class MaintenanceServiceCommandDispatcher
         CancellationToken cancellationToken)
     {
         var commandId = request.CommandId ?? throw new InvalidDataException("事务恢复缺少 commandId。");
+        var serviceReleaseStatus = MaintenanceServiceReleaseUpdateExecutor.ReadStatus(configPath, commandId,
+            nowUtc);
+        if (serviceReleaseStatus is not null)
+        {
+            var payload = MaintenanceServiceReleaseUpdateExecutor.CreatePayload(configPath,
+                serviceReleaseStatus, nowUtc);
+            var outcome = serviceReleaseStatus.State switch
+            {
+                "committed" or "rolledBack" => ("succeeded", "MaintenanceService 版本事务已核验为终态；没有重复启动安装器。"),
+                "needsReview" => ("needsReview", "MaintenanceService 版本事务需要现场核对；保留签名包和旧版本。"),
+                _ => ("pending", "MaintenanceService UpdateHelper 仍在处理；没有启动第二个安装器。")
+            };
+            return Task.FromResult((outcome.Item1, outcome.Item2, SerializePayload(payload)));
+        }
         var maintenanceStatus = MaintenanceServiceUpdateExecutor.ReadStatus(configPath, commandId, nowUtc);
         if (maintenanceStatus is not null)
         {

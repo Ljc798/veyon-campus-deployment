@@ -55,6 +55,10 @@ public interface ITeacherMaintenanceAdapter
         Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
         IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken);
 
+    Task<MaintenanceAdapterResult> OfferMaintenanceServiceUpdateAsync(MaintenancePlan plan,
+        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
+        IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken);
+
     Task<MaintenanceAdapterResult> SynchronizeConfigurationAsync(MaintenancePlan plan,
         Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
         CancellationToken cancellationToken);
@@ -161,6 +165,39 @@ public sealed class TeacherMaintenanceCoordinator
 
         foreach (var run in ready.Where(item => item.Plan!.OperationKind == MaintenanceOperationKind.Reconcile))
             await ResumeAsync(run.OperationId, cancellationToken).ConfigureAwait(false);
+
+        foreach (var run in ready.Where(item => item.Plan!.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate))
+        {
+            var plan = run.Plan!;
+            try
+            {
+                var result = await _adapter.OfferMaintenanceServiceUpdateAsync(plan,
+                    async (prepared, token) =>
+                    {
+                        await PersistPreparedUpdateCommandAsync(prepared, token).ConfigureAwait(false);
+                        progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
+                            MaintenanceRunState.Updating,
+                            "MaintenanceService 签名更新命令已写入 journal，正在由独立 SYSTEM 服务执行。",
+                            0, 1, prepared.CommandId, plan.Device.RouteAddress));
+                    }, progress, cancellationToken).ConfigureAwait(false);
+                await ApplyUpdateResultAsync(result, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                await MarkPendingOrFailedAsync(plan.OperationId,
+                    "教师端停止等待 MaintenanceService 自更新；请使用原 commandId 重新读取事务。",
+                    CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or CryptographicException or
+                                              InvalidOperationException or ArgumentException or TimeoutException)
+            {
+                await MarkPendingOrFailedAsync(plan.OperationId,
+                    "MaintenanceService 更新工作流异常：" + Sanitize(exception.Message), CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+        }
 
         var softwareUpdates = new List<MaintenanceUpdateRequest>();
         foreach (var run in ready.Where(item => item.Plan!.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
@@ -755,6 +792,8 @@ public sealed class TeacherMaintenanceCoordinator
         first.OperationKind == second.OperationKind && first.Device.Key == second.Device.Key &&
         string.Equals(first.TargetSetupVersion, second.TargetSetupVersion, StringComparison.Ordinal) &&
         string.Equals(first.TargetAgentVersion, second.TargetAgentVersion, StringComparison.Ordinal) &&
+        string.Equals(first.TargetMaintenanceServiceVersion, second.TargetMaintenanceServiceVersion,
+            StringComparison.Ordinal) &&
         string.Equals(first.TargetReleaseSha256, second.TargetReleaseSha256, StringComparison.Ordinal) &&
         string.Equals(first.ConfigurationSha256, second.ConfigurationSha256, StringComparison.Ordinal) &&
         first.Channel == second.Channel &&

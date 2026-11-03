@@ -10316,6 +10316,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             MaintenanceOperationKind.SoftwareUpdate => CanDeployStudentUpdate,
             MaintenanceOperationKind.ConfigurationSync => CanSyncStudentConfiguration,
+            MaintenanceOperationKind.MaintenanceServiceUpdate => CanMaintainStudentDevices,
             _ => CanMaintainStudentDevices
         };
         if (!canStart || !TryBeginExclusiveTask()) return;
@@ -10536,6 +10537,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task DeployStudentUpdateAsync()
     {
         await MaintainStudentDevicesAsync(MaintenanceOperationKind.SoftwareUpdate, null);
+    }
+
+    public async Task UpdateMaintenanceServiceAsync()
+    {
+        await MaintainStudentDevicesAsync(MaintenanceOperationKind.MaintenanceServiceUpdate, null);
     }
 
     private async Task<StudentMaintenanceUpdateBatchResult> DeployStudentUpdateWithResultAsync()
@@ -15229,6 +15235,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
         MaintenanceOperationKind.FullMaintenance => "软件与连接配置",
         MaintenanceOperationKind.SoftwareUpdate => "软件更新",
         MaintenanceOperationKind.ConfigurationSync => "连接配置同步",
+        MaintenanceOperationKind.MaintenanceServiceUpdate => "Maintenance 服务更新",
         MaintenanceOperationKind.Reconcile => "事务核对",
         _ => kind.ToString()
     };

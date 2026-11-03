@@ -68,6 +68,7 @@ internal static class Program
                 {
                     "--query-service" => QueryServiceCommand(),
                     "--verify-running" => VerifyServiceRunningCommand(),
+                    "--verify-installation" => VerifyInstallationCommand(),
                     "--version" => WriteVersionCommand(),
                     "--stop-service" => StopServiceCommand(),
                     "--start-service" => StartServiceCommand(),
@@ -117,6 +118,19 @@ internal static class Program
                       ?? assembly?.GetName().Version?.ToString();
         if (string.IsNullOrWhiteSpace(version)) return 1;
         Console.Out.WriteLine(version);
+        return 0;
+    }
+
+    private static int VerifyInstallationCommand()
+    {
+        EnsureAdministrator();
+        using var identity = WindowsIdentity.GetCurrent();
+        if (identity.User?.Value != "S-1-5-18")
+            throw new UnauthorizedAccessException("Maintenance 安装健康核验必须由 SYSTEM 执行。");
+        var configPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+        _ = MaintenanceServiceConfigurationStore.LoadOrInitializeForSystemService(configPath);
+        using var maintenanceIdentity = MaintenanceServiceIdentityStore.LoadOrCreateForSystemService(configPath);
+        _ = MaintenanceServiceIdentityStore.CreateSignedEnrollment(configPath);
         return 0;
     }
 

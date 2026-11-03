@@ -50,7 +50,8 @@ internal sealed class MaintenanceServiceTeacherClient
         string? releaseSha256 = null,
         string? signedReleaseEnvelopeJson = null,
         string? artifactTransferUrl = null,
-        long? targetTeacherConfigurationRevision = null) where TPayload : class
+        long? targetTeacherConfigurationRevision = null,
+        string? targetMaintenanceServiceVersion = null) where TPayload : class
     {
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(teacherSigningKey);
@@ -72,7 +73,8 @@ internal sealed class MaintenanceServiceTeacherClient
             ArtifactTransferUrl: artifactTransferUrl,
             TargetTeacherConfigurationFingerprint: targetTeacherConfigurationFingerprint,
             TeacherConfiguration: teacherConfiguration,
-            TargetTeacherConfigurationRevision: targetTeacherConfigurationRevision);
+            TargetTeacherConfigurationRevision: targetTeacherConfigurationRevision,
+            TargetMaintenanceServiceVersion: targetMaintenanceServiceVersion);
         string signedRequest;
         lock (teacherSigningKey)
             signedRequest = MaintenanceProtocolV1.SignRequest(request, teacherSigningKey, now);

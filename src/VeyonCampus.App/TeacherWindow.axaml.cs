@@ -2300,6 +2300,12 @@ public partial class TeacherWindow : Window
             await _model.DeployStudentUpdateAsync();
     }
 
+    private async void UpdateMaintenanceService(object? sender, RoutedEventArgs e)
+    {
+        await EnsureTeacherAgentChannelStartedAsync();
+        await _model.UpdateMaintenanceServiceAsync();
+    }
+
     private async void MaintainStudentDevices(object? sender, RoutedEventArgs e)
     {
         // The trusted legacy HTTP path can update older Agents even if the new teacher

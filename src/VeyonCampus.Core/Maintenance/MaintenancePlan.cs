@@ -5,7 +5,8 @@ public enum MaintenanceOperationKind
     FullMaintenance,
     SoftwareUpdate,
     ConfigurationSync,
-    Reconcile
+    Reconcile,
+    MaintenanceServiceUpdate
 }
 
 public enum MaintenanceReleaseChannel
@@ -23,6 +24,7 @@ public sealed class MaintenancePlan
     public MaintenanceComponentVersions CurrentVersions { get; }
     public string? TargetSetupVersion { get; }
     public string? TargetAgentVersion { get; }
+    public string? TargetMaintenanceServiceVersion { get; }
     public MaintenanceCapabilities Capabilities { get; }
     public string? TargetReleaseSha256 { get; }
     public string? ConfigurationSha256 { get; }
@@ -35,7 +37,8 @@ public sealed class MaintenancePlan
         MaintenanceOperationKind operationKind, MaintenanceComponentVersions currentVersions,
         string? targetSetupVersion, string? targetAgentVersion, MaintenanceCapabilities capabilities,
         string? targetReleaseSha256, string? configurationSha256, MaintenanceReleaseChannel channel,
-        string reason, DateTimeOffset plannedUtc, bool synchronizeConfiguration = false)
+        string reason, DateTimeOffset plannedUtc, bool synchronizeConfiguration = false,
+        string? targetMaintenanceServiceVersion = null)
     {
         if (operationId == Guid.Empty) throw new ArgumentException("维护 operationId 不能为空。", nameof(operationId));
         OperationId = operationId;
@@ -47,6 +50,8 @@ public sealed class MaintenancePlan
             nameof(targetSetupVersion));
         TargetAgentVersion = MaintenanceValidation.OptionalVersion(targetAgentVersion,
             nameof(targetAgentVersion));
+        TargetMaintenanceServiceVersion = MaintenanceValidation.OptionalVersion(targetMaintenanceServiceVersion,
+            nameof(targetMaintenanceServiceVersion));
         Capabilities = capabilities ?? throw new ArgumentNullException(nameof(capabilities));
         if (!string.Equals(capabilities.AgentIdentityFingerprint, device.PinnedIdentityFingerprint,
                 StringComparison.Ordinal))
@@ -64,6 +69,19 @@ public sealed class MaintenancePlan
         if ((operationKind is MaintenanceOperationKind.FullMaintenance or MaintenanceOperationKind.SoftwareUpdate) &&
             (TargetSetupVersion is not null || TargetAgentVersion is not null) && TargetReleaseSha256 is null)
             throw new InvalidDataException("软件更新维护计划必须绑定目标发行 SHA-256。");
+        if (operationKind == MaintenanceOperationKind.MaintenanceServiceUpdate &&
+            (currentVersions.MaintenanceVersion is null || TargetSetupVersion is not null ||
+             TargetAgentVersion is not null || (TargetMaintenanceServiceVersion is null) !=
+             (TargetReleaseSha256 is null)))
+            throw new InvalidDataException("MaintenanceService 检查计划必须绑定当前版本；更新时须同时绑定目标版本和独立发行 SHA-256。");
+        if (operationKind == MaintenanceOperationKind.MaintenanceServiceUpdate &&
+            TargetMaintenanceServiceVersion is not null &&
+            ApplicationReleaseClient.CompareVersions(TargetMaintenanceServiceVersion!,
+                currentVersions.MaintenanceVersion!) <= 0)
+            throw new InvalidDataException("MaintenanceService 目标版本必须高于签名读回的当前版本。");
+        if (operationKind != MaintenanceOperationKind.MaintenanceServiceUpdate &&
+            TargetMaintenanceServiceVersion is not null)
+            throw new InvalidDataException("只有 MaintenanceServiceUpdate 计划可以携带 MaintenanceService 目标版本。");
         if (SynchronizeConfiguration && ConfigurationSha256 is null)
             throw new InvalidDataException("配置同步计划必须绑定目标教师连接配置指纹。");
         if (!Enum.IsDefined(channel)) throw new ArgumentOutOfRangeException(nameof(channel));
@@ -75,5 +93,5 @@ public sealed class MaintenancePlan
     public MaintenancePlan WithDevice(MaintenanceDeviceIdentity device) =>
         new(OperationId, device, OperationKind, CurrentVersions, TargetSetupVersion, TargetAgentVersion,
             Capabilities, TargetReleaseSha256, ConfigurationSha256, Channel, Reason, PlannedUtc,
-            SynchronizeConfiguration);
+            SynchronizeConfiguration, TargetMaintenanceServiceVersion);
 }

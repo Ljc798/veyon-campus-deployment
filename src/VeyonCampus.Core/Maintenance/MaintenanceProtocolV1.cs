@@ -14,7 +14,9 @@ public enum MaintenanceProtocolV1Command
     OfferSignedStudentSetupUpdate,
     GetTransactionStatus,
     RecoverPendingTransaction,
-    SyncTeacherEndpoint
+    SyncTeacherEndpoint,
+    OfferSignedMaintenanceServiceUpdate,
+    GetMaintenanceServiceUpdateStatus
 }
 
 /// <summary>The only remote operations accepted by the independent maintenance channel.</summary>
@@ -39,7 +41,9 @@ public sealed record MaintenanceProtocolV1Request(
     string? ArtifactTransferUrl = null,
     string? TargetTeacherConfigurationFingerprint = null,
     MaintenanceTeacherBootstrapConfiguration? TeacherConfiguration = null,
-    long? TargetTeacherConfigurationRevision = null);
+    long? TargetTeacherConfigurationRevision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    string? TargetMaintenanceServiceVersion = null);
 
 public sealed record MaintenanceProtocolV1Response(
     int ProtocolVersion,
@@ -144,7 +148,8 @@ public static class MaintenanceProtocolV1
             request.ExpiresUtc <= request.IssuedUtc || request.ExpiresUtc - request.IssuedUtc > MaximumCommandLifetime)
             throw new InvalidDataException("Maintenance 请求版本、随机数、时间窗或操作编号无效。");
 
-        var hasRelease = request.TargetSetupVersion is not null || request.ReleaseSha256 is not null ||
+        var hasRelease = request.TargetSetupVersion is not null || request.TargetMaintenanceServiceVersion is not null ||
+                         request.ReleaseSha256 is not null ||
                          request.SignedReleaseEnvelopeJson is not null || request.ArtifactTransferUrl is not null;
         var hasTeacherConfiguration = request.TargetTeacherConfigurationFingerprint is not null ||
                                       request.TeacherConfiguration is not null ||
@@ -164,7 +169,8 @@ public static class MaintenanceProtocolV1
                 break;
             case MaintenanceProtocolV1Command.OfferSignedStudentSetupUpdate:
                 if (request.CommandId is null || !hasRelease || hasTeacherConfiguration ||
-                    request.TargetSetupVersion is null || request.ReleaseSha256 is null ||
+                    request.TargetSetupVersion is null || request.TargetMaintenanceServiceVersion is not null ||
+                    request.ReleaseSha256 is null ||
                     request.SignedReleaseEnvelopeJson is null || request.ArtifactTransferUrl is null ||
                     Encoding.UTF8.GetByteCount(request.SignedReleaseEnvelopeJson) is 0 or > MaximumPayloadBytes)
                     throw new InvalidDataException("StudentSetup 更新命令必须绑定 commandId、目标版本、签名发行清单和摘要。");
@@ -172,6 +178,22 @@ public static class MaintenanceProtocolV1
                     request.TargetSetupVersion);
                 _ = MaintenanceValidation.Fingerprint(request.ReleaseSha256, nameof(request.ReleaseSha256));
                 _ = StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(request.ArtifactTransferUrl);
+                break;
+            case MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate:
+                if (request.CommandId is null || !hasRelease || hasTeacherConfiguration ||
+                    request.TargetSetupVersion is not null || request.TargetMaintenanceServiceVersion is null ||
+                    request.ReleaseSha256 is null || request.SignedReleaseEnvelopeJson is null ||
+                    request.ArtifactTransferUrl is null ||
+                    Encoding.UTF8.GetByteCount(request.SignedReleaseEnvelopeJson) is 0 or > MaximumPayloadBytes)
+                    throw new InvalidDataException("MaintenanceService 更新必须绑定 commandId、独立目标版本、签名发行清单和摘要。");
+                _ = ApplicationReleaseClient.CompareVersions(request.TargetMaintenanceServiceVersion,
+                    request.TargetMaintenanceServiceVersion);
+                _ = MaintenanceValidation.Fingerprint(request.ReleaseSha256, nameof(request.ReleaseSha256));
+                _ = StudentApplicationUpdateCryptography.ValidateLocalDownloadUrl(request.ArtifactTransferUrl);
+                break;
+            case MaintenanceProtocolV1Command.GetMaintenanceServiceUpdateStatus:
+                if (request.CommandId is null || hasRelease || hasTeacherConfiguration)
+                    throw new InvalidDataException("MaintenanceService 事务查询必须绑定 commandId，且不得携带安装或配置内容。");
                 break;
             case MaintenanceProtocolV1Command.SyncTeacherEndpoint:
                 if (request.CommandId is null || hasRelease || !hasTeacherConfiguration ||

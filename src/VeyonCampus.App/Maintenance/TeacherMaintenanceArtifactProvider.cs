@@ -7,7 +7,8 @@ public sealed record TeacherMaintenanceRelease(ApplicationReleaseEnvelope Releas
     string? StudentAgentVersion, MaintenanceReleaseChannel Channel);
 
 /// <summary>Resolves only the teacher-selected release channel and stages its verified StudentSetup artifact.</summary>
-public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArtifactProvider
+public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArtifactProvider,
+    IMaintenanceServiceReleaseArtifactProvider
 {
     private readonly ApplicationReleaseClient _releaseClient;
     private readonly Func<string?> _localTestInstallerPath;
@@ -82,6 +83,33 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
             throw new InvalidDataException("本机暂存 StudentSetup 与维护计划不一致；未发送学生端命令。");
         return new LegacyStudentSetupArtifact(installerPath, _releaseClient.ApiBaseAddress, publicKeyPem,
             latest.StudentAgentVersion);
+    }
+
+    public async Task<MaintenanceServiceReleaseArtifact?> GetNewerMaintenanceServiceReleaseAsync(
+        string currentVersion, CancellationToken cancellationToken)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
+        var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
+        var latest = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.MaintenanceService,
+            currentVersion, cancellationToken).ConfigureAwait(false);
+        if (latest.Release is null || !latest.IsNewer) return null;
+        var release = latest.Release;
+        ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.MaintenanceService,
+            _releaseClient.ApiBaseAddress, publicKeyPem);
+        if (release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion)
+            throw new InvalidDataException("最新 Maintenance Service 发行要求不兼容的维护协议；拒绝暂存。");
+        var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
+            "VeyonCampus", "Updates");
+        var installerPath = await _releaseClient.DownloadAsync(release, ApplicationReleaseRole.MaintenanceService,
+            updateDirectory, cancellationToken).ConfigureAwait(false);
+        var staged = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
+            ApplicationReleaseRole.MaintenanceService, _releaseClient.ApiBaseAddress, publicKeyPem),
+            cancellationToken).ConfigureAwait(false);
+        if (!string.Equals(staged.Manifest.Version, release.Manifest.Version, StringComparison.Ordinal) ||
+            !string.Equals(staged.Manifest.Sha256, release.Manifest.Sha256, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("本机暂存 Maintenance Service 与版本目录签名清单不一致。");
+        return new MaintenanceServiceReleaseArtifact(installerPath, release, _releaseClient.ApiBaseAddress,
+            publicKeyPem);
     }
 
     private static void ValidateLocalTestPackage(ApplicationReleaseEnvelope release, Uri apiBaseAddress,

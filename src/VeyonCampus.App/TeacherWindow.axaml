@@ -73,6 +73,7 @@
             TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
             MaintainStudentDevicesRequested="MaintainStudentDevices"
             DeployStudentUpdateRequested="DeployStudentUpdate"
+            UpdateMaintenanceServiceRequested="UpdateMaintenanceService"
             SelectLocalStudentTestInstallerRequested="SelectLocalStudentTestInstaller"
             SyncStudentConfigurationRequested="SyncStudentConfiguration"
             ReviewConfigurationIdentityRequested="ReviewConfigurationIdentity"
