@@ -104,6 +104,10 @@
     <Compile Remove="MainViewModel.cs" />
   </ItemGroup>
 
+  <ItemGroup Condition="'$(VeyonCampusRole)' == 'StudentSetup'">
+    <Compile Remove="Maintenance/**/*.cs" />
+  </ItemGroup>
+
   <Target Name="ValidateVeyonCampusRole" BeforeTargets="PrepareForBuild"
           Condition="'$(VeyonCampusRole)' != 'StudentSetup' and '$(VeyonCampusRole)' != 'TeacherConsole'">
     <Error Text="VeyonCampusRole must be StudentSetup or TeacherConsole." />

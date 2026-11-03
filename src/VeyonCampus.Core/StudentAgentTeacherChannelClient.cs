@@ -30,8 +30,29 @@ public static class StudentAgentTeacherChannelClient
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(config);
         ArgumentNullException.ThrowIfNull(agentIdentityKey);
-        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
-            config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
+        StudentAgentTeacherChannelDiagnostics.Initialize(configPath);
+        StudentAgentTeacherChannelDiagnostics.RecordConfiguration(configPath, FingerprintConfiguration(config));
+        if (config.TeacherChannelEndpoints is not { Count: > 0 })
+        {
+            StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath, "MissingEndpoint");
+            throw new InvalidDataException("教师端地址未配置。" );
+        }
+        if (string.IsNullOrWhiteSpace(config.TeacherChannelRootCertificateBase64))
+        {
+            StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath, "MissingRootCertificate");
+            throw new InvalidDataException("教师端 TLS 根证书未配置。" );
+        }
+        try
+        {
+            StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
+                config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or
+                                          CryptographicException)
+        {
+            StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath, "InvalidConfiguration");
+            throw;
+        }
         var originalTrust = config;
         var failureCount = 0;
         while (!cancellationToken.IsCancellationRequested)
@@ -44,11 +65,15 @@ public static class StudentAgentTeacherChannelClient
                     WebsitePolicyAgent.JsonOptions)
                     ?? throw new InvalidDataException("学生网站策略代理配置为空。");
                 latestConfig = ValidateReconnectConfiguration(originalTrust, latestConfig);
+                StudentAgentTeacherChannelDiagnostics.RecordConfiguration(configPath,
+                    FingerprintConfiguration(latestConfig));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                 InvalidDataException or CryptographicException or JsonException or ArgumentException)
             {
+                StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
+                    StudentAgentTeacherChannelDiagnostics.ClassifyFailure(exception));
                 WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel-config",
                     Guid.NewGuid().ToString("N")[..12], exception);
                 try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
@@ -59,6 +84,9 @@ public static class StudentAgentTeacherChannelClient
             if (latestConfig.TeacherChannelEndpoints is not { Count: > 0 } endpoints ||
                 latestConfig.TeacherChannelRootCertificateBase64 is not { Length: > 0 } rootBase64)
             {
+                StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
+                    latestConfig.TeacherChannelEndpoints is not { Count: > 0 }
+                        ? "MissingEndpoint" : "MissingRootCertificate");
                 try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
                 continue;
@@ -69,6 +97,7 @@ public static class StudentAgentTeacherChannelClient
             foreach (var endpoint in endpoints)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+                StudentAgentTeacherChannelDiagnostics.RecordAttempt(configPath);
                 try
                 {
                     await ConnectAndServeAsync(configPath, latestConfig, endpoint, teacherRoot,
@@ -82,6 +111,8 @@ public static class StudentAgentTeacherChannelClient
                     TaskCanceledException or UriFormatException or AuthenticationException or
                     ObjectDisposedException or InvalidOperationException)
                 {
+                    StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
+                        StudentAgentTeacherChannelDiagnostics.ClassifyFailure(exception));
                     WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel",
                         Guid.NewGuid().ToString("N")[..12], exception);
                 }
@@ -128,7 +159,14 @@ public static class StudentAgentTeacherChannelClient
             ValidateTeacherCertificate(certificate, chain, errors, teacherRoot);
         using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         connectTimeout.CancelAfter(TimeSpan.FromSeconds(8));
-        await socket.ConnectAsync(uri, connectTimeout.Token).ConfigureAwait(false);
+        try
+        {
+            await socket.ConnectAsync(uri, connectTimeout.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        {
+            throw new StudentAgentTeacherChannelFailureException("TcpConnectFailure", exception);
+        }
         if (!StudentAgentChannelProtocol.IsCompatibleNegotiatedSubProtocol(socket.SubProtocol))
             throw new InvalidDataException("教师端选择了不受支持的 Agent 通道子协议。");
 
@@ -145,6 +183,7 @@ public static class StudentAgentTeacherChannelClient
             string.IsNullOrWhiteSpace(ready.Target))
             throw new InvalidDataException("教师端没有确认学生 Agent 身份。");
         _ = ClassroomEventCryptography.NormalizeSingleTarget(ready.Target);
+        StudentAgentTeacherChannelDiagnostics.RecordConnected(configPath);
 
         using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         await using var requestDispatcher = new StudentAgentChannelRequestDispatcher(
@@ -170,6 +209,8 @@ public static class StudentAgentTeacherChannelClient
             }
             catch (Exception exception) when (exception is WebSocketException or ObjectDisposedException) { }
         }
+        if (!cancellationToken.IsCancellationRequested)
+            throw new IOException("教师端认证长连接已关闭；Agent 将重新连接。" );
     }
 
     private static async Task ReceiveLoopAsync(ClientWebSocket socket,
@@ -331,6 +372,21 @@ public static class StudentAgentTeacherChannelClient
             Query = ""
         };
         return builder.Uri;
+    }
+
+    private static string? FingerprintConfiguration(WebsitePolicyAgentConfig config)
+    {
+        try
+        {
+            return StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(config.CampusId,
+                config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or
+                                          CryptographicException)
+        {
+            // Preserve a safe diagnostic record even when the bootstrap data itself is malformed.
+            return null;
+        }
     }
 }
 

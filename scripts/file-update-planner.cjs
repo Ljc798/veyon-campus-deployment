@@ -41,6 +41,7 @@ const ROLE_LAYOUTS = Object.freeze({
     components: Object.freeze({
       StudentSetup: 'StudentApp',
       StudentWorker: 'StudentApp',
+      MaintenanceService: 'StudentApp',
       StudentAgentPayload: 'StudentApp',
       StudentAgentRuntime: 'StudentAgentVersioned',
       StudentCompanion: 'StudentApp',
@@ -50,7 +51,7 @@ const ROLE_LAYOUTS = Object.freeze({
       StudentUpdateHelper: 'StudentUpdateHelperVersioned'
     }),
     requiredComponents: Object.freeze([
-      'StudentSetup', 'StudentWorker', 'StudentAgentPayload', 'StudentAgentRuntime',
+      'StudentSetup', 'StudentWorker', 'MaintenanceService', 'StudentAgentPayload', 'StudentAgentRuntime',
       'StudentCompanion', 'EdgePolicyExecutor', 'EdgeNativeHost', 'EdgeExtension', 'StudentUpdateHelper'
     ]),
     classify(rootId, relativePath) {
@@ -58,6 +59,7 @@ const ROLE_LAYOUTS = Object.freeze({
       if (rootId === 'StudentUpdateHelperVersioned') return 'StudentUpdateHelper';
       const lower = relativePath.toLowerCase();
       if (lower.startsWith('worker/')) return 'StudentWorker';
+      if (lower.startsWith('maintenanceservice/')) return 'MaintenanceService';
       if (lower.startsWith('websitepolicyagent/')) return 'StudentAgentPayload';
       if (lower.startsWith('studentcompanion/')) return 'StudentCompanion';
       if (lower.startsWith('edgepolicyexecutor/')) return 'EdgePolicyExecutor';

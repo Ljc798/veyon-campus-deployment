@@ -122,7 +122,8 @@ public static class StudentAgentConfigurationSyncTransport
         IEnumerable<string> targets, string campusId, IReadOnlyList<string> teacherChannelEndpoints,
         string teacherChannelRootCertificateBase64, RSA campusPrivateKey,
         IProgress<StudentAgentConfigurationSyncProgress>? progress = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Func<string, Guid, string, CancellationToken, Task>? onCommandPrepared = null)
     {
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
@@ -159,6 +160,10 @@ public static class StudentAgentConfigurationSyncTransport
                 string signedCommand;
                 lock (campusPrivateKey)
                     signedCommand = StudentAgentConfigurationSyncCryptography.Sign(command, campusPrivateKey);
+                if (onCommandPrepared is not null)
+                    await onCommandPrepared(target, command.CommandId,
+                        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedCommand))),
+                        cancellationToken).ConfigureAwait(false);
                 var nonce = command.Nonce;
                 using var request = new HttpRequestMessage(HttpMethod.Post,
                     new UriBuilder(Uri.UriSchemeHttp, target, WebsitePolicyAgent.Port,

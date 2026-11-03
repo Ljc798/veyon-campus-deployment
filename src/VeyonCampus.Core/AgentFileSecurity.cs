@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text.RegularExpressions;
 
 namespace VeyonCampus.Core;
 
@@ -75,12 +76,23 @@ internal static class AgentFileSecurity
 
     public static void SecureTree(string directory, bool executable = true)
     {
+        if (IsAgentMaintenanceDirectory(directory))
+        {
+            SecurePrivateDirectory(directory);
+            VerifyPrivateMaintenanceDirectory(directory);
+            return;
+        }
         Secure(directory, directory: true);
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
             PathLinkSecurity.RejectLinks(path);
             if (Directory.Exists(path) && IsHealthRepairStateDirectory(path))
                 VerifyPrivateHealthRepairState(path);
+            else if (Directory.Exists(path) && IsAgentMaintenanceDirectory(path))
+            {
+                SecurePrivateDirectory(path);
+                VerifyPrivateMaintenanceDirectory(path);
+            }
             else if (Directory.Exists(path)) SecureTree(path, executable);
             else if (IsAgentConfigurationDirectory(directory) && IsLegacyHealthRepairLedgerFile(path))
                 SecurePrivateFile(path);
@@ -109,6 +121,47 @@ internal static class AgentFileSecurity
     private static bool IsHealthRepairStateDirectory(string path) =>
         Path.GetFileName(path).Equals("health-repair", StringComparison.OrdinalIgnoreCase) &&
         Path.GetDirectoryName(path) is { } configDirectory && IsAgentConfigurationDirectory(configDirectory);
+
+    private static bool IsAgentMaintenanceDirectory(string path) =>
+        Path.GetFileName(path).Equals("Maintenance", StringComparison.OrdinalIgnoreCase) &&
+        Path.GetDirectoryName(path) is { } configDirectory && IsAgentConfigurationDirectory(configDirectory);
+
+    private static void VerifyPrivateMaintenanceDirectory(string directory)
+    {
+        if (!IsPrivate(directory, directory: true))
+            throw new IOException($"Maintenance 服务目录 ACL 无效：{directory}");
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        {
+            PathLinkSecurity.RejectLinks(path);
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0 &&
+                Path.GetFileName(path).Equals(MaintenanceServiceUpdateExecutor.StagingDirectoryName,
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                VerifyPrivateMaintenanceUpdateStagingDirectory(path);
+                continue;
+            }
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
+                throw new IOException($"Maintenance 服务目录不允许未审核的子目录：{path}");
+            SecurePrivateFile(path);
+        }
+    }
+
+    private static void VerifyPrivateMaintenanceUpdateStagingDirectory(string directory)
+    {
+        SecurePrivateDirectory(directory);
+        if (!IsPrivate(directory, directory: true))
+            throw new IOException($"Maintenance 更新暂存目录 ACL 无效：{directory}");
+        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
+        {
+            PathLinkSecurity.RejectLinks(path);
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0 ||
+                !Regex.IsMatch(Path.GetFileName(path),
+                    "^VeyonCampus-Student-Setup-(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?-win-x64\\.exe(?:\\.release\\.json)?$",
+                    RegexOptions.CultureInvariant))
+                throw new IOException($"Maintenance 更新暂存目录包含未审核的路径：{path}");
+            SecurePrivateFile(path);
+        }
+    }
 
     private static bool IsLegacyHealthRepairLedgerFile(string path)
     {

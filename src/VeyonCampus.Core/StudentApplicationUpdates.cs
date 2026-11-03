@@ -56,6 +56,9 @@ public sealed record StudentApplicationUpdateDownloadCapabilityResponse(
     string? TeacherChannelConfigurationFingerprint = null,
     string? ConfigurationFingerprint = null);
 
+public sealed record StudentApplicationUpdateCapabilityReadback(
+    StudentApplicationUpdateDownloadCapabilityResponse Capability, string SignedResponseSha256);
+
 public static class StudentApplicationUpdateDownloadCapabilityCryptography
 {
     public const string Purpose = "VeyonCampus.StudentApplicationUpdateDownloadCapability.v1";
@@ -615,6 +618,7 @@ public static class StudentApplicationUpdateProcessor
             // Named Mutex is thread-affine; limit the preflight lock to this synchronous section.
             using (StudentUpdateAtomicTransaction.AcquireMachineLock())
             {
+                config = ReadBoundConfigurationSnapshot(configPath, config);
                 StudentUpdateAtomicTransaction.RecoverPending(configPath);
                 StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
                 PathLinkSecurity.RejectLinks(installDirectory);
@@ -700,6 +704,7 @@ public static class StudentApplicationUpdateProcessor
 
                 // Download is asynchronous, so reacquire and re-read all machine state before mutation.
                 using var machineUpdateLock = StudentUpdateAtomicTransaction.AcquireMachineLock();
+                config = ReadBoundConfigurationSnapshot(configPath, config);
                 StudentUpdateAtomicTransaction.RecoverPending(configPath);
                 StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
                 PathLinkSecurity.RejectLinks(installDirectory);
@@ -965,6 +970,19 @@ public static class StudentApplicationUpdateProcessor
             requestSigner).ConfigureAwait(false);
         return new StudentArtifactDownloadResult(downloaded.NetworkBytes, downloaded.IntegrityHashMilliseconds,
             downloaded.RetryCount);
+    }
+
+    private static WebsitePolicyAgentConfig ReadBoundConfigurationSnapshot(string configPath,
+        WebsitePolicyAgentConfig requestSnapshot)
+    {
+        var current = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
+                     ?? throw new InvalidDataException("学生 Agent 配置在更新期间消失；未开始安装。请重新核对配置。");
+        if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(requestSnapshot, current))
+            throw new InvalidDataException(
+                "学生 Agent 的校区、信任根或运行身份在更新请求等待期间变化；未开始安装。请重新核对后发送更新。");
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(current.CampusId,
+            current.TeacherChannelEndpoints, current.TeacherChannelRootCertificateBase64);
+        return current;
     }
 
     private static string ReadInstalledVersion(string installDirectory, string executablePath)
@@ -1393,6 +1411,45 @@ public static class StudentApplicationUpdateTransport
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(20);
     private const int MaximumResultBytes = StudentAgentResponseCryptography.MaximumEnvelopeBytes;
 
+    /// <summary>Reads the pinned Agent's signed update/channel capability without creating an update command.</summary>
+    public static async Task<StudentApplicationUpdateCapabilityReadback?> ReadVerifiedDownloadCapabilityAsync(
+        string target, string campusId, RSA campusPrivateKey, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(campusPrivateKey);
+        var validatedTargets = WebsitePolicyTransport.NormalizeTargets([target]);
+        if (validatedTargets.Count != 1) throw new InvalidDataException("能力读回目标无效。");
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var normalizedTarget = validatedTargets[0];
+        var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, normalizedTarget);
+        if (pinnedKey is null) throw new InvalidDataException("学生 Agent 身份尚未固定；拒绝读取可作为维护证据的能力。");
+
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
+        var uri = new UriBuilder(Uri.UriSchemeHttp, normalizedTarget, WebsitePolicyAgent.Port,
+            WebsitePolicyAgent.StudentUpdateDownloadCapabilityPath).Uri;
+        var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
+        using var content = new StringContent(WebsitePolicyStatusCryptography.SignRequest(request, campusPrivateKey),
+            Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (response.StatusCode != HttpStatusCode.OK)
+            throw new HttpRequestException(
+                $"读取学生更新能力返回 HTTP {(int)response.StatusCode}。", null, response.StatusCode);
+        var signedResponse = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(signedResponse))
+            throw new InvalidDataException("学生更新能力接口返回空签名回执。");
+        var verified = StudentAgentResponseCryptography
+            .Verify<StudentApplicationUpdateDownloadCapabilityResponse>(signedResponse, pinnedKey);
+        if (!verified.MatchesPinnedKey)
+            throw new InvalidDataException("学生更新能力回执与已固定的 Agent 身份不一致。");
+        StudentApplicationUpdateDownloadCapabilityCryptography.Validate(verified.Payload, campusId,
+            request.Nonce, DateTimeOffset.UtcNow);
+        return new StudentApplicationUpdateCapabilityReadback(verified.Payload,
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedResponse))));
+    }
+
     public static async Task<IReadOnlyList<StudentApplicationUpdatePushResult>> PushAsync(
         IEnumerable<string> targets, string campusId, string expectedSetupVersion, RSA campusPrivateKey,
         Func<string, string, int?, CancellationToken,
@@ -1616,9 +1673,26 @@ public static class StudentApplicationUpdateTransport
                 var restartPending = response.StatusCode == HttpStatusCode.Accepted;
                 var verifiedUpdate = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(resultText,
                     pinnedKey);
-                StudentApplicationUpdateResponseCryptography.Validate(verifiedUpdate.Payload, campusId,
-                    command.CommandId, source.TargetSetupVersion ?? expectedSetupVersion,
-                    source.TargetAgentVersion, restartPending, DateTimeOffset.UtcNow);
+                var responseSetupVersion = source.TargetSetupVersion ?? expectedSetupVersion;
+                if (restartPending)
+                {
+                    // The old Agent signs this receipt before its process is replaced. Its AgentVersion
+                    // must match the source runtime; the committed readback is validated independently
+                    // against the target version and transaction below.
+                    StudentApplicationUpdateResponseCryptography.ValidatePreSwitchAcknowledgement(
+                        verifiedUpdate.Payload, campusId, command.CommandId, responseSetupVersion,
+                        source.AgentVersion, DateTimeOffset.UtcNow);
+                }
+                else
+                {
+                    var expectedRunningAgentVersion = source.TargetAgentVersion is { } targetAgentVersion &&
+                        ApplicationReleaseClient.CompareVersions(targetAgentVersion, source.AgentVersion) > 0
+                            ? targetAgentVersion
+                            : source.AgentVersion;
+                    StudentApplicationUpdateResponseCryptography.ValidateSynchronousResult(
+                        verifiedUpdate.Payload, campusId, command.CommandId, responseSetupVersion,
+                        expectedRunningAgentVersion, DateTimeOffset.UtcNow);
+                }
                 var updateIdentity = CreateIdentityCandidate(target, campusId, verifiedUpdate, pinnedKey);
                 if (restartPending)
                 {
@@ -1639,9 +1713,7 @@ public static class StudentApplicationUpdateTransport
                     if (readback.State == "committed")
                     {
                         var targetVersionsMatch = MatchesCommittedVersions(readback.Status, source,
-                            expectedSetupVersion) &&
-                            string.Equals(readback.Status.AgentVersion, verifiedUpdate.Payload.AgentVersion,
-                                StringComparison.Ordinal);
+                            expectedSetupVersion);
                         var succeeded = readback.MatchesPinnedKey && verifiedUpdate.MatchesPinnedKey &&
                                         targetVersionsMatch;
                         return succeeded
@@ -1674,9 +1746,7 @@ public static class StudentApplicationUpdateTransport
                 if (completedReadback is { State: "committed" } committedReadback)
                 {
                     var committed = verifiedUpdate.MatchesPinnedKey && committedReadback.MatchesPinnedKey &&
-                                   MatchesCommittedVersions(committedReadback.Status, source, expectedSetupVersion) &&
-                                   string.Equals(committedReadback.Status.AgentVersion,
-                                       verifiedUpdate.Payload.AgentVersion, StringComparison.Ordinal);
+                                   MatchesCommittedVersions(committedReadback.Status, source, expectedSetupVersion);
                     return committed
                         ? CreateCommittedUpdateResult(campusId, target, committedReadback.Status,
                             committedReadback.IdentityCandidate ?? updateIdentity, source,

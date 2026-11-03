@@ -29,14 +29,16 @@ public sealed record StudentAgentStatusResponse(int SchemaVersion, string Purpos
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     StudentUpdateTransactionStatus? UpdateTransaction = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    StudentAgentHealthSnapshot? Health = null);
+    StudentAgentHealthSnapshot? Health = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    StudentAgentTeacherChannelDiagnosticsSnapshot? TeacherChannelDiagnostics = null);
 public sealed record StudentUpdateTransactionStatus(Guid CommandId, string State,
     string? PreviousSetupVersion = null, string? TargetSetupVersion = null,
     string? PreviousAgentVersion = null, string? TargetAgentVersion = null);
 public sealed record StudentAgentStatusDeliveryResult(string Target, bool Succeeded, string Detail,
     StudentAgentStatusResponse? Status = null, bool NeedsReview = false,
     StudentAgentIdentityTrustCandidate? IdentityCandidate = null,
-    bool TransientUnavailable = false);
+    bool TransientUnavailable = false, string? VerifiedResponseSha256 = null);
 public sealed record StudentAgentIdentityDiscoveryResult(string Target,
     StudentAgentIdentityTrustCandidate? Candidate, bool MatchesPinnedKey, string Detail);
 
@@ -46,10 +48,12 @@ public static class WebsitePolicyStatusCryptography
     public const string RequestPurposeV2 = "VeyonCampus.WebsitePolicyStatusRequest.v2";
     public const string RequestPurposeV3 = "VeyonCampus.WebsitePolicyStatusRequest.v3";
     public const string RequestPurposeV4 = "VeyonCampus.WebsitePolicyStatusRequest.v4";
+    public const string RequestPurposeV5 = "VeyonCampus.WebsitePolicyStatusRequest.v5";
     public const string ResponsePurpose = "VeyonCampus.StudentAgentStatusResponse.v1";
     public const string ResponsePurposeV2 = "VeyonCampus.StudentAgentStatusResponse.v2";
     public const string ResponsePurposeV3 = "VeyonCampus.StudentAgentStatusResponse.v3";
     public const string ResponsePurposeV4 = "VeyonCampus.StudentAgentStatusResponse.v4";
+    public const string ResponsePurposeV5 = "VeyonCampus.StudentAgentStatusResponse.v5";
     public const int CurrentStudentUpdateProtocolVersion = 1;
     public static readonly TimeSpan MaximumRequestAge = TimeSpan.FromMinutes(5);
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
@@ -109,6 +113,7 @@ public static class WebsitePolicyStatusCryptography
             2 => ResponsePurposeV2,
             3 => ResponsePurposeV3,
             4 => ResponsePurposeV4,
+            5 => ResponsePurposeV5,
             _ => ""
         };
         if (response.StudentSetupVersion is { } setupVersion)
@@ -118,10 +123,11 @@ public static class WebsitePolicyStatusCryptography
             _ = ApplicationReleaseClient.CompareVersions(setupVersion, setupVersion);
         }
         if (response.Health is { } health &&
-            (request.SchemaVersion != 4 || !Enum.IsDefined(health.VeyonServiceState) ||
+            (request.SchemaVersion < 4 || !Enum.IsDefined(health.VeyonServiceState) ||
              health.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or
                  "superseded" or "needsReview") ||
-             health.CollectedUtc.Offset != TimeSpan.Zero))
+             health.CollectedUtc.Offset != TimeSpan.Zero ||
+             health.CollectedUtc > now.AddMinutes(2) || health.CollectedUtc < now.AddMinutes(-10)))
             throw new InvalidDataException("学生 Agent 健康快照字段无效。");
         if (response.SchemaVersion != request.SchemaVersion || response.Purpose != expectedPurpose || response.CampusId != request.CampusId ||
             response.Nonce != request.Nonce || response.CollectedUtc.Offset != TimeSpan.Zero ||
@@ -157,7 +163,11 @@ public static class WebsitePolicyStatusCryptography
             throw new InvalidDataException("学生 Agent 状态响应字段无效。");
         if ((request.SchemaVersion >= 3) != (response.EdgeBrowserDiagnostics is not null))
             throw new InvalidDataException("Edge 浏览器诊断与状态协议版本不匹配。");
-        if (request.SchemaVersion == 4)
+        if ((request.SchemaVersion == 5) != (response.TeacherChannelDiagnostics is not null) ||
+            response.TeacherChannelDiagnostics is { } channelDiagnostics &&
+            !StudentAgentTeacherChannelDiagnostics.Validate(channelDiagnostics))
+            throw new InvalidDataException("教师连接诊断与状态协议版本或字段不匹配。");
+        if (request.SchemaVersion >= 4)
         {
             var transaction = response.UpdateTransaction;
             if (response.StudentUpdateProtocolVersion != CurrentStudentUpdateProtocolVersion ||
@@ -211,6 +221,7 @@ public static class WebsitePolicyStatusCryptography
             2 => request.Purpose == RequestPurposeV2,
             3 => request.Purpose == RequestPurposeV3,
             4 => request.Purpose == RequestPurposeV4,
+            5 => request.Purpose == RequestPurposeV5,
             _ => false
         };
         if (!purposeIsValid || request.Nonce == Guid.Empty ||
@@ -237,14 +248,19 @@ public static class WebsitePolicyStatusTransport
     public static async Task<IReadOnlyList<StudentAgentStatusDeliveryResult>> ReadAsync(
         IEnumerable<string> targets, string campusId, RSA privateKey, CancellationToken cancellationToken = default,
         bool includeHealthSnapshot = false, Guid? updateCommandId = null,
-        bool allowLegacyDirectFallback = false, bool allowDirectFallbackWhenChannelOffline = false)
+        bool allowLegacyDirectFallback = false, bool allowDirectFallbackWhenChannelOffline = false,
+        bool includeTeacherChannelDiagnostics = false)
     {
         ArgumentNullException.ThrowIfNull(privateKey);
         var validated = WebsitePolicyTransport.NormalizeTargets(targets);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var outgoing = validated.Select(target =>
         {
-            var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+            var schemaVersion = includeTeacherChannelDiagnostics ? 5 : 4;
+            var purpose = schemaVersion == 5
+                ? WebsitePolicyStatusCryptography.RequestPurposeV5
+                : WebsitePolicyStatusCryptography.RequestPurposeV4;
+            var request = new WebsitePolicyStatusRequest(schemaVersion, purpose,
                 campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, updateCommandId);
             return (Target: target, SignedRequest: WebsitePolicyStatusCryptography.SignRequest(request, privateKey),
                 Request: request);
@@ -260,10 +276,21 @@ public static class WebsitePolicyStatusTransport
             {
                 var request = outgoingRequest.Request;
                 var uri = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target, WebsitePolicyAgent.Port,
-                    WebsitePolicyAgent.StatusPathV4).Uri;
+                    request.SchemaVersion == 5 ? WebsitePolicyAgent.StatusPathV5 : WebsitePolicyAgent.StatusPathV4).Uri;
                 var reply = await SendStatusRequestAsync(client, uri, outgoingRequest.SignedRequest,
                     cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
                 var body = Encoding.UTF8.GetString(reply.Body);
+                if (request.SchemaVersion == 5 && DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
+                {
+                    request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
+                        campusId, Guid.NewGuid(), DateTimeOffset.UtcNow, updateCommandId);
+                    var signedV4 = WebsitePolicyStatusCryptography.SignRequest(request, privateKey);
+                    var uriV4 = new UriBuilder(Uri.UriSchemeHttp, outgoingRequest.Target,
+                        WebsitePolicyAgent.Port, WebsitePolicyAgent.StatusPathV4).Uri;
+                    reply = await SendStatusRequestAsync(client, uriV4, signedV4,
+                        cancellationToken, includeHealthSnapshot).ConfigureAwait(false);
+                    body = Encoding.UTF8.GetString(reply.Body);
+                }
                 if (DoesNotSupportRequestedStatusVersion(reply.StatusCode, body))
                 {
                     if (updateCommandId is not null)
@@ -327,7 +354,8 @@ public static class WebsitePolicyStatusTransport
                         NeedsReview: true, IdentityCandidate: candidate);
                 return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, true,
                     "学生 Agent 状态回执的签名、随机数和已固定设备身份均已验证。", status,
-                    IdentityCandidate: candidate);
+                    IdentityCandidate: candidate,
+                    VerifiedResponseSha256: Convert.ToHexString(SHA256.HashData(reply.Body)));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException or

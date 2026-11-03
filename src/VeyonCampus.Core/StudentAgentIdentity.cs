@@ -34,6 +34,16 @@ public static class StudentApplicationUpdateResponseCryptography
     public const string Purpose = "VeyonCampus.StudentApplicationUpdateResponse.v1";
     public static readonly TimeSpan MaximumResponseAge = TimeSpan.FromMinutes(25);
 
+    public static void ValidatePreSwitchAcknowledgement(StudentApplicationUpdateResponse response, string campusId,
+        Guid commandId, string expectedSetupVersion, string sourceAgentVersion, DateTimeOffset nowUtc)
+        => Validate(response, campusId, commandId, expectedSetupVersion, sourceAgentVersion,
+            restartPending: true, nowUtc: nowUtc);
+
+    public static void ValidateSynchronousResult(StudentApplicationUpdateResponse response, string campusId,
+        Guid commandId, string expectedSetupVersion, string expectedRunningAgentVersion, DateTimeOffset nowUtc)
+        => Validate(response, campusId, commandId, expectedSetupVersion, expectedRunningAgentVersion,
+            restartPending: false, nowUtc: nowUtc);
+
     public static void Validate(StudentApplicationUpdateResponse response, string campusId, Guid commandId,
         string expectedVersion, bool restartPending, DateTimeOffset nowUtc)
         => Validate(response, campusId, commandId, expectedVersion, expectedVersion, restartPending, nowUtc);

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -158,6 +159,17 @@ public static class ApplicationReleaseUpdateHandoff
                 ApplyReleaseAsAdministrator(decodedInstallerPath, ParseRole(elevatedRole), decodedCurrentVersion);
                 return 0;
             }
+            if (args is ["--maintenance-apply-release", var encodedInstallerPath, var encodedConfigPath,
+                    var commandIdText, var encodedCurrentVersion])
+            {
+                var installerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedInstallerPath));
+                var configPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedConfigPath));
+                var currentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCurrentVersion));
+                if (!Guid.TryParseExact(commandIdText, "N", out var commandId) || commandId == Guid.Empty)
+                    throw new InvalidDataException("Maintenance 更新事务编号无效。");
+                ApplyReleaseFromMaintenanceService(installerPath, configPath, currentVersion, commandId);
+                return 0;
+            }
             return 2;
         }
         catch (Exception exception)
@@ -165,6 +177,46 @@ public static class ApplicationReleaseUpdateHandoff
             WriteFailureLog(exception);
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Starts the already deployed, versioned UpdateHelper under SYSTEM. The helper owns the
+    /// machine update mutex and can let SCM stop this service before StudentSetup replaces files.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    public static void StartFromMaintenanceService(string installerPath, string configPath, Guid commandId)
+    {
+        EnsureSystemIdentity();
+        if (commandId == Guid.Empty) throw new InvalidDataException("Maintenance 更新事务编号无效。");
+        var fullConfigPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+        EnsureSamePath(fullConfigPath, configPath, "Maintenance 更新配置路径不是当前唯一受信任 Agent 配置。" );
+        var currentVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion()
+                             ?? throw new InvalidDataException("无法读取当前 StudentSetup 版本；未启动更新助手。" );
+        var fullInstallerPath = Path.GetFullPath(installerPath);
+        EnsureMaintenanceServiceStagingPath(fullInstallerPath, fullConfigPath);
+        var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.StudentSetup);
+        if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
+            throw new InvalidDataException("Maintenance StudentSetup 更新目标必须高于当前安装版本。" );
+        EnsurePolicyCapabilities(ApplicationReleaseRole.StudentSetup, release.Manifest);
+
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var helperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(programFiles, currentVersion);
+        PathLinkSecurity.RejectLinks(helperPath);
+        if (!File.Exists(helperPath))
+            throw new FileNotFoundException("当前 StudentSetup 版本缺少 UpdateHelper；未启动更新。", helperPath);
+        var startInfo = new ProcessStartInfo(helperPath)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(helperPath)!
+        };
+        startInfo.ArgumentList.Add("--maintenance-apply-release");
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(fullInstallerPath)));
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(fullConfigPath)));
+        startInfo.ArgumentList.Add(commandId.ToString("N"));
+        startInfo.ArgumentList.Add(Convert.ToBase64String(Encoding.UTF8.GetBytes(currentVersion)));
+        using var helper = Process.Start(startInfo)
+                           ?? throw new InvalidOperationException("无法启动 SYSTEM StudentSetup 更新助手。" );
     }
 
     private static void ApplyReleaseAsCurrentUser(string installerPath, ApplicationReleaseRole role,
@@ -237,13 +289,13 @@ public static class ApplicationReleaseUpdateHandoff
     }
 
     private static void ApplyReleaseAsAdministrator(string installerPath, ApplicationReleaseRole role,
-        string currentVersion)
+        string currentVersion, bool requireUserStaging = true)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
         _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
         var fullInstallerPath = Path.GetFullPath(installerPath);
-        EnsureUserStagingPath(fullInstallerPath);
+        if (requireUserStaging) EnsureUserStagingPath(fullInstallerPath);
         var release = ReadVerifiedRelease(fullInstallerPath, role);
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("更新版本必须严格高于当前版本。");
@@ -326,6 +378,76 @@ public static class ApplicationReleaseUpdateHandoff
             try { Directory.Delete(protectedStagingDirectory, recursive: true); }
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException) { }
         }
+    }
+
+    private static void ApplyReleaseFromMaintenanceService(string installerPath, string configPath,
+        string currentVersion, Guid commandId)
+    {
+        EnsureSystemIdentity();
+        _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
+        var canonicalConfigPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+        EnsureSamePath(canonicalConfigPath, configPath,
+            "UpdateHelper 的 Maintenance 配置路径不是当前唯一受信任 Agent 配置。" );
+        var fullInstallerPath = Path.GetFullPath(installerPath);
+        EnsureMaintenanceServiceStagingPath(fullInstallerPath, canonicalConfigPath);
+        var fullProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var expectedHelperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(fullProgramFiles,
+            currentVersion);
+        EnsureSamePath(Environment.ProcessPath ?? "", expectedHelperPath,
+            "Maintenance 更新必须由当前已安装 StudentSetup 版本对应的 UpdateHelper 执行。" );
+        var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.StudentSetup);
+        if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
+            throw new InvalidDataException("Maintenance StudentSetup 更新目标必须高于当前安装版本。" );
+        EnsurePolicyCapabilities(ApplicationReleaseRole.StudentSetup, release.Manifest);
+        using var currentProcess = Process.GetCurrentProcess();
+        MaintenanceServiceUpdateJournal.MarkHelperStarted(canonicalConfigPath, commandId, currentProcess.Id,
+            currentProcess.StartTime.ToUniversalTime().Ticks);
+        try
+        {
+            using var machineUpdateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+            var updateState = StudentUpdateAtomicTransaction.ReadCurrentState(canonicalConfigPath);
+            if (updateState is "inProgress" or "needsReview")
+                throw new InvalidOperationException("已有 StudentSetup/Agent 原子事务；本次 Maintenance 更新保持待核对。" );
+            ApplyReleaseAsAdministrator(fullInstallerPath, ApplicationReleaseRole.StudentSetup, currentVersion,
+                requireUserStaging: false);
+            MaintenanceServiceUpdateJournal.MarkCompleted(canonicalConfigPath, commandId, "committed");
+            MaintenanceServiceUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
+        }
+        catch
+        {
+            var transaction = MaintenanceServiceUpdateExecutor.ReadTransaction(canonicalConfigPath);
+            var installedVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
+            var failedState = transaction is not null &&
+                              string.Equals(installedVersion, transaction.PreviousSetupVersion,
+                                  StringComparison.Ordinal)
+                ? "rolledBack"
+                : "needsReview";
+            MaintenanceServiceUpdateJournal.MarkCompleted(canonicalConfigPath, commandId, failedState);
+            throw;
+        }
+    }
+
+    private static void EnsureMaintenanceServiceStagingPath(string installerPath, string configPath)
+    {
+        var fullPath = Path.GetFullPath(installerPath);
+        var serviceDirectory = MaintenanceServiceIdentityStore.GetServiceDirectory(configPath);
+        var stagingDirectory = Path.Combine(serviceDirectory,
+            MaintenanceServiceUpdateExecutor.StagingDirectoryName);
+        EnsureSamePath(Path.GetDirectoryName(fullPath) ?? "", stagingDirectory,
+            "Maintenance 更新包必须位于 SYSTEM 私有暂存目录。" );
+        PathLinkSecurity.RejectLinks(stagingDirectory);
+        PathLinkSecurity.RejectLinks(fullPath);
+        if (!AgentFileSecurity.IsPrivate(stagingDirectory, directory: true))
+            throw new UnauthorizedAccessException("Maintenance 更新暂存目录 ACL 未限制为 SYSTEM 和 Administrators。" );
+    }
+
+    private static void EnsureSystemIdentity()
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("Maintenance StudentSetup 更新仅支持 Windows。" );
+        using var identity = WindowsIdentity.GetCurrent();
+        if (identity.User?.Value != "S-1-5-18")
+            throw new UnauthorizedAccessException("Maintenance StudentSetup 更新助手必须以 SYSTEM 身份运行。" );
     }
 
     private static void RestorePreviousInstallation(string installDirectory, string previousInstallationDirectory,

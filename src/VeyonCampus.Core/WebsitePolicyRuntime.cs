@@ -1283,7 +1283,7 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
-    private static void ValidateInstalledAgentTrustConfiguration(WebsitePolicyAgentConfig config)
+    internal static void ValidateInstalledAgentTrustConfiguration(WebsitePolicyAgentConfig config)
     {
         if (string.IsNullOrWhiteSpace(config.CampusId) || string.IsNullOrWhiteSpace(config.PublicKeyPem))
             throw new InvalidDataException("本机 Student Agent 校区配置缺少校区标识或网站策略公钥。");
@@ -1661,9 +1661,8 @@ public static class WebsitePolicyAgentInstaller
         if (!File.Exists(sourceExecutable) ||
             (File.GetAttributes(sourceExecutable) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("StudentSetup 中的新 Agent 缺失或不是普通文件。");
-        var sourceAgentVersion = WorkerInstallationGuard.GetAssemblyProductVersion(sourceExecutable);
-        if (!string.Equals(sourceAgentVersion, targetVersion, StringComparison.Ordinal))
-            throw new InvalidDataException("Agent 暂存目标版本与已验真的 StudentSetup 内置程序集版本不一致；拒绝写入错误版本目录。");
+        EnsureAgentExecutableVersion(sourceExecutable, targetVersion,
+            "Agent 暂存目标版本与已验真的 StudentSetup 内置程序集版本不一致");
 
         var fullConfigPath = Path.GetFullPath(configPath);
         PathLinkSecurity.RejectLinks(fullConfigPath);
@@ -1687,12 +1686,54 @@ public static class WebsitePolicyAgentInstaller
             (File.GetAttributes(targetExecutable) & FileAttributes.ReparsePoint) != 0 ||
             !DirectoryTreesEqual(fullSourceDirectory, targetDirectory))
             throw new InvalidDataException("新 Agent 的受保护副本与 StudentSetup 安装文件不一致。");
-        if (!string.Equals(WorkerInstallationGuard.GetAssemblyProductVersion(targetExecutable), targetVersion,
-                StringComparison.Ordinal))
-            throw new InvalidDataException("受保护暂存目录中的 Agent 版本与事务目标不一致；拒绝激活。");
+        EnsureAgentExecutableVersion(targetExecutable, targetVersion,
+            "受保护暂存目录中的 Agent 版本与事务目标不一致；拒绝激活");
 
         EnsureFirewallRule(targetExecutable);
         return new StagedWebsitePolicyAgentUpdate(targetExecutable, existingTask.ExecutablePath);
+    }
+
+    internal static void EnsureAgentExecutableVersion(string executablePath, string expectedVersion, string failureReason)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(expectedVersion, expectedVersion);
+        PathLinkSecurity.RejectLinks(executablePath);
+        PathLinkSecurity.RejectLinks(Path.ChangeExtension(executablePath, ".dll"));
+        var actualVersion = WorkerInstallationGuard.GetAssemblyProductVersion(executablePath);
+        if (!string.Equals(actualVersion, expectedVersion, StringComparison.Ordinal))
+            throw new InvalidDataException($"{failureReason}；目录声明 {expectedVersion}，程序集实际版本 {actualVersion}。");
+    }
+
+    public static void ValidatePreviousAgentRecoveryMaterial(string configPath, string expectedAgentVersion,
+        string expectedConfigFingerprint)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理恢复仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理恢复材料只能由 SYSTEM Agent 核验。");
+
+        _ = ApplicationReleaseClient.CompareVersions(expectedAgentVersion, expectedAgentVersion);
+        if (!Regex.IsMatch(expectedConfigFingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("旧 Agent 恢复配置指纹无效；未移动 StudentSetup。");
+        var fullConfig = Path.GetFullPath(configPath);
+        var previousAgent = StudentUpdateAtomicTransaction.GetAgentExecutablePath(expectedAgentVersion);
+        PathLinkSecurity.RejectLinks(fullConfig);
+        PathLinkSecurity.RejectLinks(previousAgent);
+        if (!IsManagedAgentExecutablePath(previousAgent) || !File.Exists(previousAgent))
+            throw new InvalidDataException("旧 Agent 回滚文件缺失或不在固定受管版本目录；未移动 StudentSetup。");
+        EnsureAgentExecutableVersion(previousAgent, expectedAgentVersion,
+            "旧 Agent 回滚文件与受保护版本目录不一致；未移动 StudentSetup");
+
+        var activeAgent = ReadManagedAgentExecutablePath(fullConfig);
+        if (!PathEquals(activeAgent, previousAgent))
+            throw new InvalidDataException("SYSTEM Agent 任务未指向事务记录中的旧版本；未移动 StudentSetup。");
+        var config = ReadVerifiedManagedAgentConfiguration(fullConfig);
+        if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(config), expectedConfigFingerprint,
+                StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("当前受信任校区配置与事务恢复指纹不一致；未移动 StudentSetup。");
+        if (!string.Equals(WebsitePolicyAgent.GetRuntimeVersion(), expectedAgentVersion, StringComparison.Ordinal) ||
+            !WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2), expectedConfigFingerprint, expectedAgentVersion))
+            throw new InvalidDataException("旧 SYSTEM Agent 未通过移动 StudentSetup 前的版本、配置指纹与健康检查。");
     }
 
     [SupportedOSPlatform("windows")]
@@ -1847,6 +1888,12 @@ public static class WebsitePolicyAgentInstaller
         if (!IsManagedAgentExecutablePath(target) || !IsManagedAgentExecutablePath(previous) ||
             !File.Exists(previous))
             throw new InvalidDataException("Agent 事务回滚目标不在固定受管版本目录。");
+        var previousVersionDirectory = Path.GetFileName(Path.GetDirectoryName(previous));
+        if (string.IsNullOrWhiteSpace(previousVersionDirectory) ||
+            !IsValidAgentVersionDirectory(previousVersionDirectory))
+            throw new InvalidDataException("旧 Agent 回滚目录没有有效的版本号；拒绝改写 SYSTEM 启动任务。");
+        EnsureAgentExecutableVersion(previous, previousVersionDirectory,
+            "旧 Agent 回滚文件内容与受保护版本目录不一致；拒绝改写 SYSTEM 启动任务");
 
         var task = ReadTaskForRemoval();
         if (task is null)
@@ -2241,6 +2288,11 @@ public static class WebsitePolicyAgentInstaller
             !GetPreviousAgentExecutablePaths().Any(path => PathEquals(path, fullPrevious)))
             throw new InvalidDataException("Agent 更新目标或旧版本文件缺失，不能安全切换。");
 
+        EnsureAgentExecutableVersion(fullTarget, targetVersion,
+            "Agent 更新目标文件与受保护目标版本目录不一致");
+        EnsureAgentExecutableVersion(fullPrevious, previousVersion,
+            "旧 Agent 文件与受保护回滚版本目录不一致");
+
         var previousDirectory = Path.GetFileName(Path.GetDirectoryName(fullPrevious));
         if (previousDirectory is not null && IsValidAgentVersionDirectory(previousDirectory) &&
             !string.Equals(previousDirectory, previousVersion, StringComparison.Ordinal))
@@ -2610,6 +2662,21 @@ public static class WebsitePolicyAgentInstaller
         return JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(stream, WebsitePolicyAgent.JsonOptions)
                ?? throw new InvalidDataException("现有学生网站策略代理配置无效。" );
     }
+
+    internal static bool ConfigurationSnapshotsShareImmutableRuntimeState(WebsitePolicyAgentConfig first,
+        WebsitePolicyAgentConfig second) =>
+        string.Equals(first.CampusId, second.CampusId, StringComparison.Ordinal) &&
+        PublicKeysEqual(first.PublicKeyPem, second.PublicKeyPem) &&
+        string.Equals(first.TelemetryEndpoint, second.TelemetryEndpoint, StringComparison.Ordinal) &&
+        first.DeploymentId == second.DeploymentId &&
+        string.Equals(first.ApplicationVersion, second.ApplicationVersion, StringComparison.Ordinal) &&
+        OptionalPublicKeysEqual(first.ApplicationPolicyPublicKeyPem, second.ApplicationPolicyPublicKeyPem) &&
+        OptionalPublicKeysEqual(first.StudentSystemPolicyPublicKeyPem, second.StudentSystemPolicyPublicKeyPem);
+
+    private static bool OptionalPublicKeysEqual(string? first, string? second) =>
+        first is null || second is null
+            ? first is null && second is null
+            : PublicKeysEqual(first, second);
 
     [SupportedOSPlatform("windows")]
     internal static void WriteSecureConfig(string path, byte[] bytes)
@@ -3175,7 +3242,7 @@ public static class WebsitePolicyAgentInstaller
         return configs;
     }
 
-    private static void VerifyConfigPathIdentity(string configPath, WebsitePolicyAgentConfig config)
+    internal static void VerifyConfigPathIdentity(string configPath, WebsitePolicyAgentConfig config)
     {
         VerifyAgentConfigurationPathAncestors();
         var configDirectory = Path.GetDirectoryName(configPath);
@@ -3585,6 +3652,9 @@ public static class WebsitePolicyAgentInstaller
         return false;
     }
 
+    internal static bool WaitForConfigurationHealth(TimeSpan timeout, string expectedConfigFingerprint) =>
+        WaitForAgentHealth(timeout, expectedConfigFingerprint);
+
     private static string ReadNewAgentStartupDiagnostic(string path, long previousLength)
     {
         var diagnostics = new List<string>();
@@ -3880,7 +3950,9 @@ public static class WebsitePolicyTransport
                                 WebsitePolicyAgent.PolicyDisabledAcknowledgement,
                             RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
                     return new WebsitePolicyPushResult(target, true, verified.Payload.Body,
-                        RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement);
+                        RealtimeAccepted: verified.Payload.Body == WebsitePolicyAgent.PolicyAcceptedRealtimeAcknowledgement,
+                        VerifiedAcknowledgementSha256: Convert.ToHexString(
+                            SHA256.HashData(Encoding.UTF8.GetBytes(resultText))));
                 }
                 catch (Exception exception) when (exception is InvalidDataException or IOException or
                                                   UnauthorizedAccessException or CryptographicException)
@@ -3925,7 +3997,8 @@ public static class WebsitePolicyTransport
 }
 
 public sealed record WebsitePolicyPushResult(string Target, bool Succeeded, string Detail, bool NeedsReview = false,
-    bool ReportedApplied = false, bool RealtimeAccepted = false)
+    bool ReportedApplied = false, bool RealtimeAccepted = false,
+    string? VerifiedAcknowledgementSha256 = null)
 {
     public string StatusLabel => Succeeded && RealtimeAccepted ? "Agent 已接收，Edge 等待扩展同步" :
         Succeeded ? "Agent 已确认写入，浏览器刷新待核对" : ReportedApplied ? "学生机报告已应用，身份待核对" :
@@ -4039,6 +4112,7 @@ public sealed class WebsitePolicyAgent
     public const string StatusPathV2 = "/v2/status";
     public const string StatusPathV3 = "/v3/status";
     public const string StatusPathV4 = "/v4/status";
+    public const string StatusPathV5 = "/v5/status";
     public const string RuntimeSummaryPath = "/v1/device/runtime-summary";
     public const string RuntimeSummaryPathV2 = "/v2/device/runtime-summary";
     public const string InputGuardStatusPath = "/v1/device/input-guard/status";
@@ -4101,6 +4175,15 @@ public sealed class WebsitePolicyAgent
             (config.StudentSystemPolicyPublicKeyPem ?? "") + "\n" +
             string.Join(";", config.TeacherChannelEndpoints ?? Array.Empty<string>()) + "\n" +
             (config.TeacherChannelRootCertificateBase64 ?? ""))));
+
+    private static StudentAgentTeacherChannelDiagnosticsSnapshot ReadTeacherChannelDiagnostics(string configPath)
+    {
+        StudentAgentTeacherChannelDiagnostics.Initialize(configPath);
+        return StudentAgentTeacherChannelDiagnostics.ReadSnapshot(configPath) ??
+               new StudentAgentTeacherChannelDiagnosticsSnapshot(
+                   StudentAgentTeacherChannelDiagnostics.CurrentSchemaVersion, "unknown", null, null, null, null,
+                   null, null, "尚未取得教师连接诊断。" );
+    }
 
     /// <summary>Exact fingerprint formula shipped with StudentSetup v1.1.40.</summary>
     internal static string LegacyV140ConfigFingerprint(WebsitePolicyAgentConfig config) =>
@@ -4869,7 +4952,7 @@ public sealed class WebsitePolicyAgent
             }
             var statusRequestPath = context.Request.Url?.AbsolutePath;
             if (context.Request.HttpMethod == "POST" &&
-                statusRequestPath is StatusPath or StatusPathV2 or StatusPathV3 or StatusPathV4)
+                statusRequestPath is StatusPath or StatusPathV2 or StatusPathV3 or StatusPathV4 or StatusPathV5)
             {
                 if (context.Request.ContentLength64 is > 8192)
                 {
@@ -4893,6 +4976,7 @@ public sealed class WebsitePolicyAgent
                     2 => StatusPathV2,
                     3 => StatusPathV3,
                     4 => StatusPathV4,
+                    5 => StatusPathV5,
                     _ => ""
                 };
                 if (statusRequestPath != expectedStatusPath)
@@ -4927,20 +5011,24 @@ public sealed class WebsitePolicyAgent
                             2 => WebsitePolicyStatusCryptography.ResponsePurposeV2,
                             3 => WebsitePolicyStatusCryptography.ResponsePurposeV3,
                             4 => WebsitePolicyStatusCryptography.ResponsePurposeV4,
+                            5 => WebsitePolicyStatusCryptography.ResponsePurposeV5,
                             _ => WebsitePolicyStatusCryptography.ResponsePurpose
                         },
                         config.CampusId, request.Nonce, now, GetRuntimeVersion(), ConfigFingerprint(config), website,
                         application, systemPolicy, edgeWebsite,
                         StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
                         edgeBrowserDiagnostics,
-                        request.SchemaVersion == 4
+                        request.SchemaVersion >= 4
                             ? WebsitePolicyStatusCryptography.CurrentStudentUpdateProtocolVersion
                             : null,
-                        request.SchemaVersion == 4 && request.UpdateCommandId is { } updateCommandId
+                        request.SchemaVersion >= 4 && request.UpdateCommandId is { } updateCommandId
                             ? StudentUpdateAtomicTransaction.ReadStatus(configPath, updateCommandId)
                             : null,
-                        request.SchemaVersion == 4 && includeHealthSnapshot
+                        request.SchemaVersion >= 4 && includeHealthSnapshot
                             ? WebsitePolicyAgentInstaller.ReadHealthSnapshot(configPath, config, now)
+                            : null,
+                        request.SchemaVersion == 5
+                            ? ReadTeacherChannelDiagnostics(configPath)
                             : null);
                     var bytes = Encoding.UTF8.GetBytes(StudentAgentResponseCryptography.Sign(status, agentIdentityKey));
                     await RespondBytesAsync(response, 200, bytes, "application/json; charset=utf-8", cancellationToken)
@@ -5354,9 +5442,8 @@ public sealed class WebsitePolicyAgent
             StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
             var current = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
                           ?? throw new InvalidDataException("学生网站策略代理配置不存在。");
-            if (!string.Equals(current.CampusId, config.CampusId, StringComparison.Ordinal) ||
-                !WebsitePolicyAgentInstaller.PublicKeysEqual(current.PublicKeyPem, config.PublicKeyPem))
-                throw new InvalidDataException("学生端校区或网站策略信任身份已变化；拒绝配置同步。需先核对设备身份。");
+            if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(config, current))
+                throw new InvalidDataException("学生端校区、信任根或运行身份已变化；拒绝配置同步。需先核对设备身份。");
 
             StudentAgentChannelProtocol.ValidateBootstrapConfiguration(command.CampusId,
                 command.TeacherChannelEndpoints, command.TeacherChannelRootCertificateBase64);
@@ -5366,16 +5453,30 @@ public sealed class WebsitePolicyAgent
             var sameRoot = string.Equals(current.TeacherChannelRootCertificateBase64,
                 command.TeacherChannelRootCertificateBase64, StringComparison.Ordinal);
             changed = !sameEndpoints || !sameRoot;
+            var expected = current;
             if (changed)
             {
-                var updated = current with
+                expected = current with
                 {
                     TeacherChannelEndpoints = Array.AsReadOnly(command.TeacherChannelEndpoints.ToArray()),
                     TeacherChannelRootCertificateBase64 = command.TeacherChannelRootCertificateBase64
                 };
                 WebsitePolicyAgentInstaller.WriteSecureConfig(configPath,
-                    JsonSerializer.SerializeToUtf8Bytes(updated, JsonOptions));
+                    JsonSerializer.SerializeToUtf8Bytes(expected, JsonOptions));
             }
+            var committed = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
+                            ?? throw new InvalidDataException("配置同步原子写入后无法读回；保留现场供核对。");
+            if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(current, committed) ||
+                !string.Equals(WebsitePolicyAgent.ConfigFingerprint(committed),
+                    WebsitePolicyAgent.ConfigFingerprint(expected), StringComparison.Ordinal))
+                throw new InvalidDataException("配置同步后的磁盘快照或配置指纹读回不匹配；未返回成功确认。");
+            config = committed;
+            var committedFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+            if (!string.Equals(committedFingerprint, WebsitePolicyAgent.ConfigFingerprint(expected),
+                    StringComparison.Ordinal) ||
+                !WebsitePolicyAgentInstaller.WaitForConfigurationHealth(TimeSpan.FromSeconds(2),
+                    committedFingerprint))
+                throw new InvalidDataException("配置同步后的活动快照或健康接口指纹读回不匹配；未返回成功确认。");
         }
         finally { ApplyGate.Release(); }
 

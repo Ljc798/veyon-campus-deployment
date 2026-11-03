@@ -98,6 +98,7 @@ const
   EdgeForceListMarkerKey = 'SOFTWARE\VeyonCampus\StudentSetup\EdgeRealtime';
   EdgeStoreUpdateUrl = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx';
   StudentUpdateLeaseName = 'Local\VeyonCampus_StudentSetup_InstallUpdate';
+  MaintenanceServiceRelativePath = 'MaintenanceService\VeyonCampus.MaintenanceService.exe';
   WaitObject0 = 0;
   WaitTimeout = 258;
 
@@ -107,6 +108,10 @@ var
   UpdateProgressStatus: TNewStaticText;
   UpdateProgressBar: TNewProgressBar;
   UpdateLeaseHandle: THandle;
+  MaintenanceServiceInitiallyInstalled: Boolean;
+  MaintenanceServiceWasStopped: Boolean;
+  MaintenanceServiceTouched: Boolean;
+  MaintenanceServiceSetupCompleted: Boolean;
 
 function CreateSemaphoreW(lpSemaphoreAttributes: LongWord; lInitialCount, lMaximumCount: LongInt;
   lpName: String): THandle;
@@ -177,8 +182,124 @@ begin
   UpdateLeaseHandle := 0;
 end;
 
+function RunMaintenanceServiceControl(const Parameters: String; var ResultCode: Integer): Boolean;
+var
+  ServiceExecutable: String;
+begin
+  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  Result := FileExists(ServiceExecutable) and
+    Exec(ServiceExecutable, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+function StopMaintenanceServiceBeforeUpdate(): String;
+var
+  ResultCode: Integer;
+  ServiceExecutable: String;
+begin
+  Result := '';
+  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  if not FileExists(ServiceExecutable) then Exit;
+
+  MaintenanceServiceTouched := True;
+  if not RunMaintenanceServiceControl('--query-service', ResultCode) then
+  begin
+    Result := '无法检查 Maintenance 后台服务；安装已停止，以避免替换正在运行的服务程序。';
+    Exit;
+  end;
+  if ResultCode = 3 then Exit;
+  if ResultCode <> 0 then
+  begin
+    Result := 'Maintenance 后台服务状态未知；安装已停止，请以管理员身份修复服务后重试。';
+    Exit;
+  end;
+
+  MaintenanceServiceInitiallyInstalled := True;
+  if not RunMaintenanceServiceControl('--stop-service', ResultCode) or (ResultCode <> 0) then
+  begin
+    Result := '无法安全停止 Maintenance 后台服务；安装已停止，请重试或重启 Windows。';
+    Exit;
+  end;
+  MaintenanceServiceWasStopped := True;
+end;
+
+function StartMaintenanceService(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := RunMaintenanceServiceControl('--start-service', ResultCode) and (ResultCode = 0);
+end;
+
+function InstallAndStartMaintenanceService(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  MaintenanceServiceTouched := True;
+  Result := RunMaintenanceServiceControl('--install-and-start-service', ResultCode) and (ResultCode = 0);
+  if Result then
+  begin
+    MaintenanceServiceSetupCompleted := True;
+    MaintenanceServiceWasStopped := False;
+  end;
+end;
+
+function UninstallMaintenanceService(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := RunMaintenanceServiceControl('--uninstall-service', ResultCode) and (ResultCode = 0);
+end;
+
+function RemoveMaintenanceServiceForUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if not FileExists(ExpandConstant('{app}\' + MaintenanceServiceRelativePath)) then Exit;
+  if not RunMaintenanceServiceControl('--query-service', ResultCode) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  if ResultCode = 3 then Exit;
+  if ResultCode <> 0 then
+  begin
+    Result := False;
+    Exit;
+  end;
+  if not MaintenanceServiceWasStopped then
+  begin
+    if not RunMaintenanceServiceControl('--stop-service', ResultCode) or (ResultCode <> 0) then
+    begin
+      Result := False;
+      Exit;
+    end;
+    MaintenanceServiceWasStopped := True;
+  end;
+  Result := UninstallMaintenanceService();
+end;
+
+procedure RestoreMaintenanceServiceAfterSetupFailure;
+var
+  ServiceExecutable: String;
+begin
+  if not MaintenanceServiceTouched or MaintenanceServiceSetupCompleted then Exit;
+  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  if not FileExists(ServiceExecutable) then Exit;
+  if MaintenanceServiceInitiallyInstalled then
+  begin
+    if not StartMaintenanceService() then
+      Log('Could not restart the previously installed Maintenance service after Setup failed.');
+  end
+  else if not UninstallMaintenanceService() then
+    Log('Could not remove the new Maintenance service registration after Setup failed.');
+end;
+
 function InitializeSetup(): Boolean;
 begin
+  MaintenanceServiceInitiallyInstalled := False;
+  MaintenanceServiceWasStopped := False;
+  MaintenanceServiceTouched := False;
+  MaintenanceServiceSetupCompleted := False;
   Result := AcquireInstallUpdateLease();
   if not Result then
     MsgBox('另一个学生端安装或应用内更新正在进行。请等待它结束后重新运行安装包。', mbError, MB_OK);
@@ -186,6 +307,7 @@ end;
 
 procedure DeinitializeSetup;
 begin
+  RestoreMaintenanceServiceAfterSetupFailure();
   ReleaseInstallUpdateLease();
 end;
 
@@ -326,6 +448,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
   ProcessArguments: String;
+  MaintenanceError: String;
 begin
   Result := '';
   try
@@ -355,6 +478,15 @@ begin
     begin
       Log('Student process cleanup helper failed with exit code ' + IntToStr(ResultCode) + '.');
       Result := '安装器已尝试自动关闭学生端主程序和后台进程，但未能安全完成。安装已停止，请重启 Windows 后重新运行安装包。';
+    end;
+    if Result = '' then
+    begin
+      MaintenanceError := StopMaintenanceServiceBeforeUpdate();
+      if MaintenanceError <> '' then
+      begin
+        Result := MaintenanceError;
+        Log('Maintenance service preflight failed.');
+      end;
     end;
     if (Result = '') and IsSelfUpdateSetup() and IsVerySilentSetup() and
        (not StartUpdateProgressWindow('StudentSetup')) then
@@ -560,6 +692,8 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
+    if not InstallAndStartMaintenanceService() then
+      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
     if not RegisterEdgePolicyExecutorTask() then
       Log('Edge policy executor crash recovery task could not be installed; the all-users Startup shortcut remains as a fallback.');
     if IsEdgeExtensionConfigured() then
@@ -614,6 +748,7 @@ var
   DiagnosticLines: TArrayOfString;
   DiagnosticIndex: Integer;
   FailureDetail: String;
+  MaintenanceError: String;
   KeepConfiguration: Boolean;
   UserChoice: Integer;
 begin
@@ -629,7 +764,7 @@ begin
     UserChoice := SuppressibleMsgBox('卸载学生部署工具。是否保留本机配置？' + #13#10 + #13#10 +
          '是：保留本机 Veyon Campus 配置和 Veyon 地点、名单及认证密钥，方便重新安装。' + #13#10 +
          '否：清除本机相关配置；同一台电脑上的教师端配置也会一并清除。' + #13#10 +
-         '两种选择都会停止学生端后台 Agent、恢复已部署限制并移除 Edge 启动集成。' + #13#10 +
+         '两种选择都会停止后台服务和学生 Agent、恢复已部署限制并移除 Edge 启动集成。' + #13#10 +
          '取消：不卸载。', mbConfirmation, MB_YESNOCANCEL or MB_DEFBUTTON1, IDYES);
     if UserChoice = IDCANCEL then
     begin
@@ -657,6 +792,16 @@ begin
       Exit;
     end;
 
+    MaintenanceError := StopMaintenanceServiceBeforeUpdate();
+    if MaintenanceError <> '' then
+    begin
+      Log('Student uninstall stopped: ' + MaintenanceError);
+      SuppressibleMsgBox(MaintenanceError, mbError, MB_OK, IDOK);
+      RestoreMaintenanceServiceAfterSetupFailure();
+      Result := False;
+      Exit;
+    end;
+
     Log('Starting Veyon Campus student cleanup helper.');
     UninstallArguments := '--uninstall-student-runtime "' + DiagnosticPath + '"';
     if KeepConfiguration then UninstallArguments := UninstallArguments + ' --preserve-config';
@@ -668,6 +813,16 @@ begin
 
     if (ResultCode = 0) then
     begin
+      if not RemoveMaintenanceServiceForUninstall() then
+      begin
+        Log('Student uninstall stopped: Maintenance Windows service could not be removed.');
+        if MaintenanceServiceWasStopped and not StartMaintenanceService() then
+          Log('Maintenance service could not be restarted after service removal failed.');
+        SuppressibleMsgBox('Maintenance 后台服务无法安全卸载。学生端文件已保留，请检查服务状态后重试。',
+          mbError, MB_OK, IDOK);
+        Result := False;
+        Exit;
+      end;
       DeleteFile(DiagnosticPath);
       Exit;
     end;
@@ -681,12 +836,14 @@ begin
       FailureDetail := '无法确认后台 Agent 和策略已安全清理。';
 
     Log('Student cleanup helper failed: ' + FailureDetail);
+    RestoreMaintenanceServiceAfterSetupFailure();
     SuppressibleMsgBox('学生端后台 Agent 或策略未能安全清理，已停止卸载并保留安装文件。' + #13#10 + #13#10 +
       FailureDetail + #13#10 + #13#10 + '请在学生部署工具中查看“管理员维护”记录，解决后重试。',
       mbError, MB_OK, IDOK);
     Result := False;
   except
     Log('Student uninstaller preflight exception: ' + GetExceptionMessage);
+    RestoreMaintenanceServiceAfterSetupFailure();
     SuppressibleMsgBox('学生端卸载预检查异常，已保留安装文件。卸载日志会记录异常详情，请检查后重试。',
       mbError, MB_OK, IDOK);
     Result := False;

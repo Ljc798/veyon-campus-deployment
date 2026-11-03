@@ -152,7 +152,7 @@
                   <Button Content="配置长期软件运行保护" Click="RequestOpenLongTermSoftwareProtection"
                           IsEnabled="{Binding !IsExecuting}" HorizontalAlignment="Left" />
                   <Expander Header="查看保护范围与检查方式">
-                    <TextBlock Text="Student Agent 会先做系统与目录安全检查，再逐台应用并签名确认结果。AppLocker 仅管桌面 EXE；Appx 保留签名应用放行，MSI/Script 集合不由 AppLocker 修改。"
+                    <TextBlock Text="Student Agent 会先做系统与目录安全检查，再逐台应用并签名确认结果。AppLocker 仅约束 EXE；Appx/MSIX 维持签名应用放行，因此已安装的商店游戏仍可能启动，本功能不实施 Appx 黑名单。MSI/Script 集合不由 AppLocker 修改。"
                                Classes="supporting-copy" TextWrapping="Wrap" Margin="4,8,4,4" />
                   </Expander>
                 </StackPanel>
@@ -412,11 +412,11 @@
                 <TextBlock Text="禁止修改网络配置；保留现有连接及 Veyon、学生代理通信。" Classes="muted" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Spacing="2">
-                <CheckBox Content="长期软件运行保护（含部分安装限制）" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
+                <CheckBox Content="长期软件运行保护与常规安装限制" IsChecked="{Binding StudentSystemPolicyProhibitSoftwareInstallation, Mode=TwoWay}" />
                 <TextBlock Text="无需扫描软件目录；可能影响从用户目录运行的程序和软件维护。"
                            Classes="supporting-copy" FontSize="12" Margin="28,0,0,0" TextWrapping="Wrap" />
                 <Expander Header="查看保护范围" Margin="28,0,0,0">
-                  <TextBlock Text="对所选学生账户启用 EXE 运行基线：保留系统与 Program Files 教育软件，限制未登记的便携程序；AppLocker 的 Appx 保持签名应用放行，MSI/Script 集合不由此功能修改。"
+                  <TextBlock Text="对所选学生账户启用 EXE 运行基线：保留系统与 Program Files 教育软件，限制未登记的便携程序。系统策略另行隐藏 Microsoft Store 并设置常规非管理员安装限制；这些设置不阻止已安装 Appx/MSIX 游戏启动。AppLocker 的 Appx 仍全体签名应用放行，MSI/Script 集合不由此功能修改。"
                              Classes="supporting-copy" FontSize="12" TextWrapping="Wrap" Margin="4,8,4,4" />
                 </Expander>
               </StackPanel>

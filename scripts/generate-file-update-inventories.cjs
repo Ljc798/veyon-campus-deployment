@@ -22,6 +22,7 @@ const ROLE_DEFINITIONS = Object.freeze({
     components: Object.freeze([
       { id: 'StudentSetup', dependencies: [] },
       { id: 'StudentWorker', dependencies: ['StudentSetup'] },
+      { id: 'MaintenanceService', dependencies: ['StudentSetup'] },
       { id: 'StudentAgentPayload', dependencies: [] },
       { id: 'StudentAgentRuntime', dependencies: [] },
       { id: 'StudentCompanion', dependencies: ['StudentSetup'] },

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>VeyonCampus.MaintenanceService</AssemblyName>
+    <AssemblyTitle>Veyon Campus Maintenance Service</AssemblyTitle>
+    <Product>Veyon Campus</Product>
+    <Description>Authenticated, independent student maintenance channel</Description>
+    <Version>0.4.53</Version>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <ApplicationManifest Condition="$([MSBuild]::IsOSPlatform('Windows'))">app.manifest</ApplicationManifest>
+    <VeyonCampusIncludeInstaller>false</VeyonCampusIncludeInstaller>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../VeyonCampus.Core/VeyonCampus.Core.csproj" />
+  </ItemGroup>
+</Project>

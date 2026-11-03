@@ -213,6 +213,12 @@
                           </Grid>
                           <ProgressBar Classes="inline-progress" Minimum="0" Maximum="100" Value="{Binding ProgressPercent}"
                                        IsIndeterminate="{Binding IsIndeterminate}" Height="7" />
+                          <StackPanel Spacing="3" IsVisible="{Binding HasMaintenanceFacts}">
+                            <TextBlock Text="{Binding MaintenanceVersions}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding MaintenanceTransaction}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding MaintenanceConnection}" Classes="muted" TextWrapping="Wrap" />
+                            <TextBlock Text="{Binding MaintenanceDiagnostics}" Classes="muted" TextWrapping="Wrap" />
+                          </StackPanel>
                           <TextBlock Text="{Binding Detail}" Classes="device-row-detail" TextWrapping="Wrap"
                                      IsVisible="{Binding HasDetail}" />
                           <Button Classes="tertiary" Content="在此核对身份"
@@ -221,7 +227,7 @@
                                   HorizontalAlignment="Left" />
                           <TextBlock Text="{Binding IdentityReviewStatus}" Classes="muted"
                                      TextWrapping="Wrap" IsVisible="{Binding HasIdentityReviewStatus}" />
-                          <Button Classes="tertiary" Content="重新查询更新结果"
+                          <Button Classes="tertiary" Content="{Binding RequeryButtonText}"
                                   Click="RequestRecheckStudentUpdateResult"
                                   IsVisible="{Binding CanRequery}" HorizontalAlignment="Left" />
                           <Expander Header="更新阶段耗时" Theme="{StaticResource App.DetailExpander}"

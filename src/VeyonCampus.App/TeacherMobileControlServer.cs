@@ -16,6 +16,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.Logging;
 using VeyonCampus.Core;
+using VeyonCampus.Core.Maintenance;
 
 namespace VeyonCampus.App;
 
@@ -1029,6 +1030,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Func<string> _activeCampusId;
     private readonly string? _storageDirectory;
     private readonly StudentAgentIdentityTrustStore _agentTrustStore;
+    private readonly MaintenanceServiceTrustStore _maintenanceTrustStore;
     private readonly Func<string, WebsitePolicySigningKey> _openTeacherSigningKey;
     private readonly int _httpsPort;
     private readonly int _bootstrapPort;
@@ -1136,6 +1138,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _activeCampusId = activeCampusId;
         _storageDirectory = storageDirectory is null ? null : Path.GetFullPath(storageDirectory);
         _agentTrustStore = agentTrustStore ?? new StudentAgentIdentityTrustStore();
+        _maintenanceTrustStore = new MaintenanceServiceTrustStore(_agentTrustStore);
         _openTeacherSigningKey = openTeacherSigningKey ?? OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture(captureScreenAsync);
         _screenPreviewCaptureAvailable = captureScreenAsync is not null;
@@ -1179,6 +1182,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _stateChanged = static () => { };
         _activeCampusId = activeCampusId ?? throw new ArgumentNullException(nameof(activeCampusId));
         _agentTrustStore = new StudentAgentIdentityTrustStore();
+        _maintenanceTrustStore = new MaintenanceServiceTrustStore(_agentTrustStore);
         _openTeacherSigningKey = OpenTeacherSigningKey;
         _screenPreviewCapture = new ClassroomScreenPreviewCapture();
         _screenPreviewCaptureAvailable = false;
@@ -1856,6 +1860,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         app.MapGet("/manifest.webmanifest", context => ServeAsset(context, "manifest.webmanifest", "application/manifest+json"));
         app.MapGet("/service-worker.js", context => ServeAsset(context, "service-worker.js", "text/javascript; charset=utf-8"));
         app.MapGet(StudentAgentChannelProtocol.WebSocketPath, HandleStudentAgentChannelAsync);
+        app.MapGet(MaintenanceServiceChannelProtocol.WebSocketPath, HandleMaintenanceServiceChannelAsync);
         app.MapPost("/api/pair", async context => await PairAsync(context).ConfigureAwait(false));
         app.MapPost("/api/pair-status", async context => await PollPairingAsync(context).ConfigureAwait(false));
         app.MapPost("/api/mobile-resume", async context => await ResumeMobileSessionAsync(context).ConfigureAwait(false));

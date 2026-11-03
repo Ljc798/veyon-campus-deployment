@@ -14,6 +14,7 @@ internal static class StudentApplicationUpdateChecks
 
     public static void Run()
     {
+        MaintenanceModelChecks.Run();
         CheckSignedCommand();
         CheckSignedAgentResponses();
         CheckCommandBoundStatusRequeryAndProgress();
@@ -25,6 +26,8 @@ internal static class StudentApplicationUpdateChecks
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
         CheckVerifiedBundledAgentTargetVersion();
+        CheckAgentExecutableVersionBinding();
+        CheckConfigurationSnapshotBinding();
         CheckSetupAndAgentVersionIndependence();
         CheckLegacyV140ConfigFingerprintMigration();
         CheckSignedCommandAcknowledgements();
@@ -49,6 +52,7 @@ internal static class StudentApplicationUpdateChecks
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
         CheckVerifiedBundledAgentTargetVersion();
+        CheckConfigurationSnapshotBinding();
         CheckSetupAndAgentVersionIndependence();
         CheckLegacyV140ConfigFingerprintMigration();
         CheckAtomicTransactionTerminalStates();
@@ -322,6 +326,30 @@ internal static class StudentApplicationUpdateChecks
         StudentApplicationUpdateResponseCryptography.Validate(response, "ExampleCampus", response.CommandId,
             "2.1.0", restartPending: false, now);
 
+        var acceptedAcknowledgement = response with
+        {
+            StudentSetupVersion = "1.1.45",
+            AgentVersion = "0.4.56",
+            AgentRestartPending = true,
+            Message = "StudentSetup 已安装，Agent 正在切换。"
+        };
+        StudentApplicationUpdateResponseCryptography.ValidatePreSwitchAcknowledgement(
+            acceptedAcknowledgement, "ExampleCampus", response.CommandId, "1.1.45", "0.4.56", now);
+        Reject(() => StudentApplicationUpdateResponseCryptography.ValidatePreSwitchAcknowledgement(
+            acceptedAcknowledgement, "ExampleCampus", response.CommandId, "1.1.45", "0.4.57", now));
+
+        var synchronousResult = response with
+        {
+            StudentSetupVersion = "1.1.45",
+            AgentVersion = "0.4.57",
+            AgentRestartPending = false,
+            Message = "StudentSetup 与 Agent 已读回。"
+        };
+        StudentApplicationUpdateResponseCryptography.ValidateSynchronousResult(
+            synchronousResult, "ExampleCampus", response.CommandId, "1.1.45", "0.4.57", now);
+        Reject(() => StudentApplicationUpdateResponseCryptography.ValidateSynchronousResult(
+            synchronousResult, "ExampleCampus", response.CommandId, "1.1.45", "0.4.56", now));
+
         var mismatchedPin = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(signed,
             wrongKey.ExportSubjectPublicKeyInfoPem());
         Expect(!mismatchedPin.MatchesPinnedKey && mismatchedPin.Payload == response);
@@ -496,8 +524,8 @@ internal static class StudentApplicationUpdateChecks
         static StudentMaintenancePlanningInput Input(string? setup = "1.1.56", string? agent = "0.4.56",
             string targetSetup = "1.1.57", string? targetAgent = "0.4.57", int? protocol = 1,
             string? transaction = null, bool? configMatches = null, bool connected = false,
-            bool identityTrusted = true) => new(identityTrusted, setup, agent, targetSetup, targetAgent,
-                protocol, transaction, configMatches, connected);
+            bool identityTrusted = true, string releaseChannel = "stable") => new(identityTrusted, setup, agent,
+                targetSetup, targetAgent, protocol, transaction, configMatches, connected, releaseChannel);
 
         var oldAgent = StudentMaintenancePlanner.Create(Input());
         Expect(oldAgent.Kind == StudentMaintenancePlanKind.UpdateThenConfiguration &&
@@ -526,7 +554,58 @@ internal static class StudentApplicationUpdateChecks
 
         var unknownStableTarget = StudentMaintenancePlanner.Create(Input(setup: "1.1.57", agent: "0.4.56",
             targetAgent: null, protocol: 1));
-        Expect(unknownStableTarget.Kind == StudentMaintenancePlanKind.ManualRequired);
+        Expect(unknownStableTarget.Kind == StudentMaintenancePlanKind.ManualRequired &&
+               unknownStableTarget.Reason.Contains("Agent 目标未知", StringComparison.Ordinal) &&
+               !unknownStableTarget.NeedsSoftwareUpdate && !unknownStableTarget.NeedsConfigurationSync);
+
+        var setupBehindUnknownAgentTarget = StudentMaintenancePlanner.Create(Input(setup: "1.1.56",
+            agent: "0.4.56", targetSetup: "1.1.57", targetAgent: null));
+        Expect(setupBehindUnknownAgentTarget.NeedsSoftwareUpdate &&
+               setupBehindUnknownAgentTarget.UpdateTransport == StudentMaintenanceTransport.TrustedLegacyHttp);
+        var setupAheadUnknownAgentTarget = StudentMaintenancePlanner.Create(Input(setup: "1.1.58",
+            agent: "0.4.56", targetSetup: "1.1.57", targetAgent: null));
+        Expect(setupAheadUnknownAgentTarget.Kind == StudentMaintenancePlanKind.ManualRequired);
+
+        static string CurrentSetupFor(int relation) => relation switch
+        {
+            < 0 => "1.1.56",
+            0 => "1.1.57",
+            _ => "1.1.58"
+        };
+        static string CurrentAgentFor(int relation) => relation switch
+        {
+            < 0 => "0.4.56",
+            0 => "0.4.57",
+            _ => "0.4.58"
+        };
+        foreach (var releaseChannel in new[] { "stable", "local-test" })
+        foreach (var setupRelation in new[] { -1, 0, 1 })
+        foreach (var agentRelation in new[] { -1, 0, 1 })
+        {
+            var plan = StudentMaintenancePlanner.Create(Input(setup: CurrentSetupFor(setupRelation),
+                agent: CurrentAgentFor(agentRelation), targetSetup: "1.1.57", targetAgent: "0.4.57",
+                releaseChannel: releaseChannel));
+            var requiresManualReview = setupRelation > 0 && agentRelation < 0 ||
+                                      setupRelation < 0 && agentRelation > 0;
+            var needsUpdate = setupRelation < 0 || agentRelation < 0;
+            var expectedKind = requiresManualReview
+                ? StudentMaintenancePlanKind.ManualRequired
+                : needsUpdate
+                    ? StudentMaintenancePlanKind.UpdateThenConfiguration
+                    : StudentMaintenancePlanKind.ConfigurationOnly;
+            Expect(plan.Kind == expectedKind && plan.NeedsSoftwareUpdate == (!requiresManualReview && needsUpdate));
+        }
+
+        foreach (var setupRelation in new[] { -1, 0, 1 })
+        foreach (var agentRelation in new[] { -1, 0, 1 })
+        {
+            var plan = StudentMaintenancePlanner.Create(Input(setup: CurrentSetupFor(setupRelation),
+                agent: CurrentAgentFor(agentRelation), targetSetup: "1.1.57", targetAgent: null));
+            var expectedKind = setupRelation < 0
+                ? StudentMaintenancePlanKind.UpdateThenConfiguration
+                : StudentMaintenancePlanKind.ManualRequired;
+            Expect(plan.Kind == expectedKind && plan.NeedsSoftwareUpdate == (setupRelation < 0));
+        }
 
         var pendingTransaction = StudentMaintenancePlanner.Create(Input(transaction: "inProgress"));
         Expect(pendingTransaction.Kind == StudentMaintenancePlanKind.RecoveryRequired &&
@@ -691,6 +770,58 @@ internal static class StudentApplicationUpdateChecks
         Expect(Resolve("0.4.57", "0.4.57", "0.4.56") == "0.4.57");
         Reject(() => Resolve("0.4.56", "0.4.57", "0.4.56"));
         Reject(() => Resolve(null, "0.4.56", "0.4.57"));
+    }
+
+    private static void CheckAgentExecutableVersionBinding()
+    {
+        var temporaryDirectory = Path.Combine(TestPath.CanonicalTempRoot(),
+            "veyon-agent-version-binding-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(temporaryDirectory);
+        var executablePath = Path.Combine(temporaryDirectory, "VeyonCampus.Agent.exe");
+        var assemblyPath = Path.ChangeExtension(executablePath, ".dll");
+        try
+        {
+            File.WriteAllBytes(executablePath, [0x4D, 0x5A]);
+            File.Copy(typeof(StudentApplicationUpdateChecks).Assembly.Location, assemblyPath);
+            var actualVersion = WorkerInstallationGuard.GetAssemblyProductVersion(executablePath);
+
+            WebsitePolicyAgentInstaller.EnsureAgentExecutableVersion(executablePath, actualVersion,
+                "Agent fixture version mismatch");
+            Reject(() => WebsitePolicyAgentInstaller.EnsureAgentExecutableVersion(executablePath, "0.0.0",
+                "Agent fixture version mismatch"));
+        }
+        finally
+        {
+            if (Directory.Exists(temporaryDirectory)) Directory.Delete(temporaryDirectory, recursive: true);
+        }
+    }
+
+    private static void CheckConfigurationSnapshotBinding()
+    {
+        using var websiteKey = RSA.Create(2048);
+        using var replacementWebsiteKey = RSA.Create(2048);
+        using var applicationKey = RSA.Create(2048);
+        using var replacementApplicationKey = RSA.Create(2048);
+        using var systemPolicyKey = RSA.Create(2048);
+        var initial = new WebsitePolicyAgentConfig("ExampleCampus", websiteKey.ExportSubjectPublicKeyInfoPem(),
+            "https://telemetry.invalid/heartbeat", Guid.NewGuid(), "1.2.3",
+            applicationKey.ExportSubjectPublicKeyInfoPem(), systemPolicyKey.ExportSubjectPublicKeyInfoPem(),
+            ["https://teacher-old.invalid/"], Convert.ToBase64String(Encoding.UTF8.GetBytes("root-old")));
+        var reconnected = initial with
+        {
+            TeacherChannelEndpoints = ["wss://teacher-new.invalid/connect"],
+            TeacherChannelRootCertificateBase64 = Convert.ToBase64String(Encoding.UTF8.GetBytes("root-new"))
+        };
+
+        Expect(WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(initial, reconnected));
+        Expect(!string.Equals(WebsitePolicyAgent.ConfigFingerprint(initial),
+            WebsitePolicyAgent.ConfigFingerprint(reconnected), StringComparison.Ordinal));
+        Expect(!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(initial,
+            reconnected with { PublicKeyPem = replacementWebsiteKey.ExportSubjectPublicKeyInfoPem() }));
+        Expect(!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(initial,
+            reconnected with { ApplicationPolicyPublicKeyPem = replacementApplicationKey.ExportSubjectPublicKeyInfoPem() }));
+        Expect(!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(initial,
+            reconnected with { DeploymentId = Guid.NewGuid() }));
     }
 
     private static void CheckLegacyV140ConfigFingerprintMigration()

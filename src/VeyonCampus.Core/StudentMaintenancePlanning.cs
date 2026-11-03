@@ -171,15 +171,22 @@ public static class StudentMaintenancePlanner
 
         var setupComparison = ApplicationReleaseClient.CompareVersions(input.CurrentSetupVersion,
             input.TargetSetupVersion);
-        var agentComparison = input.TargetAgentVersion is null
-            ? 0
+        int? agentComparison = input.TargetAgentVersion is null
+            ? null
             : ApplicationReleaseClient.CompareVersions(input.CurrentAgentVersion, input.TargetAgentVersion);
-        var needsSoftwareUpdate = setupComparison < 0 || agentComparison < 0;
 
-        if (input.TargetAgentVersion is null && setupComparison >= 0)
-            return Manual("正式发行清单没有已签名且绑定安装包摘要的 Agent 目标版本；StudentSetup 已达标，但无法判断 Agent 是否需要更新。请发布带有 Agent 目标版本声明的正式发行，或人工维护。 ");
+        if (agentComparison is null && setupComparison >= 0)
+        {
+            var releaseDescription = input.ReleaseChannel == "local-test" ? "本机测试发行清单" : "正式发行清单";
+            return Manual($"{releaseDescription}没有已签名且绑定安装包摘要的 Agent 目标版本；StudentSetup 已达标，但 Agent 目标未知，不能宣告软件达标或判断是否需要更新。请提供可信目标版本或人工维护。");
+        }
 
-        if (setupComparison > 0 && agentComparison < 0)
+        var needsSoftwareUpdate = setupComparison < 0 || agentComparison is < 0;
+
+        if (setupComparison < 0 && agentComparison is > 0)
+            return Manual($"当前 Agent {input.CurrentAgentVersion} 高于签名候选版本 {input.TargetAgentVersion}；StudentSetup 更新可能覆盖更高版本 Agent，已停止下发以避免降级。");
+
+        if (setupComparison > 0 && agentComparison is < 0)
             return Manual($"当前 StudentSetup {input.CurrentSetupVersion} 高于目标 {input.TargetSetupVersion}，但 Agent {input.CurrentAgentVersion} 低于目标 {input.TargetAgentVersion}；不能降级 Setup 覆盖修复。");
 
         if (needsSoftwareUpdate && !StudentAgentUpdateCompatibility.SupportsUpdateStatusProtocol(
@@ -205,8 +212,12 @@ public static class StudentMaintenancePlanner
         };
         var reason = kind switch
         {
+            StudentMaintenancePlanKind.NoOp when agentComparison is > 0 =>
+                $"当前 Agent {input.CurrentAgentVersion} 高于候选版本 {input.TargetAgentVersion}；保持较新版本，不执行降级。软件和教师连接配置无需更改。",
             StudentMaintenancePlanKind.NoOp => "软件和教师连接配置均已达标。",
             StudentMaintenancePlanKind.UpdateOnly => "仅需更新软件；连接配置已核验。",
+            StudentMaintenancePlanKind.ConfigurationOnly when agentComparison is > 0 =>
+                $"当前 Agent {input.CurrentAgentVersion} 高于候选版本 {input.TargetAgentVersion}；保持较新版本，不执行降级。需要核验并同步教师连接配置。",
             StudentMaintenancePlanKind.ConfigurationOnly => "软件版本已达标；需要核验并同步教师连接配置。",
             _ => "先更新完整 StudentSetup，再核验并同步教师连接配置。"
         };

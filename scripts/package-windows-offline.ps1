@@ -73,6 +73,7 @@ $appProjectPath = Join-Path $repoRoot 'src/VeyonCampus.App/VeyonCampus.App.cspro
 $updateHelperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/VeyonCampus.UpdateHelper.csproj'
 $coreProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Core/VeyonCampus.Core.csproj'
 $agentProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Agent/VeyonCampus.Agent.csproj'
+$maintenanceServiceProjectPath = Join-Path $repoRoot 'src/VeyonCampus.MaintenanceService/VeyonCampus.MaintenanceService.csproj'
 $companionProjectPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/VeyonCampus.Companion.csproj'
 $companionManifestPath = Join-Path $repoRoot 'src/VeyonCampus.Companion/StudentCompanion.manifest'
 $edgePolicyExecutorProjectPath = Join-Path $repoRoot 'src/VeyonCampus.EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.csproj'
@@ -562,6 +563,12 @@ if (-not $SkipRestore) {
         }
         Invoke-Dotnet $agentRestoreArguments
 
+        $maintenanceServiceRestoreArguments = @('restore', $maintenanceServiceProjectPath, '-r', 'win-x64',
+            '--locked-mode', '-p:NuGetAudit=false',
+            '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+            '-p:VeyonCampusIncludeInstaller=false')
+        Invoke-Dotnet $maintenanceServiceRestoreArguments
+
         $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
             '-p:NuGetAudit=false', '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
             '-p:VeyonCampusIncludeInstaller=false')
@@ -661,6 +668,14 @@ if ($Role -eq 'StudentSetup') {
         $inputGuardPublishArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
     }
     Invoke-Dotnet $inputGuardPublishArguments
+
+    $maintenanceServicePublishDirectory = Join-Path $publishDirectory 'MaintenanceService'
+    $maintenanceServicePublishArguments = @('publish', $maintenanceServiceProjectPath, '-c', 'Release',
+        '-r', 'win-x64', '--self-contained', 'false', '--no-restore',
+        '-p:AppHostDotNetSearch=Global', "-p:Version=$appVersion",
+        '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
+        '-p:VeyonCampusIncludeInstaller=false', '-o', $maintenanceServicePublishDirectory)
+    Invoke-Dotnet $maintenanceServicePublishArguments
 }
 
 if ($EdgeRealtimeManualTest -and $Role -eq 'StudentSetup') {
@@ -736,6 +751,31 @@ if ([string]::IsNullOrWhiteSpace($appProductVersion) -or $appProductVersion -ne 
 
 $publishedFiles = @(Get-ChildItem -LiteralPath $publishDirectory -File -Recurse)
 if ($Role -eq 'StudentSetup') {
+    $maintenanceServiceExePath = Join-Path $publishDirectory 'MaintenanceService/VeyonCampus.MaintenanceService.exe'
+    $maintenanceServiceAssemblyPath = Join-Path $publishDirectory 'MaintenanceService/VeyonCampus.MaintenanceService.dll'
+    $maintenanceServiceRuntimeConfigPath = Join-Path $publishDirectory 'MaintenanceService/VeyonCampus.MaintenanceService.runtimeconfig.json'
+    if (-not (Test-Path -LiteralPath $maintenanceServiceExePath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $maintenanceServiceAssemblyPath -PathType Leaf) -or
+        -not (Test-Path -LiteralPath $maintenanceServiceRuntimeConfigPath -PathType Leaf)) {
+        throw "StudentSetup 缺少独立 Maintenance Service 发布产物：$maintenanceServicePublishDirectory"
+    }
+    $maintenanceServiceVersion = [Reflection.AssemblyName]::GetAssemblyName($maintenanceServiceAssemblyPath).Version.ToString(3)
+    if ($maintenanceServiceVersion -cne $appVersion) {
+        throw "Maintenance Service 版本与 StudentSetup 不一致：期望 $appVersion，实际 $maintenanceServiceVersion。"
+    }
+    $maintenanceServiceRuntimeConfig = Get-Content -LiteralPath $maintenanceServiceRuntimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $maintenanceFrameworksProperty = $maintenanceServiceRuntimeConfig.runtimeOptions.PSObject.Properties['frameworks']
+    if ($null -eq $maintenanceFrameworksProperty) {
+        $maintenanceFrameworksProperty = $maintenanceServiceRuntimeConfig.runtimeOptions.PSObject.Properties['framework']
+    }
+    $maintenanceFrameworks = @()
+    if ($null -ne $maintenanceFrameworksProperty) {
+        $maintenanceFrameworks = @($maintenanceFrameworksProperty.Value | ForEach-Object { [string]$_.name } | Sort-Object -Unique)
+    }
+    if (($maintenanceFrameworks -join '|') -cne 'Microsoft.NETCore.App') {
+        throw "Maintenance Service 所需 .NET framework 与安装器预置运行时不一致：$($maintenanceFrameworks -join ', ')"
+    }
+
     $teacherArtifacts = @($publishedFiles | Where-Object { $_.Name -match '^VeyonCampus\.Teacher(?:\.|$)' })
     if ($teacherArtifacts.Count -gt 0) {
         throw "学生部署包混入教师端产物：$($teacherArtifacts[0].FullName)"

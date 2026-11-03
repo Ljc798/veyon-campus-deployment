@@ -384,14 +384,30 @@ public static class StudentUpdateAtomicTransaction
         var recoveryDirectory = GetRecoveryDirectory(record);
         PathLinkSecurity.RejectLinks(installDirectory);
         EnsureNoReparsePointsInTree(installDirectory);
-        CreateProtectedDirectory(Path.GetDirectoryName(recoveryDirectory)!);
-        CreateProtectedDirectory(recoveryDirectory);
+        if (!Directory.Exists(installDirectory) ||
+            !string.Equals(ReadInstalledVersion(installDirectory), record.PreviousSetupVersion,
+                StringComparison.Ordinal))
+            throw new InvalidDataException("移动 StudentSetup 前旧版角色与事务记录不匹配；安装目录保持原位。");
+        var previousSetupExecutable = Path.Combine(installDirectory, "VeyonCampus.StudentSetup.exe");
+        if (!File.Exists(previousSetupExecutable) ||
+            !WorkerInstallationGuard.ProductVersionMatches(previousSetupExecutable, record.PreviousSetupVersion))
+            throw new InvalidDataException("移动 StudentSetup 前旧版程序与角色版本读回不匹配；安装目录保持原位。");
+        WebsitePolicyAgentInstaller.ValidatePreviousAgentRecoveryMaterial(configPath, record.PreviousAgentVersion,
+            record.ConfigurationFingerprint);
+
         var previousDirectory = GetPreviousInstallationDirectory(record);
         if (Directory.Exists(previousDirectory))
             throw new IOException("学生更新恢复目录已存在；没有覆盖旧恢复资料。");
+        CreateProtectedDirectory(Path.GetDirectoryName(recoveryDirectory)!);
+        CreateProtectedDirectory(recoveryDirectory);
         Directory.Move(installDirectory, previousDirectory);
-        if (ReadInstalledVersion(previousDirectory) != record.PreviousSetupVersion)
-            throw new InvalidDataException("保存旧 StudentSetup 后版本读回不匹配。");
+        PathLinkSecurity.RejectLinks(previousDirectory);
+        EnsureNoReparsePointsInTree(previousDirectory);
+        if (!string.Equals(ReadInstalledVersion(previousDirectory), record.PreviousSetupVersion,
+                StringComparison.Ordinal) ||
+            !WorkerInstallationGuard.ProductVersionMatches(
+                Path.Combine(previousDirectory, "VeyonCampus.StudentSetup.exe"), record.PreviousSetupVersion))
+            throw new InvalidDataException("保存旧 StudentSetup 后角色或程序版本读回不匹配；恢复材料仍保留。");
     }
 
     public static void RestorePreviousInstallation(string configPath, StudentUpdateTransactionRecord record)
@@ -779,6 +795,41 @@ public static class StudentUpdateAtomicTransaction
         {
             try
             {
+                RecoverPending(configPath);
+                return 0;
+            }
+            catch (Exception exception)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
+                return 1;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Recovers only the transaction named by an authenticated Maintenance request. The command
+    /// binding is checked again after acquiring the machine lock so a stale request cannot
+    /// recover a later transaction that replaced the journal between inspection and dispatch.
+    /// Return codes: 0 recovered or lock busy, 1 recovery failure, 2 journal no longer matches.
+    /// </summary>
+    public static int RecoverSpecificFromCommand(string configPath, Guid expectedCommandId)
+    {
+        EnsureWindowsSystemIdentity();
+        if (expectedCommandId == Guid.Empty)
+            throw new ArgumentException("学生更新命令编号无效。", nameof(expectedCommandId));
+
+        MachineLock updateLock;
+        try { updateLock = AcquireMachineLock(TimeSpan.Zero); }
+        catch (IOException exception) when (exception.Message.StartsWith("另一项学生端更新或恢复正在进行",
+                   StringComparison.Ordinal))
+        { return 0; }
+
+        using (updateLock)
+        {
+            try
+            {
+                var current = Read(configPath);
+                if (current is null || current.CommandId != expectedCommandId) return 2;
                 RecoverPending(configPath);
                 return 0;
             }
