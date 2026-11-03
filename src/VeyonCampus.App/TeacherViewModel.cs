@@ -10457,7 +10457,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     outcome.UpdateTransactionState is not null || outcome.OperationId is not null,
                     outcome.State is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
                         MaintenanceRunState.WaitingForCommit or MaintenanceRunState.PendingVerification or
-                        MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ConfigurationSyncing,
+                        MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ConfigurationSyncing or
+                        MaintenanceRunState.MaintenanceServiceHealthVerified,
                     outcome.TeacherChannelDiagnostics, outcome.Capabilities?.ProtocolVersion);
                 if (requestedOperation == MaintenanceOperationKind.ConfigurationSync)
                 {
@@ -10471,7 +10472,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var completed = results.Count(item => item.State == MaintenanceRunState.Completed);
             var pending = results.Count(item => item.State is MaintenanceRunState.PendingVerification or
                 MaintenanceRunState.Updating or MaintenanceRunState.WaitingForCommit or
-                MaintenanceRunState.ConfigurationSyncing);
+                MaintenanceRunState.ConfigurationSyncing or MaintenanceRunState.MaintenanceServiceHealthVerified);
             var manual = results.Count(item => item.State is MaintenanceRunState.ManualRequired or
                 MaintenanceRunState.RecoveryRequired);
             var failed = results.Count(item => item.State == MaintenanceRunState.Failed);
@@ -10621,7 +10622,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     outcome.CurrentVersions is not null || outcome.OperationId is not null,
                     outcome.State is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
                         MaintenanceRunState.WaitingForCommit or MaintenanceRunState.PendingVerification or
-                        MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ConfigurationSyncing,
+                        MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ConfigurationSyncing or
+                        MaintenanceRunState.MaintenanceServiceHealthVerified,
                     outcome.TeacherChannelDiagnostics, outcome.Capabilities?.ProtocolVersion);
                 StudentMaintenanceStatus = "已重新核对维护事务 " + operationId.ToString("D") + "：" + outcome.Summary;
                 return;
@@ -14457,6 +14459,7 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
         MaintenanceRunState.Failed => "失败",
         MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
             MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing => "事务待核对",
+        MaintenanceRunState.MaintenanceServiceHealthVerified => "Maintenance 已核验，待继续软件阶段",
         _ => State.ToString()
     };
     public string VersionsText

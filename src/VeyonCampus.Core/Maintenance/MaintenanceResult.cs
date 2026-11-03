@@ -86,7 +86,7 @@ public sealed record MaintenanceResult
         return new MaintenanceResult(run.OperationId, run.Device.Key, run.State, run.UpdatedUtc, summary,
             latestEvidence, run.AgentCommandId, run.CurrentVersions,
             run.Plan is null ? null : new MaintenanceComponentVersions(run.Plan.TargetSetupVersion,
-                run.Plan.TargetAgentVersion, null, null),
+                run.Plan.TargetAgentVersion, null, run.Plan.TargetMaintenanceServiceVersion),
             run.Plan?.OperationKind, run.Plan?.Channel, run.Capabilities?.ConfigurationFingerprint,
             run.Capabilities?.TeacherChannelFingerprint, run.Plan?.ConfigurationSha256,
             run.VerifiedCurrentVersions, run.VerifiedUpdateTransactionState, run.VerifiedStatusUtc);

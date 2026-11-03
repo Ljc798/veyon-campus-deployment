@@ -98,7 +98,8 @@ public sealed class MaintenanceJournal
             existing.Capabilities is not null && !string.Equals(existing.Capabilities.SignedResponseSha256,
                 replacement.Capabilities?.SignedResponseSha256, StringComparison.Ordinal) ||
             existing.CurrentVersions is not null && existing.CurrentVersions != replacement.CurrentVersions ||
-            existing.AgentCommandId is not null && existing.AgentCommandId != replacement.AgentCommandId ||
+            existing.AgentCommandId is not null && existing.AgentCommandId != replacement.AgentCommandId &&
+                !IsValidNextPhaseCommand(existing, replacement) ||
             existing.VerifiedStatusUtc is not null &&
             (replacement.VerifiedStatusUtc is null || replacement.VerifiedStatusUtc < existing.VerifiedStatusUtc) ||
             existing.VerifiedStatusUtc == replacement.VerifiedStatusUtc &&
@@ -236,9 +237,39 @@ public sealed class MaintenanceJournal
                string.Equals(first.TargetAgentVersion, second.TargetAgentVersion, StringComparison.Ordinal) &&
                string.Equals(first.TargetMaintenanceServiceVersion, second.TargetMaintenanceServiceVersion,
                    StringComparison.Ordinal) &&
+               string.Equals(first.TargetMaintenanceServiceReleaseSha256,
+                   second.TargetMaintenanceServiceReleaseSha256, StringComparison.Ordinal) &&
                string.Equals(first.TargetReleaseSha256, second.TargetReleaseSha256, StringComparison.Ordinal) &&
                string.Equals(first.ConfigurationSha256, second.ConfigurationSha256, StringComparison.Ordinal) &&
                first.Channel == second.Channel &&
                first.SynchronizeConfiguration == second.SynchronizeConfiguration;
+    }
+
+    private static bool IsValidNextPhaseCommand(MaintenanceRun existing, MaintenanceRun replacement)
+    {
+        var plan = existing.Plan;
+        var serviceCommit = existing.Transitions.LastOrDefault(item =>
+            item.To == MaintenanceRunState.MaintenanceServiceHealthVerified)?.Evidence;
+        if (existing.State != MaintenanceRunState.MaintenanceServiceHealthVerified ||
+            replacement.State is not (MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating) ||
+            plan is null || plan.OperationKind != MaintenanceOperationKind.FullMaintenance ||
+            plan.TargetMaintenanceServiceVersion is null ||
+            plan.TargetSetupVersion is null && plan.TargetAgentVersion is null ||
+            serviceCommit is null || serviceCommit.Kind != "signed-maintenance-service-committed" ||
+            serviceCommit.CommandId != existing.AgentCommandId || replacement.AgentCommandId is null)
+            return false;
+
+        var transitions = replacement.Transitions;
+        var offerIndex = -1;
+        for (var index = 0; index < transitions.Count; index++)
+            if (transitions[index].To == MaintenanceRunState.UpdateOffered) offerIndex = index;
+        var updateOffer = offerIndex < 0 ? null : transitions[offerIndex].Evidence;
+        if (offerIndex < 0 || updateOffer is null || updateOffer.Kind != "signed-update-command" ||
+            updateOffer.CommandId != replacement.AgentCommandId)
+            return false;
+        if (replacement.State == MaintenanceRunState.UpdateOffered) return true;
+        return offerIndex + 1 < transitions.Count &&
+               transitions[offerIndex + 1].To == MaintenanceRunState.Updating &&
+               transitions[offerIndex + 1].Evidence?.CommandId == replacement.AgentCommandId;
     }
 }

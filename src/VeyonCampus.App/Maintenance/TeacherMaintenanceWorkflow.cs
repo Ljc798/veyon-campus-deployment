@@ -139,7 +139,8 @@ public sealed class TeacherMaintenanceWorkflow
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (snapshot.State == MaintenanceRunState.PlanReady ||
-                snapshot.State == MaintenanceRunState.AgentHealthVerified)
+                snapshot.State == MaintenanceRunState.AgentHealthVerified ||
+                snapshot.State == MaintenanceRunState.MaintenanceServiceHealthVerified)
             {
                 executableOperationIds.Add(snapshot.OperationId);
                 continue;
@@ -150,10 +151,15 @@ public sealed class TeacherMaintenanceWorkflow
             {
                 var resumed = await _coordinator.ResumeAsync(snapshot.OperationId, cancellationToken)
                     .ConfigureAwait(false);
-                outcomes.Add(ToOutcome(resumed, resumed.Transitions.LastOrDefault()?.Reason ??
-                    "原维护事务仍在等待可信读回。", snapshot.AuthenticatedChannelConnected,
-                    snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
-                    snapshot.TeacherChannelDiagnostics));
+                if (resumed.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                    resumed.Plan?.OperationKind == MaintenanceOperationKind.FullMaintenance &&
+                    (resumed.Plan.TargetSetupVersion is not null || resumed.Plan.TargetAgentVersion is not null))
+                    executableOperationIds.Add(resumed.OperationId);
+                else
+                    outcomes.Add(ToOutcome(resumed, resumed.Transitions.LastOrDefault()?.Reason ??
+                        "原维护事务仍在等待可信读回。", snapshot.AuthenticatedChannelConnected,
+                        snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
+                        snapshot.TeacherChannelDiagnostics));
             }
         }
 
@@ -166,6 +172,8 @@ public sealed class TeacherMaintenanceWorkflow
         TeacherMaintenanceRelease? release = null;
         string? desiredChannelFingerprint = null;
         string? releaseFailure = null;
+        var maintenanceReleaseCache = new Dictionary<string, MaintenanceServiceReleaseArtifact?>(
+            StringComparer.Ordinal);
         if (planableInspections.Length > 0 && !isMaintenanceServiceOperation && (needsRelease || requestedOperation is null or
                 MaintenanceOperationKind.FullMaintenance or MaintenanceOperationKind.ConfigurationSync))
         {
@@ -223,12 +231,13 @@ public sealed class TeacherMaintenanceWorkflow
 
                 var servicePlan = new MaintenancePlan(snapshot.OperationId, snapshot.Device,
                     MaintenanceOperationKind.MaintenanceServiceUpdate, snapshot.CurrentVersions!,
-                    null, null, snapshot.Capabilities, serviceArtifact?.Release.Manifest.Sha256, null,
+                    null, null, snapshot.Capabilities, null, null,
                     channel,
                     serviceArtifact is null ? "检查 MaintenanceService 独立发行版本。" :
                         "更新至签名 MaintenanceService 发行 " + serviceArtifact.Release.Manifest.Version + "。",
                     DateTimeOffset.UtcNow, synchronizeConfiguration: false,
-                    targetMaintenanceServiceVersion: serviceArtifact?.Release.Manifest.Version);
+                    targetMaintenanceServiceVersion: serviceArtifact?.Release.Manifest.Version,
+                    targetMaintenanceServiceReleaseSha256: serviceArtifact?.Release.Manifest.Sha256);
                 var servicePlanEvidence = new MaintenanceEvidence("signed-maintenance-service-plan",
                     snapshot.Device.PinnedIdentityFingerprint,
                     serviceArtifact?.Release.Manifest.Sha256 ?? snapshot.Capabilities.SignedResponseSha256,
@@ -291,7 +300,10 @@ public sealed class TeacherMaintenanceWorkflow
                     : null,
                 HasAuthenticatedAgentChannel: StudentAgentChannelHub.IsConnected(campusId,
                     snapshot.Device.RouteAddress),
-                ReleaseChannel: isConfigurationOnly ? "stable" : release!.Release.Manifest.ReleaseChannel ?? "stable"));
+                ReleaseChannel: isConfigurationOnly ? "stable" : release!.Release.Manifest.ReleaseChannel ?? "stable",
+                HasAuthenticatedMaintenanceUpdateChannel: capability.SupportedCommands is { } updateCommands &&
+                    updateCommands.Contains("offerSignedStudentSetupUpdate", StringComparer.Ordinal) &&
+                    updateCommands.Contains("getTransactionStatus", StringComparer.Ordinal)));
 
             if (planning.Kind is StudentMaintenancePlanKind.ManualRequired or
                 StudentMaintenancePlanKind.RecoveryRequired)
@@ -304,6 +316,39 @@ public sealed class TeacherMaintenanceWorkflow
                 continue;
             }
 
+            MaintenanceServiceReleaseArtifact? maintenanceArtifact = null;
+            var allowAutomaticServiceStage = requestedOperation is null or MaintenanceOperationKind.FullMaintenance;
+            if (allowAutomaticServiceStage &&
+                snapshot.CurrentVersions.MaintenanceVersion is { } installedMaintenanceVersion &&
+                capability.SupportedCommands is { } maintenanceCommands &&
+                maintenanceCommands.Contains("offerSignedMaintenanceServiceUpdate", StringComparer.Ordinal) &&
+                maintenanceCommands.Contains("getMaintenanceServiceUpdateStatus", StringComparer.Ordinal))
+            {
+                try
+                {
+                    if (!maintenanceReleaseCache.TryGetValue(installedMaintenanceVersion, out maintenanceArtifact))
+                    {
+                        maintenanceArtifact = await _releases.GetNewerMaintenanceServiceReleaseAsync(
+                            installedMaintenanceVersion, channel, cancellationToken).ConfigureAwait(false);
+                        maintenanceReleaseCache[installedMaintenanceVersion] = maintenanceArtifact;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                                  InvalidDataException or CryptographicException or IOException or
+                                                  UnauthorizedAccessException or InvalidOperationException or ArgumentException)
+                {
+                    var reason = "没有准备 MaintenanceService 独立更新候选；为避免跳过服务阶段，本设备本次不启动 StudentSetup 更新。" +
+                                 Sanitize(exception.Message);
+                    var manual = await _coordinator.MarkManualRequiredAsync(snapshot.OperationId, reason,
+                        cancellationToken).ConfigureAwait(false);
+                    outcomes.Add(ToOutcome(manual, reason, snapshot.AuthenticatedChannelConnected,
+                        snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
+                        snapshot.TeacherChannelDiagnostics));
+                    continue;
+                }
+            }
+
             var needsSoftwareUpdate = requestedOperation == MaintenanceOperationKind.ConfigurationSync
                 ? false
                 : requestedOperation == MaintenanceOperationKind.SoftwareUpdate
@@ -312,10 +357,19 @@ public sealed class TeacherMaintenanceWorkflow
             var needsConfigurationSync = requestedOperation == MaintenanceOperationKind.SoftwareUpdate
                 ? false
                 : requestedOperation == MaintenanceOperationKind.ConfigurationSync || planning.NeedsConfigurationSync;
+            var needsMaintenanceServiceUpdate = maintenanceArtifact is not null;
             var kind = requestedOperation switch
             {
                 MaintenanceOperationKind.ConfigurationSync => MaintenanceOperationKind.ConfigurationSync,
                 MaintenanceOperationKind.SoftwareUpdate => MaintenanceOperationKind.SoftwareUpdate,
+                MaintenanceOperationKind.MaintenanceServiceUpdate => MaintenanceOperationKind.MaintenanceServiceUpdate,
+                MaintenanceOperationKind.FullMaintenance when needsMaintenanceServiceUpdate =>
+                    needsSoftwareUpdate || needsConfigurationSync
+                        ? MaintenanceOperationKind.FullMaintenance
+                        : MaintenanceOperationKind.MaintenanceServiceUpdate,
+                null when needsMaintenanceServiceUpdate => needsSoftwareUpdate || needsConfigurationSync
+                    ? MaintenanceOperationKind.FullMaintenance
+                    : MaintenanceOperationKind.MaintenanceServiceUpdate,
                 _ => (needsSoftwareUpdate, needsConfigurationSync) switch
                 {
                     (true, true) => MaintenanceOperationKind.FullMaintenance,
@@ -324,9 +378,12 @@ public sealed class TeacherMaintenanceWorkflow
                     _ => MaintenanceOperationKind.SoftwareUpdate
                 }
             };
+            var serviceOnly = kind == MaintenanceOperationKind.MaintenanceServiceUpdate;
+            var includeStudentUpdate = needsSoftwareUpdate && !isConfigurationOnly;
             var plan = new MaintenancePlan(snapshot.OperationId, snapshot.Device, kind,
-                snapshot.CurrentVersions, targetSetupVersion, targetAgentVersion,
-                capability, isConfigurationOnly ? null : release!.Release.Manifest.Sha256,
+                snapshot.CurrentVersions, serviceOnly || !includeStudentUpdate ? null : targetSetupVersion,
+                serviceOnly || !includeStudentUpdate ? null : targetAgentVersion,
+                capability, includeStudentUpdate ? release!.Release.Manifest.Sha256 : null,
                 needsConfigurationSync ? desiredChannelFingerprint : null,
                 isConfigurationOnly ? MaintenanceReleaseChannel.Stable : channel,
                 requestedOperation == MaintenanceOperationKind.ConfigurationSync
@@ -334,7 +391,11 @@ public sealed class TeacherMaintenanceWorkflow
                     : requestedOperation == MaintenanceOperationKind.SoftwareUpdate
                         ? "按请求仅更新 StudentSetup 与 Agent，不执行连接配置同步。"
                         : planning.Reason,
-                DateTimeOffset.UtcNow, needsConfigurationSync);
+                DateTimeOffset.UtcNow, needsConfigurationSync,
+                targetMaintenanceServiceVersion: needsMaintenanceServiceUpdate
+                    ? maintenanceArtifact!.Release.Manifest.Version : null,
+                targetMaintenanceServiceReleaseSha256: needsMaintenanceServiceUpdate
+                    ? maintenanceArtifact!.Release.Manifest.Sha256 : null);
             var planEvidence = new MaintenanceEvidence("signed-maintenance-plan",
                 snapshot.Device.PinnedIdentityFingerprint, capability.SignedResponseSha256, null,
                 capability.VerifiedUtc);
@@ -479,7 +540,7 @@ public sealed class TeacherMaintenanceWorkflow
         new(run.Device.RouteAddress, run.OperationId, run.State, summary,
             MaintenanceResult.FromRun(run, summary), run.CurrentVersions, run.Capabilities,
             run.Plan is null ? null : new MaintenanceComponentVersions(run.Plan.TargetSetupVersion,
-                run.Plan.TargetAgentVersion, null, null),
+                run.Plan.TargetAgentVersion, null, run.Plan.TargetMaintenanceServiceVersion),
             run.Plan?.OperationKind, run.Plan?.Channel,
             run.VerifiedUpdateTransactionState ?? updateTransactionState,
             authenticatedChannelConnected, authenticatedChannelCheckedUtc, channelDiagnostics);

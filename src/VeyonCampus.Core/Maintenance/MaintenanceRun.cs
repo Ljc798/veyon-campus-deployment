@@ -10,6 +10,7 @@ public enum MaintenanceRunState
     Updating,
     WaitingForCommit,
     AgentHealthVerified,
+    MaintenanceServiceHealthVerified,
     ConfigurationSyncing,
     NoChanges,
     PendingVerification,
@@ -64,21 +65,28 @@ public sealed class MaintenanceRun
                 MaintenanceRunState.PendingVerification, MaintenanceRunState.RecoveryRequired,
                 MaintenanceRunState.RolledBack, MaintenanceRunState.Failed),
             [MaintenanceRunState.Updating] = Set(MaintenanceRunState.WaitingForCommit,
+                MaintenanceRunState.MaintenanceServiceHealthVerified,
                 MaintenanceRunState.PendingVerification, MaintenanceRunState.RecoveryRequired,
                 MaintenanceRunState.RolledBack, MaintenanceRunState.Failed),
             [MaintenanceRunState.WaitingForCommit] = Set(MaintenanceRunState.AgentHealthVerified,
+                MaintenanceRunState.MaintenanceServiceHealthVerified,
                 MaintenanceRunState.PendingVerification, MaintenanceRunState.RecoveryRequired,
                 MaintenanceRunState.RolledBack, MaintenanceRunState.Failed),
             [MaintenanceRunState.AgentHealthVerified] = Set(MaintenanceRunState.ConfigurationSyncing,
                 MaintenanceRunState.Completed, MaintenanceRunState.PendingVerification,
                 MaintenanceRunState.RecoveryRequired, MaintenanceRunState.ManualRequired,
                 MaintenanceRunState.Failed),
+            [MaintenanceRunState.MaintenanceServiceHealthVerified] = Set(MaintenanceRunState.UpdateOffered,
+                MaintenanceRunState.ConfigurationSyncing, MaintenanceRunState.Completed,
+                MaintenanceRunState.PendingVerification, MaintenanceRunState.RecoveryRequired,
+                MaintenanceRunState.ManualRequired, MaintenanceRunState.Failed),
             [MaintenanceRunState.ConfigurationSyncing] = Set(MaintenanceRunState.Completed,
                 MaintenanceRunState.PendingVerification, MaintenanceRunState.RecoveryRequired,
                 MaintenanceRunState.ManualRequired, MaintenanceRunState.Failed),
             [MaintenanceRunState.NoChanges] = Set(MaintenanceRunState.Completed, MaintenanceRunState.Failed),
             [MaintenanceRunState.PendingVerification] = Set(MaintenanceRunState.WaitingForCommit,
-                MaintenanceRunState.AgentHealthVerified, MaintenanceRunState.ConfigurationSyncing,
+                MaintenanceRunState.AgentHealthVerified, MaintenanceRunState.MaintenanceServiceHealthVerified,
+                MaintenanceRunState.ConfigurationSyncing,
                 MaintenanceRunState.Completed, MaintenanceRunState.RolledBack, MaintenanceRunState.RecoveryRequired,
                 MaintenanceRunState.ManualRequired, MaintenanceRunState.Failed),
             [MaintenanceRunState.RecoveryRequired] = Set(MaintenanceRunState.PendingVerification,
@@ -98,6 +106,17 @@ public sealed class MaintenanceRun
     public DateTimeOffset CreatedUtc { get; }
     public DateTimeOffset UpdatedUtc { get; }
     public IReadOnlyList<MaintenanceTransition> Transitions { get; }
+    public bool IsMaintenanceServiceUpdateStage =>
+        (State is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
+            MaintenanceRunState.WaitingForCommit or MaintenanceRunState.PendingVerification or
+            MaintenanceRunState.RecoveryRequired) &&
+        (Plan?.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate ||
+         Plan?.TargetMaintenanceServiceVersion is not null &&
+         Transitions.LastOrDefault(item => item.To == MaintenanceRunState.UpdateOffered)?.Evidence?.Kind ==
+         "signed-maintenance-service-update-command");
+    public bool LastUpdateCommandIsMaintenanceService =>
+        Transitions.LastOrDefault(item => item.To == MaintenanceRunState.UpdateOffered)?.Evidence?.Kind ==
+        "signed-maintenance-service-update-command";
     public bool IsTerminal => State is MaintenanceRunState.Completed or MaintenanceRunState.RolledBack or
         MaintenanceRunState.Failed or MaintenanceRunState.ManualRequired;
 
@@ -133,16 +152,19 @@ public sealed class MaintenanceRun
         if ((state is MaintenanceRunState.CapabilitiesVerified or MaintenanceRunState.PlanReady or
                 MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
                 MaintenanceRunState.WaitingForCommit or MaintenanceRunState.AgentHealthVerified or
+                MaintenanceRunState.MaintenanceServiceHealthVerified or
                 MaintenanceRunState.ConfigurationSyncing or MaintenanceRunState.NoChanges or
                 MaintenanceRunState.Completed) && currentVersions is null)
             throw new InvalidDataException("Maintenance run 已核验能力，但缺少当前组件版本快照。");
         if ((state is MaintenanceRunState.PlanReady or MaintenanceRunState.UpdateOffered or
                 MaintenanceRunState.Updating or MaintenanceRunState.WaitingForCommit or
-                MaintenanceRunState.AgentHealthVerified or MaintenanceRunState.ConfigurationSyncing or
+                MaintenanceRunState.AgentHealthVerified or MaintenanceRunState.MaintenanceServiceHealthVerified or
+                MaintenanceRunState.ConfigurationSyncing or
                 MaintenanceRunState.NoChanges or MaintenanceRunState.Completed) && plan is null)
             throw new InvalidDataException("Maintenance run 已进入计划执行阶段，但没有绑定维护计划。");
         if ((state is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
                 MaintenanceRunState.WaitingForCommit or MaintenanceRunState.AgentHealthVerified or
+                MaintenanceRunState.MaintenanceServiceHealthVerified or
                 MaintenanceRunState.RolledBack) && agentCommandId is null)
             throw new InvalidDataException("Maintenance run 更新阶段缺少 Agent commandId。");
         var history = transitions.ToArray();
@@ -161,6 +183,14 @@ public sealed class MaintenanceRun
         if (expectedState != state || history.Length == 0 && state != MaintenanceRunState.Discovered ||
             updated < previousTime)
             throw new InvalidDataException("Maintenance run 当前状态与其完整转换历史不一致。");
+        var latestUpdateCommand = history.LastOrDefault(item => item.To == MaintenanceRunState.UpdateOffered)
+            ?.Evidence?.CommandId;
+        if (agentCommandId != latestUpdateCommand)
+            throw new InvalidDataException("Maintenance run 当前 commandId 与追加式更新阶段历史不一致。");
+        if (agentCommandId is not null && history.LastOrDefault(item =>
+                item.To == MaintenanceRunState.UpdateOffered)?.Evidence?.Kind is not
+            ("signed-update-command" or "signed-maintenance-service-update-command"))
+            throw new InvalidDataException("Maintenance run 当前更新阶段缺少已识别的签名命令摘要证据。");
         OperationId = operationId;
         Device = device;
         State = state;
@@ -241,14 +271,41 @@ public sealed class MaintenanceRun
         if (agentCommandId == Guid.Empty) throw new ArgumentException("Agent 更新 commandId 不能为空.", nameof(agentCommandId));
         if (AgentCommandId is { } existingCommand)
         {
-            if (existingCommand == agentCommandId) return this;
-            throw new InvalidOperationException("此 operationId 已绑定另一 Agent 更新 commandId；拒绝重复下发。");
+            if (existingCommand == agentCommandId)
+            {
+                if (State is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating) return this;
+                throw new InvalidOperationException("此 operationId 的新阶段 commandId 与上一阶段重复。");
+            }
+            if (State != MaintenanceRunState.MaintenanceServiceHealthVerified ||
+                Plan?.OperationKind != MaintenanceOperationKind.FullMaintenance ||
+                Plan.TargetSetupVersion is null && Plan.TargetAgentVersion is null ||
+                !string.Equals(Transitions.LastOrDefault(item =>
+                    item.To == MaintenanceRunState.MaintenanceServiceHealthVerified)?.Evidence?.Kind,
+                    "signed-maintenance-service-committed", StringComparison.Ordinal))
+                throw new InvalidOperationException("此 operationId 已绑定更新 commandId；当前阶段不允许开始第二阶段。");
         }
         if (Plan is null || Plan.OperationKind is MaintenanceOperationKind.ConfigurationSync or
                 MaintenanceOperationKind.Reconcile)
             throw new InvalidOperationException("当前维护计划没有可下发的软件更新。");
-        var withCommand = Copy(agentCommandId: agentCommandId);
-        return withCommand.TransitionTo(MaintenanceRunState.UpdateOffered, reason, evidence, nowUtc);
+        if (Plan.TargetMaintenanceServiceVersion is not null &&
+            (State == MaintenanceRunState.PlanReady &&
+             evidence.Kind != "signed-maintenance-service-update-command" ||
+             State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+             evidence.Kind != "signed-update-command"))
+            throw new InvalidOperationException("多阶段维护必须先记录独立 MaintenanceService 命令，再启动 StudentSetup 阶段。");
+        if (!Allowed.TryGetValue(State, out var allowed) || !allowed.Contains(MaintenanceRunState.UpdateOffered))
+            throw new InvalidOperationException($"当前状态 {State} 不允许开始更新阶段。");
+        if (evidence.CommandId != agentCommandId || evidence.Sha256 is null ||
+            !string.Equals(evidence.DeviceIdentityFingerprint, Device.PinnedIdentityFingerprint,
+                StringComparison.Ordinal))
+            throw new InvalidDataException("更新阶段凭据没有绑定当前设备和新 commandId。");
+        var occurredUtc = MaintenanceValidation.Utc(nowUtc);
+        var transition = new MaintenanceTransition(State, MaintenanceRunState.UpdateOffered, occurredUtc,
+            MaintenanceValidation.RequiredText(reason, nameof(reason)), evidence);
+        return new MaintenanceRun(OperationId, Device, MaintenanceRunState.UpdateOffered, Capabilities,
+            CurrentVersions, Plan, agentCommandId, CreatedUtc, occurredUtc,
+            Transitions.Append(transition).ToArray(), VerifiedCurrentVersions,
+            VerifiedUpdateTransactionState, VerifiedStatusUtc);
     }
 
     public MaintenanceRun RecordVerifiedStatus(MaintenanceComponentVersions verifiedVersions,
@@ -260,7 +317,8 @@ public sealed class MaintenanceRun
                 StringComparison.Ordinal) || evidence.Sha256 is null)
             throw new InvalidDataException("签名状态事实没有绑定当前固定设备身份和响应摘要。" );
         if (evidence.Kind is "signed-update-transaction-status" or
-            "signed-maintenance-update-transaction-status")
+            "signed-maintenance-update-transaction-status" or "signed-maintenance-service-committed" or
+            "signed-maintenance-service-transaction-status")
         {
             if (AgentCommandId is not { } commandId || evidence.CommandId != commandId)
                 throw new InvalidDataException("签名更新状态 commandId 与当前维护操作不一致。" );
@@ -274,6 +332,13 @@ public sealed class MaintenanceRun
                 throw new InvalidDataException("签名配置状态 commandId 与当前维护操作不一致。" );
         }
         else throw new InvalidDataException("维护状态读回证据类型无效。" );
+        if (verifiedVersions.MaintenanceVersion is null && Plan?.TargetMaintenanceServiceVersion is { } targetService &&
+            Transitions.Any(item => item.To == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                item.Evidence?.Kind == "signed-maintenance-service-committed") &&
+            (evidence.Kind is "signed-update-transaction-status" or
+                "signed-maintenance-update-transaction-status"))
+            verifiedVersions = new MaintenanceComponentVersions(verifiedVersions.StudentSetupVersion,
+                verifiedVersions.AgentRuntimeVersion, verifiedVersions.AgentAssemblyVersion, targetService);
         var now = DateTimeOffset.UtcNow;
         return new MaintenanceRun(OperationId, Device, State, Capabilities, CurrentVersions, Plan, AgentCommandId,
             CreatedUtc, now < UpdatedUtc ? UpdatedUtc : now, Transitions, verifiedVersions,
@@ -306,10 +371,15 @@ public sealed class MaintenanceRun
             !string.Equals(evidence?.DeviceIdentityFingerprint, Device.PinnedIdentityFingerprint,
                 StringComparison.Ordinal))
             throw new InvalidDataException($"维护状态 {next} 缺少当前固定设备身份的确认凭证。");
+        if (next == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+            (Plan?.TargetMaintenanceServiceVersion is null ||
+             evidence?.Kind != "signed-maintenance-service-committed"))
+            throw new InvalidDataException("MaintenanceService 阶段缺少已绑定目标版本的签名提交与健康证据。");
         if (next == MaintenanceRunState.UpdateOffered && AgentCommandId is null)
             throw new InvalidOperationException("尚未绑定 Agent commandId，不能进入 UpdateOffered。");
         if (next is MaintenanceRunState.IdentityVerified or MaintenanceRunState.CapabilitiesVerified or
-            MaintenanceRunState.AgentHealthVerified or MaintenanceRunState.RolledBack or
+            MaintenanceRunState.AgentHealthVerified or MaintenanceRunState.MaintenanceServiceHealthVerified or
+            MaintenanceRunState.RolledBack or
             MaintenanceRunState.Completed)
         {
             if (evidence is null || !string.Equals(evidence.DeviceIdentityFingerprint,
@@ -318,7 +388,8 @@ public sealed class MaintenanceRun
         }
         if ((next is MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
                 MaintenanceRunState.WaitingForCommit or MaintenanceRunState.AgentHealthVerified or
-                MaintenanceRunState.RolledBack) && AgentCommandId is { } expectedCommand &&
+                MaintenanceRunState.MaintenanceServiceHealthVerified or MaintenanceRunState.RolledBack) &&
+            AgentCommandId is { } expectedCommand &&
             evidence?.CommandId != expectedCommand)
             throw new InvalidDataException("维护状态缺少与 operationId 绑定的 Agent commandId 证据。");
         if (next == MaintenanceRunState.UpdateOffered && evidence?.CommandId != AgentCommandId)

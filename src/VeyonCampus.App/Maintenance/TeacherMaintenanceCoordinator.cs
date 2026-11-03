@@ -33,7 +33,7 @@ public sealed record MaintenanceAdapterResult(Guid OperationId, MaintenanceAdapt
 public sealed record MaintenanceUpdateRequest(MaintenancePlan Plan);
 
 public sealed record MaintenanceUpdateCommandPrepared(Guid OperationId, Guid CommandId,
-    string SignedCommandSha256);
+    string SignedCommandSha256, bool MaintenanceServiceUpdate = false);
 
 public sealed record MaintenanceInspectionSnapshot(Guid OperationId, MaintenanceDeviceIdentity Device,
     MaintenanceRunState State, MaintenanceComponentVersions? CurrentVersions,
@@ -163,12 +163,16 @@ public sealed class TeacherMaintenanceCoordinator
         var initial = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
         var runs = ids.Select(id => initial.Find(id) ?? throw new KeyNotFoundException(
             $"Maintenance operationId {id:D} 不存在。" )).ToArray();
-        var ready = runs.Where(run => run.State == MaintenanceRunState.PlanReady && run.Plan is not null).ToArray();
+        var ready = runs.Where(run => (run.State is MaintenanceRunState.PlanReady or
+            MaintenanceRunState.MaintenanceServiceHealthVerified) && run.Plan is not null).ToArray();
 
         foreach (var run in ready.Where(item => item.Plan!.OperationKind == MaintenanceOperationKind.Reconcile))
             await ResumeAsync(run.OperationId, cancellationToken).ConfigureAwait(false);
 
-        foreach (var run in ready.Where(item => item.Plan!.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate))
+        foreach (var run in ready.Where(item => item.State == MaintenanceRunState.PlanReady &&
+                     (item.Plan!.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate ||
+                      item.Plan.OperationKind == MaintenanceOperationKind.FullMaintenance &&
+                      item.Plan.TargetMaintenanceServiceVersion is not null)))
         {
             var plan = run.Plan!;
             try
@@ -202,9 +206,15 @@ public sealed class TeacherMaintenanceCoordinator
         }
 
         var softwareUpdates = new List<MaintenanceUpdateRequest>();
-        foreach (var run in ready.Where(item => item.Plan!.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
-                                                 MaintenanceOperationKind.FullMaintenance))
+        foreach (var plannedRun in ready.Where(item => item.Plan!.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
+                                                        MaintenanceOperationKind.FullMaintenance))
         {
+            var run = await RequireRunAsync(plannedRun.OperationId, cancellationToken).ConfigureAwait(false);
+            if (run.Plan?.TargetMaintenanceServiceVersion is not null &&
+                run.State != MaintenanceRunState.MaintenanceServiceHealthVerified)
+                continue;
+            if (run.State is not (MaintenanceRunState.PlanReady or
+                MaintenanceRunState.MaintenanceServiceHealthVerified)) continue;
             if (!NeedsSoftwareUpdate(run.Plan!, out var reason))
             {
                 if (reason is not null)
@@ -216,6 +226,14 @@ public sealed class TeacherMaintenanceCoordinator
                     continue;
                 }
                 if (run.Plan!.SynchronizeConfiguration) continue;
+                if (run.State == MaintenanceRunState.MaintenanceServiceHealthVerified)
+                {
+                    var completedAfterServiceUpdate = run.TransitionTo(MaintenanceRunState.Completed,
+                        "MaintenanceService 已更新并健康读回；StudentSetup 与 Agent 目标已达到，无需第二次安装。",
+                        TrustedEvidence(run), DateTimeOffset.UtcNow);
+                    await _store.UpdateAsync(completedAfterServiceUpdate, cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
                 var noChanges = run.TransitionTo(MaintenanceRunState.NoChanges, "Setup 与 Agent 目标均无需更新。",
                     TrustedEvidence(run), DateTimeOffset.UtcNow)
                     .TransitionTo(MaintenanceRunState.Completed, "软件版本已核验为无需更新。",
@@ -276,7 +294,8 @@ public sealed class TeacherMaintenanceCoordinator
         var configurationRuns = current.Runs.Where(run => ids.Contains(run.OperationId) && run.Plan is not null &&
             run.Plan.SynchronizeConfiguration &&
             (run.State == MaintenanceRunState.PlanReady ||
-             run.State == MaintenanceRunState.AgentHealthVerified)).ToArray();
+             run.State == MaintenanceRunState.AgentHealthVerified ||
+             run.State == MaintenanceRunState.MaintenanceServiceHealthVerified)).ToArray();
         for (var index = 0; index < configurationRuns.Length; index++)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -303,7 +322,24 @@ public sealed class TeacherMaintenanceCoordinator
                 .First(item => item.Device.Key == run.Device.Key) is { } refreshed
                 ? (await RequireRunAsync(refreshed.OperationId, cancellationToken).ConfigureAwait(false))
                 : run;
+        if (run.State == MaintenanceRunState.MaintenanceServiceHealthVerified)
+        {
+            _ = await ExecuteAsync([operationId], cancellationToken: cancellationToken).ConfigureAwait(false);
+            return await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
+        }
         var result = await _adapter.ReconcileAsync(run, cancellationToken).ConfigureAwait(false);
+        if (run.IsMaintenanceServiceUpdateStage)
+        {
+            await ApplyUpdateResultAsync(result, cancellationToken).ConfigureAwait(false);
+            run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
+            if (run.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                run.Plan?.OperationKind == MaintenanceOperationKind.FullMaintenance)
+            {
+                _ = await ExecuteAsync([operationId], cancellationToken: cancellationToken).ConfigureAwait(false);
+                run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
+            }
+            return run;
+        }
         if (result.Disposition == MaintenanceAdapterDisposition.UpdateCommittedAndHealthy)
         {
             run = await RecordVerifiedStatusAsync(run, result, cancellationToken).ConfigureAwait(false);
@@ -378,7 +414,9 @@ public sealed class TeacherMaintenanceCoordinator
         CancellationToken cancellationToken)
     {
         var run = await RequireRunAsync(prepared.OperationId, cancellationToken).ConfigureAwait(false);
-        var evidence = new MaintenanceEvidence("signed-update-command", run.Device.PinnedIdentityFingerprint,
+        var evidence = new MaintenanceEvidence(prepared.MaintenanceServiceUpdate
+                ? "signed-maintenance-service-update-command" : "signed-update-command",
+            run.Device.PinnedIdentityFingerprint,
             prepared.SignedCommandSha256, prepared.CommandId, DateTimeOffset.UtcNow);
         if (run.AgentCommandId == prepared.CommandId && run.State is MaintenanceRunState.UpdateOffered or
                 MaintenanceRunState.Updating)
@@ -394,6 +432,7 @@ public sealed class TeacherMaintenanceCoordinator
         CancellationToken cancellationToken)
     {
         var run = await RequireRunAsync(result.OperationId, cancellationToken).ConfigureAwait(false);
+        var maintenanceServiceStage = run.IsMaintenanceServiceUpdateStage;
         run = await RecordVerifiedStatusAsync(run, result, cancellationToken).ConfigureAwait(false);
         switch (result.Disposition)
         {
@@ -408,6 +447,33 @@ public sealed class TeacherMaintenanceCoordinator
                 break;
             case MaintenanceAdapterDisposition.UpdateCommittedAndHealthy:
                 var healthyEvidence = RequireEvidence(run, result.Evidence, requireCommand: true);
+                if (maintenanceServiceStage)
+                {
+                    if (run.State == MaintenanceRunState.PendingVerification)
+                        run = run.TransitionTo(MaintenanceRunState.MaintenanceServiceHealthVerified,
+                            result.Detail, healthyEvidence, DateTimeOffset.UtcNow);
+                    else if (run.State == MaintenanceRunState.RecoveryRequired)
+                        run = run.TransitionTo(MaintenanceRunState.PendingVerification, result.Detail,
+                                healthyEvidence, DateTimeOffset.UtcNow)
+                            .TransitionTo(MaintenanceRunState.MaintenanceServiceHealthVerified,
+                                result.Detail, healthyEvidence, DateTimeOffset.UtcNow);
+                    else
+                    {
+                        if (run.State == MaintenanceRunState.UpdateOffered)
+                            run = run.TransitionTo(MaintenanceRunState.Updating, result.Detail,
+                                healthyEvidence, DateTimeOffset.UtcNow);
+                        if (run.State == MaintenanceRunState.Updating)
+                            run = run.TransitionTo(MaintenanceRunState.MaintenanceServiceHealthVerified,
+                                result.Detail, healthyEvidence, DateTimeOffset.UtcNow);
+                    }
+                    if (run.Plan?.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate ||
+                        run.Plan?.TargetSetupVersion is null && run.Plan?.TargetAgentVersion is null &&
+                        run.Plan?.SynchronizeConfiguration != true)
+                        run = run.TransitionTo(MaintenanceRunState.Completed, result.Detail,
+                            healthyEvidence, DateTimeOffset.UtcNow);
+                    await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
+                    break;
+                }
                 run = await MarkAgentHealthyAsync(run, healthyEvidence, result.Detail, cancellationToken)
                     .ConfigureAwait(false);
                 if (run.Plan?.SynchronizeConfiguration != true)
@@ -436,7 +502,9 @@ public sealed class TeacherMaintenanceCoordinator
                 break;
             case MaintenanceAdapterDisposition.ManualRequired:
             case MaintenanceAdapterDisposition.Failed:
-                if (run.AgentCommandId is null && run.State == MaintenanceRunState.PlanReady)
+                if ((run.AgentCommandId is null && run.State == MaintenanceRunState.PlanReady) ||
+                    (run.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                     run.LastUpdateCommandIsMaintenanceService))
                 {
                     var failed = run.TransitionTo(result.Disposition == MaintenanceAdapterDisposition.ManualRequired
                             ? MaintenanceRunState.ManualRequired
@@ -629,7 +697,14 @@ public sealed class TeacherMaintenanceCoordinator
     {
         if (result.VerifiedCurrentVersions is null && result.VerifiedUpdateTransactionState is null)
             return run;
-        if (result.VerifiedCurrentVersions is null || result.VerifiedStatusUtc is null || result.Evidence is null)
+        if (result.Evidence?.Kind is not ("signed-update-transaction-status" or
+            "signed-maintenance-update-transaction-status" or "signed-maintenance-service-committed" or
+            "signed-maintenance-service-transaction-status" or "signed-configuration-final-status" or
+            "signed-maintenance-configuration-status"))
+            return run;
+        if (result.VerifiedStatusUtc is null)
+            return run; // Snapshots without signed status timestamps are not persisted as verified facts.
+        if (result.VerifiedCurrentVersions is null || result.Evidence is null)
             throw new InvalidDataException("维护适配器返回不完整的签名学生状态事实。" );
         var observed = run.RecordVerifiedStatus(result.VerifiedCurrentVersions,
             result.VerifiedUpdateTransactionState, result.VerifiedStatusUtc.Value, result.Evidence);
@@ -665,7 +740,10 @@ public sealed class TeacherMaintenanceCoordinator
         var run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
         if (run.IsTerminal || run.State is MaintenanceRunState.PendingVerification or
                 MaintenanceRunState.RecoveryRequired) return;
-        var next = run.AgentCommandId is not null || (run.State is MaintenanceRunState.ConfigurationSyncing or
+        var hasCurrentUpdateCommand = run.AgentCommandId is not null &&
+                                      !(run.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                                        run.LastUpdateCommandIsMaintenanceService);
+        var next = hasCurrentUpdateCommand || (run.State is MaintenanceRunState.ConfigurationSyncing or
                        MaintenanceRunState.AgentHealthVerified)
             ? MaintenanceRunState.PendingVerification
             : MaintenanceRunState.Failed;
@@ -796,6 +874,8 @@ public sealed class TeacherMaintenanceCoordinator
         string.Equals(first.TargetAgentVersion, second.TargetAgentVersion, StringComparison.Ordinal) &&
         string.Equals(first.TargetMaintenanceServiceVersion, second.TargetMaintenanceServiceVersion,
             StringComparison.Ordinal) &&
+        string.Equals(first.TargetMaintenanceServiceReleaseSha256,
+            second.TargetMaintenanceServiceReleaseSha256, StringComparison.Ordinal) &&
         string.Equals(first.TargetReleaseSha256, second.TargetReleaseSha256, StringComparison.Ordinal) &&
         string.Equals(first.ConfigurationSha256, second.ConfigurationSha256, StringComparison.Ordinal) &&
         first.Channel == second.Channel &&

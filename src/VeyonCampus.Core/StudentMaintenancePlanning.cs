@@ -14,6 +14,7 @@ public enum StudentMaintenanceTransport
 {
     None,
     AuthenticatedAgentChannel,
+    AuthenticatedMaintenanceServiceChannel,
     TrustedLegacyHttp,
     Unavailable
 }
@@ -28,7 +29,8 @@ public sealed record StudentMaintenancePlanningInput(
     string? UpdateTransactionState,
     bool? TeacherChannelConfigurationMatches,
     bool HasAuthenticatedAgentChannel,
-    string ReleaseChannel = "stable");
+    string ReleaseChannel = "stable",
+    bool HasAuthenticatedMaintenanceUpdateChannel = false);
 
 public sealed record StudentMaintenancePlan(
     StudentMaintenancePlanKind Kind,
@@ -189,14 +191,17 @@ public static class StudentMaintenancePlanner
         if (setupComparison > 0 && agentComparison is < 0)
             return Manual($"当前 StudentSetup {input.CurrentSetupVersion} 高于目标 {input.TargetSetupVersion}，但 Agent {input.CurrentAgentVersion} 低于目标 {input.TargetAgentVersion}；不能降级 Setup 覆盖修复。");
 
-        if (needsSoftwareUpdate && !StudentAgentUpdateCompatibility.SupportsUpdateStatusProtocol(
+        if (needsSoftwareUpdate && !input.HasAuthenticatedMaintenanceUpdateChannel &&
+            !StudentAgentUpdateCompatibility.SupportsUpdateStatusProtocol(
                 input.CurrentAgentVersion, input.StudentUpdateProtocolVersion, input.ReleaseChannel))
             return Manual("当前 Agent 未签名报告受支持的原子更新协议；不会下发安装包。");
 
         var needsConfigurationSync = input.TeacherChannelConfigurationMatches != true;
         var transport = !needsSoftwareUpdate
             ? StudentMaintenanceTransport.None
-            : input.HasAuthenticatedAgentChannel
+            : input.HasAuthenticatedMaintenanceUpdateChannel
+                ? StudentMaintenanceTransport.AuthenticatedMaintenanceServiceChannel
+                : input.HasAuthenticatedAgentChannel
                 ? StudentMaintenanceTransport.AuthenticatedAgentChannel
                 : StudentMaintenanceTransport.TrustedLegacyHttp;
 
