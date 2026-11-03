@@ -155,33 +155,57 @@ public static class StudentAgentTeacherChannelClient
         using var sendGate = new SemaphoreSlim(1, 1);
         socket.Options.AddSubProtocol(StudentAgentChannelProtocol.WebSocketSubProtocolV1);
         socket.Options.KeepAliveInterval = StudentAgentChannelProtocol.HeartbeatInterval;
+        string? certificateFailureCode = null;
         socket.Options.RemoteCertificateValidationCallback = (_, certificate, chain, errors) =>
-            ValidateTeacherCertificate(certificate, chain, errors, teacherRoot);
+        {
+            try
+            {
+                var valid = ValidateTeacherCertificate(certificate, chain, errors, teacherRoot);
+                if (!valid) certificateFailureCode = "TlsValidationFailure";
+                return valid;
+            }
+            catch (Exception exception) when (exception is CryptographicException or ArgumentException or
+                                              InvalidOperationException)
+            {
+                certificateFailureCode = "TlsValidationFailure";
+                return false;
+            }
+        };
         using var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         connectTimeout.CancelAfter(TimeSpan.FromSeconds(8));
         try
         {
             await socket.ConnectAsync(uri, connectTimeout.Token).ConfigureAwait(false);
         }
-        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException exception) when (!cancellationToken.IsCancellationRequested &&
+                                                            certificateFailureCode is null)
         {
             throw new StudentAgentTeacherChannelFailureException("TcpConnectFailure", exception);
         }
+        catch (Exception exception) when (certificateFailureCode is { } failureCode &&
+                                          (exception is not OperationCanceledException ||
+                                           !cancellationToken.IsCancellationRequested))
+        {
+            throw new StudentAgentTeacherChannelFailureException(failureCode, exception);
+        }
         if (!StudentAgentChannelProtocol.IsCompatibleNegotiatedSubProtocol(socket.SubProtocol))
-            throw new InvalidDataException("教师端选择了不受支持的 Agent 通道子协议。");
+            throw new StudentAgentTeacherChannelFailureException("ProtocolMismatch",
+                new InvalidDataException("教师端选择了不受支持的 Agent 通道子协议。"));
 
         var challenge = StudentAgentChannelProtocol.Deserialize(
             await ReceiveMessageAsync(socket, connectTimeout.Token).ConfigureAwait(false));
         if (challenge.Type != "challenge" || challenge.CampusId != config.CampusId ||
             string.IsNullOrWhiteSpace(challenge.Nonce))
-            throw new InvalidDataException("教师端连接挑战无效。");
+            throw new StudentAgentTeacherChannelFailureException("AuthenticationRejected",
+                new InvalidDataException("教师端连接挑战无效。"));
         var hello = StudentAgentChannelProtocol.CreateHello(config.CampusId, challenge.Nonce, agentIdentityKey);
         await SendMessageAsync(socket, hello, sendGate, connectTimeout.Token).ConfigureAwait(false);
         var ready = StudentAgentChannelProtocol.Deserialize(
             await ReceiveMessageAsync(socket, connectTimeout.Token).ConfigureAwait(false));
         if (ready.Type != "ready" || ready.CampusId != config.CampusId ||
             string.IsNullOrWhiteSpace(ready.Target))
-            throw new InvalidDataException("教师端没有确认学生 Agent 身份。");
+            throw new StudentAgentTeacherChannelFailureException("AuthenticationRejected",
+                new InvalidDataException("教师端没有确认学生 Agent 身份。"));
         _ = ClassroomEventCryptography.NormalizeSingleTarget(ready.Target);
         StudentAgentTeacherChannelDiagnostics.RecordConnected(configPath);
 
@@ -363,7 +387,8 @@ public static class StudentAgentTeacherChannelClient
     {
         if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var baseUri) ||
             baseUri.Scheme != Uri.UriSchemeHttps ||
-            !ClassroomEventCryptography.IsPrivateIpv4Address(IPAddress.Parse(baseUri.Host)))
+            !IPAddress.TryParse(baseUri.Host, out var address) ||
+            !ClassroomEventCryptography.IsPrivateIpv4Address(address))
             throw new InvalidDataException("教师端连接地址无效。");
         var builder = new UriBuilder(baseUri)
         {
