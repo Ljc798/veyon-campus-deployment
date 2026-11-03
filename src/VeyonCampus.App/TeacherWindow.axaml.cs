@@ -100,6 +100,7 @@ public partial class TeacherWindow : Window
         _model.PropertyChanged += TeacherModelPropertyChanged;
         _model.ActiveClassroomSeatGridChanged += OnActiveClassroomSeatGridChanged;
         _mobileControl.StudentAgentChannelConnected += OnStudentAgentChannelConnected;
+        _mobileControl.MaintenanceServiceChannelConnected += OnMaintenanceServiceChannelConnected;
         _teacherHeartbeatTimer.Tick += RunHourlyBackgroundChecks;
         _classroomStatusTimer.Tick += RefreshClassroomStatus;
         _classroomEventsTimer.Tick += RefreshClassroomEvents;
@@ -198,6 +199,7 @@ public partial class TeacherWindow : Window
             _model.PropertyChanged -= TeacherModelPropertyChanged;
             _model.ActiveClassroomSeatGridChanged -= OnActiveClassroomSeatGridChanged;
             _mobileControl.StudentAgentChannelConnected -= OnStudentAgentChannelConnected;
+            _mobileControl.MaintenanceServiceChannelConnected -= OnMaintenanceServiceChannelConnected;
             _classroomScopeSyncCancellation?.Cancel();
             try { await _mobileControl.DisposeAsync(); }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
@@ -446,6 +448,7 @@ public partial class TeacherWindow : Window
 
     private void OnStudentAgentChannelConnected(string target)
     {
+        ReconcileMaintenanceConfigurationAfterConnection(target);
         Dispatcher.UIThread.Post(() =>
         {
             if (!_classroomScopeWaitingForAgentConnections ||
@@ -457,6 +460,12 @@ public partial class TeacherWindow : Window
             _ = ReconcileClassroomScopeAfterStudentConnectedAsync();
         });
     }
+
+    private void OnMaintenanceServiceChannelConnected(string target) =>
+        ReconcileMaintenanceConfigurationAfterConnection(target);
+
+    private void ReconcileMaintenanceConfigurationAfterConnection(string target) =>
+        Dispatcher.UIThread.Post(() => _ = _model.ReconcilePendingMaintenanceConfigurationAsync(target));
 
     private async Task ReconcileClassroomScopeAfterStudentConnectedAsync()
     {

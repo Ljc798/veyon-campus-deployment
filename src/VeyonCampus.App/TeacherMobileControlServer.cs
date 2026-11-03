@@ -253,6 +253,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action<string>? StudentAgentChannelConnected;
+    public event Action<string>? MaintenanceServiceChannelConnected;
     public bool IsRunning { get => _isRunning; private set => Set(ref _isRunning, value); }
     public bool CanStart => !IsRunning;
     public bool CanStop => IsRunning && _classroomContext is null;
@@ -474,7 +475,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                 {
                     _classroomQuickControlService?.NotifyStudentAgentConnected(target);
                     StudentAgentChannelConnected?.Invoke(target);
-                });
+                },
+                maintenanceServiceChannelConnected: target => MaintenanceServiceChannelConnected?.Invoke(target));
             await service.StartAsync(cancellationToken);
             _service = service;
             var pairingAddress = _identityProvider.SelectPreferredLanAddress(identity.Addresses);
@@ -1065,6 +1067,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>?
         _readClassroomQuickControl;
     private readonly Action<string>? _studentAgentChannelConnected;
+    private readonly Action<string>? _maintenanceServiceChannelConnected;
     private readonly ITeacherMobileControlHost? _host;
     private readonly ClassroomQuizStore _classroomQuizzes = new();
     private CancellationTokenSource _classroomSessionChanged = new();
@@ -1129,7 +1132,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             Task<ClassroomQuickControlOperationResult>>? executeClassroomQuickControl = null,
         Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>? readClassroomQuickControl = null,
         ITeacherMobileControlHost? host = null,
-        Action<string>? studentAgentChannelConnected = null)
+        Action<string>? studentAgentChannelConnected = null,
+        Action<string>? maintenanceServiceChannelConnected = null)
     {
         if (httpsPort is < 0 or > 65535 || bootstrapPort is < 0 or > 65535 || httpsPort == bootstrapPort)
             throw new ArgumentOutOfRangeException(nameof(httpsPort), "手机控制服务端口无效。");
@@ -1148,6 +1152,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         _executeClassroomQuickControl = executeClassroomQuickControl;
         _readClassroomQuickControl = readClassroomQuickControl;
         _studentAgentChannelConnected = studentAgentChannelConnected;
+        _maintenanceServiceChannelConnected = maintenanceServiceChannelConnected;
         _host = host ?? TeacherMobileControlHostFactory.CreateForCurrentPlatform();
         _classroomModeStateStore = new ClassroomModeStateStore(_storageDirectory is null ? null :
             Path.Combine(_storageDirectory, "classroom-mode-state.json"));

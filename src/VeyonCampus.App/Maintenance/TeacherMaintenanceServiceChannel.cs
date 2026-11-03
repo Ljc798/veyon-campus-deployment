@@ -101,6 +101,11 @@ internal sealed partial class TeacherMobileControlService
             await using var connection = new TeacherMaintenanceServiceConnection(socket);
             using var registration = MaintenanceServiceChannelHub.Register(campusId, agentPin.Target,
                 connection.SendRequestAsync);
+            try { _maintenanceServiceChannelConnected?.Invoke(agentPin.Target); }
+            catch (InvalidOperationException)
+            {
+                // UI notification is best-effort; it must not tear down an authenticated service channel.
+            }
             try { await connection.RunAsync(context.RequestAborted).ConfigureAwait(false); }
             catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
             catch (Exception exception) when (exception is WebSocketException or IOException or InvalidDataException or

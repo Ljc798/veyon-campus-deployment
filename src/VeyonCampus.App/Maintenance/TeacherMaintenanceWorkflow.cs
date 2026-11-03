@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using VeyonCampus.Core;
 using VeyonCampus.Core.Maintenance;
 
@@ -81,6 +82,53 @@ public sealed class TeacherMaintenanceWorkflow
         }
 
         if (devices.Count == 0) return Array.AsReadOnly(outcomes.ToArray());
+        if (requestedOperation != MaintenanceOperationKind.SoftwareUpdate)
+        {
+            try
+            {
+                var desiredConnectivity = LegacyAgentMaintenanceAdapter
+                    .ReadCurrentTeacherChannelConfiguration(campusId);
+                using var signer = WebsitePolicySigningKeyStore.Open(campusId);
+                var signerFingerprint = StudentAgentResponseCryptography.GetFingerprint(signer.PublicKeyPem);
+                foreach (var device in devices)
+                {
+                    var status = await _coordinator.GetConfigurationStatusAsync(device.PinnedIdentityFingerprint,
+                        MaintenanceConfigurationModule.TeacherConnectivity, cancellationToken).ConfigureAwait(false);
+                    var existingPending = await _coordinator.GetPendingConfigurationAsync(
+                        device.PinnedIdentityFingerprint, MaintenanceConfigurationModule.TeacherConnectivity,
+                        cancellationToken).ConfigureAwait(false);
+                    if (status.State == MaintenanceConfigurationReconciliationState.InSync &&
+                        string.Equals(status.DesiredFingerprint, desiredConnectivity.Fingerprint,
+                            StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (existingPending is not null)
+                            await _coordinator.ClearPendingConfigurationAsync(device.PinnedIdentityFingerprint,
+                                MaintenanceConfigurationModule.TeacherConnectivity, existingPending.Fingerprint,
+                                cancellationToken).ConfigureAwait(false);
+                        continue;
+                    }
+                    var revisionHint = existingPending?.NextRevisionHint ?? checked(
+                        Math.Max(status.DesiredRevision ?? 0, status.ReportedRevision ?? 0) + 1);
+                    await _coordinator.QueuePendingConfigurationAsync(new PendingMaintenanceConfiguration(
+                        device.PinnedIdentityFingerprint, campusId,
+                        MaintenanceConfigurationModule.TeacherConnectivity, 1, revisionHint,
+                        desiredConnectivity.Fingerprint, signerFingerprint, desiredConnectivity.Endpoints,
+                        desiredConnectivity.RootCertificateBase64, DateTimeOffset.UtcNow), cancellationToken)
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or CryptographicException or
+                                              InvalidOperationException or ArgumentException)
+            {
+                foreach (var device in devices)
+                    outcomes.Add(new TeacherMaintenanceTargetResult(device.RouteAddress, null,
+                        MaintenanceRunState.PendingVerification,
+                        "教师连接 Desired 未能持久化；离线重发队列未更新。本次维护检查继续执行：" +
+                        Sanitize(exception.Message)));
+            }
+        }
         var inspections = await _coordinator.InspectAsync(devices, cancellationToken).ConfigureAwait(false);
         var executableOperationIds = new List<Guid>();
         var snapshotsByOperation = inspections.ToDictionary(item => item.OperationId);
@@ -287,6 +335,37 @@ public sealed class TeacherMaintenanceWorkflow
         return Array.AsReadOnly(outcomes.ToArray());
     }
 
+    public async Task<bool> HasPendingTeacherConnectivityAsync(string campusId, string target,
+        CancellationToken cancellationToken = default)
+    {
+        var pinnedPublicKey = _trustStore.FindTrustedPublicKey(campusId, target);
+        if (pinnedPublicKey is null) return false;
+        var fingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedPublicKey);
+        return await _coordinator.GetPendingConfigurationAsync(fingerprint,
+            MaintenanceConfigurationModule.TeacherConnectivity, cancellationToken).ConfigureAwait(false) is not null;
+    }
+
+    public async Task<IReadOnlyList<TeacherMaintenanceTargetResult>> SynchronizePendingTeacherConnectivityAsync(
+        string campusId, string target, CancellationToken cancellationToken = default)
+    {
+        var pinnedPublicKey = _trustStore.FindTrustedPublicKey(campusId, target);
+        if (pinnedPublicKey is null) return Array.Empty<TeacherMaintenanceTargetResult>();
+        var fingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedPublicKey);
+        var pending = await _coordinator.GetPendingConfigurationAsync(fingerprint,
+            MaintenanceConfigurationModule.TeacherConnectivity, cancellationToken).ConfigureAwait(false);
+        if (pending is null || !string.Equals(pending.CampusId, campusId, StringComparison.Ordinal))
+            return Array.Empty<TeacherMaintenanceTargetResult>();
+        var active = await _coordinator.GetActiveOperationAsync(campusId, fingerprint, cancellationToken)
+            .ConfigureAwait(false);
+        if (active is not null && (active.Plan?.SynchronizeConfiguration != true ||
+            !string.Equals(active.Plan.ConfigurationSha256, pending.Fingerprint,
+                StringComparison.OrdinalIgnoreCase)))
+            return Array.Empty<TeacherMaintenanceTargetResult>();
+        return await MaintainAsync(campusId, [target], MaintenanceReleaseChannel.Stable,
+            cancellationToken: cancellationToken,
+            requestedOperation: MaintenanceOperationKind.ConfigurationSync).ConfigureAwait(false);
+    }
+
     public async Task<TeacherMaintenanceTargetResult> ResumeAsync(Guid operationId,
         CancellationToken cancellationToken = default)
     {
@@ -320,6 +399,7 @@ public sealed class TeacherMaintenanceWorkflow
         var label = status.State switch
         {
             MaintenanceConfigurationReconciliationState.NoDesiredConfiguration => "无教师连接配置目标",
+            MaintenanceConfigurationReconciliationState.QueuedForDelivery => "等待设备重连后同步",
             MaintenanceConfigurationReconciliationState.AwaitingReport => "等待学生端签名读回",
             MaintenanceConfigurationReconciliationState.PendingApplication => "配置等待应用",
             MaintenanceConfigurationReconciliationState.Rejected => "学生端拒绝配置",

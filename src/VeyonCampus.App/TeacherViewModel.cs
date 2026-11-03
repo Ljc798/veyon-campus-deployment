@@ -150,6 +150,8 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
 
 public sealed class TeacherViewModel : INotifyPropertyChanged
 {
+    private readonly ConcurrentDictionary<string, byte> _pendingMaintenanceSyncInFlight =
+        new(StringComparer.OrdinalIgnoreCase);
     private const string DefaultCampusNamePrefix = "智学前程-";
     private static readonly IBrush QuickControlNeutralBadgeBrush =
         new SolidColorBrush(Color.Parse("#617985"));
@@ -10278,6 +10280,28 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public async Task SyncStudentConfigurationAsync(IReadOnlyCollection<string>? targetOverride = null)
     {
         await MaintainStudentDevicesAsync(MaintenanceOperationKind.ConfigurationSync, targetOverride);
+    }
+
+    public async Task ReconcilePendingMaintenanceConfigurationAsync(string target)
+    {
+        var workflow = _maintenanceWorkflow;
+        var campusId = CampusId.Trim();
+        if (workflow is null || string.IsNullOrWhiteSpace(campusId) || string.IsNullOrWhiteSpace(target)) return;
+        var key = campusId + "\n" + target.Trim().ToLowerInvariant();
+        if (!_pendingMaintenanceSyncInFlight.TryAdd(key, 0)) return;
+        try
+        {
+            await workflow.SynchronizePendingTeacherConnectivityAsync(campusId, target).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException or
+                                          InvalidOperationException or ArgumentException or
+                                          System.Net.Http.HttpRequestException)
+        {
+            // The durable Desired entry stays queued; a later authenticated reconnect can retry it.
+        }
+        finally { _pendingMaintenanceSyncInFlight.TryRemove(key, out _); }
     }
 
     public async Task MaintainStudentDevicesAsync()

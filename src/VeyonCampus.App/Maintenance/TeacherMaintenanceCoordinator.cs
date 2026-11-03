@@ -301,6 +301,32 @@ public sealed class TeacherMaintenanceCoordinator
         return journal.GetConfigurationStatus(deviceIdentityFingerprint, module);
     }
 
+    public async Task<PendingMaintenanceConfiguration?> GetPendingConfigurationAsync(
+        string deviceIdentityFingerprint, MaintenanceConfigurationModule module,
+        CancellationToken cancellationToken = default)
+    {
+        var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return journal.FindPendingConfiguration(deviceIdentityFingerprint, module);
+    }
+
+    public Task QueuePendingConfigurationAsync(PendingMaintenanceConfiguration pending,
+        CancellationToken cancellationToken = default) =>
+        _store.SetPendingConfigurationAsync(pending, cancellationToken);
+
+    public Task ClearPendingConfigurationAsync(string deviceIdentityFingerprint,
+        MaintenanceConfigurationModule module, string expectedFingerprint,
+        CancellationToken cancellationToken = default) =>
+        _store.ClearPendingConfigurationAsync(deviceIdentityFingerprint, module, expectedFingerprint,
+            cancellationToken);
+
+    public async Task<MaintenanceRun?> GetActiveOperationAsync(string campusId, string deviceIdentityFingerprint,
+        CancellationToken cancellationToken = default)
+    {
+        var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return journal.Runs.FirstOrDefault(run => !run.IsTerminal && run.Device.CampusId == campusId &&
+            run.Device.PinnedIdentityFingerprint == deviceIdentityFingerprint);
+    }
+
     /// <summary>Reads current signed device facts without creating or advancing a maintenance operation.</summary>
     public Task<MaintenanceAdapterInspection> InspectCurrentAsync(MaintenanceDeviceIdentity device,
         CancellationToken cancellationToken = default)
@@ -519,11 +545,21 @@ public sealed class TeacherMaintenanceCoordinator
     private async Task PersistConfigurationSnapshotsAsync(MaintenanceRun run, MaintenanceAdapterResult result,
         CancellationToken cancellationToken)
     {
-        if (run.Plan?.ConfigurationSha256 is not { } targetFingerprint ||
-            result.ConfigurationRevision is not { } revision || result.Evidence?.Sha256 is not { } responseSha ||
-            run.Transitions.LastOrDefault(item => item.To == MaintenanceRunState.ConfigurationSyncing)
-                ?.Evidence?.Sha256 is not { } commandSha)
+        if (run.Plan?.ConfigurationSha256 is not { } targetFingerprint) return;
+        var responseEvidence = result.Evidence;
+        var commandEvidence = run.Transitions.LastOrDefault(item =>
+            item.To == MaintenanceRunState.ConfigurationSyncing)?.Evidence;
+        if (result.ConfigurationRevision is not { } revision || responseEvidence?.Sha256 is not { } responseSha ||
+            commandEvidence?.Sha256 is not { } commandSha)
+        {
+            // Legacy Agent sync returns a signed Agent acknowledgement rather than the newer
+            // Maintenance revision DTO. It can clear the delivery queue after that verified success,
+            // but it must not fabricate a Desired/Reported revision.
+            await _store.ClearPendingConfigurationAsync(run.Device.PinnedIdentityFingerprint,
+                MaintenanceConfigurationModule.TeacherConnectivity, targetFingerprint, cancellationToken)
+                .ConfigureAwait(false);
             return;
+        }
         using var signingKey = WebsitePolicySigningKeyStore.Open(run.Device.CampusId);
         var signerFingerprint = StudentAgentResponseCryptography.GetFingerprint(signingKey.PublicKeyPem);
         var issuedUtc = run.Transitions.Last(item => item.To == MaintenanceRunState.ConfigurationSyncing)
@@ -541,9 +577,12 @@ public sealed class TeacherMaintenanceCoordinator
         var reported = new ReportedMaintenanceConfiguration(run.Device.PinnedIdentityFingerprint,
             MaintenanceConfigurationModule.TeacherConnectivity, 1, revision, targetFingerprint,
             MaintenanceConfigurationApplyState.Applied, responseSha,
-            result.VerifiedStatusUtc ?? result.Evidence.VerifiedUtc);
+            result.VerifiedStatusUtc ?? responseEvidence!.VerifiedUtc);
         await _store.SetDesiredConfigurationAsync(desired, cancellationToken).ConfigureAwait(false);
         await _store.SetReportedConfigurationAsync(reported, cancellationToken).ConfigureAwait(false);
+        await _store.ClearPendingConfigurationAsync(run.Device.PinnedIdentityFingerprint,
+            MaintenanceConfigurationModule.TeacherConnectivity, targetFingerprint, cancellationToken)
+            .ConfigureAwait(false);
     }
 
     private async Task<MaintenanceRun> RecordVerifiedStatusAsync(MaintenanceRun run,

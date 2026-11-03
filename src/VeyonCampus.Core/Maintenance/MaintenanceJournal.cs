@@ -3,23 +3,25 @@ namespace VeyonCampus.Core.Maintenance;
 /// <summary>Immutable persistence DTO with per-device active-operation deduplication.</summary>
 public sealed class MaintenanceJournal
 {
-    public const int CurrentSchemaVersion = 3;
+    public const int CurrentSchemaVersion = 4;
     public int SchemaVersion { get; }
     public DateTimeOffset UpdatedUtc { get; }
     public IReadOnlyList<MaintenanceRun> Runs { get; }
     public IReadOnlyList<DesiredMaintenanceConfiguration> DesiredConfigurations { get; }
     public IReadOnlyList<ReportedMaintenanceConfiguration> ReportedConfigurations { get; }
+    public IReadOnlyList<PendingMaintenanceConfiguration> PendingConfigurations { get; }
 
     public MaintenanceJournal(DateTimeOffset updatedUtc, IReadOnlyList<MaintenanceRun> runs,
         int schemaVersion = CurrentSchemaVersion,
         IReadOnlyList<DesiredMaintenanceConfiguration>? desiredConfigurations = null,
-        IReadOnlyList<ReportedMaintenanceConfiguration>? reportedConfigurations = null)
+        IReadOnlyList<ReportedMaintenanceConfiguration>? reportedConfigurations = null,
+        IReadOnlyList<PendingMaintenanceConfiguration>? pendingConfigurations = null)
     {
         if (schemaVersion is < 1 or > CurrentSchemaVersion)
             throw new InvalidDataException($"不支持的 Maintenance journal Schema {schemaVersion}。");
         ArgumentNullException.ThrowIfNull(runs);
-        // Schema 2 adds signed transaction readbacks; Schema 3 adds independent Desired/Reported
-        // configuration snapshots. Older journals remain readable and are upgraded on write.
+        // Schema 2 adds signed transaction readbacks; Schema 3 adds Desired/Reported snapshots;
+        // Schema 4 adds durable offline configuration intents.
         SchemaVersion = CurrentSchemaVersion;
         UpdatedUtc = MaintenanceValidation.Utc(updatedUtc);
         var snapshots = runs.ToArray();
@@ -33,14 +35,17 @@ public sealed class MaintenanceJournal
         Runs = Array.AsReadOnly(snapshots.OrderBy(run => run.CreatedUtc).ToArray());
         var desired = (desiredConfigurations ?? Array.Empty<DesiredMaintenanceConfiguration>()).ToArray();
         var reported = (reportedConfigurations ?? Array.Empty<ReportedMaintenanceConfiguration>()).ToArray();
+        var pending = (pendingConfigurations ?? Array.Empty<PendingMaintenanceConfiguration>()).ToArray();
         if (desired.GroupBy(item => (item.DeviceIdentityFingerprint, item.Module)).Any(group => group.Count() > 1) ||
-            reported.GroupBy(item => (item.DeviceIdentityFingerprint, item.Module)).Any(group => group.Count() > 1))
+            reported.GroupBy(item => (item.DeviceIdentityFingerprint, item.Module)).Any(group => group.Count() > 1) ||
+            pending.GroupBy(item => (item.DeviceIdentityFingerprint, item.Module)).Any(group => group.Count() > 1))
             throw new InvalidDataException("Maintenance journal 存在重复的 Desired/Reported 配置键。");
         if (desired.Any(item => reported.Any(value => value.DeviceIdentityFingerprint == item.DeviceIdentityFingerprint &&
                                                        value.Module == item.Module && value.Revision > item.Revision)))
             throw new InvalidDataException("Reported 配置 revision 超过对应设备当前 Desired revision。");
         DesiredConfigurations = Array.AsReadOnly(desired);
         ReportedConfigurations = Array.AsReadOnly(reported);
+        PendingConfigurations = Array.AsReadOnly(pending);
     }
 
     public static MaintenanceJournal Empty(DateTimeOffset nowUtc) => new(nowUtc, Array.Empty<MaintenanceRun>());
@@ -60,7 +65,7 @@ public sealed class MaintenanceJournal
         if (Runs.Any(run => !run.IsTerminal && run.Device.Key == requested.Device.Key))
             throw new InvalidOperationException("该设备已有活动维护操作；必须先恢复或核对原 operationId。");
         return new MaintenanceJournal(nowUtc, Runs.Append(requested).ToArray(), SchemaVersion,
-            DesiredConfigurations, ReportedConfigurations);
+            DesiredConfigurations, ReportedConfigurations, PendingConfigurations);
     }
 
     public MaintenanceJournal Update(MaintenanceRun replacement, DateTimeOffset nowUtc)
@@ -92,7 +97,7 @@ public sealed class MaintenanceJournal
         var updated = currentRuns;
         updated[index] = replacement;
         return new MaintenanceJournal(nowUtc, updated, SchemaVersion,
-            DesiredConfigurations, ReportedConfigurations);
+            DesiredConfigurations, ReportedConfigurations, PendingConfigurations);
     }
 
     public MaintenanceJournal SetDesiredConfiguration(DesiredMaintenanceConfiguration desired,
@@ -112,7 +117,8 @@ public sealed class MaintenanceJournal
         var values = DesiredConfigurations.Where(item =>
                 item.DeviceIdentityFingerprint != desired.DeviceIdentityFingerprint || item.Module != desired.Module)
             .Append(desired).ToArray();
-        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, values, ReportedConfigurations);
+        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, values, ReportedConfigurations,
+            PendingConfigurations);
     }
 
     public MaintenanceJournal SetReportedConfiguration(ReportedMaintenanceConfiguration reported,
@@ -136,7 +142,50 @@ public sealed class MaintenanceJournal
         var values = ReportedConfigurations.Where(item =>
                 item.DeviceIdentityFingerprint != reported.DeviceIdentityFingerprint || item.Module != reported.Module)
             .Append(reported).ToArray();
-        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, DesiredConfigurations, values);
+        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, DesiredConfigurations, values,
+            PendingConfigurations);
+    }
+
+    public MaintenanceJournal SetPendingConfiguration(PendingMaintenanceConfiguration pending,
+        DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(pending);
+        var existing = PendingConfigurations.FirstOrDefault(item =>
+            item.DeviceIdentityFingerprint == pending.DeviceIdentityFingerprint && item.Module == pending.Module);
+        if (existing is not null && pending.QueuedUtc < existing.QueuedUtc)
+            throw new InvalidDataException("离线 Desired 配置的排队时间不能倒退。");
+        if (existing == pending) return this;
+        var values = PendingConfigurations.Where(item =>
+                item.DeviceIdentityFingerprint != pending.DeviceIdentityFingerprint || item.Module != pending.Module)
+            .Append(pending).ToArray();
+        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, DesiredConfigurations,
+            ReportedConfigurations, values);
+    }
+
+    public MaintenanceJournal ClearPendingConfiguration(string deviceIdentityFingerprint,
+        MaintenanceConfigurationModule module, string expectedFingerprint, DateTimeOffset nowUtc)
+    {
+        var identity = MaintenanceValidation.Fingerprint(deviceIdentityFingerprint,
+            nameof(deviceIdentityFingerprint));
+        if (!Enum.IsDefined(module)) throw new ArgumentOutOfRangeException(nameof(module));
+        var fingerprint = MaintenanceValidation.Fingerprint(expectedFingerprint, nameof(expectedFingerprint));
+        var existing = PendingConfigurations.FirstOrDefault(item => item.DeviceIdentityFingerprint == identity &&
+            item.Module == module);
+        if (existing is null || existing.Fingerprint != fingerprint) return this;
+        var values = PendingConfigurations.Where(item => item.DeviceIdentityFingerprint != identity ||
+            item.Module != module).ToArray();
+        return new MaintenanceJournal(nowUtc, Runs, CurrentSchemaVersion, DesiredConfigurations,
+            ReportedConfigurations, values);
+    }
+
+    public PendingMaintenanceConfiguration? FindPendingConfiguration(string deviceIdentityFingerprint,
+        MaintenanceConfigurationModule module)
+    {
+        var identity = MaintenanceValidation.Fingerprint(deviceIdentityFingerprint,
+            nameof(deviceIdentityFingerprint));
+        if (!Enum.IsDefined(module)) throw new ArgumentOutOfRangeException(nameof(module));
+        return PendingConfigurations.FirstOrDefault(item =>
+            item.DeviceIdentityFingerprint == identity && item.Module == module);
     }
 
     public MaintenanceRun? Find(Guid operationId) => Runs.FirstOrDefault(run => run.OperationId == operationId);
@@ -157,7 +206,9 @@ public sealed class MaintenanceJournal
             item.DeviceIdentityFingerprint == identity && item.Module == module);
         var reported = ReportedConfigurations.FirstOrDefault(item =>
             item.DeviceIdentityFingerprint == identity && item.Module == module);
-        return MaintenanceConfigurationReconciliation.GetStatus(desired, reported);
+        var pending = PendingConfigurations.FirstOrDefault(item =>
+            item.DeviceIdentityFingerprint == identity && item.Module == module);
+        return MaintenanceConfigurationReconciliation.GetStatus(desired, reported, pending);
     }
 
     private static bool SameIntent(MaintenancePlan? first, MaintenancePlan? second)

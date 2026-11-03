@@ -9,6 +9,9 @@ namespace VeyonCampus.App.Maintenance;
 public sealed record LegacyStudentSetupArtifact(string InstallerPath, Uri ApiBaseAddress,
     string DeveloperReleasePublicKeyPem, string? VerifiedAgentTargetVersion = null);
 
+public sealed record TeacherConnectivityConfiguration(IReadOnlyList<string> Endpoints,
+    string RootCertificateBase64, string Fingerprint);
+
 public interface ILegacyStudentSetupArtifactProvider
 {
     Task<LegacyStudentSetupArtifact> GetVerifiedArtifactAsync(MaintenancePlan plan,
@@ -573,7 +576,14 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
     }
 
     public static string? ReadCurrentTeacherChannelFingerprint(string campusId) =>
-        ReadTeacherChannelIdentity(campusId, CancellationToken.None).BootstrapFingerprint;
+        ReadCurrentTeacherChannelConfiguration(campusId).Fingerprint;
+
+    public static TeacherConnectivityConfiguration ReadCurrentTeacherChannelConfiguration(string campusId)
+    {
+        var identity = ReadTeacherChannelIdentity(campusId, CancellationToken.None);
+        return new TeacherConnectivityConfiguration(identity.Endpoints, identity.RootCertificateBase64,
+            identity.BootstrapFingerprint);
+    }
 
     private async Task<MaintenanceAdapterResult> ReconcileThroughMaintenanceServiceAsync(MaintenanceRun run,
         MaintenancePlan plan, CancellationToken cancellationToken)

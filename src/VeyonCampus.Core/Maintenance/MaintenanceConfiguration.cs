@@ -20,11 +20,56 @@ public enum MaintenanceConfigurationApplyState
 public enum MaintenanceConfigurationReconciliationState
 {
     NoDesiredConfiguration,
+    QueuedForDelivery,
     AwaitingReport,
     PendingApplication,
     Rejected,
     Drifted,
     InSync
+}
+
+/// <summary>A durable teacher-side intent waiting for this fixed device to reconnect.</summary>
+public sealed record PendingMaintenanceConfiguration
+{
+    public string DeviceIdentityFingerprint { get; }
+    public string CampusId { get; }
+    public MaintenanceConfigurationModule Module { get; }
+    public int SchemaVersion { get; }
+    public long NextRevisionHint { get; }
+    public string Fingerprint { get; }
+    public string SignerFingerprint { get; }
+    public IReadOnlyList<string> TeacherChannelEndpoints { get; }
+    public string TeacherChannelRootCertificateBase64 { get; }
+    public DateTimeOffset QueuedUtc { get; }
+
+    public PendingMaintenanceConfiguration(string deviceIdentityFingerprint, string campusId,
+        MaintenanceConfigurationModule module, int schemaVersion, long nextRevisionHint, string fingerprint,
+        string signerFingerprint, IReadOnlyList<string> teacherChannelEndpoints,
+        string teacherChannelRootCertificateBase64, DateTimeOffset queuedUtc)
+    {
+        DeviceIdentityFingerprint = MaintenanceValidation.Fingerprint(deviceIdentityFingerprint,
+            nameof(deviceIdentityFingerprint));
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        CampusId = campusId;
+        if (!Enum.IsDefined(module)) throw new ArgumentOutOfRangeException(nameof(module));
+        Module = module;
+        if (schemaVersion <= 0) throw new ArgumentOutOfRangeException(nameof(schemaVersion));
+        SchemaVersion = schemaVersion;
+        if (nextRevisionHint <= 0) throw new ArgumentOutOfRangeException(nameof(nextRevisionHint));
+        NextRevisionHint = nextRevisionHint;
+        Fingerprint = MaintenanceValidation.Fingerprint(fingerprint, nameof(fingerprint));
+        SignerFingerprint = MaintenanceValidation.Fingerprint(signerFingerprint, nameof(signerFingerprint));
+        ArgumentNullException.ThrowIfNull(teacherChannelEndpoints);
+        if (teacherChannelEndpoints.Count is < 1 or > 16 ||
+            teacherChannelEndpoints.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidDataException("待发送教师连接配置端点数量或内容无效。");
+        TeacherChannelEndpoints = Array.AsReadOnly(teacherChannelEndpoints.ToArray());
+        ArgumentException.ThrowIfNullOrWhiteSpace(teacherChannelRootCertificateBase64);
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(CampusId, TeacherChannelEndpoints,
+            teacherChannelRootCertificateBase64);
+        TeacherChannelRootCertificateBase64 = teacherChannelRootCertificateBase64;
+        QueuedUtc = MaintenanceValidation.Utc(queuedUtc);
+    }
 }
 
 public sealed record MaintenanceConfigurationReconciliationStatus(
@@ -103,8 +148,15 @@ public sealed record ReportedMaintenanceConfiguration
 public static class MaintenanceConfigurationReconciliation
 {
     public static MaintenanceConfigurationReconciliationStatus GetStatus(
-        DesiredMaintenanceConfiguration? desired, ReportedMaintenanceConfiguration? reported)
+        DesiredMaintenanceConfiguration? desired, ReportedMaintenanceConfiguration? reported,
+        PendingMaintenanceConfiguration? pending = null)
     {
+        if (pending is not null && !(desired is not null && reported is not null &&
+            desired.Fingerprint == pending.Fingerprint && Matches(desired, reported)))
+            return new MaintenanceConfigurationReconciliationStatus(
+                MaintenanceConfigurationReconciliationState.QueuedForDelivery,
+                pending.NextRevisionHint, reported?.Revision, pending.Fingerprint, reported?.Fingerprint,
+                reported?.CollectedUtc);
         if (desired is null)
             return new MaintenanceConfigurationReconciliationStatus(
                 MaintenanceConfigurationReconciliationState.NoDesiredConfiguration,

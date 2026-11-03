@@ -15,6 +15,11 @@ public interface IMaintenanceRunStore
         CancellationToken cancellationToken = default);
     Task<MaintenanceJournal> SetReportedConfigurationAsync(ReportedMaintenanceConfiguration reported,
         CancellationToken cancellationToken = default);
+    Task<MaintenanceJournal> SetPendingConfigurationAsync(PendingMaintenanceConfiguration pending,
+        CancellationToken cancellationToken = default);
+    Task<MaintenanceJournal> ClearPendingConfigurationAsync(string deviceIdentityFingerprint,
+        MaintenanceConfigurationModule module, string expectedFingerprint,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Per-user atomic teacher-side journal; it stores public evidence digests, never signing keys.</summary>
@@ -89,6 +94,28 @@ public sealed class MaintenanceRunStore : IMaintenanceRunStore
         var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
         var updated = current.SetReportedConfiguration(reported, DateTimeOffset.UtcNow);
         await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }, cancellationToken);
+
+    public Task<MaintenanceJournal> SetPendingConfigurationAsync(PendingMaintenanceConfiguration pending,
+        CancellationToken cancellationToken = default) => ExecuteLockedAsync(async () =>
+    {
+        var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
+        var updated = current.SetPendingConfiguration(pending, DateTimeOffset.UtcNow);
+        if (!ReferenceEquals(current, updated))
+            await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }, cancellationToken);
+
+    public Task<MaintenanceJournal> ClearPendingConfigurationAsync(string deviceIdentityFingerprint,
+        MaintenanceConfigurationModule module, string expectedFingerprint,
+        CancellationToken cancellationToken = default) => ExecuteLockedAsync(async () =>
+    {
+        var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
+        var updated = current.ClearPendingConfiguration(deviceIdentityFingerprint, module,
+            expectedFingerprint, DateTimeOffset.UtcNow);
+        if (!ReferenceEquals(current, updated))
+            await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
         return updated;
     }, cancellationToken);
 
