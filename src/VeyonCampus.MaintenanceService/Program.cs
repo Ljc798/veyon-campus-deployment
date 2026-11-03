@@ -4,6 +4,7 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
+using System.Reflection;
 using Microsoft.Win32.SafeHandles;
 using VeyonCampus.Core;
 using VeyonCampus.Core.Maintenance;
@@ -66,6 +67,8 @@ internal static class Program
                 return args[0] switch
                 {
                     "--query-service" => QueryServiceCommand(),
+                    "--verify-running" => VerifyServiceRunningCommand(),
+                    "--version" => WriteVersionCommand(),
                     "--stop-service" => StopServiceCommand(),
                     "--start-service" => StartServiceCommand(),
                     "--install-and-start-service" => InstallAndStartServiceCommand(),
@@ -99,6 +102,23 @@ internal static class Program
     }
 
     private static int QueryServiceCommand() => IsServiceInstalled() ? 0 : 3;
+
+    private static int VerifyServiceRunningCommand()
+    {
+        using var manager = OpenServiceControlManager(ScManagerConnect);
+        using var service = TryOpenService(manager, ServiceQueryStatus, out var notInstalled);
+        return notInstalled || service is null ? 3 : QueryServiceState(service) == ServiceRunning ? 0 : 4;
+    }
+
+    private static int WriteVersionCommand()
+    {
+        var assembly = Assembly.GetEntryAssembly();
+        var version = assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                      ?? assembly?.GetName().Version?.ToString();
+        if (string.IsNullOrWhiteSpace(version)) return 1;
+        Console.Out.WriteLine(version);
+        return 0;
+    }
 
     private static int StopServiceCommand()
     {

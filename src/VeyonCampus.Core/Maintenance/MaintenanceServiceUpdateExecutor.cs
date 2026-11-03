@@ -218,14 +218,19 @@ public static class MaintenanceServiceUpdateExecutor
                 return ToStudentStatus(record with { State = "inProgress" });
 
             var installed = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
-            var agentVersion = ReadInstalledVersions(configPath, nowUtc).AgentRuntimeVersion;
+            var installedVersions = ReadInstalledVersions(configPath, nowUtc);
+            var agentVersion = installedVersions.AgentRuntimeVersion;
             var targetSetupInstalled = string.Equals(installed, record.TargetSetupVersion,
                 StringComparison.Ordinal);
             var targetAgentInstalled = record.TargetAgentVersion is { } targetAgent
                 ? agentVersion is not null && ApplicationReleaseClient.CompareVersions(agentVersion, targetAgent) >= 0
                 : record.PreviousAgentVersion is { } previousAgent && agentVersion is not null &&
                   ApplicationReleaseClient.CompareVersions(agentVersion, previousAgent) >= 0;
-            var terminalState = targetSetupInstalled && targetAgentInstalled ? "committed" : "needsReview";
+            var serviceVersion = installedVersions.MaintenanceServiceVersion;
+            var targetMaintenanceServiceInstalled = serviceVersion is not null &&
+                ApplicationReleaseClient.CompareVersions(serviceVersion, record.TargetSetupVersion) >= 0;
+            var terminalState = targetSetupInstalled && targetAgentInstalled && targetMaintenanceServiceInstalled
+                ? "committed" : "needsReview";
             MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, terminalState);
             record = ReadTransaction(configPath) ?? throw new InvalidDataException("Maintenance 更新事务读回丢失。" );
         }

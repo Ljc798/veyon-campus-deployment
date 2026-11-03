@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
@@ -293,7 +294,8 @@ public static class ApplicationReleaseUpdateHandoff
     }
 
     private static void ApplyReleaseAsAdministrator(string installerPath, ApplicationReleaseRole role,
-        string currentVersion, bool requireUserStaging = true, bool maintenanceServiceSelfUpdate = false)
+        string currentVersion, bool requireUserStaging = true, bool maintenanceServiceSelfUpdate = false,
+        Action? verifyAdditionalComponents = null, Action? commitAdditionalTransaction = null)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
@@ -370,6 +372,8 @@ public static class ApplicationReleaseUpdateHandoff
                     !File.Exists(executablePath) ||
                     (File.GetAttributes(executablePath) & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidDataException("安装器退出后版本回读不匹配；未重启应用。");
+                verifyAdditionalComponents?.Invoke();
+                commitAdditionalTransaction?.Invoke();
             }
             catch (Exception updateFailure)
             {
@@ -405,6 +409,9 @@ public static class ApplicationReleaseUpdateHandoff
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("Maintenance StudentSetup 更新目标必须高于当前安装版本。" );
         EnsurePolicyCapabilities(ApplicationReleaseRole.StudentSetup, release.Manifest);
+        var maintenanceServiceDirectory = Path.Combine(fullProgramFiles, "Veyon Campus", "MaintenanceService",
+            "Current");
+        string? maintenanceServiceSnapshot = null;
         using var currentProcess = Process.GetCurrentProcess();
         MaintenanceServiceUpdateJournal.MarkHelperStarted(canonicalConfigPath, commandId, currentProcess.Id,
             currentProcess.StartTime.ToUniversalTime().Ticks);
@@ -414,19 +421,50 @@ public static class ApplicationReleaseUpdateHandoff
             var updateState = StudentUpdateAtomicTransaction.ReadCurrentState(canonicalConfigPath);
             if (updateState is "inProgress" or "needsReview")
                 throw new InvalidOperationException("已有 StudentSetup/Agent 原子事务；本次 Maintenance 更新保持待核对。" );
+            maintenanceServiceSnapshot = CreateMaintenanceServiceSnapshot(maintenanceServiceDirectory,
+                fullProgramFiles, commandId);
             ApplyReleaseAsAdministrator(fullInstallerPath, ApplicationReleaseRole.StudentSetup, currentVersion,
-                requireUserStaging: false);
-            MaintenanceServiceUpdateJournal.MarkCompleted(canonicalConfigPath, commandId, "committed");
+                requireUserStaging: false, maintenanceServiceSelfUpdate: true,
+                verifyAdditionalComponents: () => VerifyInstalledMaintenanceService(maintenanceServiceDirectory,
+                    release.Manifest.Version),
+                commitAdditionalTransaction: () => MaintenanceServiceUpdateJournal.MarkCompleted(
+                    canonicalConfigPath, commandId, "committed"));
+            TryDeleteMaintenanceServiceSnapshot(maintenanceServiceSnapshot);
             MaintenanceServiceUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
         }
-        catch
+        catch (Exception updateFailure)
         {
-            TryRestartInstalledMaintenanceService(fullProgramFiles);
+            Exception? serviceRestoreFailure = null;
+            if (maintenanceServiceSnapshot is not null)
+            {
+                try { RestoreMaintenanceServiceSnapshot(maintenanceServiceDirectory, maintenanceServiceSnapshot); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or InvalidOperationException or
+                                                  System.ComponentModel.Win32Exception or TimeoutException or
+                                                  System.Security.SecurityException)
+                { serviceRestoreFailure = exception; }
+            }
+            else TryRestartInstalledMaintenanceService(fullProgramFiles);
             var transaction = MaintenanceServiceUpdateExecutor.ReadTransaction(canonicalConfigPath);
-            var installedVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
-            var installedAgentVersion = MaintenanceServiceUpdateExecutor.ReadInstalledVersions(canonicalConfigPath,
-                DateTimeOffset.UtcNow).AgentRuntimeVersion;
-            var failedState = transaction is not null && transaction.PreviousAgentVersion is { } previousAgent &&
+            string? installedVersion = null;
+            try { installedVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or System.Security.SecurityException)
+            { WriteFailureLog(new IOException("Maintenance 更新失败后无法读取 StudentSetup 恢复版本。", exception)); }
+            string? installedAgentVersion = null;
+            try
+            {
+                installedAgentVersion = MaintenanceServiceUpdateExecutor.ReadInstalledVersions(canonicalConfigPath,
+                    DateTimeOffset.UtcNow).AgentRuntimeVersion;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or System.Security.SecurityException or
+                                              CryptographicException or InvalidOperationException)
+            {
+                WriteFailureLog(new IOException("Maintenance 更新失败后无法读取 Agent 恢复版本。", exception));
+            }
+            var failedState = serviceRestoreFailure is null && transaction is not null &&
+                              transaction.PreviousAgentVersion is { } previousAgent &&
                               string.Equals(installedVersion, transaction.PreviousSetupVersion,
                                   StringComparison.Ordinal) &&
                               string.Equals(installedAgentVersion, previousAgent, StringComparison.Ordinal)
@@ -435,7 +473,163 @@ public static class ApplicationReleaseUpdateHandoff
             MaintenanceServiceUpdateJournal.MarkCompleted(canonicalConfigPath, commandId, failedState);
             if (failedState == "rolledBack")
                 MaintenanceServiceUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
+            if (serviceRestoreFailure is not null)
+                throw new IOException("Maintenance 自更新失败，独立服务旧版恢复失败；更新事务已标记需人工核对。",
+                    new AggregateException(updateFailure, serviceRestoreFailure));
             throw;
+        }
+    }
+
+    private static string CreateMaintenanceServiceSnapshot(string serviceDirectory, string programFiles,
+        Guid commandId)
+    {
+        PathLinkSecurity.RejectLinks(serviceDirectory);
+        if (!Directory.Exists(serviceDirectory))
+            throw new DirectoryNotFoundException("Maintenance 自更新缺少当前服务目录；拒绝无回滚副本地替换。" );
+        VerifyNoReparsePointsInTree(serviceDirectory);
+        var recoveryRoot = Path.Combine(programFiles, "Veyon Campus", "UpdateRecovery", "MaintenanceService");
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(recoveryRoot);
+        Directory.CreateDirectory(recoveryRoot);
+        PathLinkSecurity.RejectLinks(recoveryRoot);
+        AgentFileSecurity.SecurePrivateDirectory(recoveryRoot);
+        var snapshotDirectory = Path.Combine(recoveryRoot, commandId.ToString("N"));
+        if (Directory.Exists(snapshotDirectory) || File.Exists(snapshotDirectory))
+            throw new IOException("Maintenance 自更新恢复目录已存在；拒绝覆盖现有恢复材料。" );
+        Directory.CreateDirectory(snapshotDirectory);
+        AgentFileSecurity.SecurePrivateDirectory(snapshotDirectory);
+        try
+        {
+            var count = 0;
+            long bytes = 0;
+            CopyMaintenanceServiceTree(serviceDirectory, snapshotDirectory, ref count, ref bytes);
+            VerifyNoReparsePointsInTree(snapshotDirectory);
+            var snapshotExecutable = Path.Combine(snapshotDirectory, "VeyonCampus.MaintenanceService.exe");
+            if (!File.Exists(snapshotExecutable))
+                throw new InvalidDataException("Maintenance 自更新恢复副本缺少服务可执行文件。" );
+            return snapshotDirectory;
+        }
+        catch
+        {
+            TryDeleteMaintenanceServiceSnapshot(snapshotDirectory);
+            throw;
+        }
+    }
+
+    private static void CopyMaintenanceServiceTree(string sourceDirectory, string destinationDirectory,
+        ref int fileCount, ref long totalBytes)
+    {
+        foreach (var sourcePath in Directory.EnumerateFileSystemEntries(sourceDirectory))
+        {
+            PathLinkSecurity.RejectLinks(sourcePath);
+            var attributes = File.GetAttributes(sourcePath);
+            var destinationPath = Path.Combine(destinationDirectory, Path.GetFileName(sourcePath));
+            if ((attributes & FileAttributes.Directory) != 0)
+            {
+                Directory.CreateDirectory(destinationPath);
+                AgentFileSecurity.SecurePrivateDirectory(destinationPath);
+                CopyMaintenanceServiceTree(sourcePath, destinationPath, ref fileCount, ref totalBytes);
+                continue;
+            }
+            if ((attributes & (FileAttributes.Device | FileAttributes.ReparsePoint)) != 0)
+                throw new InvalidDataException("Maintenance 服务恢复副本包含非普通文件。" );
+            var length = new FileInfo(sourcePath).Length;
+            if (++fileCount > 512 || length < 0 || totalBytes > 512L * 1024 * 1024 - length)
+                throw new InvalidDataException("Maintenance 服务恢复副本超过文件数量或总大小限制。" );
+            totalBytes += length;
+            File.Copy(sourcePath, destinationPath, overwrite: false);
+            AgentFileSecurity.SecurePrivateFile(destinationPath);
+        }
+    }
+
+    private static void RestoreMaintenanceServiceSnapshot(string serviceDirectory, string snapshotDirectory)
+    {
+        PathLinkSecurity.RejectLinks(serviceDirectory);
+        PathLinkSecurity.RejectLinks(snapshotDirectory);
+        VerifyNoReparsePointsInTree(snapshotDirectory);
+        var snapshotExecutable = Path.Combine(snapshotDirectory, "VeyonCampus.MaintenanceService.exe");
+        if (!File.Exists(snapshotExecutable))
+            throw new InvalidDataException("Maintenance 自更新恢复副本缺少服务可执行文件；保留恢复材料。" );
+        _ = RunMaintenanceServiceControl(snapshotExecutable, "--stop-service");
+        var failedDirectory = serviceDirectory + ".failed-" + Guid.NewGuid().ToString("N");
+        if (Directory.Exists(serviceDirectory))
+        {
+            VerifyNoReparsePointsInTree(serviceDirectory);
+            Directory.Move(serviceDirectory, failedDirectory);
+        }
+        else if (File.Exists(serviceDirectory))
+            throw new IOException("Maintenance 服务目录被普通文件占用；保留恢复材料。" );
+        try
+        {
+            Directory.Move(snapshotDirectory, serviceDirectory);
+            VerifyNoReparsePointsInTree(serviceDirectory);
+            var restoredExecutable = Path.Combine(serviceDirectory, "VeyonCampus.MaintenanceService.exe");
+            _ = RunMaintenanceServiceControl(restoredExecutable, "--install-and-start-service");
+            if (RunMaintenanceServiceControl(restoredExecutable, "--verify-running") != 0)
+                throw new IOException("Maintenance 服务恢复后未达到 SCM Running 状态。" );
+            if (Directory.Exists(failedDirectory))
+            {
+                VerifyNoReparsePointsInTree(failedDirectory);
+                Directory.Delete(failedDirectory, recursive: true);
+            }
+            var recoveryRoot = Path.GetDirectoryName(snapshotDirectory);
+            if (recoveryRoot is not null && Directory.Exists(recoveryRoot) &&
+                !Directory.EnumerateFileSystemEntries(recoveryRoot).Any())
+                Directory.Delete(recoveryRoot);
+        }
+        catch (Exception restoreFailure)
+        {
+            throw new IOException(
+                $"Maintenance 服务回滚未能启动旧服务；恢复副本已移动到：{serviceDirectory}；失败服务目录现场：{failedDirectory}。原恢复副本路径：{snapshotDirectory}。",
+                restoreFailure);
+        }
+    }
+
+    private static void VerifyInstalledMaintenanceService(string serviceDirectory, string expectedVersion)
+    {
+        var executablePath = Path.Combine(serviceDirectory, "VeyonCampus.MaintenanceService.exe");
+        PathLinkSecurity.RejectLinks(executablePath);
+        if (!File.Exists(executablePath) || RunMaintenanceServiceControl(executablePath, "--verify-running") != 0)
+            throw new InvalidDataException("Maintenance 自更新后服务未通过 SCM Running 状态核验。" );
+        var startInfo = new ProcessStartInfo(executablePath)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            WorkingDirectory = serviceDirectory
+        };
+        startInfo.ArgumentList.Add("--version");
+        using var process = Process.Start(startInfo)
+                           ?? throw new InvalidOperationException("无法读取更新后 Maintenance 服务版本。" );
+        var output = process.StandardOutput.ReadToEndAsync();
+        if (!process.WaitForExit(35_000))
+        {
+            try { process.Kill(entireProcessTree: false); }
+            catch (Exception exception) when (exception is InvalidOperationException or
+                                              System.ComponentModel.Win32Exception) { }
+            throw new TimeoutException("读取更新后 Maintenance 服务版本超时。" );
+        }
+        var installedVersion = output.GetAwaiter().GetResult().Trim();
+        if (process.ExitCode != 0 || string.IsNullOrWhiteSpace(installedVersion) ||
+            ApplicationReleaseClient.CompareVersions(installedVersion, expectedVersion) != 0)
+            throw new InvalidDataException("Maintenance 服务程序集版本与已签名 StudentSetup 发行目标不匹配。" );
+    }
+
+    private static void TryDeleteMaintenanceServiceSnapshot(string snapshotDirectory)
+    {
+        try
+        {
+            if (!Directory.Exists(snapshotDirectory)) return;
+            VerifyNoReparsePointsInTree(snapshotDirectory);
+            Directory.Delete(snapshotDirectory, recursive: true);
+            var recoveryRoot = Path.GetDirectoryName(snapshotDirectory);
+            if (recoveryRoot is not null && Directory.Exists(recoveryRoot) &&
+                !Directory.EnumerateFileSystemEntries(recoveryRoot).Any())
+                Directory.Delete(recoveryRoot);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.Security.SecurityException)
+        {
+            WriteFailureLog(new IOException("Maintenance 服务恢复快照未能清理；保留在 " + snapshotDirectory, exception));
         }
     }
 

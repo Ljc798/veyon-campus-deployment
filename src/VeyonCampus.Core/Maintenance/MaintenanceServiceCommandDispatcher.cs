@@ -3,6 +3,7 @@ using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Diagnostics;
 using VeyonCampus.Core;
 
 namespace VeyonCampus.Core.Maintenance;
@@ -355,9 +356,23 @@ public sealed class MaintenanceServiceCommandDispatcher
     internal static string GetServiceVersion()
     {
         var assembly = Assembly.GetEntryAssembly();
-        return assembly?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
-               ?? assembly?.GetName().Version?.ToString()
-               ?? "unknown";
+        if (string.Equals(assembly?.GetName().Name, "VeyonCampus.MaintenanceService",
+                StringComparison.Ordinal))
+            return assembly!.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+                   ?? assembly.GetName().Version?.ToString()
+                   ?? "unknown";
+        if (OperatingSystem.IsWindows())
+        {
+            var executablePath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "Veyon Campus", "MaintenanceService", "Current", "VeyonCampus.MaintenanceService.exe");
+            if (File.Exists(executablePath))
+            {
+                PathLinkSecurity.RejectLinks(executablePath);
+                var version = FileVersionInfo.GetVersionInfo(executablePath).ProductVersion;
+                if (!string.IsNullOrWhiteSpace(version)) return version;
+            }
+        }
+        return "unknown";
     }
 
     private static string SerializePayload<T>(T payload) => JsonSerializer.Serialize(payload, PayloadJsonOptions);

@@ -61,7 +61,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 ; A push transaction must observe every replacement before committing. Do not queue
 ; locked files for reboot; let Setup fail so the transaction can restore the prior tree.
 Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "MaintenanceService\*"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Current"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall
+Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Current"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall; Check: not IsMaintenanceServiceSelfUpdate
+Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Current"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall; Check: IsMaintenanceServiceSelfUpdate
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
@@ -222,13 +223,31 @@ begin
 
   MaintenanceServiceInitiallyInstalled := True;
 
+  if IsMaintenanceServiceSelfUpdate() and
+     not RegQueryStringValue(HKLM64,
+       'SYSTEM\CurrentControlSet\Services\VeyonCampusMaintenanceService', 'ImagePath', ServiceImagePath) then
+  begin
+    Result := 'Maintenance 自更新无法读取 Windows 服务注册路径；已停止安装以保留恢复通道。';
+    Exit;
+  end;
+
   if RegQueryStringValue(HKLM64,
        'SYSTEM\CurrentControlSet\Services\VeyonCampusMaintenanceService', 'ImagePath', ServiceImagePath) and
      (Pos(LowerCase(ExpandConstant('{app}\MaintenanceService\')),
        LowerCase(ServiceImagePath)) = 0) then
   begin
-    Log('Maintenance service is already installed outside StudentSetup; keeping it online during this application update.');
-    Exit;
+    if not IsMaintenanceServiceSelfUpdate() then
+    begin
+      Log('Maintenance service is already installed outside StudentSetup; keeping it online during this application update.');
+      Exit;
+    end;
+    if Pos(LowerCase(ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath)),
+       LowerCase(ServiceImagePath)) = 0 then
+    begin
+      Result := 'Maintenance 自更新发现服务注册路径与当前版本目录不匹配；已停止安装以保留恢复通道。';
+      Exit;
+    end;
+    Log('Stopping the independent Maintenance service for its signed self-update transaction.');
   end;
 
   if not RunMaintenanceServiceControl('--stop-service', ResultCode) or (ResultCode <> 0) then
