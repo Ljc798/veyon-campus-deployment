@@ -46,7 +46,7 @@
 | 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
 | 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
 | 29 | P4-03 运维可观察性 | `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
-| 30 | P4-02 Ring 0–3 灰度部署 | `PLAN-RECORDED; VM-PENDING` | 灰度顺序、隔离快照、暂停和回退要求已有文档；没有运行 VM 或真实教室灰度。 |
+| 30 | P4-02 Ring 0–3 灰度部署 | `GATES-DEFINED; TEST-DEFERRED; RING-PENDING` | 最终计划已明确各 Ring 准入、逐台组件/课堂/网站回归记录与熔断恢复条件；隔离包按目标机既有信任根验证，不要求先正式公开发行。未运行 VM 或真实教室灰度，需用户安排后再执行。 |
 | 31 | P4-04 课堂能力发布门槛 | `PARTIAL-CODE; FIELD-PENDING; TEST-DEFERRED` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；应用限制结果改用中性提示并明确只是 Agent 签名回执，非 Windows 实际拦截证明。历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
 | 32 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
 | 33 | P5-02 / Issue 011 Authenticode、摘要与签名清单 | `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED` | 新增签名脚本与受保护签名 job；标签发布需配置 PFX/password、预期 thumbprint、RFC 3161 timestamp URL，签后核验两安装器、生成含最终 SHA 的 Authenticode manifest 并连同 SHA256SUMS 发布。凭据/证书未配置且本轮未运行 workflow，不能称已签名。 |
