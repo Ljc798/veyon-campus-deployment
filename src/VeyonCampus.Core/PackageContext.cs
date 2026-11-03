@@ -13,7 +13,8 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
     string? StudentSystemPolicyPublicKeyPath = null, string? StudentSystemPolicyPublicKeySha256 = null,
     PackageSetupRecommendations? RecommendedOperations = null,
     IReadOnlyList<string>? TeacherChannelEndpoints = null,
-    string? TeacherChannelRootCertificatePath = null)
+    string? TeacherChannelRootCertificatePath = null,
+    IReadOnlyList<string>? PolicyTrustRotationAuthorizations = null)
 {
     public static PackageContext Load(string directory)
     {
@@ -76,7 +77,7 @@ public sealed record PackageContext(string Root, string Campus, string ComputerP
     /// <summary>Stable fingerprint of everything <see cref="VerifyUnchanged"/> re-reads, for binding reports to a package.</summary>
     public string PackageFingerprint =>
         Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(
-            $"{ConfigSha256}|{PublicKeySha256}|{PublicKeyFingerprint}|{SchemaVersion}|{InstallerSha256}|{WebsitePolicyPublicKeySha256}|{ApplicationPolicyPublicKeySha256}|{StudentSystemPolicyPublicKeySha256}|{TelemetryEndpoint}|{DeploymentId}|{Compatibility}|{string.Join(';', TeacherChannelEndpoints ?? [])}|{string.Join(';', PayloadFiles?.Select(file => $"{file.Path}:{file.Size}:{file.Sha256}") ?? [])}")));
+            $"{ConfigSha256}|{PublicKeySha256}|{PublicKeyFingerprint}|{SchemaVersion}|{InstallerSha256}|{WebsitePolicyPublicKeySha256}|{ApplicationPolicyPublicKeySha256}|{StudentSystemPolicyPublicKeySha256}|{TelemetryEndpoint}|{DeploymentId}|{Compatibility}|{string.Join(';', TeacherChannelEndpoints ?? [])}|{string.Join(';', PolicyTrustRotationAuthorizations ?? [])}|{string.Join(';', PayloadFiles?.Select(file => $"{file.Path}:{file.Size}:{file.Sha256}") ?? [])}")));
 
     public void VerifyUnchanged()
     {

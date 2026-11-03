@@ -42,7 +42,7 @@
 | 23 | CM-02 自动配置同步与离线对账 | `PARTIAL-CODE; TEST-DEFERRED` | Maintenance 签名同步现同时写 Agent 配置、维护 bootstrap，在共享更新锁内拒绝活动更新，重启 SYSTEM Agent 并等待活动配置指纹；运行失败回滚两侧快照，断电中断由受保护恢复记录在服务启动时恢复旧快照。教师 journal 新增按固定 Agent 身份持久化的 TeacherConnectivity 待发送队列；Agent 通道或独立 Maintenance 服务通道认证重连后会触发一次对账，按学生端健康状态签发下一 revision 并同步，重复连接事件有本机并发抑制。已完成源码接线，未构建/测试/VM 验收；CM-02 的其他配置模块与验证仍未完成。 |
 | 24 | CM-03 Schema 迁移与回滚 | `PARTIAL-CODE; TEST-DEFERRED` | 修复 Schema 7 校区包归档器缺口；新增 Maintenance bootstrap Schema 1→2 显式迁移：保留原始字节快照、原子替换、核对 schema/revision/固定身份/配置指纹，失败时恢复原字节。Agent 本地主配置没有 schema 字段；校区包未来版本与 7→8→9 迁移语义尚未定义，未虚构目标 schema。未构建/测试/VM 验收。 |
 | 25 | CM-04 无包首次安全配对 | `PARTIAL-CODE; TEST-DEFERRED` | Agent 首次身份由 SYSTEM 生成并通过签名状态披露；教师首次固定仍需显式勾选确认。新增学生课堂助手 12 位身份核对码，并在教师首次信任/身份轮换对话中并列显示，帮助现场核对设备。仅覆盖已装有签名校区公钥/证书配置的设备；限时无包入网、首次公钥/证书/公开配置安全分发、审计记录与 VM 验收仍未完成。 |
-| 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; RECOVERY-ADVICE-PARTIAL; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；P4-03 待处理列表现有按事务状态生成的下一步建议；Maintenance 服务身份变化现需显示新旧完整指纹并由教师明确批准。PolicyTrust 新增旧根签名授权/新根持有证明的轮换授权格式，但尚未接入配置包、学生端切换和过渡期双根验签；多配置模块状态 UI 仍未实现。 |
+| 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; RECOVERY-ADVICE-PARTIAL; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；P4-03 待处理列表现有按事务状态生成的下一步建议；Maintenance 服务身份变化现需显示新旧完整指纹并由教师明确批准。PolicyTrust 轮换授权现可被 schemaVersion=8 本地包生成器、解析器和归档器携带/结构校验；教师端轮换入口、学生端授权切换、过渡期双根验签仍未完成；stable 云端发布 API 仍只接受 schemaVersion=3–6；多配置模块状态 UI 仍未实现。 |
 | 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
 | 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
 | 29 | P4-03 运维可观察性 | `PARTIAL-CODE; RECOVERY-ADVICE-WIRED; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。待处理列表现按事务状态显示建议操作，不会建议重发未决 commandId 或绕过恢复核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
@@ -279,4 +279,5 @@
 
 - 新增 `PolicyTrustRotationCryptography` 核心格式，分别为网站、应用、学生系统策略根标记用途；轮换内容绑定校区、旧/新根指纹、新公钥、签发时间和旧根退休时间。旧根 RSA-PSS/SHA-256 授权新根，新根再签同一规范载荷证明私钥持有；授权有效过渡期最多 90 天。
 - 验证会核对预期校区/用途、现有旧根指纹、公钥规范化及其指纹、签名、未来时间偏差和过期时间；输入有大小上限并拒绝重复 JSON 字段及私钥 PEM。
-- 这是未接入的密码学基础：目前 PackageManifest/Builder、CampusConfigurationArchive、学生安装配置切换及旧/新根过渡期策略验签尚未消费此授权，所以尚不能用于实际根轮换。未构建或测试。
+- schemaVersion=8 本地配置包现可在 manifest 内携带 1–3 项轮换授权；Builder/Manifest 会检查校区、密钥用途唯一性、授权新公钥与包内对应策略公钥相同，归档器支持保留并重读这些字段。该包版本要求完整 teacherChannel 配置；稳定云端发布客户端仍拒绝 schemaVersion=8。
+- 学生安装配置切换、由旧根验证授权、保留旧根至退休时间、教师端受控轮换入口均还未接入，因此仍不能用于实际根轮换。未构建或测试。

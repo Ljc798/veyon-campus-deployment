@@ -91,19 +91,12 @@ public static class PolicyTrustRotationCryptography
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(expectedCampusId);
         if (!Enum.IsDefined(expectedRole)) throw new ArgumentOutOfRangeException(nameof(expectedRole));
-        ArgumentException.ThrowIfNullOrWhiteSpace(envelopeJson);
-        var bytes = System.Text.Encoding.UTF8.GetBytes(envelopeJson);
-        if (bytes.Length is 0 or > MaximumEnvelopeBytes)
-            throw new InvalidDataException("策略信任根轮换授权大小无效。");
-        PolicyJson.RejectDuplicateFields(bytes);
-        var authorization = JsonSerializer.Deserialize<PolicyTrustRotationAuthorization>(bytes, JsonOptions)
-                            ?? throw new InvalidDataException("策略信任根轮换授权为空。");
-        if (authorization.SchemaVersion != 1 || authorization.CampusId != expectedCampusId ||
-            authorization.Role != expectedRole)
-            throw new InvalidDataException("策略信任根轮换授权版本、校区或密钥用途不匹配。");
+        var authorization = Parse(envelopeJson);
+        if (authorization.CampusId != expectedCampusId || authorization.Role != expectedRole)
+            throw new InvalidDataException("策略信任根轮换授权校区或密钥用途不匹配。");
 
-        var issued = authorization.IssuedUtc.ToUniversalTime();
-        var retire = authorization.RetirePreviousRootUtc.ToUniversalTime();
+        var issued = authorization.IssuedUtc;
+        var retire = authorization.RetirePreviousRootUtc;
         var now = nowUtc.ToUniversalTime();
         if (issued > now + MaximumClockSkew || retire <= now || retire <= issued ||
             retire - issued > MaximumTransition)
@@ -119,6 +112,43 @@ public static class PolicyTrustRotationCryptography
             authorization.NewFingerprint != newFingerprint || previousFingerprint == newFingerprint)
             throw new InvalidDataException("策略信任根轮换授权中的旧/新指纹不匹配。");
 
+        var unsigned = new UnsignedAuthorization(authorization.SchemaVersion, authorization.CampusId,
+            authorization.Role, authorization.PreviousFingerprint, authorization.NewFingerprint,
+            canonicalNewPem, issued, retire);
+        var payload = SerializeCanonical(unsigned);
+        var previousSignature = Convert.FromBase64String(authorization.PreviousRootSignature);
+        var newProof = Convert.FromBase64String(authorization.NewRootProofSignature);
+        if (!previousKey.VerifyData(payload, previousSignature, HashAlgorithmName.SHA256,
+                RSASignaturePadding.Pss) ||
+            !newKey.VerifyData(payload, newProof, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
+            throw new CryptographicException("策略信任根轮换没有通过旧根授权和新根持有证明。");
+
+        return new VerifiedPolicyTrustRotation(expectedCampusId, expectedRole, previousFingerprint, newFingerprint,
+            canonicalPreviousPem, canonicalNewPem, issued, retire);
+    }
+
+    public static PolicyTrustRotationAuthorization Parse(string envelopeJson)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(envelopeJson);
+        var bytes = System.Text.Encoding.UTF8.GetBytes(envelopeJson);
+        if (bytes.Length is 0 or > MaximumEnvelopeBytes)
+            throw new InvalidDataException("策略信任根轮换授权大小无效。");
+        PolicyJson.RejectDuplicateFields(bytes);
+        var authorization = JsonSerializer.Deserialize<PolicyTrustRotationAuthorization>(bytes, JsonOptions)
+                            ?? throw new InvalidDataException("策略信任根轮换授权为空。");
+        WebsitePolicySigningKeyStore.ValidateCampusId(authorization.CampusId);
+        if (authorization.SchemaVersion != 1 || !Enum.IsDefined(authorization.Role))
+            throw new InvalidDataException("策略信任根轮换授权版本或密钥用途无效。");
+        var issued = authorization.IssuedUtc.ToUniversalTime();
+        var retire = authorization.RetirePreviousRootUtc.ToUniversalTime();
+        using var newKey = ImportPublicKey(authorization.NewPublicKeyPem);
+        var canonicalNewPem = newKey.ExportSubjectPublicKeyInfoPem();
+        var previousFingerprint = ValidateFingerprint(authorization.PreviousFingerprint,
+            nameof(authorization.PreviousFingerprint));
+        var newFingerprint = Fingerprint(canonicalNewPem);
+        if (authorization.NewFingerprint != newFingerprint || previousFingerprint == newFingerprint ||
+            retire <= issued || retire - issued > MaximumTransition)
+            throw new InvalidDataException("策略信任根轮换授权中的新指纹或过渡期无效。");
         byte[] previousSignature;
         byte[] newProof;
         try
@@ -130,18 +160,18 @@ public static class PolicyTrustRotationCryptography
         {
             throw new InvalidDataException("策略信任根轮换签名编码无效。", exception);
         }
-
-        var unsigned = new UnsignedAuthorization(authorization.SchemaVersion, authorization.CampusId,
-            authorization.Role, authorization.PreviousFingerprint, authorization.NewFingerprint,
-            canonicalNewPem, issued, retire);
-        var payload = SerializeCanonical(unsigned);
-        if (!previousKey.VerifyData(payload, previousSignature, HashAlgorithmName.SHA256,
-                RSASignaturePadding.Pss) ||
-            !newKey.VerifyData(payload, newProof, HashAlgorithmName.SHA256, RSASignaturePadding.Pss))
-            throw new CryptographicException("策略信任根轮换没有通过旧根授权和新根持有证明。");
-
-        return new VerifiedPolicyTrustRotation(expectedCampusId, expectedRole, previousFingerprint, newFingerprint,
-            canonicalPreviousPem, canonicalNewPem, issued, retire);
+        if (previousSignature.Length is < 256 or > 512 || newProof.Length is < 256 or > 512)
+            throw new InvalidDataException("策略信任根轮换签名长度不正确。");
+        return authorization with
+        {
+            PreviousFingerprint = previousFingerprint,
+            NewFingerprint = newFingerprint,
+            NewPublicKeyPem = canonicalNewPem,
+            IssuedUtc = issued,
+            RetirePreviousRootUtc = retire,
+            PreviousRootSignature = Convert.ToBase64String(previousSignature),
+            NewRootProofSignature = Convert.ToBase64String(newProof)
+        };
     }
 
     private static byte[] SerializeCanonical(UnsignedAuthorization value)
@@ -187,6 +217,13 @@ public static class PolicyTrustRotationCryptography
         using var key = RSA.Create();
         key.ImportFromPem(publicKeyPem);
         return Convert.ToHexString(SHA256.HashData(key.ExportSubjectPublicKeyInfo()));
+    }
+
+    private static string ValidateFingerprint(string value, string name)
+    {
+        if (value is null || value.Length != 64 || value.Any(character => !Uri.IsHexDigit(character)))
+            throw new InvalidDataException($"{name} 格式无效。");
+        return value.ToUpperInvariant();
     }
 
     private static void ValidateKeySize(RSA key, string parameterName)

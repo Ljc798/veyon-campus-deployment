@@ -17,12 +17,13 @@ public static class PackageBuilder
         string? studentSystemPolicyPublicKeyPem = null,
         PackageSetupRecommendations? recommendedOperations = null,
         IReadOnlyList<string>? teacherChannelEndpoints = null,
-        byte[]? teacherChannelRootCertificate = null)
+        byte[]? teacherChannelRootCertificate = null,
+        IReadOnlyList<string>? policyTrustRotationAuthorizations = null)
         => BuildCore(outputDirectory, campus, computerPrefix, publicKeySourcePath,
             websitePolicyPublicKeyPem, enableAnonymousTelemetry,
             cancellationToken, PhysicalPackageBuildFileSystem.Instance, applicationPolicyPublicKeyPem, compatibility,
             studentSystemPolicyPublicKeyPem, recommendedOperations, teacherChannelEndpoints,
-            teacherChannelRootCertificate);
+            teacherChannelRootCertificate, policyTrustRotationAuthorizations);
 
     internal static string BuildCore(string outputDirectory, string campus, string computerPrefix,
         string publicKeySourcePath, string? websitePolicyPublicKeyPem, bool enableAnonymousTelemetry,
@@ -31,7 +32,8 @@ public static class PackageBuilder
         string? studentSystemPolicyPublicKeyPem = null,
         PackageSetupRecommendations? recommendedOperations = null,
         IReadOnlyList<string>? teacherChannelEndpoints = null,
-        byte[]? teacherChannelRootCertificate = null)
+        byte[]? teacherChannelRootCertificate = null,
+        IReadOnlyList<string>? policyTrustRotationAuthorizations = null)
     {
         ArgumentNullException.ThrowIfNull(fileSystem);
         cancellationToken.ThrowIfCancellationRequested();
@@ -50,10 +52,14 @@ public static class PackageBuilder
             throw new InvalidDataException("schemaVersion=6 建议操作必须和完整 schemaVersion=5 策略信任载荷一起提供。");
         if ((teacherChannelEndpoints is null) != (teacherChannelRootCertificate is null))
             throw new InvalidDataException("学生主动连接教师端必须同时提供教师地址和 TLS 根证书。");
+        if (policyTrustRotationAuthorizations is { Count: < 1 or > 3 })
+            throw new InvalidDataException("策略信任根轮换授权必须为 1 至 3 项。");
+        if (policyTrustRotationAuthorizations is { Count: > 0 } && teacherChannelRootCertificate is null)
+            throw new InvalidDataException("schemaVersion=8 策略信任轮换包必须包含完整 teacherChannel 配置。");
         if (teacherChannelEndpoints is not null)
         {
             if (studentSystemPolicyPublicKeyPem is null || compatibility?.StudentAgent is null)
-                throw new InvalidDataException("schemaVersion=7 学生通道包必须包含完整的系统策略密钥和 Agent 兼容范围。");
+                throw new InvalidDataException("schemaVersion=7/8 学生通道包必须包含完整的系统策略密钥和 Agent 兼容范围。");
             StudentAgentChannelProtocol.ValidateBootstrapConfiguration(campus, teacherChannelEndpoints,
                 Convert.ToBase64String(teacherChannelRootCertificate!));
         }
@@ -64,6 +70,25 @@ public static class PackageBuilder
         var websitePolicyPem = websitePolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(websitePolicyPublicKeyPem);
         var applicationPolicyPem = applicationPolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(applicationPolicyPublicKeyPem);
         var studentSystemPolicyPem = studentSystemPolicyPublicKeyPem is null ? null : ReadRsaPublicKeyPem(studentSystemPolicyPublicKeyPem);
+        if (policyTrustRotationAuthorizations is { Count: > 0 })
+        {
+            var roles = new HashSet<PolicyTrustKeyRole>();
+            foreach (var envelope in policyTrustRotationAuthorizations)
+            {
+                var authorization = PolicyTrustRotationCryptography.Parse(envelope);
+                if (authorization.CampusId != campus || !roles.Add(authorization.Role))
+                    throw new InvalidDataException("策略信任根轮换授权校区不符或密钥用途重复。");
+                var packageRootPem = authorization.Role switch
+                {
+                    PolicyTrustKeyRole.WebsitePolicy when websitePolicyPem is not null => websitePolicyPem,
+                    PolicyTrustKeyRole.ApplicationPolicy when applicationPolicyPem is not null => applicationPolicyPem,
+                    PolicyTrustKeyRole.StudentSystemPolicy when studentSystemPolicyPem is not null => studentSystemPolicyPem,
+                    _ => throw new InvalidDataException("轮换授权用途在当前配置包中没有对应的新策略公钥。")
+                };
+                if (!string.Equals(packageRootPem, authorization.NewPublicKeyPem, StringComparison.Ordinal))
+                    throw new InvalidDataException("策略轮换授权的新公钥与配置包策略公钥不一致。");
+            }
+        }
         var finalRoot = Path.GetFullPath(outputDirectory);
         if (Directory.Exists(finalRoot) || File.Exists(finalRoot))
             throw new IOException("输出目录已存在；为防止覆盖资料或密钥，不能复用该路径。");
@@ -144,7 +169,8 @@ public static class PackageBuilder
 
             long Size(string p) => new FileInfo(p).Length;
             string Hash(string p) { using var s = File.OpenRead(p); return Convert.ToHexString(SHA256.HashData(s)); }
-            var schemaVersion = teacherChannelRootCertificatePath is not null ? 7 :
+            var schemaVersion = policyTrustRotationAuthorizations is { Count: > 0 } ? 8 :
+                teacherChannelRootCertificatePath is not null ? 7 :
                 recommendedOperations is not null ? 6 : studentSystemPolicyPublicPath is not null ? 5 :
                 applicationPolicyPublicPath is not null ? 4 : websitePolicyPublicPath is not null ? 3 : 2;
             var manifest = new Dictionary<string, object?>
@@ -186,6 +212,8 @@ public static class PackageBuilder
                         sha256 = Hash(teacherChannelRootCertificatePath)
                     }
                 };
+            if (policyTrustRotationAuthorizations is { Count: > 0 })
+                manifest["policyTrustRotations"] = policyTrustRotationAuthorizations;
             if (schemaVersion >= 4)
             {
                 var compatibilityFields = new Dictionary<string, object?>
@@ -242,12 +270,15 @@ public static class PackageBuilder
 
             // Re-read the staged package and all manifest digests before publishing it.
             var stagedPackage = PackageContext.Load(root);
-            var expectedSchema = teacherChannelRootCertificateFileName is not null ? 7 :
+            var expectedSchema = policyTrustRotationAuthorizations is { Count: > 0 } ? 8 :
+                teacherChannelRootCertificateFileName is not null ? 7 :
                 recommendedOperations is not null ? 6 : studentSystemPolicyKeyFileName is not null ? 5 :
                 applicationPolicyKeyFileName is not null ? 4 : websitePolicyKeyFileName is null ? 2 : 3;
             if (stagedPackage.SchemaVersion != expectedSchema || stagedPackage.Campus != campus ||
                 stagedPackage.ComputerPrefix != computerPrefix || stagedPackage.InstallerPath is not null ||
-                stagedPackage.RecommendedOperations != recommendedOperations)
+                stagedPackage.RecommendedOperations != recommendedOperations ||
+                !(stagedPackage.PolicyTrustRotationAuthorizations ?? Array.Empty<string>())
+                    .SequenceEqual(policyTrustRotationAuthorizations ?? Array.Empty<string>(), StringComparer.Ordinal))
                 throw new InvalidDataException("生成的校区配置包与输入不一致；学生配置包已拒绝完成。");
             stagedPackage.VerifyUnchanged();
             cancellationToken.ThrowIfCancellationRequested();

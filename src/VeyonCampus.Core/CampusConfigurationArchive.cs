@@ -19,9 +19,9 @@ public static class CampusConfigurationArchive
     {
         var root = Path.GetFullPath(packageDirectory);
         var context = PackageManifest.Load(root);
-        if (context.SchemaVersion is not (3 or 4 or 5 or 6 or 7) || context.WebsitePolicyPublicKeyPath is null ||
+        if (context.SchemaVersion is not (3 or 4 or 5 or 6 or 7 or 8) || context.WebsitePolicyPublicKeyPath is null ||
             !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(context.TelemetryEndpoint))
-            throw new InvalidDataException("当前只接受 schemaVersion=3/4/5/6/7 的校区配置包。");
+            throw new InvalidDataException("当前只接受 schemaVersion=3 至 8 的校区配置包。");
 
         var publicKeyName = GetTopLevelName(root, context.PublicKeyPath);
         var websitePolicyKeyName = GetTopLevelName(root, context.WebsitePolicyPublicKeyPath);
@@ -66,6 +66,8 @@ public static class CampusConfigurationArchive
                 snapshot.ComputerPrefix != context.ComputerPrefix ||
                 !string.Equals(snapshot.TelemetryEndpoint, context.TelemetryEndpoint, StringComparison.Ordinal) ||
                 snapshot.RecommendedOperations != context.RecommendedOperations ||
+                !(snapshot.PolicyTrustRotationAuthorizations ?? Array.Empty<string>()).SequenceEqual(
+                    context.PolicyTrustRotationAuthorizations ?? Array.Empty<string>(), StringComparer.Ordinal) ||
                 !(snapshot.TeacherChannelEndpoints ?? Array.Empty<string>()).SequenceEqual(
                     context.TeacherChannelEndpoints ?? Array.Empty<string>(), StringComparer.Ordinal) ||
                 !string.Equals(snapshot.TeacherChannelRootCertificatePath is null ? null :
@@ -121,7 +123,7 @@ public static class CampusConfigurationArchive
                 File.WriteAllBytes(Path.Combine(staging, name), bytes);
 
             var context = PackageManifest.Load(staging);
-            if (context.SchemaVersion is not (3 or 4 or 5 or 6 or 7) || context.WebsitePolicyPublicKeyPath is null ||
+            if (context.SchemaVersion is not (3 or 4 or 5 or 6 or 7 or 8) || context.WebsitePolicyPublicKeyPath is null ||
                 (context.SchemaVersion >= 4) != (context.ApplicationPolicyPublicKeyPath is not null) ||
                 (context.SchemaVersion >= 5) != (context.StudentSystemPolicyPublicKeyPath is not null))
                 throw new InvalidDataException("下载内容不是受支持的校区配置包。");
@@ -200,14 +202,15 @@ public static class CampusConfigurationArchive
         using var document = ParseUtf8Json(manifestBytes);
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("schemaVersion", out var version) ||
-            version.ValueKind != JsonValueKind.Number || version.GetInt32() is not (3 or 4 or 5 or 6 or 7))
-            throw new InvalidDataException("当前只接受 schemaVersion=3/4/5/6/7 的校区配置清单。");
+            version.ValueKind != JsonValueKind.Number || version.GetInt32() is not (3 or 4 or 5 or 6 or 7 or 8))
+            throw new InvalidDataException("当前只接受 schemaVersion=3 至 8 的校区配置清单。");
         var allowedFields = new HashSet<string>(StringComparer.Ordinal)
         {
             "schemaVersion", "packageId", "targetOs", "architecture", "campus", "computerPrefix",
             "telemetryEndpoint", "publicKey", "websitePolicyPublicKey", "applicationPolicyPublicKey", "studentSystemPolicyPublicKey",
             "compatibility", "files", "recommendedOperations", "teacherChannel"
         };
+        if (version.GetInt32() >= 8) allowedFields.Add("policyTrustRotations");
         var seenFields = new HashSet<string>(StringComparer.Ordinal);
         foreach (var property in root.EnumerateObject())
         {
@@ -223,14 +226,14 @@ public static class CampusConfigurationArchive
         AddManifestFileName(root, "websitePolicyPublicKey", names);
         if (version.GetInt32() >= 4) AddManifestFileName(root, "applicationPolicyPublicKey", names);
         else if (root.TryGetProperty("applicationPolicyPublicKey", out _))
-            throw new InvalidDataException("应用策略公钥只允许出现在 schemaVersion=4/5/6/7。");
+            throw new InvalidDataException("应用策略公钥只允许出现在 schemaVersion=4 至 8。");
         if (version.GetInt32() >= 5) AddManifestFileName(root, "studentSystemPolicyPublicKey", names);
         else if (root.TryGetProperty("studentSystemPolicyPublicKey", out _))
-            throw new InvalidDataException("系统策略公钥只允许出现在 schemaVersion=5/6/7。");
-        if (version.GetInt32() == 7)
+            throw new InvalidDataException("系统策略公钥只允许出现在 schemaVersion=5 至 8。");
+        if (version.GetInt32() >= 7)
             AddTeacherChannelCertificateFileName(root, names);
         else if (root.TryGetProperty("teacherChannel", out _))
-            throw new InvalidDataException("teacherChannel 只允许出现在 schemaVersion=7。");
+            throw new InvalidDataException("teacherChannel 只允许出现在 schemaVersion=7/8。");
         if (names.Count != (version.GetInt32() >= 7 ? 7 : version.GetInt32() >= 5 ? 6 : version.GetInt32() == 4 ? 5 : 4))
             throw new InvalidDataException("校区配置清单中的文件名重复或数量无效。");
         if (version.GetInt32() >= 4)
@@ -279,7 +282,7 @@ public static class CampusConfigurationArchive
             !channel.TryGetProperty("rootCertificate", out var certificate) ||
             certificate.ValueKind != JsonValueKind.Object ||
             !certificate.TryGetProperty("path", out var path) || path.ValueKind != JsonValueKind.String)
-            throw new InvalidDataException("schemaVersion=7 teacherChannel 必须包含有效地址和根证书文件。");
+            throw new InvalidDataException("schemaVersion=7/8 teacherChannel 必须包含有效地址和根证书文件。");
 
         var name = path.GetString() ?? "";
         if (name.Length is < 5 or > 200 || name != Path.GetFileName(name) ||
