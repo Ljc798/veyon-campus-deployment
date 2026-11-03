@@ -694,6 +694,8 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 每项从教师下发、Agent 收到/执行、操作系统真实效果、状态读回直到解除恢复完整留证；分清连接失败、权限不足、策略执行失败与报告缺失。
 - [ ] 不在真实课堂期间进行首次全量功能验收；失败注入在 VM 中完成，校区仅执行获批准的无破坏性灰度检查。
 
+**实施进度补记（2026-11-03，现场验收待执行）：** 既有[课堂功能现场验收台账](maintenance/classroom-feature-acceptance.md)作为当前逐能力证据记录；网站黑白名单历史限定记录继续保留原范围，其余未填现场版本和效果证据的项目维持 `NOT-TESTED`。用户要求测试稍后统一安排，因此本轮未尝试把源码或历史记录升级成当前构建的现场通过结论。
+
 **阶段退出门槛**：普通教师只需一个维护入口，后台按设备能力自动选路；真实校区验证连续维护、回滚和恢复后才扩大投放；发布说明与真实课堂能力证据一致。
 
 ---
@@ -757,6 +759,8 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 新 Maintenance 协议必须维护版本矩阵，旧兼容接口的退役应以实际装机占比和测试证据判断，不能随着新业务版本随意删除。
 - [ ] 生产发布严格采用正式发行凭据；不得将本地测试签名、新测试根证书或私钥加入生产安装包。
 - [ ] 用户拒绝重试、机器需人工维护或事务恢复未闭环时，提供完整错误原因和明确现场操作说明，不自动清除用户数据/校区配置。
+
+**P5-01 实施进度补记（2026-11-03，未运行 CI）：** 已有 App checks、API contract 和 Windows installers workflows。Windows installer workflow 新增独立 Maintenance Service 安装器打包步骤及隔离 artifact；Student/Teacher 发布 artifact 与生产发布明确继续只使用 StudentSetup、TeacherConsole。Workflow 未运行，不能视为安装包构建或服务安装验收通过。
 
 ---
 

@@ -46,7 +46,10 @@
 | 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
 | 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
 | 29 | P4-03 运维可观察性 | `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
-| 30–37 | P4-02、P4-04～P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 继续实施代码和文档；环形发布、CI/安装器、隔离云、候选包与实机验收各自保留门槛。 |
+| 30 | P4-02 Ring 0–3 灰度部署 | `PLAN-RECORDED; VM-PENDING` | 灰度顺序、隔离快照、暂停和回退要求已有文档；没有运行 VM 或真实教室灰度。 |
+| 31 | P4-04 课堂能力发布门槛 | `LEDGER-READY; FIELD-PENDING` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
+| 32 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
+| 33–37 | P5-02～P5-05、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 代码签名、隔离 CloudBase、RC 和最终 VM/现场任务分别保留签名、环境与测试门槛。 |
 
 ## 最近完成：P0-07 / Issue 007
 
@@ -232,3 +235,9 @@
 - 最近状态不是 Completed/NoChanges 的设备进入待处理列表，显示当前名单匹配到的名称、最近路由、状态、时间、版本读回和最后阶段原因。终态旧记录按 180 天展示门槛过滤；活动事务仍显示。
 - 已验证过签名能力且事务为 Failed/RolledBack 的设备可单台新建维护尝试；目标必须仍匹配当前名单、只处理这一台，工作流会重新读取身份/事务再决定通道。活动/恢复事务的按钮走现有 operation 恢复流程；未固定身份或 ManualRequired 不开放自动重试。
 - 当前仍仅覆盖本机 journal 中出现过事务的设备；未做多教师/多校区汇聚，定向重试只对当前教师可达名单有效。未构建、测试或做 UI 验收。
+
+## 2026-11-03 连续实施补记：P5-01 Windows installer CI 接入
+
+- 当前仓库已有 `.github/workflows/app-checks.yml`、`api-contracts.yml` 与 `windows-installers.yml`；Windows workflow 以前只打包 StudentSetup、TeacherConsole 两类安装器，没有打包新 Maintenance Service 独立安装器。
+- Windows workflow 现调用 `scripts/package-maintenance-service.ps1 -Clean`，在 CI 生成独立 Maintenance Service 安装器并上传为单独 artifact；原 `windows-installers` artifact 收窄为 Student/Teacher 两类，生产发布步骤仍显式只签算并上传 Student/Teacher。
+- 此项只是 workflow 源码接线；本轮没有运行 workflow、构建安装器或安装服务。Windows runner/Inno/.NET runtime/服务卸载和 SCM 状态需后续验证；P5-01 仍 `CI-PARTIAL; RUN-DEFERRED`。

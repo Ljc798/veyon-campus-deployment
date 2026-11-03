@@ -108,6 +108,14 @@ jobs:
             throw 'Inno Setup 6.7.1 language directory was not found after installation.'
           }
           Copy-Item -LiteralPath $languageDownload -Destination $languageTarget -Force
+      - name: Build independent Maintenance Service installer
+        shell: pwsh
+        run: |
+          $packageArguments = @{ Clean = $true }
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
+            $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
+          }
+          & ./scripts/package-maintenance-service.ps1 @packageArguments
       - name: Build Student installer
         shell: pwsh
         run: |
@@ -353,8 +361,16 @@ jobs:
         with:
           name: windows-installers-${{ github.run_id }}
           path: |
-            artifacts/VeyonCampus-*-Setup-*-win-x64.exe
+            artifacts/VeyonCampus-Student-Setup-*-win-x64.exe
+            artifacts/VeyonCampus-Teacher-Setup-*-win-x64.exe
             artifacts/VeyonCampus-Student-Setup-*-win-x64.exe.agent-target.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: maintenance-service-installer-${{ github.run_id }}
+          path: artifacts/VeyonCampus-Maintenance-Setup-*-win-x64.exe
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
