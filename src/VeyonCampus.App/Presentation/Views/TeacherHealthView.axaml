@@ -303,6 +303,8 @@
                     Click="RequestRefreshMaintenanceOverview" IsEnabled="{Binding !IsExecuting}" />
           </Grid>
           <TextBlock Text="{Binding MaintenanceOverviewSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding MaintenanceConfigurationOverviewSummary}" Classes="supporting-copy"
+                     TextWrapping="Wrap" />
           <TextBlock Text="{Binding MaintenanceIdentityRotationStatus}" Classes="supporting-copy"
                      TextWrapping="Wrap" IsVisible="{Binding HasMaintenanceIdentityRotationStatus}" />
           <TextBlock Text="本机记录中没有待恢复、失败或待核对的维护事务。"

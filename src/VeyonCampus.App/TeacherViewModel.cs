@@ -4032,6 +4032,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string MaintenanceIdentityRotationStatus { get; private set; } = "";
     public bool HasMaintenanceIdentityRotationStatus => !string.IsNullOrWhiteSpace(MaintenanceIdentityRotationStatus);
     public string MaintenanceOverviewSummary { get; private set; } = "尚未读取本机 Maintenance 记录。";
+    public string MaintenanceConfigurationOverviewSummary { get; private set; } =
+        "尚无本机配置对账记录。";
     public bool UseLocalTestStudentUpdateSource
     {
         get => _useLocalTestStudentUpdateSource;
@@ -10260,6 +10262,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 Changed(nameof(HasPendingMaintenanceIdentityRotations));
                 MaintenanceOverviewSummary = "尚未设置当前校区；没有读取维护记录。";
                 Changed(nameof(MaintenanceOverviewSummary));
+                MaintenanceConfigurationOverviewSummary = "尚未设置当前校区；没有读取配置对账记录。";
+                Changed(nameof(MaintenanceConfigurationOverviewSummary));
                 return;
             }
             var journal = await _maintenanceRunStore.ReadAsync();
@@ -10282,6 +10286,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             MaintenanceOverviewSummary = $"本校区本机记录 {latestRuns.Length} 台 · Maintenance {knownMaintenance} · Legacy {knownLegacy} · 需现场维护 {needsField}" +
                 (unknown > 0 ? $" · 能力未知/待核对 {unknown}" : "") + "。按每台最近一次维护事务统计。";
             Changed(nameof(MaintenanceOverviewSummary));
+            MaintenanceConfigurationOverviewSummary = BuildMaintenanceConfigurationOverview(journal, latestRuns);
+            Changed(nameof(MaintenanceConfigurationOverviewSummary));
 
             MaintenanceIssueItems.Clear();
             var currentTargets = WebsitePolicyTargetChoices.GroupBy(item => NormalizeTargetKey(item.Target),
@@ -10319,7 +10325,44 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasPendingMaintenanceIdentityRotations));
             MaintenanceOverviewSummary = "无法读取本机 Maintenance 概览；原维护记录未修改。";
             Changed(nameof(MaintenanceOverviewSummary));
+            MaintenanceConfigurationOverviewSummary = "无法读取本机配置对账记录；原维护记录未修改。";
+            Changed(nameof(MaintenanceConfigurationOverviewSummary));
         }
+    }
+
+    private static string BuildMaintenanceConfigurationOverview(MaintenanceJournal journal,
+        IReadOnlyList<MaintenanceRun> latestRuns)
+    {
+        var deviceFingerprints = latestRuns.Select(run => run.Device.PinnedIdentityFingerprint)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        var modules = Enum.GetValues<MaintenanceConfigurationModule>();
+        var summaries = new List<string>();
+        foreach (var module in modules)
+        {
+            var statuses = deviceFingerprints.Select(fingerprint => journal.GetConfigurationStatus(fingerprint, module))
+                .Where(status => status.State != MaintenanceConfigurationReconciliationState.NoDesiredConfiguration)
+                .ToArray();
+            if (statuses.Length == 0) continue;
+            var queued = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.QueuedForDelivery);
+            var waiting = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.AwaitingReport);
+            var pending = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.PendingApplication);
+            var rejected = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.Rejected);
+            var drifted = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.Drifted);
+            var inSync = statuses.Count(status => status.State == MaintenanceConfigurationReconciliationState.InSync);
+            var label = module switch
+            {
+                MaintenanceConfigurationModule.CampusIdentity => "校区身份",
+                MaintenanceConfigurationModule.TeacherConnectivity => "教师连接",
+                MaintenanceConfigurationModule.PolicyTrust => "策略信任",
+                MaintenanceConfigurationModule.SystemConfiguration => "系统配置",
+                MaintenanceConfigurationModule.RuntimeSettings => "运行参数",
+                _ => module.ToString()
+            };
+            summaries.Add($"{label}：排队 {queued}、待回报 {waiting}、应用中 {pending}、拒绝 {rejected}、漂移 {drifted}、同步 {inSync}");
+        }
+        return summaries.Count == 0
+            ? "本机当前校区记录中尚无 Desired/Reported 配置对账状态。"
+            : "配置 Desired/Reported 对账（" + string.Join("；", summaries) + "）。统计仅覆盖本机 journal 中有事务记录的固定身份设备，不代表全校实时状态。";
     }
 
     public async Task ApproveMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item)
