@@ -12,7 +12,7 @@
 
 | 编号 | 问题                                             | 依据及状态                                       |
 | ---- | ------------------------------------------------ | ------------------------------------------------ |
-| 001  | 稳定版更新可能使用错误的 Agent 暂存目标版本      | 本次 review；源码逻辑仍存在，待修复验证          |
+| 001  | 稳定版更新可能使用错误的 Agent 暂存目标版本      | 修复源码和定向夹具已通过；线上 `.56` stable Schema 3 更新及 Windows VM 仍未测 |
 | 002  | 配置同步后请求处理仍可能使用旧配置               | 本次 review；源码逻辑仍存在，待修复验证          |
 | 003  | 核心课堂功能及部分系统策略缺少通过现场验收的证据 | 用户现场反馈；网站黑白名单流程除外               |
 | 004  | 单一“最新版本”提示不足以表达组件和恢复状态       | 用户现场反馈；界面现状需进一步核查               |
@@ -28,9 +28,13 @@
 ## 001：稳定版更新可能使用错误的 Agent 暂存目标版本
 
 - **影响：** 稳定版安装包携带较新的 Agent，但清单未声明 `StudentAgentVersion` 时，暂存可能指向旧版 Agent 目录，文件冲突导致更新失败或回滚。
-- **依据：** [StudentApplicationUpdates.cs](../../src/VeyonCampus.Core/StudentApplicationUpdates.cs) 中，读取内置 `bundledAgentVersion` 后重设了事务目标，但后续 `StageAgentUpdate` 和切换仍使用此前计算的 `targetAgentVersion`。
+- **依据：** 原代码读取内置 `bundledAgentVersion` 后重设事务目标，但 `StageAgentUpdate` 和切换仍使用此前计算的 `targetAgentVersion`。这会影响没有 `StudentAgentVersion` 声明的稳定 Schema 3 清单。
 - **处理方向：** 验证安装包内 Agent 版本后，暂存、激活、交接使用同一目标版本。
 - **验收要求：** 使用未声明 Agent 版本的稳定清单，从旧 Agent 更新到较新内置 Agent；确认事务提交和实际运行版本。
+- **线上范围（2026-11-03）：** 用户确认当前线上主流 Agent 为 `0.4.56`；本轮只优先验证 `0.4.56 → StudentSetup 内置 Agent 0.4.57`，`0.4.55` 兼容矩阵暂缓，除非装机盘点发现仍在使用。
+- **工作区修复：** `StudentApplicationUpdateProcessor.ResolveTargetAgentVersionAfterSetupInstall` 在验明包内 Agent 版本后，以该版本作为唯一暂存/交接目标，并同步 rebasing 事务目标；显式签名目标不一致或包内 Agent 降级仍会拒绝。当前补丁进入工作区构建的 Agent `0.4.57`；它不会改写线上已安装的 `0.4.56` 二进制。
+- **自动化证据：** `dotnet run --project tests/VeyonCampus.Checks -c Release --no-restore -p:NuGetAudit=false -p:UsedAvaloniaProducts= -- --student-application-update-fixtures` 通过，覆盖清单省略 Agent 目标时 `0.4.56 → 0.4.57`、显式目标冲突和降级拒绝。构建有既有 `NU1900`/`CA1416` 警告；`git diff --check` 通过。
+- **状态与缺口：** 改动尚未提交。Windows VM 上由线上 `0.4.56` 执行稳定 Schema 3 下载、暂存、切换、健康读回仍 `NOT-TESTED`，需用正式发行流水线生成的稳定签名包验证。截图中的 local-test 拒绝发生在教师端预检，是独立的信任/能力门禁，不等同于 stable 升级失败；测试 bootstrap 安装 Agent `0.4.57` 也不能代替 `.56` 首次升级验证。
 
 ## 002：配置同步后请求处理仍可能使用旧配置
 

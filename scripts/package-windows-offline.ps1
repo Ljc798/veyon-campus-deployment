@@ -381,9 +381,8 @@ if (-not [string]::IsNullOrWhiteSpace($TestReleasePublicKeyPath)) {
         Remove-Item Env:VEYONCAMPUS_RELEASE_KEY_TO_VALIDATE -ErrorAction SilentlyContinue
     }
 }
-if ($EnableLocalTestStudentUpdateUi -and
-    ($Role -ne 'TeacherConsole' -or [string]::IsNullOrWhiteSpace($testReleasePublicKeyFullPath))) {
-    throw 'EnableLocalTestStudentUpdateUi 仅用于嵌入本机测试公钥的 TeacherConsole 测试包。'
+if ($EnableLocalTestStudentUpdateUi -and $Role -ne 'TeacherConsole') {
+    throw 'EnableLocalTestStudentUpdateUi 仅用于 TeacherConsole 本机测试包。'
 }
 
 function ConvertTo-InnoPascalStringLiteral {

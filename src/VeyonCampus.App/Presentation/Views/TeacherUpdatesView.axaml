@@ -42,18 +42,18 @@
                   IsVisible="{Binding IsLocalTestStudentUpdateSourceAvailable}">
             <StackPanel Spacing="8">
               <TextBlock Text="学生端更新来源" Classes="component-title" />
-              <CheckBox Content="使用本机测试版（仅本机测试构建显示；隔离线上正式版，不会上传）"
+              <CheckBox Content="使用本机测试包（仅限隔离测试机）"
                         IsChecked="{Binding UseLocalTestStudentUpdateSource, Mode=TwoWay}" />
               <TextBlock Text="{Binding StudentUpdateSourceSummary}" Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="从网站安装的正式教师端不会提供本机测试入口，也不会信任测试发行公钥。测试时请使用同一测试包组中的教师端、学生引导包和目标包。"
+              <TextBlock Text="教师端用 Developer Release 公钥验证本机包；安装器只在本机读取，不会上传。"
                          Classes="muted" TextWrapping="Wrap" />
               <WrapPanel Orientation="Horizontal" IsVisible="{Binding UseLocalTestStudentUpdateSource}">
-                <Button Classes="secondary" Content="选择本机测试更新目标…"
+                <Button Classes="secondary" Content="选择本机签名 StudentSetup…"
                         Click="RequestSelectLocalStudentTestInstaller" Margin="0,0,8,4" />
                 <TextBlock Text="{Binding LocalTestStudentSetupInstallerPath}" Classes="muted"
                            VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="720" />
               </WrapPanel>
-              <TextBlock Text="请选择带同名 .exe.release.json 清单的测试目标包。一次性引导安装包只在旧 Agent 快照机上本地安装，不能在此选择。"
+              <TextBlock Text="选择 Developer Release 签名的 stable StudentSetup 包，旁边必须有同名 .exe.release.json 清单。"
                          Classes="muted" TextWrapping="Wrap"
                          IsVisible="{Binding UseLocalTestStudentUpdateSource}" />
             </StackPanel>

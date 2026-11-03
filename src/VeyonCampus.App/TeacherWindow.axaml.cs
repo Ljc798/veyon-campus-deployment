@@ -2299,7 +2299,7 @@ public partial class TeacherWindow : Window
         {
             var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                Title = "选择本机测试 StudentSetup 更新目标（需与 .release.json 清单配套；不要选择一次性引导包）",
+                Title = "选择本机测试 StudentSetup 更新包",
                 AllowMultiple = false,
                 FileTypeFilter =
                 [

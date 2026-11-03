@@ -4022,7 +4022,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get
         {
 #if VEYONCAMPUS_LOCAL_TEST_UPDATE_UI
-            return ApplicationReleaseTrust.HasPinnedTestPublicKey;
+            return ApplicationReleaseTrust.HasPinnedPublicKey;
 #else
             return false;
 #endif
@@ -4053,7 +4053,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public string LocalTestStudentSetupInstallerPath => _localTestStudentSetupInstallerPath ?? "未选择本机测试安装器";
     public string StudentUpdateSourceSummary => _useLocalTestStudentUpdateSource && IsLocalTestStudentUpdateSourceAvailable
-        ? "当前来源：本机测试版。只读取你选择的安装器及签名清单，不访问或修改线上正式发布。" +
+        ? "当前来源：本机测试包。使用 Developer Release 公钥校验；安装器只从本机读取，不上传。" +
           (_localTestStudentReleaseSummary is null ? "" : " " + _localTestStudentReleaseSummary)
         : "当前来源：线上正式版。版本来自线上签名发布目录。";
 
@@ -4075,11 +4075,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         var release = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(path,
             ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
             ApplicationReleaseTrust.LoadPinnedPublicKeyPem()));
-        if (release.Manifest.ReleaseChannel != "local-test" || release.Manifest.StudentAgentVersion is null)
-            throw new InvalidDataException("所选清单不是由本机测试密钥签署的 StudentSetup 测试包。");
+        if (release.Manifest.SchemaVersion != 3 || release.Manifest.ReleaseChannel is not null ||
+            release.Manifest.StudentAgentVersion is not null)
+            throw new InvalidDataException("本机更新包必须使用已安装学生 Agent 信任的 Developer Release 密钥签署，并提供 stable Schema 3 清单。");
         _localTestStudentSetupInstallerPath = path;
         _localTestStudentReleaseSummary =
-            $"已验签：StudentSetup {release.Manifest.Version} · SYSTEM Agent {release.Manifest.StudentAgentVersion}。";
+            $"已验签：StudentSetup {release.Manifest.Version} · stable 签名。";
         UseLocalTestStudentUpdateSource = true;
         Changed(nameof(LocalTestStudentSetupInstallerPath));
         Changed(nameof(StudentUpdateSourceSummary));
@@ -10514,10 +10515,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     var localTestRelease = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(
                         localTestInstallerPath, ApplicationReleaseRole.StudentSetup,
                         releaseClient.ApiBaseAddress, ApplicationReleaseTrust.LoadPinnedPublicKeyPem()));
-                    if (localTestRelease.Manifest.ReleaseChannel != "local-test" ||
-                        localTestRelease.Manifest.StudentAgentVersion is null)
-                        throw new InvalidDataException("所选安装器没有本机测试发行标记和签名 Agent 版本；请选择由本机测试发布工具生成的 .release.json 配套包。");
-                    latest = new ApplicationReleaseCheckResult(localTestRelease, true, "local-test");
+                    if (localTestRelease.Manifest.SchemaVersion != 3 ||
+                        localTestRelease.Manifest.ReleaseChannel is not null ||
+                        localTestRelease.Manifest.StudentAgentVersion is not null)
+                        throw new InvalidDataException("所选本机更新包必须是 Developer Release 签名的 stable Schema 3 StudentSetup。");
+                    latest = new ApplicationReleaseCheckResult(localTestRelease, true, "0.0.0");
                 }
                 else
                 {
@@ -10529,7 +10531,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 releaseLookupTimer.Stop();
                 releaseLookupMilliseconds = releaseLookupTimer.ElapsedMilliseconds;
                 preparationSummary = _useLocalTestStudentUpdateSource
-                    ? "本机测试清单与安装器验签完成"
+                    ? "本机 stable 清单与安装器验签完成"
                     : $"发布查询 {releaseLookupMilliseconds.Value / 1000d:0.0} 秒";
             }
             var release = latest.Release ?? throw new InvalidOperationException("暂时没有可用的学生端更新。");
@@ -10664,7 +10666,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             StudentUpdateStatus = $"正在准备学生端更新 {release.Manifest.Version}（{rolloutTargetsToUpdate.Count} 台需要更新）……";
             SetStudentUpdateProgress(true, false, 0, localTestInstallerPath is null
                 ? $"正在从线上正式源下载并校验 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）"
-                : $"正在复制并复核本机测试 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
+                : $"正在复制并复核本机签名 StudentSetup（0 / {FormatMegabytes(release.Manifest.SizeBytes)} MB）");
             var teacherFetchTimer = Stopwatch.StartNew();
             string installerPath;
             try

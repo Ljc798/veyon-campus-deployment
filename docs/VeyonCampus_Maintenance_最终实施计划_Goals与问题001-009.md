@@ -282,26 +282,39 @@ flowchart TD
 
 **执行补充（2026-11-03，按用户要求停止测试）：** 用户说明 Windows 设备尚未开机，要求不执行测试、由其自行测试。此后未连接 Windows App 中保存的主机、未运行 Windows 安装器或测试，也未向 CloudBase 写入。唯一新增的 CloudBase 操作为 `tcb db pg migration up --dry-run --json` 只读预演，结果为 `dryRun=true`、`executable=false`：两条目标 migration `20261021140000`、`20261102120000` 待应用；另报告本地旧 migration `20261010090000_add_daily_operations_reporting` 早于远端最新 migration。仓库部署脚本注明 OperationsReporting 仍禁用并排除此旧 migration；CLI `--include-all` 的实际选择集合未验证，因此新增问题 [012](../问题跟踪/README.md#012cloudbase-迁移顺序冲突缺少安全的选择性应用路径)。为解决这一前置阻塞，新增 [allowlist migration helper](../scripts/apply-cloudbase-release-migrations.sh)：只将两条目标 SQL 暴露给 CloudBase CLI 临时目录，先验证远端必需基线并拒绝已含禁用迁移的环境，默认只预演，拒绝仓库 production envId，应用时须二次确认 envId 和 migration ID，成功后读回远端 ledger；新增离线契约夹具并接入 API contract CI。脚本和夹具均未运行，隔离环境迁移选择/执行和 ledger 仍由用户按[自测清单](maintenance/P0-02-自测清单.md)验证。清单覆盖 Windows 版本读回、签名/39174、Schema 3、Schema 4 拒绝、事务回滚、1.1.40 指纹迁移、别名目录及 CloudBase 部署。P0-02 仍为 `BLOCKED-BY-ENVIRONMENT`，不进入 P0-03。
 
+**本轮遇到的发行测试阻塞与用户指示（2026-11-03）：**
+
+- 官网当前主流基线为 StudentSetup `1.1.44` / Agent `0.4.56`。该基线内置 Developer Release 公钥；本机新生成的临时测试密钥与它不匹配，官网版学生端不会信任其签名包。若要继续以官网版 `.56` 为基线，测试目标包必须使用与该内置公钥匹配的 Developer Release 私钥签名；若改用测试公钥，就必须先换装含该公钥的学生端基线，不能把它当成官网 `.56` 原地升级测试。
+- GitHub/GitCode 上传令牌只授权上传，不是发行签名私钥。已检查本机常用发行密钥位置，未找到对应私钥文件；现有 GitHub 工作流引用受保护的 `VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM` / 口令 secret。不得把密钥内容写入仓库、提交、日志或聊天。
+- 当前本地 StudentSetup `1.1.45` / Agent `0.4.57` 目标包尚无 Developer Release 签名的 `.exe.release.json` Schema 3 清单。因此即使 EXE 已构建，也不能据此判断官网 `.56` 可接受或把它作为可用测试更新包；教师端测试包同样只供代码路径准备，不代表更新已验收。
+- `.github/workflows/windows-installers.yml` 的稳定标签流程会创建公开 GitHub Release，并继续向 production CloudBase 发布教师端和学生端元数据。不可用这个标签流程制作本机测试包。之前提出的 GitHub 草稿包方案尚未实施，也未创建草稿 Release。
+- 已开始检查 P0-07：教师端根据 HTTP `202 Accepted` 区分重启待完成响应，但响应校验调用仍把 `source.TargetAgentVersion` 传入。需要继续核对历史 Agent 的 ACK 版本语义、命令/身份签名绑定及最终 committed 读回；本轮没有修改 P0-07。
+- 用户最新指示：先按维护计划逐项实现后续代码；测试与 Windows/CloudBase 验收任务延后。为遵照该顺序，暂缓 P0-02 的实机/云端验收，继续代码实施不代表跳过或通过该门槛；P0-02 仍保持阻塞，正式发行仍须等所需验收完成。完成维护实现并满足发行门槛后，再发布正式稳定版供用户测试。本轮按用户要求在记录问题后暂停；没有运行测试、打包或发布。P0-01 已有代码完成记录，P0-03 当前有未提交工作区改动且 VM/分支验收未完成，其余维护子任务仍待实现；不得将这些状态概括为“Maintenance 已全部完成”。
+
 ### P0-03：修复稳定版 Agent 暂存目标版本错配（**Issue 001**）
 
 **源码事实与风险路径**（`StudentApplicationUpdates.cs` / `StudentApplicationUpdateProcessor.ProcessAsync`）：
 
 1. `manifest.StudentAgentVersion` 在正式 Schema 3 中允许为空；处理器据此较早计算 `targetAgentVersion`，可能沿用旧 Agent 版本。
 2. 安装完 StudentSetup 后，读取真实 `bundledAgentVersion`，发现与事务记录不一致时调用 `RebaseTargetAgentVersion(...)`。
-3. **但后续 `StageAgentUpdate(agentSourceDirectory, targetAgentVersion, configPath)` 与交接流程仍可能使用先前的局部 `targetAgentVersion`。** 因而「事务目标」和「实际 Agent 暂存目录」可能不一致。
+3. **风险定位于历史代码路径**：事务目标可能在安装后更新，但后续暂存仍使用旧的局部 `targetAgentVersion`，导致「事务目标」和「实际 Agent 暂存目录」不一致。当前工作区已将目标更新为已安装 StudentSetup 的内置 Agent 版本，并继续向暂存与交接传递该值。
 
 **这是可以指出具体数据流的代码逻辑风险**，但不能把事故发生频率、真实 Windows 表现当作已复现。特别要复核：sidecar 只供教师端识别目标，不会凭空改变历史 Agent 接收到的 Schema 3 清单。
 
-- [ ] 在当前 HEAD 复核 `releaseAgentVersion → initial targetAgentVersion → bundledAgentVersion → RebaseTargetAgentVersion → StageAgentUpdate → Start/Helper → Commit`，记录每处赋值和校验。
-- [ ] 使用**经验证的内置 Agent 产品版本**作为安装后的唯一目标，所有暂存、任务切换、事务 rebasing、Helper 参数、读回使用相同值；若旧版事务别名仍存在，走单独兼容迁移分支。
-- [ ] 目标路径和文件需与完整安装器、受保护目录、签名摘要绑定；不得通过任意未验真路径纠正版本。
-- [ ] 严格保护 `NoChange`、同 Agent 版本、旧 Agent 更高版本（禁止降级）及 `recoveryRequired` 情况。
+- [x] 在当前 HEAD 复核 `releaseAgentVersion → initial targetAgentVersion → bundledAgentVersion → RebaseTargetAgentVersion → StageAgentUpdate → Start/Helper → Commit`，记录每处赋值和校验。
+- [x] 使用**经验证的内置 Agent 产品版本**作为安装后的唯一目标，事务 rebasing、暂存、任务切换和 Helper 参数都复用该版本；旧版事务别名继续由独立兼容分支处理。
+- [x] 暂存源限定在固定 StudentSetup 安装目录；同时校验源程序集版本等于目标版本、受保护副本与源目录一致、暂存程序集版本仍等于目标版本。
+- [x] 保留 `NoChange`、同 Agent 版本健康读回、旧 Agent 更高版本拒绝降级和未恢复事务门禁。
 - [ ] 增加精确复现：`stable Schema 3 + 无 manifest.StudentAgentVersion + 内置 Agent 更新 + 旧 Agent`；包含已有 sidecar 与无 sidecar 两种教师端判断路径。
 - [ ] 在 Windows VM 读回 `SetupProductVersion`、`bundledAgentVersion`、暂存目录、计划任务实际 EXE、运行 Agent 版本、事务最终状态；实际提交和健康通过才算完成。
 
 **优先文件：** `src/VeyonCampus.Core/StudentApplicationUpdates.cs`、`StudentUpdateAtomicTransaction.cs`、`StudentApplicationUpdateHandoff.cs`、`StudentMaintenancePlanning.cs`、`tests/VeyonCampus.Checks/StudentApplicationUpdateChecks.cs`。
 
 **验收门槛：** T17–T18、T30，至少一项真实 VM 稳定签名更新；修复不能改变旧 Agent 对签名/摘要的拒绝行为。
+
+**2026-11-03 范围与进展：** 用户确认线上主流 Agent 为 `0.4.56`，本轮暂缓 `0.4.55`。工作区已修正内置 Agent 版本读回后的目标复用，并添加 `0.4.56 → 0.4.57`、签名目标冲突及降级拒绝夹具；定向夹具通过。该修复进入当前构建的 Agent `0.4.57`，不会直接改写线上 `.56`。用户截图中的 local-test 操作在教师端预检阶段已因缺少本机测试公钥而停止，不能作为 stable 更新失败或成功的证据。要完成 `.56` 首次 stable 升级验收，仍需正式发行流水线签名的 Schema 3 包及 Windows VM 读回，P0-03 继续开放。
+
+**代码实施补充（2026-11-03）：** `WebsitePolicyAgentInstaller.StageAgentUpdate` 现在会在复制前核对固定 StudentSetup 目录内 Agent 程序集版本与目标版本一致，并在受保护副本校验后再次核对其程序集版本；任何目录名/事务目标与真实内置程序集版本不一致都会停止激活。按用户要求，本轮未运行测试或打包。此前记录的目标解析定向夹具仍是已有自动化证据；教师端 sidecar/无 sidecar 分支和 Windows VM 读回仍待后续测试，本项不能标记为 `FIXED-VERIFIED`。
 
 ### P0-04：更新移动失败与回滚恢复闭环（`OPS-01`）
 

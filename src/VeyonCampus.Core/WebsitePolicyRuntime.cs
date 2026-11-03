@@ -1661,6 +1661,9 @@ public static class WebsitePolicyAgentInstaller
         if (!File.Exists(sourceExecutable) ||
             (File.GetAttributes(sourceExecutable) & FileAttributes.ReparsePoint) != 0)
             throw new InvalidDataException("StudentSetup 中的新 Agent 缺失或不是普通文件。");
+        var sourceAgentVersion = WorkerInstallationGuard.GetAssemblyProductVersion(sourceExecutable);
+        if (!string.Equals(sourceAgentVersion, targetVersion, StringComparison.Ordinal))
+            throw new InvalidDataException("Agent 暂存目标版本与已验真的 StudentSetup 内置程序集版本不一致；拒绝写入错误版本目录。");
 
         var fullConfigPath = Path.GetFullPath(configPath);
         PathLinkSecurity.RejectLinks(fullConfigPath);
@@ -1684,6 +1687,9 @@ public static class WebsitePolicyAgentInstaller
             (File.GetAttributes(targetExecutable) & FileAttributes.ReparsePoint) != 0 ||
             !DirectoryTreesEqual(fullSourceDirectory, targetDirectory))
             throw new InvalidDataException("新 Agent 的受保护副本与 StudentSetup 安装文件不一致。");
+        if (!string.Equals(WorkerInstallationGuard.GetAssemblyProductVersion(targetExecutable), targetVersion,
+                StringComparison.Ordinal))
+            throw new InvalidDataException("受保护暂存目录中的 Agent 版本与事务目标不一致；拒绝激活。");
 
         EnsureFirewallRule(targetExecutable);
         return new StagedWebsitePolicyAgentUpdate(targetExecutable, existingTask.ExecutablePath);

@@ -24,6 +24,7 @@ internal static class StudentApplicationUpdateChecks
         CheckInlineIdentityReviewActions();
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
+        CheckVerifiedBundledAgentTargetVersion();
         CheckSetupAndAgentVersionIndependence();
         CheckLegacyV140ConfigFingerprintMigration();
         CheckSignedCommandAcknowledgements();
@@ -47,6 +48,7 @@ internal static class StudentApplicationUpdateChecks
         CheckInlineIdentityReviewActions();
         CheckUpdateHelperVersionBinding();
         CheckAgentVersionRebaseGuard();
+        CheckVerifiedBundledAgentTargetVersion();
         CheckSetupAndAgentVersionIndependence();
         CheckLegacyV140ConfigFingerprintMigration();
         CheckAtomicTransactionTerminalStates();
@@ -675,6 +677,20 @@ internal static class StudentApplicationUpdateChecks
         Expect(!CanMigrateLegacyAlias(legacyRecord, "1.2.0", "0.4.55"));
         Expect(!CanMigrateLegacyAlias(legacyRecord with { State = StudentUpdateTransactionState.SetupInstalled },
             "1.2.0", "0.4.57"));
+    }
+
+    private static void CheckVerifiedBundledAgentTargetVersion()
+    {
+        string Resolve(string? signedTargetAgentVersion, string bundledAgentVersion, string currentAgentVersion) =>
+            StudentApplicationUpdateProcessor.ResolveTargetAgentVersionAfterSetupInstall(signedTargetAgentVersion,
+                bundledAgentVersion, currentAgentVersion);
+
+        // 0.4.56 receives a stable Schema 3 manifest with no Agent target. The verified
+        // StudentSetup contains 0.4.57, which must become the target used by stage/handoff.
+        Expect(Resolve(null, "0.4.57", "0.4.56") == "0.4.57");
+        Expect(Resolve("0.4.57", "0.4.57", "0.4.56") == "0.4.57");
+        Reject(() => Resolve("0.4.56", "0.4.57", "0.4.56"));
+        Reject(() => Resolve(null, "0.4.56", "0.4.57"));
     }
 
     private static void CheckLegacyV140ConfigFingerprintMigration()

@@ -554,6 +554,21 @@ public static class StudentApplicationUpdateProcessor
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
+    internal static string ResolveTargetAgentVersionAfterSetupInstall(string? signedTargetAgentVersion,
+        string bundledAgentVersion, string currentAgentVersion)
+    {
+        if (signedTargetAgentVersion is not null &&
+            !string.Equals(signedTargetAgentVersion, bundledAgentVersion, StringComparison.Ordinal))
+            throw new InvalidDataException("已签名发行清单中的 Agent 版本与 StudentSetup 内置 Agent 程序集版本不一致；已停止切换。 ");
+        if (ApplicationReleaseClient.CompareVersions(bundledAgentVersion, currentAgentVersion) < 0)
+            throw new InvalidDataException("StudentSetup 内置 Agent 低于当前 SYSTEM Agent；为防止降级，已回滚本次安装。 ");
+
+        // The signed Schema 3 manifest intentionally has no Agent version. Once the
+        // verified installer is in place, its bundled Agent product version is the
+        // authoritative target for staging, handoff, and the transaction journal.
+        return bundledAgentVersion;
+    }
+
     public static string? TryReadInstalledStudentSetupVersion()
     {
         if (!OperatingSystem.IsWindows()) return null;
@@ -778,16 +793,12 @@ public static class StudentApplicationUpdateProcessor
                 PathLinkSecurity.RejectLinks(sourceExecutable);
                 PathLinkSecurity.RejectLinks(Path.ChangeExtension(sourceExecutable, ".dll"));
                 var bundledAgentVersion = WorkerInstallationGuard.GetAssemblyProductVersion(sourceExecutable);
-                if (releaseAgentVersion is not null &&
-                    !string.Equals(releaseAgentVersion, bundledAgentVersion, StringComparison.Ordinal))
-                    throw new InvalidDataException("已签名发行清单中的 Agent 版本与 StudentSetup 内置 Agent 程序集版本不一致；已停止切换。 ");
-                if (ApplicationReleaseClient.CompareVersions(bundledAgentVersion, currentAgentVersion) < 0)
-                    throw new InvalidDataException("StudentSetup 内置 Agent 低于当前 SYSTEM Agent；为防止降级，已回滚本次安装。 ");
-                if (!string.Equals(transaction.TargetAgentVersion, bundledAgentVersion, StringComparison.Ordinal))
+                targetAgentVersion = ResolveTargetAgentVersionAfterSetupInstall(releaseAgentVersion,
+                    bundledAgentVersion, currentAgentVersion);
+                if (!string.Equals(transaction.TargetAgentVersion, targetAgentVersion, StringComparison.Ordinal))
                     transaction = StudentUpdateAtomicTransaction.RebaseTargetAgentVersion(configPath, transaction,
-                        transaction.TargetAgentVersion, bundledAgentVersion);
-                agentComparison = ApplicationReleaseClient.CompareVersions(bundledAgentVersion,
-                    currentAgentVersion);
+                        transaction.TargetAgentVersion, targetAgentVersion);
+                agentComparison = ApplicationReleaseClient.CompareVersions(targetAgentVersion, currentAgentVersion);
                 if (agentComparison <= 0)
                 {
                     using (var healthTiming = StudentUpdatePhaseTimingStore.Begin(configPath,
