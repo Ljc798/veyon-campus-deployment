@@ -15186,9 +15186,8 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     public string DisplayName { get; } = displayName;
     public Guid? CommandId => _commandId;
     public Guid? MaintenanceOperationId => _maintenanceOperationId;
-    public bool CanRequery => MaintenanceOperationId is { } ? _maintenanceCanResume &&
-        (StatusText is "待核对" or "待验证") && !_isRechecking :
-        CommandId is not null && (StatusText is "待核对" or "待验证") && !_isRechecking;
+    public bool CanRequery => MaintenanceOperationId is not null && _maintenanceCanResume &&
+        (StatusText is "待核对" or "待验证") && !_isRechecking;
     public string RequeryButtonText => MaintenanceOperationId is null ? "重新查询更新结果" : "重新核对维护事务";
     public bool CanReviewIdentity => _canReviewIdentity && !_identityReviewActive;
     public string IdentityReviewStatus { get => _identityReviewStatus; private set => Set(ref _identityReviewStatus, value); }
