@@ -86,7 +86,12 @@ public static class MaintenanceServiceConfigurationStore
         EnsurePrivateDirectory(directory);
         var path = Path.Combine(directory, BootstrapFileName);
         if (File.Exists(path))
-            return ReadAndValidate(path, agentConfig, agentFingerprint);
+        {
+            var snapshot = ReadAndValidate(path, agentConfig, agentFingerprint, out var storedSchemaVersion);
+            if (storedSchemaVersion == 1)
+                return MigrateLegacyBootstrap(path, directory, snapshot, agentConfig, agentFingerprint);
+            return snapshot;
+        }
 
         var snapshot = CreateSnapshot(agentConfig, agentFingerprint, nowUtc ?? DateTimeOffset.UtcNow);
         WriteSnapshot(path, directory, snapshot);
@@ -163,7 +168,7 @@ public static class MaintenanceServiceConfigurationStore
         EnsurePrivateDirectory(directory);
         var path = Path.Combine(directory, BootstrapFileName);
         var current = File.Exists(path)
-            ? ReadAndValidate(path, agentConfig, agentFingerprint)
+            ? ReadAndValidate(path, agentConfig, agentFingerprint, out _)
             : CreateSnapshot(agentConfig, agentFingerprint, nowUtc);
         _ = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);
         var request = MaintenanceProtocolV1.VerifyRequest(signedRequestJson,
@@ -184,7 +189,7 @@ public static class MaintenanceServiceConfigurationStore
                                          ?? throw new InvalidDataException("Student Agent 配置在同步期间消失。");
         var originalBootstrapExisted = File.Exists(path);
         if (originalBootstrapExisted)
-            current = ReadAndValidate(path, originalAgentConfiguration, agentFingerprint);
+            current = ReadAndValidate(path, originalAgentConfiguration, agentFingerprint, out _);
         else
             current = CreateSnapshot(originalAgentConfiguration, agentFingerprint, nowUtc);
         request = MaintenanceProtocolV1.VerifyRequest(signedRequestJson,
@@ -395,7 +400,7 @@ public static class MaintenanceServiceConfigurationStore
     }
 
     private static MaintenanceServiceBootstrapSnapshot ReadAndValidate(string path,
-        WebsitePolicyAgentConfig agentConfig, string agentFingerprint)
+        WebsitePolicyAgentConfig agentConfig, string agentFingerprint, out int storedSchemaVersion)
     {
         PathLinkSecurity.RejectLinks(path);
         AgentFileSecurity.SecurePrivateFile(path);
@@ -406,6 +411,7 @@ public static class MaintenanceServiceConfigurationStore
         PolicyJson.RejectDuplicateFields(bytes);
         var snapshot = JsonSerializer.Deserialize<MaintenanceServiceBootstrapSnapshot>(bytes, JsonOptions)
                        ?? throw new InvalidDataException("Maintenance 教师连接配置为空。");
+        storedSchemaVersion = snapshot.SchemaVersion;
         var canonical = snapshot.SchemaVersion == 1
             ? JsonSerializer.SerializeToUtf8Bytes(new LegacyBootstrapSnapshot(snapshot.SchemaVersion,
                 snapshot.CampusId, snapshot.AgentIdentityFingerprint, snapshot.TeacherSigningPublicKeyPem,
@@ -430,6 +436,74 @@ public static class MaintenanceServiceConfigurationStore
             snapshot.UpdatedUtc > DateTimeOffset.UtcNow.AddMinutes(2))
             throw new InvalidDataException("Maintenance 教师连接配置与固定校区、Agent 或教师签名身份不匹配。");
         return snapshot with { SchemaVersion = 2, TeacherSigningPublicKeyPem = canonicalTeacherKey };
+    }
+
+    private static MaintenanceServiceBootstrapSnapshot MigrateLegacyBootstrap(string path, string directory,
+        MaintenanceServiceBootstrapSnapshot validatedLegacySnapshot, WebsitePolicyAgentConfig agentConfig,
+        string agentFingerprint)
+    {
+        var originalBytes = File.ReadAllBytes(path);
+        if (originalBytes.Length is <= 0 or > MaximumFileBytes)
+            throw new InvalidDataException("旧版 Maintenance bootstrap 大小无效；保留原文件。" );
+        var migrated = validatedLegacySnapshot with { SchemaVersion = 2, ConfigurationRevision = 0 };
+        try
+        {
+            WriteSnapshot(path, directory, migrated);
+            var readback = ReadAndValidate(path, agentConfig, agentFingerprint, out var migratedSchemaVersion);
+            if (migratedSchemaVersion != 2 || readback.SchemaVersion != 2 || readback.ConfigurationRevision != 0 ||
+                readback.CampusId != migrated.CampusId ||
+                !string.Equals(readback.AgentIdentityFingerprint, migrated.AgentIdentityFingerprint,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(readback.ConfigurationFingerprint, migrated.ConfigurationFingerprint,
+                    StringComparison.OrdinalIgnoreCase) ||
+                !PublicKeysEqual(readback.TeacherSigningPublicKeyPem, migrated.TeacherSigningPublicKeyPem))
+                throw new InvalidDataException("Maintenance bootstrap 1→2 迁移后的 revision、指纹或固定身份读回不匹配。" );
+            return readback;
+        }
+        catch (Exception migrationFailure) when (migrationFailure is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or System.Text.Json.JsonException or
+                                                  FormatException or CryptographicException or
+                                                  InvalidOperationException or ArgumentException or
+                                                  System.Security.SecurityException)
+        {
+            try { WriteRawSnapshot(path, directory, originalBytes); }
+            catch (Exception rollbackFailure) when (rollbackFailure is IOException or UnauthorizedAccessException or
+                                                     InvalidDataException or System.Security.SecurityException)
+            {
+                throw new IOException("Maintenance bootstrap Schema 1→2 迁移失败，原快照恢复也失败；需人工恢复。",
+                    new AggregateException(migrationFailure, rollbackFailure));
+            }
+            throw new IOException("Maintenance bootstrap Schema 1→2 迁移未通过读回；已恢复原始 Schema 1 快照。",
+                migrationFailure);
+        }
+    }
+
+    private static void WriteRawSnapshot(string path, string directory, byte[] bytes)
+    {
+        PathLinkSecurity.RejectLinks(directory);
+        PathLinkSecurity.RejectLinks(path);
+        var temporary = path + ".restore-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            AgentFileSecurity.SecurePrivateFile(temporary);
+            using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.Write, FileShare.None,
+                       16 * 1024, FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            PathLinkSecurity.RejectLinks(directory);
+            PathLinkSecurity.RejectLinks(path);
+            File.Move(temporary, path, overwrite: true);
+            AgentFileSecurity.SecurePrivateFile(path);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static void WriteSnapshot(string path, string directory,
