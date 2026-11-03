@@ -4027,6 +4027,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string MaintenanceEventReportExportStatus { get; private set; } = "";
     public ObservableCollection<TeacherMaintenanceIssueItem> MaintenanceIssueItems { get; } = [];
     public bool HasMaintenanceIssueItems => MaintenanceIssueItems.Count > 0;
+    public ObservableCollection<TeacherMaintenanceConfigurationItem> MaintenanceConfigurationItems { get; } = [];
+    public bool HasMaintenanceConfigurationItems => MaintenanceConfigurationItems.Count > 0;
     public ObservableCollection<PendingMaintenanceIdentityRotationItem> PendingMaintenanceIdentityRotations { get; } = [];
     public bool HasPendingMaintenanceIdentityRotations => PendingMaintenanceIdentityRotations.Count > 0;
     public string MaintenanceIdentityRotationStatus { get; private set; } = "";
@@ -10260,6 +10262,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 PendingMaintenanceIdentityRotations.Clear();
                 Changed(nameof(HasPendingMaintenanceIdentityRotations));
+                MaintenanceConfigurationItems.Clear();
+                Changed(nameof(HasMaintenanceConfigurationItems));
                 MaintenanceOverviewSummary = "尚未设置当前校区；没有读取维护记录。";
                 Changed(nameof(MaintenanceOverviewSummary));
                 MaintenanceConfigurationOverviewSummary = "尚未设置当前校区；没有读取配置对账记录。";
@@ -10294,6 +10298,21 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.First().StudentName,
                     StringComparer.OrdinalIgnoreCase);
+            MaintenanceConfigurationItems.Clear();
+            foreach (var run in latestRuns)
+            {
+                foreach (var module in Enum.GetValues<MaintenanceConfigurationModule>())
+                {
+                    var status = journal.GetConfigurationStatus(run.Device.PinnedIdentityFingerprint, module);
+                    if (status.State == MaintenanceConfigurationReconciliationState.NoDesiredConfiguration)
+                        continue;
+                    var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(run.Device.RouteAddress),
+                        run.Device.RouteAddress);
+                    MaintenanceConfigurationItems.Add(new TeacherMaintenanceConfigurationItem(displayName,
+                        run.Device.RouteAddress, module, status));
+                }
+            }
+            Changed(nameof(HasMaintenanceConfigurationItems));
             PendingMaintenanceIdentityRotations.Clear();
             foreach (var rotation in _maintenanceIdentityTrustStore.ListPendingRotations(campusId)
                          .OrderByDescending(item => item.RequestedUtc))
@@ -10323,6 +10342,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             PendingMaintenanceIdentityRotations.Clear();
             Changed(nameof(HasPendingMaintenanceIdentityRotations));
+            MaintenanceConfigurationItems.Clear();
+            Changed(nameof(HasMaintenanceConfigurationItems));
             MaintenanceOverviewSummary = "无法读取本机 Maintenance 概览；原维护记录未修改。";
             Changed(nameof(MaintenanceOverviewSummary));
             MaintenanceConfigurationOverviewSummary = "无法读取本机配置对账记录；原维护记录未修改。";
@@ -14648,6 +14669,52 @@ public sealed class PendingMaintenanceIdentityRotationItem(
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsBusy)));
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanAct)));
     }
+}
+
+public sealed class TeacherMaintenanceConfigurationItem(string displayName, string target,
+    MaintenanceConfigurationModule module, MaintenanceConfigurationReconciliationStatus status)
+{
+    public string DisplayName { get; } = displayName;
+    public string Target { get; } = target;
+    public string ModuleText { get; } = module switch
+    {
+        MaintenanceConfigurationModule.CampusIdentity => "校区身份",
+        MaintenanceConfigurationModule.TeacherConnectivity => "教师连接",
+        MaintenanceConfigurationModule.PolicyTrust => "策略信任",
+        MaintenanceConfigurationModule.SystemConfiguration => "系统配置",
+        MaintenanceConfigurationModule.RuntimeSettings => "运行参数",
+        _ => module.ToString()
+    };
+    public string StateText { get; } = status.State switch
+    {
+        MaintenanceConfigurationReconciliationState.QueuedForDelivery => "等待发送",
+        MaintenanceConfigurationReconciliationState.AwaitingReport => "等待回报",
+        MaintenanceConfigurationReconciliationState.PendingApplication => "应用中",
+        MaintenanceConfigurationReconciliationState.Rejected => "学生端拒绝",
+        MaintenanceConfigurationReconciliationState.Drifted => "配置漂移",
+        MaintenanceConfigurationReconciliationState.InSync => "已同步",
+        _ => status.State.ToString()
+    };
+    public string RevisionText => $"Desired r{status.DesiredRevision?.ToString() ?? "—"} / Reported r{status.ReportedRevision?.ToString() ?? "—"}";
+    public string LastReportedText => status.LastReportedUtc is { } reported
+        ? (status.State == MaintenanceConfigurationReconciliationState.InSync ? "最后同步 " : "最后回报 ") +
+          reported.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture)
+        : "尚无学生端回报";
+    public string AdviceText => status.State switch
+    {
+        MaintenanceConfigurationReconciliationState.QueuedForDelivery =>
+            "建议：等待该固定身份设备重新认证连接；离线队列保留期内会尝试对账。",
+        MaintenanceConfigurationReconciliationState.AwaitingReport =>
+            "建议：核对学生端连接和签名回报；收到回报前不要把期望配置视为已应用。",
+        MaintenanceConfigurationReconciliationState.PendingApplication =>
+            "建议：等待学生端应用完成后刷新状态；不要重复发送仍在处理的修订。",
+        MaintenanceConfigurationReconciliationState.Rejected =>
+            "建议：查看学生端拒绝原因，修复配置或兼容问题后再签发新修订。",
+        MaintenanceConfigurationReconciliationState.Drifted =>
+            "建议：Desired 与 Reported 不一致；核对设备当前配置后再决定是否重新同步。",
+        MaintenanceConfigurationReconciliationState.InSync => "期望配置与学生端签名读回一致。",
+        _ => "建议：刷新维护记录并核对配置状态。"
+    };
 }
 
 public sealed class StudentApplicationUpdateTargetProgressItem(string target, string displayName) : INotifyPropertyChanged

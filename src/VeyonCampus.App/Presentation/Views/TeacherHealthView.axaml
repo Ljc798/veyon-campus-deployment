@@ -305,6 +305,38 @@
           <TextBlock Text="{Binding MaintenanceOverviewSummary}" Classes="supporting-copy" TextWrapping="Wrap" />
           <TextBlock Text="{Binding MaintenanceConfigurationOverviewSummary}" Classes="supporting-copy"
                      TextWrapping="Wrap" />
+          <StackPanel Spacing="8" IsVisible="{Binding HasMaintenanceConfigurationItems}">
+            <TextBlock Text="设备配置 Desired / Reported 对账明细" Classes="component-title" />
+            <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto">
+              <ItemsControl ItemsSource="{Binding MaintenanceConfigurationItems}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherMaintenanceConfigurationItem">
+                    <Border Classes="device-row" Margin="0,0,0,7">
+                      <StackPanel Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                          <StackPanel Spacing="2">
+                            <TextBlock Text="{Binding DisplayName}" Classes="device-row-name"
+                                       TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding Target}" Classes="muted"
+                                       TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.InfoSubtle}"
+                                  CornerRadius="999" Padding="8,3" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding StateText}" Foreground="{DynamicResource Teacher.Color.Info}"
+                                       FontWeight="SemiBold" />
+                          </Border>
+                        </Grid>
+                        <TextBlock Text="{Binding ModuleText}" Classes="supporting-copy" />
+                        <TextBlock Text="{Binding RevisionText}" Classes="device-row-detail" />
+                        <TextBlock Text="{Binding LastReportedText}" Classes="muted" />
+                        <TextBlock Text="{Binding AdviceText}" Classes="supporting-copy" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
           <TextBlock Text="{Binding MaintenanceIdentityRotationStatus}" Classes="supporting-copy"
                      TextWrapping="Wrap" IsVisible="{Binding HasMaintenanceIdentityRotationStatus}" />
           <TextBlock Text="本机记录中没有待恢复、失败或待核对的维护事务。"
