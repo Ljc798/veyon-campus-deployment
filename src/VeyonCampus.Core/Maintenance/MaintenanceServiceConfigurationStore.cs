@@ -88,8 +88,9 @@ public static class MaintenanceServiceConfigurationStore
     }
 
     /// <summary>
-    /// Verifies the complete teacher-signed request again at the privileged boundary, then
-    /// atomically changes only endpoint/root fields. A changed teacher signing key is not accepted.
+    /// Verifies the complete teacher-signed request again at the privileged boundary, then updates
+    /// the Agent and Maintenance endpoint/root snapshots under the shared machine update lock.
+    /// A changed teacher signing key or any other Agent identity/trust field is rejected.
     /// </summary>
     [SupportedOSPlatform("windows")]
     public static MaintenanceServiceBootstrapSnapshot ApplySignedTeacherEndpointUpdate(string configPath,
@@ -104,6 +105,7 @@ public static class MaintenanceServiceConfigurationStore
         var current = File.Exists(path)
             ? ReadAndValidate(path, agentConfig, agentFingerprint)
             : CreateSnapshot(agentConfig, agentFingerprint, nowUtc);
+        _ = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);
         var request = MaintenanceProtocolV1.VerifyRequest(signedRequestJson,
             current.TeacherSigningPublicKeyPem, current.CampusId, current.AgentIdentityFingerprint, nowUtc);
         if (request.Command != MaintenanceProtocolV1Command.SyncTeacherEndpoint ||
@@ -111,10 +113,26 @@ public static class MaintenanceServiceConfigurationStore
             request.TargetTeacherConfigurationFingerprint is null ||
             request.TargetTeacherConfigurationRevision is not { } targetRevision)
             throw new InvalidDataException("Maintenance 只接受带签名且绑定 revision 的教师端点同步命令。");
-        if (targetRevision != checked(current.ConfigurationRevision + 1))
+
+        using var updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+        StudentUpdateAtomicTransaction.EnsureNoActiveTransaction(configPath);
+        var originalAgentConfigurationBytes = File.ReadAllBytes(configPath);
+        var lockedAgentFingerprint = StudentAgentIdentityKeyStore.ReadFingerprint(configPath);
+        if (!string.Equals(lockedAgentFingerprint, agentFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Student Agent 固定身份在配置同步期间发生变化；拒绝写入。");
+        var originalAgentConfiguration = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
+                                         ?? throw new InvalidDataException("Student Agent 配置在同步期间消失。");
+        var originalBootstrapExisted = File.Exists(path);
+        if (originalBootstrapExisted)
+            current = ReadAndValidate(path, originalAgentConfiguration, agentFingerprint);
+        else
+            current = CreateSnapshot(originalAgentConfiguration, agentFingerprint, nowUtc);
+        request = MaintenanceProtocolV1.VerifyRequest(signedRequestJson,
+            current.TeacherSigningPublicKeyPem, current.CampusId, current.AgentIdentityFingerprint, nowUtc);
+        if (request.TargetTeacherConfigurationRevision != checked(current.ConfigurationRevision + 1))
             throw new InvalidDataException("教师连接配置 revision 已变化或不连续；拒绝覆盖新状态。");
 
-        var endpoints = Array.AsReadOnly(request.TeacherConfiguration.Endpoints.ToArray());
+        var endpoints = Array.AsReadOnly(request.TeacherConfiguration!.Endpoints.ToArray());
         var rootCertificate = request.TeacherConfiguration.RootCertificateBase64;
         var fingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(
             current.CampusId, endpoints, rootCertificate)
@@ -123,6 +141,14 @@ public static class MaintenanceServiceConfigurationStore
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Maintenance 教师连接配置未通过目标指纹核验。");
 
+        var updatedAgentConfiguration = originalAgentConfiguration with
+        {
+            TeacherChannelEndpoints = endpoints,
+            TeacherChannelRootCertificateBase64 = rootCertificate
+        };
+        if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(
+                originalAgentConfiguration, updatedAgentConfiguration))
+            throw new InvalidDataException("教师连接同步意外改变了校区、信任根或策略配置；拒绝写入。");
         var updated = current with
         {
             SchemaVersion = 2,
@@ -132,8 +158,49 @@ public static class MaintenanceServiceConfigurationStore
             UpdatedUtc = nowUtc.ToUniversalTime(),
             ConfigurationRevision = targetRevision
         };
-        WriteSnapshot(path, directory, updated);
-        return updated;
+
+        try
+        {
+            PathLinkSecurity.RejectLinks(configPath);
+            WebsitePolicyAgentInstaller.WriteSecureConfig(configPath,
+                JsonSerializer.SerializeToUtf8Bytes(updatedAgentConfiguration, WebsitePolicyAgent.JsonOptions));
+            var agentReadback = WebsitePolicyAgentInstaller.ReadExistingConfig(configPath)
+                                ?? throw new InvalidDataException("Student Agent 配置写入后无法读回。");
+            if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(
+                    originalAgentConfiguration, agentReadback) ||
+                !string.Equals(WebsitePolicyAgent.ConfigFingerprint(agentReadback),
+                    WebsitePolicyAgent.ConfigFingerprint(updatedAgentConfiguration), StringComparison.Ordinal))
+                throw new InvalidDataException("Student Agent 配置写入后指纹或固定身份读回不匹配。");
+
+            WriteSnapshot(path, directory, updated);
+            WebsitePolicyAgentInstaller.RestartCurrentAgentTaskForConfigurationSync(configPath,
+                WebsitePolicyAgent.ConfigFingerprint(updatedAgentConfiguration), TimeSpan.FromSeconds(20));
+            return updated;
+        }
+        catch (Exception updateFailure)
+        {
+            try
+            {
+                PathLinkSecurity.RejectLinks(configPath);
+                WebsitePolicyAgentInstaller.WriteSecureConfig(configPath, originalAgentConfigurationBytes);
+                if (originalBootstrapExisted)
+                    WriteSnapshot(path, directory, current);
+                else if (File.Exists(path))
+                {
+                    PathLinkSecurity.RejectLinks(path);
+                    File.Delete(path);
+                }
+                WebsitePolicyAgentInstaller.RestartCurrentAgentTaskForConfigurationSync(configPath,
+                    WebsitePolicyAgent.ConfigFingerprint(originalAgentConfiguration), TimeSpan.FromSeconds(20));
+            }
+            catch (Exception rollbackFailure)
+            {
+                throw new IOException(
+                    "教师连接配置同步失败，且 Agent 配置、Maintenance bootstrap 或 SYSTEM Agent 恢复未完成；需要人工恢复。",
+                    new AggregateException(updateFailure, rollbackFailure));
+            }
+            throw new IOException("教师连接配置同步未能完成；已恢复 Agent 配置并重启原连接。", updateFailure);
+        }
     }
 
     private static MaintenanceServiceBootstrapSnapshot CreateSnapshot(WebsitePolicyAgentConfig config,

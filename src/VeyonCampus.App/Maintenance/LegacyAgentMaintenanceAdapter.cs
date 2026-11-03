@@ -486,11 +486,13 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         if (payload is null || string.IsNullOrWhiteSpace(payload.ConfigurationFingerprint) ||
             !string.Equals(payload.ConfigurationFingerprint, identity.BootstrapFingerprint,
                 StringComparison.OrdinalIgnoreCase) || payload.UpdatedUtc.Offset != TimeSpan.Zero ||
+            payload.AgentConfigurationFingerprint is not { Length: 64 } agentConfigurationFingerprint ||
+            agentConfigurationFingerprint.Any(character => !Uri.IsHexDigit(character)) ||
             payload.ConfigurationRevision != targetRevision ||
             payload.UpdatedUtc > reply.Response.CollectedUtc.AddMinutes(1) ||
             payload.UpdatedUtc < reply.Response.CollectedUtc.AddMinutes(-5))
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance 已回执，但教师连接配置指纹或持久化时间未通过签名读回校验。", evidence);
+                "Maintenance 已回执，但 Agent/Maintenance 配置指纹或持久化时间未通过签名读回校验。", evidence);
 
         var installed = payload.InstalledVersions;
         if (installed is null)
@@ -525,7 +527,7 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                 versions, installed.TransactionState, reply.Response.CollectedUtc);
 
         return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ConfigurationSynchronized,
-            "Maintenance 独立服务已通过签名回执确认教师连接指纹，并核验 SYSTEM、Agent 任务和组件版本。",
+            "Maintenance 与 Student Agent 均已通过签名回执确认教师连接配置，且核验了 SYSTEM、Agent 任务和组件版本。",
             evidence, versions, installed.TransactionState, reply.Response.CollectedUtc, targetRevision);
     }
 

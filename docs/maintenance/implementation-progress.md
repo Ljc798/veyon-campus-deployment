@@ -37,7 +37,7 @@
 | 18 | P2-04 StudentSetup 安装 Maintenance | `PACKAGE-WIRED; VM-PENDING` | StudentSetup 离线包包含独立服务文件；安装/更新时停止并重新注册服务，异常时尝试恢复旧服务；卸载前停止服务并在安全清理后移除 SCM 注册。ACL、升级覆盖、失败恢复和完整卸载均需后续 VM 验收。 |
 | 19–21 | P3 自更新、看门狗、离线恢复及故障注入 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 外部组件更新与强杀/断电/断网恢复仍未实现；VM 退出门槛保持。 |
 | 22 | CM-01 Desired/Reported 与 revision | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity revision、签名读回和 journal 已接通；其他配置模块尚未实施。 |
-| 23 | CM-02 自动配置同步与离线对账 | `NOT-IMPLEMENTED` | 目前只接入教师连接参数的 Maintenance 专用 bootstrap；Agent 本地配置热更新、离线重连重发尚未贯通。 |
+| 23 | CM-02 自动配置同步与离线对账 | `PARTIAL-CODE; TEST-DEFERRED` | Maintenance 签名同步现同时原子写 Agent 配置、维护 bootstrap，在共享更新锁内拒绝活动更新，重启 SYSTEM Agent 并等待活动配置指纹；运行失败回滚两侧快照。离线设备 Desired 队列/重连重发、断电中途双文件恢复记录仍未完成。 |
 | 24 | CM-03 Schema 迁移与回滚 | `PARTIAL-CODE; TEST-DEFERRED` | 修复 Schema 7 校区包归档器缺口；模块级配置迁移器、配置快照回滚与 7→8→9 仍未实施。 |
 | 25 | CM-04 无包首次安全配对 | `NOT-IMPLEMENTED` | 设备身份/维护服务 pin 已有基础，但首次限时配对、教师明确批准及审计流程尚未接通。 |
 | 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；受控根密钥轮换、独立失败阶段/恢复建议视图仍未实现。 |
@@ -200,5 +200,6 @@
 - CM-05 状态判定基础：新增配置对账状态计算，区分无 Desired、等待签名 Reported、Pending、Rejected、Drifted、InSync，并暴露 Desired/Reported revision、指纹及最后 Reported 时间；`IsConfigurationInSync` 改用完整状态判断。后续接入维护结果摘要，见下条；未构建/测试。
 - CM-05 教师结果摘要接线：逐台维护和事务恢复结果追加 TeacherConnectivity 对账状态、Desired/Reported revision 与最近签名读回时间；不会把本地 journal 中没有签名 Reported 证据的记录标成 InSync。其他配置模块、可操作的失败阶段/建议 UI 尚未覆盖；未构建/测试。
 - CM-03 Schema 7 归档修复：`CampusConfigurationArchive` 现允许 Schema 7，归档/解包固定文件清单纳入 `teacherChannel` TLS `.cer`，最大文件数从 7 调至 8；解析时验证 1–16 个教师端点、只允许根目录证书文件，并要求 files 清单与实际固定文件一致。Schema 3–6 原校验保留。此改动未运行构建或测试；Schema 7 包创建→上传归档→下载解包、重复字段/证书路径篡改拒绝均待后续测试。
+- CM-02 教师连接配置双写：Maintenance 接收一条已验签命令后，在 StudentUpdate 原子锁内确认无活动更新，只修改 Agent 的 endpoints/TLS root 和独立 Maintenance bootstrap；保留校区身份、签名公钥、策略公钥等不可变字段。写入后重启固定 SYSTEM Agent 任务，等待 `/health` 返回目标 Agent config fingerprint；失败时回写两侧旧快照并恢复旧连接。签名同步回执加入 Agent 配置指纹，教师端要求其格式有效。尚未做断电期间双文件写入的持久化恢复 journal，也没有设备离线 Desired 队列/重新上线自动重发；未构建/测试/VM 验收。
 - 当前验证边界：本轮尚未构建安装包，用户现在没有可据此测试的 StudentSetup 安装包。完成代码实施后，仍需统一执行自动化检查与 Windows VM 安装/升级/回滚验收；随后才能打包给用户手动测试。Production 发布和真实校区推送仍是单独门槛。
 - P1-06 / Issue 009：`TeacherPolicyView.axaml` 已明确区分 EXE 运行限制、Store 可见/常规安装限制与已安装 Appx/MSIX 启动限制；不再暗示当前 AppLocker XML 能限制已安装游戏。没有变更 Appx 放行基线，也没有将范围说明当作现场验收；Edition 支持矩阵、实际 Store 下载/启动、策略撤销与系统必需包保护均 `VM-PENDING` / `NOT-TESTED`。

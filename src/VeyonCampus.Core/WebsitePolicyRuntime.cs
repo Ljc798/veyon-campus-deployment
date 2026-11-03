@@ -1924,6 +1924,25 @@ public static class WebsitePolicyAgentInstaller
     }
 
     [SupportedOSPlatform("windows")]
+    public static void RestartCurrentAgentTaskForConfigurationSync(string configPath,
+        string expectedConfigurationFingerprint, TimeSpan healthTimeout)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("学生网站策略代理配置同步仅支持 Windows。");
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+            if (identity.User?.Value != "S-1-5-18")
+                throw new UnauthorizedAccessException("学生网站策略代理配置同步只能由 SYSTEM 执行。");
+        if (healthTimeout <= TimeSpan.Zero || healthTimeout > TimeSpan.FromMinutes(2))
+            throw new ArgumentOutOfRangeException(nameof(healthTimeout));
+        var executable = ReadManagedAgentExecutablePath(configPath);
+        StopRunningScheduledTask(ScheduledTaskName);
+        StopManagedAgentProcesses([executable]);
+        StartScheduledTask();
+        if (!WaitForConfigurationHealth(healthTimeout, expectedConfigurationFingerprint))
+            throw new IOException("重启后的 Student Agent 未通过教师连接配置指纹健康读回。");
+    }
+
+    [SupportedOSPlatform("windows")]
     public static void RemoveStudentUpdateRecoveryTasks(string recoveryAgentExecutablePath, string configPath)
     {
         if (!OperatingSystem.IsWindows())

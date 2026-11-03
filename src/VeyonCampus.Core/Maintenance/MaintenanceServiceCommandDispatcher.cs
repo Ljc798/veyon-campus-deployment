@@ -39,7 +39,8 @@ public sealed record MaintenanceServiceTeacherConfigurationSyncPayload(
     string ConfigurationFingerprint,
     DateTimeOffset UpdatedUtc,
     MaintenanceServiceInstalledVersionsPayload InstalledVersions,
-    long ConfigurationRevision = 0);
+    long ConfigurationRevision = 0,
+    string? AgentConfigurationFingerprint = null);
 
 public sealed record MaintenanceServiceTransactionReadbackPayload(
     StudentUpdateTransactionStatus Transaction,
@@ -207,12 +208,13 @@ public sealed class MaintenanceServiceCommandDispatcher
                 // The configuration store re-verifies the full signed request at the privileged write boundary.
                 var updated = MaintenanceServiceConfigurationStore.ApplySignedTeacherEndpointUpdate(configPath,
                     signedRequestJson, DateTimeOffset.UtcNow);
+                var agentConfiguration = MaintenanceServiceIdentityStore.ReadTrustedAgentConfiguration(configPath);
                 var installedVersions = ReadInstalledVersions(configPath, DateTimeOffset.UtcNow);
-                return ("succeeded", "教师连接配置已写入 Maintenance 独立配置，并通过目标指纹读回。",
+                return ("succeeded", "教师连接配置已写入 Maintenance 与 Student Agent 配置，且 Agent 已重启并通过活动健康指纹读回。",
                     SerializePayload(new MaintenanceServiceTeacherConfigurationSyncPayload(
                         updated.ConfigurationFingerprint ?? throw new InvalidDataException(
                             "Maintenance 配置读回缺少目标指纹。"), updated.UpdatedUtc, installedVersions,
-                        updated.ConfigurationRevision)));
+                        updated.ConfigurationRevision, WebsitePolicyAgent.ConfigFingerprint(agentConfiguration))));
             }
             case MaintenanceProtocolV1Command.OfferSignedStudentSetupUpdate:
                 throw new InvalidOperationException("StudentSetup 更新命令未通过事务准备入口执行。" );
