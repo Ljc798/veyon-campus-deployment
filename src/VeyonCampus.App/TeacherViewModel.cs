@@ -14462,6 +14462,25 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
         MaintenanceRunState.MaintenanceServiceHealthVerified => "Maintenance 已核验，待继续软件阶段",
         _ => State.ToString()
     };
+    public string RecoveryAdviceText => State switch
+    {
+        MaintenanceRunState.PendingVerification =>
+            "建议：使用原 operation/commandId 继续核对签名事务；不要为同一设备另发更新。",
+        MaintenanceRunState.RecoveryRequired =>
+            "建议：暂停新命令，先核对原事务与恢复材料；读回仍不一致时转现场恢复。",
+        MaintenanceRunState.ManualRequired =>
+            "建议：暂停自动处理，先核对设备身份、签名发行与通道能力，再决定人工修复方式。",
+        MaintenanceRunState.RolledBack =>
+            "建议：确认回滚版本和设备健康后，修复原失败原因，再单独重试此设备。",
+        MaintenanceRunState.Failed =>
+            "建议：先根据失败原因和签名版本读回排除前置问题，再单独重试此设备。",
+        MaintenanceRunState.MaintenanceServiceHealthVerified =>
+            "建议：继续同一维护 operation；服务阶段已核验，后续软件阶段尚未完成。",
+        MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
+            MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing =>
+            "建议：等待或重新核对原事务；未收到签名终态前不要重复下发。",
+        _ => "建议：先核对签名状态与组件版本，再选择恢复或现场维护。"
+    };
     public string VersionsText
     {
         get

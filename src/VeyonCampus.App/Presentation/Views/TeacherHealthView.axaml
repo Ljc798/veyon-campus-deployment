@@ -328,6 +328,7 @@
                         <TextBlock Text="{Binding UpdatedText}" Classes="muted" />
                         <TextBlock Text="{Binding VersionsText}" Classes="muted" TextWrapping="Wrap" />
                         <TextBlock Text="{Binding Detail}" Classes="device-row-detail" TextWrapping="Wrap" />
+                        <TextBlock Text="{Binding RecoveryAdviceText}" Classes="supporting-copy" TextWrapping="Wrap" />
                         <TextBlock Text="设备不在当前名单中；刷新名单后才能对其操作。"
                                    Classes="muted" IsVisible="{Binding IsTargetUnavailable}" />
                         <Button Classes="tertiary" Content="{Binding ActionText}"
