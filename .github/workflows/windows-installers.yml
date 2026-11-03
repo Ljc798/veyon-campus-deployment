@@ -402,9 +402,67 @@ jobs:
           compression-level: 0
           retention-days: 14
 
+  sign-release-installers:
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v') || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.38' || github.event.head_commit.message == 'Release v1.1.7' || github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20' || github.event.head_commit.message == 'Release v1.1.4'))
+    needs: build-installers
+    runs-on: windows-latest
+    environment: production-release
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-installers-${{ github.run_id }}
+          path: artifacts
+      - name: Sign and verify public release installers
+        env:
+          VEYONCAMPUS_AUTHENTICODE_PFX_BASE64: ${{ secrets.VEYONCAMPUS_AUTHENTICODE_PFX_BASE64 }}
+          VEYONCAMPUS_AUTHENTICODE_PFX_PASSWORD: ${{ secrets.VEYONCAMPUS_AUTHENTICODE_PFX_PASSWORD }}
+          VEYONCAMPUS_AUTHENTICODE_THUMBPRINT: ${{ vars.VEYONCAMPUS_AUTHENTICODE_THUMBPRINT }}
+          VEYONCAMPUS_AUTHENTICODE_TIMESTAMP_URL: ${{ vars.VEYONCAMPUS_AUTHENTICODE_TIMESTAMP_URL }}
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -match '^(?:beta-)?v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -eq 'refs/heads/develop') {
+            $appProjectPath = Join-Path $env:GITHUB_WORKSPACE 'src/VeyonCampus.App/VeyonCampus.App.csproj'
+            $appProject = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
+            $version = [string](@($appProject.Project.PropertyGroup | ForEach-Object { $_.Version } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+          } else {
+            throw 'SIGNED-RELEASE-BLOCKED: unsupported release ref.'
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'Could not determine the release installer version.' }
+          $student = "artifacts/VeyonCampus-Student-Setup-$version-win-x64.exe"
+          $teacher = "artifacts/VeyonCampus-Teacher-Setup-$version-win-x64.exe"
+          & ./scripts/sign-windows-release-installers.ps1 `
+            -InstallerPaths @($student, $teacher) `
+            -SignatureManifestPath 'artifacts/Authenticode-signatures.json'
+          $checksumLines = @($student, $teacher) | ForEach-Object {
+            $hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
+            $name = [IO.Path]::GetFileName($_)
+            "$hash *$name"
+          }
+          [IO.File]::WriteAllLines((Join-Path $env:GITHUB_WORKSPACE 'artifacts/SHA256SUMS'),
+            $checksumLines, [Text.UTF8Encoding]::new($false))
+      - uses: actions/upload-artifact@v7
+        with:
+          name: signed-windows-installers-${{ github.run_id }}
+          path: |
+            artifacts/VeyonCampus-Student-Setup-*-win-x64.exe
+            artifacts/VeyonCampus-Teacher-Setup-*-win-x64.exe
+            artifacts/VeyonCampus-Student-Setup-*-win-x64.exe.agent-target.json
+            artifacts/Authenticode-signatures.json
+            artifacts/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
   publish-release:
     if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && (github.event.head_commit.message == 'Release v1.1.38' || github.event.head_commit.message == 'Release v1.1.7' || github.event.head_commit.message == 'Release v1.1.0' || github.event.head_commit.message == 'Release v1.0.10' || github.event.head_commit.message == 'Release v1.0.19' || github.event.head_commit.message == 'Release v1.0.20' || github.event.head_commit.message == 'Release v1.1.4'))
-    needs: build-installers
+    needs: sign-release-installers
     runs-on: ubuntu-latest
     environment: production-release
     concurrency:
@@ -425,7 +483,7 @@ jobs:
           node-version: '20.19.x'
       - uses: actions/download-artifact@v7
         with:
-          name: windows-installers-${{ github.run_id }}
+          name: signed-windows-installers-${{ github.run_id }}
           path: artifacts
       - name: Check release configuration and prepare signing keys
         env:
@@ -476,16 +534,19 @@ jobs:
           version="${tag#v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          signature_manifest="artifacts/Authenticode-signatures.json"
           test -s "$student"
           test -s "$teacher"
+          test -s "$signature_manifest"
           (
             cd artifacts
             sha256sum \
               "$(basename "$student")" \
-              "$(basename "$teacher")" > SHA256SUMS
+              "$(basename "$teacher")" \
+              "$(basename "$signature_manifest")" > SHA256SUMS
           )
-          printf 'version=%s\nstudent=%s\nteacher=%s\nchecksums=artifacts/SHA256SUMS\n' \
-            "$version" "$student" "$teacher" >> "$GITHUB_OUTPUT"
+          printf 'version=%s\nstudent=%s\nteacher=%s\nsignature_manifest=%s\nchecksums=artifacts/SHA256SUMS\n' \
+            "$version" "$student" "$teacher" "$signature_manifest" >> "$GITHUB_OUTPUT"
       - name: Prepare public release notes
         shell: bash
         run: |
@@ -521,6 +582,7 @@ jobs:
             "${{ steps.assets.outputs.student }}" \
             "${{ steps.assets.outputs.teacher }}" \
             "${{ steps.assets.outputs.checksums }}" \
+            "${{ steps.assets.outputs.signature_manifest }}" \
             "$RUNNER_TEMP/release-notes.md"
       - name: Publish signed version metadata to CloudBase after GitHub assets are verified
         env:
@@ -541,7 +603,7 @@ jobs:
 
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v')
-    needs: build-installers
+    needs: sign-release-installers
     runs-on: ubuntu-latest
     environment: production-release
     permissions:
@@ -554,7 +616,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@v7
         with:
-          name: windows-installers-${{ github.run_id }}
+          name: signed-windows-installers-${{ github.run_id }}
           path: artifacts
       - name: Create or verify the Beta release tag
         shell: bash
@@ -593,13 +655,16 @@ jobs:
           version="${TAG#beta-v}"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          signature_manifest="artifacts/Authenticode-signatures.json"
           test -s "$student"
           test -s "$teacher"
+          test -s "$signature_manifest"
           (
             cd artifacts
             sha256sum \
               "$(basename "$student")" \
-              "$(basename "$teacher")" > SHA256SUMS
+              "$(basename "$teacher")" \
+              "$(basename "$signature_manifest")" > SHA256SUMS
           )
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
@@ -614,7 +679,7 @@ jobs:
 
           GitCode/AtomGit 附件由维护者在本机上传：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases
 
-          安装包未进行 Authenticode 签名。请在可恢复的测试电脑上验证，不要首次在正式课堂设备或真实学生账户上测试。
+          Student/Teacher 安装器已通过 Authenticode 验证；Authenticode-signatures.json 记录发布者证书指纹与最终文件 SHA-256。请先核对签名与校验值，再在可恢复的测试电脑验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
       - name: Publish or verify GitHub Beta Release first
         shell: bash
@@ -626,4 +691,5 @@ jobs:
             "$tag" "$version" \
             "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
             "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
-            artifacts/SHA256SUMS "$RUNNER_TEMP/beta-release-notes.md"
+            artifacts/SHA256SUMS artifacts/Authenticode-signatures.json \
+            "$RUNNER_TEMP/beta-release-notes.md"

@@ -49,7 +49,11 @@
 | 30 | P4-02 Ring 0–3 灰度部署 | `PLAN-RECORDED; VM-PENDING` | 灰度顺序、隔离快照、暂停和回退要求已有文档；没有运行 VM 或真实教室灰度。 |
 | 31 | P4-04 课堂能力发布门槛 | `LEDGER-READY; FIELD-PENDING` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
 | 32 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
-| 33–37 | P5-02～P5-05、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 代码签名、隔离 CloudBase、RC 和最终 VM/现场任务分别保留签名、环境与测试门槛。 |
+| 33 | P5-02 / Issue 011 Authenticode、摘要与签名清单 | `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED` | 新增签名脚本与受保护签名 job；标签发布需配置 PFX/password、预期 thumbprint、RFC 3161 timestamp URL，签后核验两安装器、生成含最终 SHA 的 Authenticode manifest 并连同 SHA256SUMS 发布。凭据/证书未配置且本轮未运行 workflow，不能称已签名。 |
+| 34 | P5-03 / Issue 012 隔离 CloudBase 迁移 | `ENVIRONMENT-PENDING` | 已有 migration contract 工作流；没有确认隔离环境连接与访问凭据，本轮不执行生产迁移。 |
+| 35 | P5-04 非 stable RC 交付 | `NOT-STARTED; SIGNING-BLOCKED; TEST-DEFERRED` | 正式/预发布签名、全量检查、版本矩阵和包哈希完成前不生成可交付 RC。 |
+| 36 | P5-05 用户 Windows VM/现场验收清单 | `CHECKLIST-RECORDED; VM-PENDING; FIELD-PENDING` | 原计划已有逐版本验收矩阵；仍须补充本次签名包哈希、VM 快照和用户实测记录。 |
+| 37 | LM-02/03 旧 Agent 一跳迁移与兼容矩阵 | `SOURCE-IMPLEMENTED; VM-PENDING; SIGNING-BLOCKED` | 旧版稳定发行信任链与 Legacy bridge 代码已接线，但缺合法 stable 签名和 0.4.55/0.4.56 快照；不得宣称迁移完成。 |
 
 ## 最近完成：P0-07 / Issue 007
 
@@ -241,3 +245,10 @@
 - 当前仓库已有 `.github/workflows/app-checks.yml`、`api-contracts.yml` 与 `windows-installers.yml`；Windows workflow 以前只打包 StudentSetup、TeacherConsole 两类安装器，没有打包新 Maintenance Service 独立安装器。
 - Windows workflow 现调用 `scripts/package-maintenance-service.ps1 -Clean`，在 CI 生成独立 Maintenance Service 安装器并上传为单独 artifact；原 `windows-installers` artifact 收窄为 Student/Teacher 两类，生产发布步骤仍显式只签算并上传 Student/Teacher。
 - 此项只是 workflow 源码接线；本轮没有运行 workflow、构建安装器或安装服务。Windows runner/Inno/.NET runtime/服务卸载和 SCM 状态需后续验证；P5-01 仍 `CI-PARTIAL; RUN-DEFERRED`。
+
+## 2026-11-03 连续实施补记：P5-02 Windows 安装器代码签名门槛
+
+- 新增 `scripts/sign-windows-release-installers.ps1`：要求配置 Authenticode PFX Base64/口令、预期发布者 thumbprint 和 RFC 3161 时间戳 URL；限制只处理 `artifacts` 中匹配版本的 StudentSetup/TeacherConsole EXE；核对证书有效期、私钥、Code Signing EKU 和证书指纹，调用 SignTool SHA-256 签名/验证及 Windows Authenticode 状态核验。
+- 新增 Windows `sign-release-installers` job，受 `production-release` 环境保护；正式/预发布标签必须签署并验证安装器，否则以 `SIGNING-BLOCKED` 停止发布。签名报告包含最终安装器 SHA-256、发布者与时间戳证书摘要，并作为 Release asset 和 `SHA256SUMS` 一并交付；只有签名通过的 artifact 能进入 stable/beta 发布 job。非发布分支的 CI 构建保持 unsigned 内部检查包。
+- GitHub release publisher 兼容旧资产集合，同时接受可选 Authenticode manifest，并将清单纳入发布文件集合和 `SHA256SUMS` 完整性校验。
+- 本轮没有 Authenticode 证书或环境权限，也未运行 PowerShell、SignTool、workflow、installer 或发布；因此仍是 `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED`。

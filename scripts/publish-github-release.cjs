@@ -19,29 +19,34 @@ function defaultGitHubCli(args) {
   });
 }
 
-function expectedAssetNames(version, includeLegacyBundles = false) {
+function expectedAssetNames(version, includeLegacyBundles = false, includeAuthenticodeManifest = false) {
   const names = [
     `VeyonCampus-Student-Setup-${version}-win-x64.exe`,
-    `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`,
-    'SHA256SUMS'
+    `VeyonCampus-Teacher-Setup-${version}-win-x64.exe`
   ];
   if (includeLegacyBundles) names.splice(2, 0,
     `VeyonCampus-Student-Setup-${version}-win-x64.zip`,
     `VeyonCampus-Teacher-Setup-${version}-win-x64.zip`);
+  if (includeAuthenticodeManifest) names.push('Authenticode-signatures.json');
+  names.push('SHA256SUMS');
   return names;
 }
 
 function validateArguments(tag, version, assetPaths) {
   const prerelease = tag.startsWith('beta-v');
   const expectedTag = `${prerelease ? 'beta-' : ''}v${version}`;
+  const names = assetPaths.map(filePath => path.basename(filePath));
+  const includeLegacyBundles = names.filter(name => name.endsWith('.zip')).length === 2;
+  const includeAuthenticodeManifest = names.includes('Authenticode-signatures.json');
   if (!/^(?:beta-)?v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(tag) ||
-      tag !== expectedTag || (assetPaths.length !== 3 && assetPaths.length !== 5)) {
-    throw new Error('Expected a vX.Y.Z or beta-vX.Y.Z tag and its Student/Teacher EXE files, SHA256SUMS, and optional legacy ZIP bundles.');
+      tag !== expectedTag || ![3, 4, 5, 6].includes(assetPaths.length) ||
+      names.filter(name => name.endsWith('.zip')).length % 2 !== 0) {
+    throw new Error('Expected a vX.Y.Z or beta-vX.Y.Z tag and its Student/Teacher EXE files, SHA256SUMS, optional Authenticode manifest, and optional legacy ZIP bundles.');
   }
-  const expected = expectedAssetNames(version, assetPaths.length === 5).sort();
-  const actual = assetPaths.map(filePath => path.basename(filePath)).sort();
+  const expected = expectedAssetNames(version, includeLegacyBundles, includeAuthenticodeManifest).sort();
+  const actual = names.sort();
   if (actual.length !== expected.length || actual.some((name, index) => name !== expected[index])) {
-    throw new Error('Pass the version-matched Student/Teacher EXE files, SHA256SUMS, and optional legacy ZIP bundles exactly once.');
+    throw new Error('Pass the version-matched Student/Teacher EXE files, SHA256SUMS, optional Authenticode manifest, and optional legacy ZIP bundles exactly once.');
   }
 }
 
@@ -332,15 +337,17 @@ async function publishGitHubFileUpdateRelease({ tag, version, assetPaths, notesP
 
 async function main() {
   const [tag, version, ...argumentsAfterVersion] = process.argv.slice(2);
-  if (!tag || !version || ![3, 4, 5, 6].includes(argumentsAfterVersion.length)) {
-    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <SHA256SUMS> [release-notes.md] [legacy-student.zip legacy-teacher.zip].');
+  const hasNotes = argumentsAfterVersion.length > 0 && /\.md$/i.test(argumentsAfterVersion.at(-1));
+  const notesPath = hasNotes ? argumentsAfterVersion.at(-1) : null;
+  const assetPaths = hasNotes ? argumentsAfterVersion.slice(0, -1) : argumentsAfterVersion;
+  if (!tag || !version || ![3, 4, 5, 6].includes(assetPaths.length)) {
+    throw new Error('Usage: node scripts/publish-github-release.cjs <tag> <version> <student.exe> <teacher.exe> <SHA256SUMS> [Authenticode-signatures.json] [legacy-student.zip legacy-teacher.zip] [release-notes.md].');
   }
-  const hasLegacyBundles = argumentsAfterVersion.length >= 5;
   const result = await publishGitHubRelease({
     tag,
     version,
-    assetPaths: argumentsAfterVersion.slice(0, hasLegacyBundles ? 5 : 3),
-    notesPath: hasLegacyBundles ? argumentsAfterVersion[5] || null : argumentsAfterVersion[3] || null
+    assetPaths,
+    notesPath
   });
   process.stdout.write(JSON.stringify(result) + '\n');
 }

@@ -762,6 +762,8 @@ src/VeyonCampus.Core/Maintenance/
 
 **P5-01 实施进度补记（2026-11-03，未运行 CI）：** 已有 App checks、API contract 和 Windows installers workflows。Windows installer workflow 新增独立 Maintenance Service 安装器打包步骤及隔离 artifact；Student/Teacher 发布 artifact 与生产发布明确继续只使用 StudentSetup、TeacherConsole。Workflow 未运行，不能视为安装包构建或服务安装验收通过。
 
+**P5-02 / Issue 011 实施进度补记（2026-11-03，源码接线，签名阻断）：** 新增 Authenticode 签名/验证脚本与受 `production-release` 环境保护的 Windows release-signing job；发布标签须配置 Authenticode PFX Base64/密码、期望证书指纹和 RFC 3161 时间戳 URL。脚本限制处理两个版本匹配安装器，核对私钥、Code Signing EKU、有效期、thumbprint，执行 SHA-256 SignTool 签名/验证和 Windows Authenticode 状态读回，产出含最终 SHA-256/发布者/时间戳证书的 JSON，并由 `SHA256SUMS` 保护。GitHub publisher 向后兼容旧资产集合，并在新签名发布时校验和发布签名清单。代码签名密钥/证书及 runner 权限尚未配置；没有运行 SignTool、PowerShell、workflow 或发布。缺任一凭据时有意阻断正式/预发布标签，状态为 `SIGNING-BLOCKED; RUN-DEFERRED`，不将 Student Agent RSA release sidecar 当作 Authenticode 签名。
+
 ---
 
 ## 10. Codex 执行计划（按依赖连续实施）
