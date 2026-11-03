@@ -9439,13 +9439,13 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var expirySummary = expiry is { } until ? $" · 自动解除 {until.ToLocalTime():yyyy-MM-dd HH:mm}" : "";
             var modeText = mode switch
             {
-                ApplicationPolicyMode.Audit => "影响检查",
-                ApplicationPolicyMode.Enforce => "应用限制",
-                _ => succeeded == results.Count ? "限制已解除" : "解除结果"
+                ApplicationPolicyMode.Audit => "影响检查回执",
+                ApplicationPolicyMode.Enforce => "应用限制回执",
+                _ => succeeded == results.Count ? "解除回执" : "解除结果"
             };
-            ApplicationPolicyResult = $"{modeText}{expirySummary} · 成功 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed}";
+            ApplicationPolicyResult = $"{modeText}{expirySummary} · Agent 签名确认 {succeeded}/{results.Count} · 需核对 {needsReview} · 失败 {failed} · Windows 实际效果待现场核验";
             ApplicationPolicyResultDetails = string.Join(Environment.NewLine, results.Select(result =>
-                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Succeeded ? "已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
+                $"{GetWebsitePolicyTargetLabel(result.Target)}：{(result.Succeeded ? "Agent 签名回执已确认" : result.NeedsReview ? "需核对" : "失败")} — {result.Detail}"));
             ShowApplicationPolicyResultDetails = false;
             _lastApplicationAuditPolicyRevision = mode == ApplicationPolicyMode.Audit && succeeded == results.Count ? revision : null;
             _lastApplicationAuditFingerprint = _lastApplicationAuditPolicyRevision is null ? null : GetApplicationPolicyFingerprint();

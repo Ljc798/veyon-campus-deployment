@@ -309,7 +309,7 @@
               <suki:InfoBar Message="{Binding ApplicationPolicyError}" Severity="Error"
                             IsOpen="{Binding HasApplicationPolicyError}" IsClosable="False" IsOpaque="False" />
               <StackPanel IsVisible="{Binding HasApplicationPolicyResult}" Spacing="6">
-                <suki:InfoBar Message="{Binding ApplicationPolicyResult}" Severity="Success"
+                <suki:InfoBar Message="{Binding ApplicationPolicyResult}" Severity="Information"
                               IsOpen="{Binding HasApplicationPolicyResult}" IsClosable="False" IsOpaque="False" />
                 <ToggleButton Content="{Binding ApplicationPolicyDetailsToggleText}"
                               IsChecked="{Binding ShowApplicationPolicyResultDetails, Mode=TwoWay}"

@@ -47,7 +47,7 @@
 | 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
 | 29 | P4-03 运维可观察性 | `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
 | 30 | P4-02 Ring 0–3 灰度部署 | `PLAN-RECORDED; VM-PENDING` | 灰度顺序、隔离快照、暂停和回退要求已有文档；没有运行 VM 或真实教室灰度。 |
-| 31 | P4-04 课堂能力发布门槛 | `LEDGER-READY; FIELD-PENDING` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
+| 31 | P4-04 课堂能力发布门槛 | `PARTIAL-CODE; FIELD-PENDING; TEST-DEFERRED` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；应用限制结果改用中性提示并明确只是 Agent 签名回执，非 Windows 实际拦截证明。历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
 | 32 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
 | 33 | P5-02 / Issue 011 Authenticode、摘要与签名清单 | `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED` | 新增签名脚本与受保护签名 job；标签发布需配置 PFX/password、预期 thumbprint、RFC 3161 timestamp URL，签后核验两安装器、生成含最终 SHA 的 Authenticode manifest 并连同 SHA256SUMS 发布。凭据/证书未配置且本轮未运行 workflow，不能称已签名。 |
 | 34 | P5-03 / Issue 012 隔离 CloudBase 迁移 | `ENVIRONMENT-PENDING` | 已有 migration contract 工作流；没有确认隔离环境连接与访问凭据，本轮不执行生产迁移。 |
@@ -224,6 +224,7 @@
 - CM-02 教师连接配置双写及离线重发：Maintenance 接收一条已验签命令后，在 StudentUpdate 原子锁内确认无活动更新，只修改 Agent 的 endpoints/TLS root 和独立 Maintenance bootstrap；保留校区身份、签名公钥、策略公钥等不可变字段。写入前先持久化 SYSTEM/Administrators 私有恢复记录，含设备 pin、目标 revision/fingerprint、原始 Agent 配置和原 bootstrap；Agent 与服务配置写完并重启健康读回后删除记录。运行时失败会恢复两侧旧快照；若断电/强杀留有记录，服务启动会等更新事务结束后恢复旧快照，再开放维护通道。签名同步回执带 Agent 配置指纹，教师端检查其格式。Teacher journal 现按固定 Agent 身份保存离线 TeacherConnectivity 目标；Agent 或 Maintenance WebSocket 经认证建立后触发重连对账，执行前确认无活动维护事务，revision 仍从签名健康读回产生。已补齐源码级自动重发接线；尚未证明实际重连、跨进程队列恢复或并发竞争，且只覆盖教师连接模块。未构建/测试/VM 验收。
 - 当前验证边界：本轮尚未构建安装包，用户现在没有可据此测试的 StudentSetup 或 Maintenance Service 安装包。完成代码实施后，仍需统一执行自动化检查与 Windows VM 安装/升级/回滚验收；随后才能打包给用户手动测试。Production 发布和真实校区推送仍是单独门槛。
 - P1-06 / Issue 009：`TeacherPolicyView.axaml` 已明确区分 EXE 运行限制、Store 可见/常规安装限制与已安装 Appx/MSIX 启动限制；不再暗示当前 AppLocker XML 能限制已安装游戏。没有变更 Appx 放行基线，也没有将范围说明当作现场验收；Edition 支持矩阵、实际 Store 下载/启动、策略撤销与系统必需包保护均 `VM-PENDING` / `NOT-TESTED`。
+- P4-04：应用限制逐台结果条固定为绿色 Success，且把签名 Agent 回执写作“成功 x/n”。现改成信息提示与“Agent 签名确认 x/n”，逐台显示签名回执确认，并保留“Windows 实际效果待现场核验”。此为防止 UI 将回执等同于 OS 执行效果的源码修正；未构建、测试或 VM 验收，现场拦截/解除和 Edition 兼容仍待验证。
 
 ## 2026-11-03 连续实施补记：P4-03 可观察性（部分代码）
 
