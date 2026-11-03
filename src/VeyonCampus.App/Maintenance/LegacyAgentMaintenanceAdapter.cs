@@ -24,7 +24,7 @@ public interface ILegacyStudentSetupArtifactProvider
 public interface IMaintenanceServiceReleaseArtifactProvider
 {
     Task<MaintenanceServiceReleaseArtifact?> GetNewerMaintenanceServiceReleaseAsync(string currentVersion,
-        CancellationToken cancellationToken);
+        MaintenanceReleaseChannel channel, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -452,7 +452,7 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         try
         {
             artifact = await _maintenanceServiceArtifactProvider.GetNewerMaintenanceServiceReleaseAsync(
-                currentVersion, cancellationToken).ConfigureAwait(false);
+                currentVersion, plan.Channel, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

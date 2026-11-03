@@ -79,6 +79,7 @@
             DeployStudentUpdateRequested="DeployStudentUpdate"
             UpdateMaintenanceServiceRequested="UpdateMaintenanceService"
             SelectLocalStudentTestInstallerRequested="SelectLocalStudentTestInstaller"
+            SelectLocalTestMaintenanceInstallerRequested="SelectLocalTestMaintenanceInstaller"
             SyncStudentConfigurationRequested="SyncStudentConfiguration"
             ReviewConfigurationIdentityRequested="ReviewConfigurationIdentity"
             ReviewStudentUpdateIdentityRequested="ReviewStudentUpdateIdentity"

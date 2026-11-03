@@ -616,6 +616,8 @@ src/VeyonCampus.Core/Maintenance/
 
 **实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。Maintenance 单独包会把 UpdateHelper 与服务放在同一版本目录。P3-01 新增专属签名命令、SYSTEM 私有暂存、版本切换、健康核验和旧服务回滚；Teacher provider/adapter 已接入 Coordinator/journal 与 Workflow，高级维护操作新增“仅更新 Maintenance 服务”入口，可单独执行该升级；发送前检查签名能力列表是否声明更新与事务查询命令，不兼容的旧服务不会收到新命令。当前仍是单一 Maintenance 更新事务，成功后没有自动接续 StudentSetup 更新的多阶段 operation。协议只接受当前 v1，尚未完成旧教师协议的最低兼容协商及密钥轮换。CloudBase migration 未部署；本轮按用户要求不构建、不测试、不打包，故无可安装测试包。状态：`WORKFLOW-WIRED; TEST-DEFERRED; VM-PENDING; FIELD-PENDING`。
 
+**实施进度续记（2026-11-03，本机 MaintenanceService 测试候选，未验收）：** 教师端本机测试来源新增独立 MaintenanceService 安装器选择；验证本机 `.exe.release.json`、固定 Developer Release 公钥、Schema 5、`local-test` 通道、SHA-256 与当前协议 v1 后，复制到本机受信暂存目录并经现有独立 SYSTEM 事务发送。新增离线 signer 只写本机签名 sidecar，不调用 CloudBase；Stable 发行查询仍只走 stable。服务端发行清单验证允许固定 Developer Release 密钥签名的 schema 5 `local-test` 包，安装器角色、协议、摘要、版本和固定 LAN 传输校验保持不变。此改动为 P3-01/P5-04 本机候选准备；未运行 signer、构建、测试或 VM，实际接收/升级/回滚仍 `TEST-DEFERRED; VM-PENDING`，尚未实现与 StudentSetup 合并成单一多阶段 operation。
+
 ### P3-02：恢复任务和健康自检
 
 - [ ] 使用 SCM 恢复选项、必要时独立 SYSTEM 恢复任务，确保服务启动失败、意外退出、主机重启后可恢复。

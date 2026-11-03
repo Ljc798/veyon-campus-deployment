@@ -645,7 +645,7 @@ public sealed class ApplicationReleaseClient
                 manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767 ||
                 manifest.StudentAgentVersion is null || !IsSemanticVersion(manifest.StudentAgentVersion))) ||
             (manifest.SchemaVersion == 5 && (expectedRole != ApplicationReleaseRole.MaintenanceService ||
-                manifest.ReleaseChannel != "stable" || manifest.PolicyCapabilities is not null || manifest.StudentAgentVersion is not null ||
+                manifest.PolicyCapabilities is not null || manifest.StudentAgentVersion is not null ||
                 manifest.MaintenanceProtocolVersion is not (>= 1 and <= 32767))) ||
             (manifest.SchemaVersion < 5 && manifest.MaintenanceProtocolVersion is not null) ||
             (expectedRole == ApplicationReleaseRole.MaintenanceService && manifest.SchemaVersion != 5) ||

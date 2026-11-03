@@ -12,12 +12,14 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
 {
     private readonly ApplicationReleaseClient _releaseClient;
     private readonly Func<string?> _localTestInstallerPath;
+    private readonly Func<string?> _localTestMaintenanceInstallerPath;
 
     public TeacherMaintenanceArtifactProvider(ApplicationReleaseClient releaseClient,
-        Func<string?> localTestInstallerPath)
+        Func<string?> localTestInstallerPath, Func<string?>? localTestMaintenanceInstallerPath = null)
     {
         _releaseClient = releaseClient ?? throw new ArgumentNullException(nameof(releaseClient));
         _localTestInstallerPath = localTestInstallerPath ?? throw new ArgumentNullException(nameof(localTestInstallerPath));
+        _localTestMaintenanceInstallerPath = localTestMaintenanceInstallerPath ?? (() => null);
     }
 
     public async Task<TeacherMaintenanceRelease> GetLatestReleaseAsync(MaintenanceReleaseChannel channel,
@@ -86,22 +88,43 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
     }
 
     public async Task<MaintenanceServiceReleaseArtifact?> GetNewerMaintenanceServiceReleaseAsync(
-        string currentVersion, CancellationToken cancellationToken)
+        string currentVersion, MaintenanceReleaseChannel channel, CancellationToken cancellationToken)
     {
+        if (!Enum.IsDefined(channel)) throw new ArgumentOutOfRangeException(nameof(channel));
         _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
         var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
-        var latest = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.MaintenanceService,
-            currentVersion, cancellationToken).ConfigureAwait(false);
-        if (latest.Release is null || !latest.IsNewer) return null;
-        var release = latest.Release;
+        var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
+            "VeyonCampus", "Updates");
+        ApplicationReleaseEnvelope release;
+        string installerPath;
+        if (channel == MaintenanceReleaseChannel.LocalTest)
+        {
+            var localInstallerPath = _localTestMaintenanceInstallerPath()
+                ?? throw new InvalidOperationException("请选择本机测试 MaintenanceService 安装器。");
+            release = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(localInstallerPath,
+                ApplicationReleaseRole.MaintenanceService, _releaseClient.ApiBaseAddress, publicKeyPem),
+                cancellationToken).ConfigureAwait(false);
+            if (release.Manifest.ReleaseChannel != "local-test")
+                throw new InvalidDataException("本机 MaintenanceService 候选必须使用 Developer Release 公钥并标记 local-test。");
+            if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
+                return null;
+            installerPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(
+                localInstallerPath, updateDirectory, ApplicationReleaseRole.MaintenanceService,
+                _releaseClient.ApiBaseAddress, publicKeyPem), cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var latest = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.MaintenanceService,
+                currentVersion, cancellationToken).ConfigureAwait(false);
+            if (latest.Release is null || !latest.IsNewer) return null;
+            release = latest.Release;
+            installerPath = await _releaseClient.DownloadAsync(release, ApplicationReleaseRole.MaintenanceService,
+                updateDirectory, cancellationToken).ConfigureAwait(false);
+        }
         ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.MaintenanceService,
             _releaseClient.ApiBaseAddress, publicKeyPem);
         if (release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion)
-            throw new InvalidDataException("最新 Maintenance Service 发行要求不兼容的维护协议；拒绝暂存。");
-        var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
-            "VeyonCampus", "Updates");
-        var installerPath = await _releaseClient.DownloadAsync(release, ApplicationReleaseRole.MaintenanceService,
-            updateDirectory, cancellationToken).ConfigureAwait(false);
+            throw new InvalidDataException("MaintenanceService 候选要求不兼容的维护协议；拒绝暂存。");
         var staged = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
             ApplicationReleaseRole.MaintenanceService, _releaseClient.ApiBaseAddress, publicKeyPem),
             cancellationToken).ConfigureAwait(false);

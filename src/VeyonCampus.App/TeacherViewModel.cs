@@ -386,7 +386,9 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private string _studentConfigurationSyncStatus = "准备好后可同步当前教师连接到已选学生机。";
     private bool _useLocalTestStudentUpdateSource;
     private string? _localTestStudentSetupInstallerPath;
+    private string? _localTestMaintenanceInstallerPath;
     private string? _localTestStudentReleaseSummary;
+    private string? _localTestMaintenanceReleaseSummary;
     private readonly ObservableCollection<StudentConfigurationSyncTargetProgressItem> _studentConfigurationSyncTargetProgressItems = [];
     private bool _isStudentConfigurationSyncProgressVisible;
     private double _studentConfigurationSyncProgressPercent;
@@ -531,7 +533,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         if (_releaseClient is not null)
         {
             var artifactProvider = new TeacherMaintenanceArtifactProvider(_releaseClient,
-                () => _localTestStudentSetupInstallerPath);
+                () => _localTestStudentSetupInstallerPath, () => _localTestMaintenanceInstallerPath);
             var coordinator = new TeacherMaintenanceCoordinator(_maintenanceRunStore,
                 new LegacyAgentMaintenanceAdapter(artifactProvider));
             _maintenanceWorkflow = new TeacherMaintenanceWorkflow(coordinator, artifactProvider);
@@ -4045,8 +4047,14 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool CanDeployStudentUpdate => OperatingSystem.IsWindows() && !IsExecuting && _releaseClient is not null &&
         AreStudentUpdateTargetsValid() && (!_useLocalTestStudentUpdateSource ||
             (IsLocalTestStudentUpdateSourceAvailable && !string.IsNullOrWhiteSpace(_localTestStudentSetupInstallerPath)));
-    public bool CanMaintainStudentDevices => OperatingSystem.IsWindows() && !IsExecuting &&
+    private bool CanStartMaintenanceOnSelectedTargets => OperatingSystem.IsWindows() && !IsExecuting &&
         AreStudentUpdateTargetsValid();
+    public bool CanMaintainStudentDevices => CanStartMaintenanceOnSelectedTargets &&
+        (!_useLocalTestStudentUpdateSource || IsLocalTestStudentUpdateSourceAvailable &&
+            !string.IsNullOrWhiteSpace(_localTestStudentSetupInstallerPath));
+    public bool CanUpdateMaintenanceService => CanStartMaintenanceOnSelectedTargets &&
+        (!_useLocalTestStudentUpdateSource || IsLocalTestStudentUpdateSourceAvailable &&
+            !string.IsNullOrWhiteSpace(_localTestMaintenanceInstallerPath));
     public string StudentMaintenanceStatus
     {
         get => _studentMaintenanceStatus;
@@ -4067,12 +4075,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed();
             Changed(nameof(StudentUpdateSourceSummary));
             Changed(nameof(CanDeployStudentUpdate));
+            Changed(nameof(CanUpdateMaintenanceService));
         }
     }
     public string LocalTestStudentSetupInstallerPath => _localTestStudentSetupInstallerPath ?? "未选择本机测试安装器";
+    public string LocalTestMaintenanceInstallerPath => _localTestMaintenanceInstallerPath ?? "未选择本机测试 MaintenanceService 安装器";
     public string StudentUpdateSourceSummary => _useLocalTestStudentUpdateSource && IsLocalTestStudentUpdateSourceAvailable
         ? "当前来源：本机测试包。使用 Developer Release 公钥校验；安装器只从本机读取，不上传。" +
-          (_localTestStudentReleaseSummary is null ? "" : " " + _localTestStudentReleaseSummary)
+          (_localTestStudentReleaseSummary is null ? "" : " " + _localTestStudentReleaseSummary) +
+          (_localTestMaintenanceReleaseSummary is null ? "" : " " + _localTestMaintenanceReleaseSummary)
         : "当前来源：线上正式版。版本来自线上签名发布目录。";
 
     public async Task SelectLocalTestStudentSetupInstallerAsync(string installerPath)
@@ -4103,6 +4114,31 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(LocalTestStudentSetupInstallerPath));
         Changed(nameof(StudentUpdateSourceSummary));
         Changed(nameof(CanDeployStudentUpdate));
+    }
+
+    public async Task SelectLocalTestMaintenanceServiceInstallerAsync(string installerPath)
+    {
+        if (!IsLocalTestStudentUpdateSourceAvailable)
+            throw new InvalidOperationException("此教师端正式版已关闭本机测试更新入口；请使用本机测试教师端选择测试包。");
+        ArgumentException.ThrowIfNullOrWhiteSpace(installerPath);
+        var path = Path.GetFullPath(installerPath);
+        if (!File.Exists(path + ".release.json"))
+            throw new InvalidDataException("所选 MaintenanceService 安装器旁没有同名 .exe.release.json 签名清单。");
+        var releaseClient = _releaseClient ?? throw new InvalidOperationException(
+            _releaseClientError ?? "此版本未嵌入 Developer Release 公钥，不能验证测试包。");
+        var release = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(path,
+            ApplicationReleaseRole.MaintenanceService, releaseClient.ApiBaseAddress,
+            ApplicationReleaseTrust.LoadPinnedPublicKeyPem()));
+        if (release.Manifest.ReleaseChannel != "local-test" ||
+            release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion)
+            throw new InvalidDataException("本机 MaintenanceService 包必须由已固定的 Developer Release 密钥签署，并声明当前受支持的维护协议。");
+        _localTestMaintenanceInstallerPath = path;
+        _localTestMaintenanceReleaseSummary =
+            $"已验签：MaintenanceService {release.Manifest.Version} · local-test · 协议 v{release.Manifest.MaintenanceProtocolVersion}。";
+        UseLocalTestStudentUpdateSource = true;
+        Changed(nameof(LocalTestMaintenanceInstallerPath));
+        Changed(nameof(StudentUpdateSourceSummary));
+        Changed(nameof(CanUpdateMaintenanceService));
     }
 
     public void ReportLocalStudentTestReleaseSelectionError(string message) =>
@@ -10368,7 +10404,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             MaintenanceOperationKind.SoftwareUpdate => CanDeployStudentUpdate,
             MaintenanceOperationKind.ConfigurationSync => CanSyncStudentConfiguration,
-            MaintenanceOperationKind.MaintenanceServiceUpdate => CanMaintainStudentDevices,
+            MaintenanceOperationKind.MaintenanceServiceUpdate => CanUpdateMaintenanceService,
             _ => targetOverride is { Count: > 0 }
                 ? CanMaintainTargetOverride(targetOverride)
                 : CanMaintainStudentDevices
@@ -10611,6 +10647,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     public async Task UpdateMaintenanceServiceAsync()
     {
+        if (!CanUpdateMaintenanceService) return;
         await MaintainStudentDevicesAsync(MaintenanceOperationKind.MaintenanceServiceUpdate, null);
     }
 

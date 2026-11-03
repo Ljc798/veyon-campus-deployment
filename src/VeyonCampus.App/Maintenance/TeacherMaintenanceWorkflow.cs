@@ -206,7 +206,7 @@ public sealed class TeacherMaintenanceWorkflow
                 try
                 {
                     serviceArtifact = await _releases.GetNewerMaintenanceServiceReleaseAsync(
-                        currentMaintenanceVersion, cancellationToken).ConfigureAwait(false);
+                        currentMaintenanceVersion, channel, cancellationToken).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
                 catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
@@ -224,7 +224,7 @@ public sealed class TeacherMaintenanceWorkflow
                 var servicePlan = new MaintenancePlan(snapshot.OperationId, snapshot.Device,
                     MaintenanceOperationKind.MaintenanceServiceUpdate, snapshot.CurrentVersions!,
                     null, null, snapshot.Capabilities, serviceArtifact?.Release.Manifest.Sha256, null,
-                    MaintenanceReleaseChannel.Stable,
+                    channel,
                     serviceArtifact is null ? "检查 MaintenanceService 独立发行版本。" :
                         "更新至签名 MaintenanceService 发行 " + serviceArtifact.Release.Manifest.Version + "。",
                     DateTimeOffset.UtcNow, synchronizeConfiguration: false,

@@ -2377,7 +2377,42 @@ public partial class TeacherWindow : Window
             await _model.SelectLocalTestStudentSetupInstallerAsync(path);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or InvalidOperationException)
+                                          InvalidDataException or InvalidOperationException or
+                                          System.Security.Cryptography.CryptographicException or ArgumentException)
+        {
+            _model.ReportLocalStudentTestReleaseSelectionError(exception.Message);
+        }
+    }
+
+    private async void SelectLocalTestMaintenanceInstaller(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                Title = "选择本机测试 MaintenanceService 更新包",
+                AllowMultiple = false,
+                FileTypeFilter =
+                [
+                    new FilePickerFileType("本机测试 MaintenanceService")
+                    {
+                        Patterns = ["VeyonCampus-Maintenance-Setup-*-win-x64.exe"]
+                    }
+                ]
+            });
+            if (files.Count == 0) return;
+            using var file = files[0];
+            var path = file.TryGetLocalPath();
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                _model.ReportLocalStudentTestReleaseSelectionError("所选 MaintenanceService 文件没有可访问的本地路径。");
+                return;
+            }
+            await _model.SelectLocalTestMaintenanceServiceInstallerAsync(path);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          System.Security.Cryptography.CryptographicException or ArgumentException)
         {
             _model.ReportLocalStudentTestReleaseSelectionError(exception.Message);
         }
