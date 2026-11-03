@@ -72,10 +72,13 @@ public static class StudentAgentTeacherChannelClient
             catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                 InvalidDataException or CryptographicException or JsonException or ArgumentException)
             {
+                var classified = exception is StudentAgentTeacherChannelFailureException
+                    ? exception
+                    : new StudentAgentTeacherChannelFailureException("InvalidConfiguration", exception);
                 StudentAgentTeacherChannelDiagnostics.RecordFailure(configPath,
-                    StudentAgentTeacherChannelDiagnostics.ClassifyFailure(exception));
+                    StudentAgentTeacherChannelDiagnostics.ClassifyFailure(classified));
                 WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, "teacher-channel-config",
-                    Guid.NewGuid().ToString("N")[..12], exception);
+                    Guid.NewGuid().ToString("N")[..12], classified);
                 try { await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false); }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
                 continue;
@@ -192,7 +195,7 @@ public static class StudentAgentTeacherChannelClient
             throw new StudentAgentTeacherChannelFailureException("ProtocolMismatch",
                 new InvalidDataException("教师端选择了不受支持的 Agent 通道子协议。"));
 
-        var challenge = StudentAgentChannelProtocol.Deserialize(
+        var challenge = DeserializeTeacherMessage(
             await ReceiveMessageAsync(socket, connectTimeout.Token).ConfigureAwait(false));
         if (challenge.Type != "challenge" || challenge.CampusId != config.CampusId ||
             string.IsNullOrWhiteSpace(challenge.Nonce))
@@ -200,13 +203,17 @@ public static class StudentAgentTeacherChannelClient
                 new InvalidDataException("教师端连接挑战无效。"));
         var hello = StudentAgentChannelProtocol.CreateHello(config.CampusId, challenge.Nonce, agentIdentityKey);
         await SendMessageAsync(socket, hello, sendGate, connectTimeout.Token).ConfigureAwait(false);
-        var ready = StudentAgentChannelProtocol.Deserialize(
+        var ready = DeserializeTeacherMessage(
             await ReceiveMessageAsync(socket, connectTimeout.Token).ConfigureAwait(false));
         if (ready.Type != "ready" || ready.CampusId != config.CampusId ||
             string.IsNullOrWhiteSpace(ready.Target))
             throw new StudentAgentTeacherChannelFailureException("AuthenticationRejected",
                 new InvalidDataException("教师端没有确认学生 Agent 身份。"));
-        _ = ClassroomEventCryptography.NormalizeSingleTarget(ready.Target);
+        try { _ = ClassroomEventCryptography.NormalizeSingleTarget(ready.Target); }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException)
+        {
+            throw new StudentAgentTeacherChannelFailureException("AuthenticationRejected", exception);
+        }
         StudentAgentTeacherChannelDiagnostics.RecordConnected(configPath);
 
         using var sessionLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -243,10 +250,11 @@ public static class StudentAgentTeacherChannelClient
         while (!cancellationToken.IsCancellationRequested)
         {
             var bytes = await ReceiveMessageAsync(socket, cancellationToken).ConfigureAwait(false);
-            var message = StudentAgentChannelProtocol.Deserialize(bytes);
+            var message = DeserializeTeacherMessage(bytes);
             if (message.Type == "heartbeat-ack") continue;
             if (message.Type != "http-request")
-                throw new InvalidDataException("教师端发送了未知连接消息。");
+                throw new StudentAgentTeacherChannelFailureException("ProtocolMismatch",
+                    new InvalidDataException("教师端发送了未知连接消息。"));
             await requestDispatcher.DispatchAsync(message, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -358,7 +366,8 @@ public static class StudentAgentTeacherChannelClient
                     throw new WebSocketException("教师端已关闭学生 Agent 连接。");
                 if (result.MessageType != WebSocketMessageType.Text ||
                     message.Length + result.Count > StudentAgentChannelProtocol.MaximumMessageBytes)
-                    throw new InvalidDataException("学生连接帧类型或大小无效。");
+                    throw new StudentAgentTeacherChannelFailureException("ProtocolMismatch",
+                        new InvalidDataException("学生连接帧类型或大小无效。"));
                 message.Write(buffer, 0, result.Count);
                 if (result.EndOfMessage) return message.ToArray();
             }
@@ -389,7 +398,8 @@ public static class StudentAgentTeacherChannelClient
             baseUri.Scheme != Uri.UriSchemeHttps ||
             !IPAddress.TryParse(baseUri.Host, out var address) ||
             !ClassroomEventCryptography.IsPrivateIpv4Address(address))
-            throw new InvalidDataException("教师端连接地址无效。");
+            throw new StudentAgentTeacherChannelFailureException("InvalidConfiguration",
+                new InvalidDataException("教师端连接地址无效。"));
         var builder = new UriBuilder(baseUri)
         {
             Scheme = Uri.UriSchemeWss,
@@ -397,6 +407,15 @@ public static class StudentAgentTeacherChannelClient
             Query = ""
         };
         return builder.Uri;
+    }
+
+    private static StudentAgentChannelMessage DeserializeTeacherMessage(ReadOnlySpan<byte> bytes)
+    {
+        try { return StudentAgentChannelProtocol.Deserialize(bytes); }
+        catch (Exception exception) when (exception is JsonException or InvalidDataException or ArgumentException)
+        {
+            throw new StudentAgentTeacherChannelFailureException("ProtocolMismatch", exception);
+        }
     }
 
     private static string? FingerprintConfiguration(WebsitePolicyAgentConfig config)

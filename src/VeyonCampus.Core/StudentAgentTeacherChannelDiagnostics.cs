@@ -135,18 +135,7 @@ public static class StudentAgentTeacherChannelDiagnostics
         if (sockets.Any(item => item.SocketErrorCode is SocketError.NetworkUnreachable or SocketError.HostUnreachable or
                 SocketError.TimedOut or SocketError.NetworkDown or SocketError.AddressNotAvailable))
             return "TcpConnectFailure";
-        if (chain.Any(item => item is InvalidDataException))
-        {
-            var message = string.Join(" ", chain.Select(item => item.Message));
-            if (message.Contains("身份", StringComparison.Ordinal) ||
-                message.Contains("challenge", StringComparison.OrdinalIgnoreCase) ||
-                message.Contains("认证", StringComparison.Ordinal) ||
-                message.Contains("挑战", StringComparison.Ordinal)) return "AuthenticationRejected";
-            if (message.Contains("子协议", StringComparison.Ordinal) ||
-                message.Contains("消息", StringComparison.Ordinal) ||
-                message.Contains("协议", StringComparison.Ordinal)) return "ProtocolMismatch";
-            return "InvalidConfiguration";
-        }
+        if (chain.Any(item => item is InvalidDataException or JsonException)) return "ProtocolMismatch";
         if (chain.Any(item => item is WebSocketException)) return "NetworkFailure";
         if (chain.Any(item => item is UriFormatException or ArgumentException)) return "InvalidConfiguration";
         return "NetworkFailure";
