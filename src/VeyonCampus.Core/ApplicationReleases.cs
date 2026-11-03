@@ -204,8 +204,9 @@ public sealed class ApplicationReleaseClient
     {
         _ = ParseVersion(currentVersion);
         var roleName = RoleName(role);
+        var releaseApiVersion = role == ApplicationReleaseRole.MaintenanceService ? 5 : 4;
         var url = new Uri(_apiBaseAddress,
-            $"v4/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
+            $"v{releaseApiVersion}/releases/latest?role={Uri.EscapeDataString(roleName)}&architecture=win-x64");
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
@@ -644,7 +645,7 @@ public sealed class ApplicationReleaseClient
                 manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767 ||
                 manifest.StudentAgentVersion is null || !IsSemanticVersion(manifest.StudentAgentVersion))) ||
             (manifest.SchemaVersion == 5 && (expectedRole != ApplicationReleaseRole.MaintenanceService ||
-                !isStable || manifest.PolicyCapabilities is not null || manifest.StudentAgentVersion is not null ||
+                manifest.ReleaseChannel != "stable" || manifest.PolicyCapabilities is not null || manifest.StudentAgentVersion is not null ||
                 manifest.MaintenanceProtocolVersion is not (>= 1 and <= 32767))) ||
             (manifest.SchemaVersion < 5 && manifest.MaintenanceProtocolVersion is not null) ||
             (expectedRole == ApplicationReleaseRole.MaintenanceService && manifest.SchemaVersion != 5) ||

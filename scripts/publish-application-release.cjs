@@ -28,15 +28,21 @@ function parseArguments(args) {
       options.confirmed = true;
       continue;
     }
-    if (!['--role', '--version', '--installer', '--agent-target'].includes(name) || options[name])
+    if (!['--role', '--version', '--installer', '--agent-target', '--maintenance-protocol-version'].includes(name) || options[name])
       throw new Error(`Unexpected or duplicate argument: ${name}`);
     const value = args[++index];
     if (!value || value.startsWith('--')) throw new Error(`Missing value for ${name}`);
     options[name] = value;
   }
   if (!options.confirmed) throw new Error('Pass --confirm-publication to publish a public application release.');
-  if (!['TeacherConsole', 'StudentSetup'].includes(options['--role']))
-    throw new Error('--role must be TeacherConsole or StudentSetup.');
+  if (!['TeacherConsole', 'StudentSetup', 'MaintenanceService'].includes(options['--role']))
+    throw new Error('--role must be TeacherConsole, StudentSetup, or MaintenanceService.');
+  const maintenanceProtocolVersion = options['--maintenance-protocol-version'] === undefined
+    ? null : Number(options['--maintenance-protocol-version']);
+  if ((options['--role'] === 'MaintenanceService' &&
+       (!Number.isInteger(maintenanceProtocolVersion) || maintenanceProtocolVersion < 1 || maintenanceProtocolVersion > 32767)) ||
+      (options['--role'] !== 'MaintenanceService' && maintenanceProtocolVersion !== null))
+    throw new Error('--maintenance-protocol-version is required only for MaintenanceService and must be 1–32767.');
   if (!options['--version'] || options['--version'].length > 64 ||
       !VERSION_PATTERN.test(options['--version']))
     throw new Error('--version must be a valid SemVer X.Y.Z value.');
@@ -48,7 +54,8 @@ function parseArguments(args) {
     installerPath,
     agentTargetPath: options['--agent-target']
       ? path.resolve(options['--agent-target'])
-      : `${installerPath}.agent-target.json`
+      : `${installerPath}.agent-target.json`,
+    maintenanceProtocolVersion
   };
 }
 
@@ -69,6 +76,9 @@ function canonicalPayload(manifest) {
   if (manifest.schemaVersion === 4) {
     payload.studentAgentVersion = manifest.studentAgentVersion;
     payload.releaseChannel = manifest.releaseChannel;
+  } else if (manifest.schemaVersion === 5) {
+    payload.releaseChannel = manifest.releaseChannel;
+    payload.maintenanceProtocolVersion = manifest.maintenanceProtocolVersion;
   }
   return Buffer.from(JSON.stringify(payload), 'utf8');
 }
@@ -186,7 +196,7 @@ function compareSemanticVersions(left, right) {
 }
 
 async function getLatestRelease(apiBaseUrl, role) {
-  const url = new URL(`v3/releases/latest?role=${encodeURIComponent(role)}&architecture=win-x64`, apiBaseUrl);
+  const url = new URL(`v5/releases/latest?role=${encodeURIComponent(role)}&architecture=win-x64`, apiBaseUrl);
   const response = await fetch(url, {
     headers: { Accept: 'application/json' },
     cache: 'no-store',
@@ -227,9 +237,13 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       publicApiBaseUrl.search || publicApiBaseUrl.hash || publicApiBaseUrl.username || publicApiBaseUrl.password)
     throw new Error('The configured public API base URL must be an HTTPS root URL.');
 
-  const { role, version, installerPath, agentTargetPath } = parseArguments(args);
-  const roleName = role === 'TeacherConsole' ? 'Teacher' : 'Student';
-  const product = role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
+  const { role, version, installerPath, agentTargetPath, maintenanceProtocolVersion } = parseArguments(args);
+  const roleName = { TeacherConsole: 'Teacher', StudentSetup: 'Student', MaintenanceService: 'Maintenance' }[role];
+  const product = {
+    TeacherConsole: 'VeyonCampus.TeacherConsole',
+    StudentSetup: 'VeyonCampus.StudentSetup',
+    MaintenanceService: 'VeyonCampus.MaintenanceService'
+  }[role];
   const fileName = `VeyonCampus-${roleName}-Setup-${version}-win-x64.exe`;
   if (path.basename(installerPath) !== fileName)
     throw new Error(`Installer filename must be exactly ${fileName}.`);
@@ -254,7 +268,7 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
 
   const releaseId = crypto.randomUUID();
   const manifest = {
-    schemaVersion: 3,
+    schemaVersion: role === 'MaintenanceService' ? 5 : 3,
     product,
     role,
     version,
@@ -263,7 +277,9 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
     sizeBytes: fileInfo.size,
     sha256: await computeFileSha256(installerPath),
     downloadUrl: new URL(`v1/releases/${releaseId}/artifact`, publicApiBaseUrl).href,
-    policyCapabilities: { applicationPolicy: 1, studentSystemPolicy: 1 }
+    ...(role === 'MaintenanceService'
+      ? { releaseChannel: 'stable', maintenanceProtocolVersion }
+      : { policyCapabilities: { applicationPolicy: 1, studentSystemPolicy: 1 } })
   };
   let studentAgentVersion = null;
   let agentTargetSignature = null;
@@ -314,8 +330,9 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       currentRelease.manifest.sha256 === manifest.sha256 &&
       currentRelease.manifest.fileName === manifest.fileName &&
       currentRelease.manifest.sizeBytes === manifest.sizeBytes &&
-      currentRelease.manifest.policyCapabilities?.applicationPolicy === manifest.policyCapabilities.applicationPolicy &&
-      currentRelease.manifest.policyCapabilities?.studentSystemPolicy === manifest.policyCapabilities.studentSystemPolicy;
+      currentRelease.manifest.policyCapabilities?.applicationPolicy === manifest.policyCapabilities?.applicationPolicy &&
+      currentRelease.manifest.policyCapabilities?.studentSystemPolicy === manifest.policyCapabilities?.studentSystemPolicy &&
+      currentRelease.manifest.maintenanceProtocolVersion === manifest.maintenanceProtocolVersion;
     if (sameArtifact) {
       if (role === 'StudentSetup') {
         const externalDownloadUrl = installerDownloadUrl(releaseDownload, manifest);
@@ -344,12 +361,12 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
   }).toString('base64');
-  const legacySignature = crypto.sign('sha256', legacyCanonicalPayload(manifest), {
+  const legacySignature = role === 'MaintenanceService' ? null : crypto.sign('sha256', legacyCanonicalPayload(manifest), {
     key: privateKey,
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
   }).toString('base64');
-  const legacySystemPolicySignature = crypto.sign('sha256', legacySystemPolicyCanonicalPayload(manifest), {
+  const legacySystemPolicySignature = role === 'MaintenanceService' ? null : crypto.sign('sha256', legacySystemPolicyCanonicalPayload(manifest), {
     key: privateKey,
     padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
     saltLength: 32
@@ -357,9 +374,19 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
   // Verify the public attachment before advertising it. CloudBase receives JSON metadata only.
   const externalDownloadUrl = installerDownloadUrl(releaseDownload, manifest);
   await verifyExternalArtifact(externalDownloadUrl, manifest);
-  await requestCloudBase(apiBase, apiKey, '/v1/rdb/rest/rpc/publish_application_release_v4', {
-    method: 'POST',
-    body: {
+  const publishEndpoint = role === 'MaintenanceService'
+    ? '/v1/rdb/rest/rpc/publish_maintenance_service_release_v1'
+    : '/v1/rdb/rest/rpc/publish_application_release_v4';
+  const publishBody = role === 'MaintenanceService'
+    ? {
+      p_release_id: releaseId,
+      p_version: version,
+      p_size_bytes: fileInfo.size,
+      p_sha256: manifest.sha256,
+      p_signature: signature,
+      p_maintenance_protocol_version: maintenanceProtocolVersion
+    }
+    : {
       p_release_id: releaseId,
       p_role: role,
       p_version: version,
@@ -372,7 +399,10 @@ async function publish({ environment = process.env, args = process.argv.slice(2)
       p_student_system_policy_capability: manifest.policyCapabilities.studentSystemPolicy,
       p_student_agent_version: studentAgentVersion,
       p_student_agent_target_signature: agentTargetSignature
-    },
+    };
+  await requestCloudBase(apiBase, apiKey, publishEndpoint, {
+    method: 'POST',
+    body: publishBody,
     timeoutMs: 30000
   });
   console.log(JSON.stringify({ releaseId, role, version, fileName, sizeBytes: fileInfo.size,

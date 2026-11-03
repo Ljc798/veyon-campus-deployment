@@ -11,7 +11,7 @@ function downloadConfiguration(environment = {}) {
 }
 
 function installerDownloadUrl(configuration, release) {
-  const role = { TeacherConsole: 'Teacher', StudentSetup: 'Student' }[release.role];
+  const role = { TeacherConsole: 'Teacher', StudentSetup: 'Student', MaintenanceService: 'Maintenance' }[release.role];
   if (!role || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(release.version) ||
       release.fileName !== `VeyonCampus-${role}-Setup-${release.version}-win-x64.exe`)
     throw new Error('External installer downloads require matching stable release metadata.');

@@ -23,7 +23,7 @@ const DEFAULT_PAGE_SIZE = 20;
 const MAX_PAGE_SIZE = 49;
 const APPLICATION_RELEASE_MAX_BYTES = 512 * 1024 * 1024;
 const APPLICATION_RELEASE_SIGNATURE_ALGORITHM = 'RSA-PSS-SHA256';
-const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
+const APPLICATION_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup', 'MaintenanceService']);
 const FILE_UPDATE_RELEASE_ROLES = new Set(['TeacherConsole', 'StudentSetup']);
 const FILE_UPDATE_RELEASE_CHANNELS = new Set(['stable', 'beta']);
 const FILE_UPDATE_MANIFEST_MAX_BYTES = 16 * 1024 * 1024;
@@ -802,8 +802,12 @@ function normalizeReleaseRow(row) {
   const releaseId = typeof row.release_id === 'string' ? row.release_id.toLowerCase() : '';
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(releaseId))
     return null;
-  const roleProduct = row.role === 'TeacherConsole' ? 'VeyonCampus.TeacherConsole' : 'VeyonCampus.StudentSetup';
-  const roleFile = row.role === 'TeacherConsole' ? 'Teacher' : 'Student';
+  const roleProduct = {
+    TeacherConsole: 'VeyonCampus.TeacherConsole',
+    StudentSetup: 'VeyonCampus.StudentSetup',
+    MaintenanceService: 'VeyonCampus.MaintenanceService'
+  }[row.role];
+  const roleFile = { TeacherConsole: 'Teacher', StudentSetup: 'Student', MaintenanceService: 'Maintenance' }[row.role];
   const version = row.version;
   if (row.product !== roleProduct || row.architecture !== 'win-x64' ||
       !parseSemanticVersion(version) || row.signature_algorithm !== APPLICATION_RELEASE_SIGNATURE_ALGORITHM ||
@@ -820,12 +824,14 @@ function normalizeReleaseRow(row) {
   const legacySystemPolicySignature = row.legacy_system_policy_signature ?? null;
   const studentAgentVersion = row.student_agent_version ?? null;
   const studentAgentTargetSignature = row.student_agent_target_signature ?? null;
+  const maintenanceProtocolVersion = row.maintenance_protocol_version == null
+    ? null : Number(row.maintenance_protocol_version);
   const isCanonicalSignature = (value) => {
     if (typeof value !== 'string' || value.length > 8192) return false;
     const signatureBytes = Buffer.from(value, 'base64');
     return signatureBytes.length >= 256 && signatureBytes.toString('base64') === value;
   };
-  if (![1, 2, 3].includes(manifestSchemaVersion) ||
+  if (![1, 2, 3, 5].includes(manifestSchemaVersion) ||
       (manifestSchemaVersion === 1 && (studentSystemPolicyCapability !== 0 || applicationPolicyCapability !== 0 ||
         legacySignature !== null || legacySystemPolicySignature !== null)) ||
       (manifestSchemaVersion === 2 && (!Number.isInteger(studentSystemPolicyCapability) ||
@@ -836,6 +842,14 @@ function normalizeReleaseRow(row) {
         !Number.isInteger(applicationPolicyCapability) || applicationPolicyCapability < 1 ||
         applicationPolicyCapability > 32767 || !isCanonicalSignature(legacySignature) ||
         !isCanonicalSignature(legacySystemPolicySignature))) ||
+      (manifestSchemaVersion === 5 && (row.role !== 'MaintenanceService' ||
+        !Number.isInteger(maintenanceProtocolVersion) || maintenanceProtocolVersion < 1 ||
+        maintenanceProtocolVersion > 32767 || studentSystemPolicyCapability !== 0 ||
+        applicationPolicyCapability !== 0 || legacySignature !== null ||
+        legacySystemPolicySignature !== null || studentAgentVersion !== null ||
+        studentAgentTargetSignature !== null)) ||
+      (manifestSchemaVersion !== 5 && maintenanceProtocolVersion !== null) ||
+      (row.role === 'MaintenanceService' && manifestSchemaVersion !== 5) ||
       !isCanonicalSignature(row.signature) ||
       ((studentAgentVersion === null) !== (studentAgentTargetSignature === null)) ||
       (studentAgentVersion !== null && (row.role !== 'StudentSetup' || !parseSemanticVersion(studentAgentVersion) ||
@@ -859,6 +873,7 @@ function normalizeReleaseRow(row) {
     legacySystemPolicySignature,
     studentAgentVersion,
     studentAgentTargetSignature,
+    maintenanceProtocolVersion,
     signatureAlgorithm: APPLICATION_RELEASE_SIGNATURE_ALGORITHM,
     objectKey: row.object_key,
     publishedAt: row.published_at
@@ -866,7 +881,11 @@ function normalizeReleaseRow(row) {
 }
 
 function makeReleaseManifest(config, release, apiVersion = 1) {
-  const schemaVersion = Math.min(release.manifestSchemaVersion, apiVersion);
+  const schemaVersion = release.role === 'MaintenanceService'
+    ? (apiVersion >= 5 ? 5 : 0)
+    : Math.min(release.manifestSchemaVersion, apiVersion);
+  if (schemaVersion === 0)
+    throw new InvalidRequestError('MaintenanceService releases require the v5 signed manifest API.');
   const manifest = {
     schemaVersion,
     product: release.product,
@@ -885,6 +904,10 @@ function makeReleaseManifest(config, release, apiVersion = 1) {
       applicationPolicy: release.applicationPolicyCapability,
       studentSystemPolicy: release.studentSystemPolicyCapability
     };
+  else if (schemaVersion === 5) {
+    manifest.releaseChannel = 'stable';
+    manifest.maintenanceProtocolVersion = release.maintenanceProtocolVersion;
+  }
   return manifest;
 }
 
@@ -1010,7 +1033,7 @@ async function readReleaseRows(config, query) {
 
 async function readLatestReleaseEnvelopes(config, roles, apiVersion = 1, includeAgentTarget = false) {
   const query = new URLSearchParams({
-    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,student_agent_version,student_agent_target_signature,published_at',
+    select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,student_agent_version,student_agent_target_signature,maintenance_protocol_version,published_at',
     role: roles.length === 1 ? 'eq.' + roles[0] : 'in.(' + roles.join(',') + ')',
     architecture: 'eq.win-x64',
     status: 'eq.published',
@@ -1051,7 +1074,11 @@ async function handleLatestRelease(request, response, config, url, apiVersion = 
   const role = url.searchParams.get('role');
   const architecture = url.searchParams.get('architecture') || 'win-x64';
   if (!APPLICATION_RELEASE_ROLES.has(role)) {
-    sendJson(response, 400, { error: 'role must be TeacherConsole or StudentSetup' });
+    sendJson(response, 400, { error: 'role must be TeacherConsole, StudentSetup, or MaintenanceService' });
+    return;
+  }
+  if (role === 'MaintenanceService' && apiVersion < 5) {
+    sendJson(response, 400, { error: 'MaintenanceService requires the v5 signed release manifest' });
     return;
   }
   if (architecture !== 'win-x64') {
@@ -1100,7 +1127,7 @@ async function handleLatestFileUpdateRelease(response, config, url) {
 async function handleReleaseArtifact(request, response, config, releaseId) {
   try {
     const query = new URLSearchParams({
-      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,published_at',
+      select: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,manifest_schema_version,student_system_policy_capability,application_policy_capability,legacy_signature,legacy_system_policy_signature,student_agent_version,student_agent_target_signature,maintenance_protocol_version,published_at',
       release_id: 'eq.' + releaseId,
       status: 'eq.published',
       limit: '1'
@@ -2151,6 +2178,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v4/releases/latest') {
         await handleLatestRelease(request, response, config, url, 3, true);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v5/releases/latest') {
+        await handleLatestRelease(request, response, config, url, 5, true);
         return;
       }
       if (request.method === 'GET' && pathname === '/v1/file-updates/latest') {
