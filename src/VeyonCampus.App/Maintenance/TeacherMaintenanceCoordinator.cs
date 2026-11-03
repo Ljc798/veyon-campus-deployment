@@ -1,5 +1,6 @@
 using VeyonCampus.Core.Maintenance;
 using System.Security.Cryptography;
+using VeyonCampus.Core;
 
 namespace VeyonCampus.App.Maintenance;
 
@@ -26,7 +27,8 @@ public enum MaintenanceAdapterDisposition
 public sealed record MaintenanceAdapterResult(Guid OperationId, MaintenanceAdapterDisposition Disposition,
     string Detail, MaintenanceEvidence? Evidence,
     MaintenanceComponentVersions? VerifiedCurrentVersions = null,
-    string? VerifiedUpdateTransactionState = null, DateTimeOffset? VerifiedStatusUtc = null);
+    string? VerifiedUpdateTransactionState = null, DateTimeOffset? VerifiedStatusUtc = null,
+    long? ConfigurationRevision = null);
 
 public sealed record MaintenanceUpdateRequest(MaintenancePlan Plan);
 
@@ -291,6 +293,14 @@ public sealed class TeacherMaintenanceCoordinator
             .ToArray());
     }
 
+    public async Task<MaintenanceConfigurationReconciliationStatus> GetConfigurationStatusAsync(
+        string deviceIdentityFingerprint, MaintenanceConfigurationModule module,
+        CancellationToken cancellationToken = default)
+    {
+        var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        return journal.GetConfigurationStatus(deviceIdentityFingerprint, module);
+    }
+
     /// <summary>Reads current signed device facts without creating or advancing a maintenance operation.</summary>
     public Task<MaintenanceAdapterInspection> InspectCurrentAsync(MaintenanceDeviceIdentity device,
         CancellationToken cancellationToken = default)
@@ -440,6 +450,7 @@ public sealed class TeacherMaintenanceCoordinator
             }
             run = run.TransitionTo(MaintenanceRunState.Completed, result.Detail, evidence, DateTimeOffset.UtcNow);
             await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
+            await PersistConfigurationSnapshotsAsync(run, result, cancellationToken).ConfigureAwait(false);
         }
         else if (result.Disposition == MaintenanceAdapterDisposition.PendingVerification)
         {
@@ -475,6 +486,7 @@ public sealed class TeacherMaintenanceCoordinator
                 run = run.TransitionTo(MaintenanceRunState.ConfigurationSyncing,
                     "签名读回确认目标教师连接配置已生效。", evidence, DateTimeOffset.UtcNow);
             run = run.TransitionTo(MaintenanceRunState.Completed, result.Detail, evidence, DateTimeOffset.UtcNow);
+            await PersistConfigurationSnapshotsAsync(run, result, cancellationToken).ConfigureAwait(false);
         }
         else if (result.Disposition == MaintenanceAdapterDisposition.UpdateRolledBack)
         {
@@ -502,6 +514,36 @@ public sealed class TeacherMaintenanceCoordinator
         }
         await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
         return run;
+    }
+
+    private async Task PersistConfigurationSnapshotsAsync(MaintenanceRun run, MaintenanceAdapterResult result,
+        CancellationToken cancellationToken)
+    {
+        if (run.Plan?.ConfigurationSha256 is not { } targetFingerprint ||
+            result.ConfigurationRevision is not { } revision || result.Evidence?.Sha256 is not { } responseSha ||
+            run.Transitions.LastOrDefault(item => item.To == MaintenanceRunState.ConfigurationSyncing)
+                ?.Evidence?.Sha256 is not { } commandSha)
+            return;
+        using var signingKey = WebsitePolicySigningKeyStore.Open(run.Device.CampusId);
+        var signerFingerprint = StudentAgentResponseCryptography.GetFingerprint(signingKey.PublicKeyPem);
+        var issuedUtc = run.Transitions.Last(item => item.To == MaintenanceRunState.ConfigurationSyncing)
+            .OccurredUtc;
+        var desired = new DesiredMaintenanceConfiguration(run.Device.PinnedIdentityFingerprint,
+            MaintenanceConfigurationModule.TeacherConnectivity, 1, revision, targetFingerprint,
+            signerFingerprint, commandSha, issuedUtc);
+        var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var previouslyDesired = journal.DesiredConfigurations.FirstOrDefault(item =>
+            item.DeviceIdentityFingerprint == desired.DeviceIdentityFingerprint &&
+            item.Module == desired.Module);
+        if (previouslyDesired is not null && (previouslyDesired.Revision != revision ||
+            previouslyDesired.Fingerprint != targetFingerprint))
+            throw new InvalidDataException("设备签名读回 revision 与 Teacher Desired 配置不匹配。");
+        var reported = new ReportedMaintenanceConfiguration(run.Device.PinnedIdentityFingerprint,
+            MaintenanceConfigurationModule.TeacherConnectivity, 1, revision, targetFingerprint,
+            MaintenanceConfigurationApplyState.Applied, responseSha,
+            result.VerifiedStatusUtc ?? result.Evidence.VerifiedUtc);
+        await _store.SetDesiredConfigurationAsync(desired, cancellationToken).ConfigureAwait(false);
+        await _store.SetReportedConfigurationAsync(reported, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<MaintenanceRun> RecordVerifiedStatusAsync(MaintenanceRun run,

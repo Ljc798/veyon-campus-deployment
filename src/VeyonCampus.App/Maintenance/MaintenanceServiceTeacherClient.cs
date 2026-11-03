@@ -29,10 +29,15 @@ internal sealed class MaintenanceServiceTeacherClient
     public MaintenanceServiceTeacherClient(MaintenanceServiceTrustStore? trustStore = null) =>
         _trustStore = trustStore ?? new MaintenanceServiceTrustStore();
 
-    public bool IsAvailable(MaintenanceDeviceIdentity device) =>
-        device is not null && MaintenanceServiceChannelHub.IsConnected(device.CampusId, device.RouteAddress) &&
-        _trustStore.FindTrustedPublicKey(device.CampusId, device.RouteAddress,
+    public bool HasPinnedIdentity(MaintenanceDeviceIdentity device) =>
+        device is not null && _trustStore.FindTrustedPublicKey(device.CampusId, device.RouteAddress,
             device.PinnedIdentityFingerprint) is not null;
+
+    public bool HasConnectedChannel(MaintenanceDeviceIdentity device) =>
+        device is not null && MaintenanceServiceChannelHub.IsConnected(device.CampusId, device.RouteAddress);
+
+    public bool IsAvailable(MaintenanceDeviceIdentity device) =>
+        HasConnectedChannel(device) && HasPinnedIdentity(device);
 
     public async Task<MaintenanceServiceTeacherReply<TPayload>> SendAsync<TPayload>(
         MaintenanceDeviceIdentity device, Guid operationId, Guid? commandId,
@@ -44,7 +49,8 @@ internal sealed class MaintenanceServiceTeacherClient
         string? targetSetupVersion = null,
         string? releaseSha256 = null,
         string? signedReleaseEnvelopeJson = null,
-        string? artifactTransferUrl = null) where TPayload : class
+        string? artifactTransferUrl = null,
+        long? targetTeacherConfigurationRevision = null) where TPayload : class
     {
         ArgumentNullException.ThrowIfNull(device);
         ArgumentNullException.ThrowIfNull(teacherSigningKey);
@@ -65,7 +71,8 @@ internal sealed class MaintenanceServiceTeacherClient
             SignedReleaseEnvelopeJson: signedReleaseEnvelopeJson,
             ArtifactTransferUrl: artifactTransferUrl,
             TargetTeacherConfigurationFingerprint: targetTeacherConfigurationFingerprint,
-            TeacherConfiguration: teacherConfiguration);
+            TeacherConfiguration: teacherConfiguration,
+            TargetTeacherConfigurationRevision: targetTeacherConfigurationRevision);
         string signedRequest;
         lock (teacherSigningKey)
             signedRequest = MaintenanceProtocolV1.SignRequest(request, teacherSigningKey, now);

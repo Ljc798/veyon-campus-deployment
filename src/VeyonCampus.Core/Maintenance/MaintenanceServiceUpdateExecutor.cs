@@ -52,6 +52,7 @@ public static class MaintenanceServiceUpdateExecutor
     private static readonly HttpClient DownloadClient = new(new HttpClientHandler
     {
         AllowAutoRedirect = false,
+        UseProxy = false,
         UseCookies = false,
         AutomaticDecompression = DecompressionMethods.None
     }) { Timeout = TimeSpan.FromMinutes(20) };
@@ -189,7 +190,9 @@ public static class MaintenanceServiceUpdateExecutor
         {
             if (artifactCreated) TryDeleteFile(installerPath);
             if (envelopeCreated) TryDeleteFile(envelopePath);
-            MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, "needsReview");
+            // The helper has not been offered this package yet, so the installed tree is unchanged.
+            // Keep the transaction auditable while allowing a later command to retry cleanly.
+            MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, "rolledBack");
             throw;
         }
     }
@@ -218,8 +221,10 @@ public static class MaintenanceServiceUpdateExecutor
             var agentVersion = ReadInstalledVersions(configPath, nowUtc).AgentRuntimeVersion;
             var targetSetupInstalled = string.Equals(installed, record.TargetSetupVersion,
                 StringComparison.Ordinal);
-            var targetAgentInstalled = record.TargetAgentVersion is not { } targetAgent || agentVersion is not null &&
-                ApplicationReleaseClient.CompareVersions(agentVersion, targetAgent) >= 0;
+            var targetAgentInstalled = record.TargetAgentVersion is { } targetAgent
+                ? agentVersion is not null && ApplicationReleaseClient.CompareVersions(agentVersion, targetAgent) >= 0
+                : record.PreviousAgentVersion is { } previousAgent && agentVersion is not null &&
+                  ApplicationReleaseClient.CompareVersions(agentVersion, previousAgent) >= 0;
             var terminalState = targetSetupInstalled && targetAgentInstalled ? "committed" : "needsReview";
             MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, terminalState);
             record = ReadTransaction(configPath) ?? throw new InvalidDataException("Maintenance 更新事务读回丢失。" );
@@ -276,7 +281,8 @@ public static class MaintenanceServiceUpdateExecutor
         try { ApplicationReleaseUpdateHandoff.StartFromMaintenanceService(installerPath, configPath, commandId); }
         catch
         {
-            MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, "needsReview");
+            MaintenanceServiceUpdateJournal.MarkCompleted(configPath, commandId, "rolledBack");
+            TryDeleteStagedPackage(installerPath);
             throw;
         }
         await Task.CompletedTask.ConfigureAwait(false);
@@ -367,42 +373,22 @@ public static class MaintenanceServiceUpdateExecutor
 
     internal static class MaintenanceServiceUpdateJournalStore
     {
-        private static readonly object Gate = new();
+        private const string JournalMutexName = @"Global\VeyonCampus.MaintenanceUpdateJournal";
 
         public static void Write(string configPath, MaintenanceServiceUpdateTransactionRecord record)
         {
-            lock (Gate)
-            {
-                var path = GetPath(configPath);
-                var directory = Path.GetDirectoryName(path)!;
-                PathLinkSecurity.RejectLinks(directory);
-                if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
-                var bytes = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
-                if (bytes.Length is 0 or > MaximumTransactionBytes)
-                    throw new IOException("Maintenance 更新事务超过存储上限。" );
-                var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
-                try
-                {
-                    using (new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
-                    AgentFileSecurity.SecurePrivateFile(temporary);
-                    using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.Write, FileShare.None,
-                               16 * 1024, FileOptions.WriteThrough))
-                    {
-                        stream.Write(bytes);
-                        stream.Flush(flushToDisk: true);
-                    }
-                    PathLinkSecurity.RejectLinks(directory);
-                    File.Move(temporary, path, overwrite: true);
-                    AgentFileSecurity.SecurePrivateFile(path);
-                }
-                finally { TryDeleteFile(temporary); }
-            }
+            using var gate = AcquireGate();
+            WriteCore(GetPath(configPath), record);
         }
 
         public static void MarkHelperStarted(string configPath, Guid commandId, int processId, long startTicks)
         {
-            var current = RequireMatching(configPath, commandId);
-            Write(configPath, current with
+            using var gate = AcquireGate();
+            var path = GetPath(configPath);
+            var current = RequireMatching(path, commandId);
+            if (current.State is not ("pending" or "inProgress"))
+                throw new InvalidDataException("Maintenance 更新事务已经进入终态；UpdateHelper 不会重新开始。" );
+            WriteCore(path, current with
             {
                 State = "inProgress",
                 HelperProcessId = processId,
@@ -415,8 +401,11 @@ public static class MaintenanceServiceUpdateExecutor
         {
             if (state is not ("committed" or "rolledBack" or "needsReview"))
                 throw new ArgumentOutOfRangeException(nameof(state));
-            var current = RequireMatching(configPath, commandId);
-            Write(configPath, current with
+            using var gate = AcquireGate();
+            var path = GetPath(configPath);
+            var current = RequireMatching(path, commandId);
+            if (current.State is "committed" or "rolledBack") return;
+            WriteCore(path, current with
             {
                 State = state,
                 HelperProcessId = null,
@@ -425,12 +414,91 @@ public static class MaintenanceServiceUpdateExecutor
             });
         }
 
-        private static MaintenanceServiceUpdateTransactionRecord RequireMatching(string configPath, Guid commandId)
+        private static MaintenanceServiceUpdateTransactionRecord RequireMatching(string path, Guid commandId)
         {
-            var current = ReadTransaction(GetPath(configPath));
+            var current = ReadTransaction(path);
             if (current is null || current.CommandId != commandId)
                 throw new InvalidDataException("Maintenance 更新事务与 UpdateHelper commandId 不匹配。" );
             return current;
+        }
+
+        private static void WriteCore(string path, MaintenanceServiceUpdateTransactionRecord record)
+        {
+            var current = ReadTransaction(path);
+            if (current is not null)
+            {
+                if (current.CommandId == record.CommandId)
+                {
+                    if (current.OperationId != record.OperationId ||
+                        !string.Equals(current.PreviousSetupVersion, record.PreviousSetupVersion,
+                            StringComparison.Ordinal) ||
+                        !string.Equals(current.ReleaseSha256, record.ReleaseSha256,
+                            StringComparison.OrdinalIgnoreCase) ||
+                        !string.Equals(current.TargetSetupVersion, record.TargetSetupVersion,
+                            StringComparison.Ordinal) ||
+                        !string.Equals(current.PreviousAgentVersion, record.PreviousAgentVersion,
+                            StringComparison.Ordinal) ||
+                        !string.Equals(current.TargetAgentVersion, record.TargetAgentVersion,
+                            StringComparison.Ordinal))
+                        throw new InvalidDataException("Maintenance 更新 commandId 已绑定到不同事务意图。");
+                    if (current.State is "committed" or "rolledBack") return;
+                }
+                else if (current.State is "pending" or "inProgress" or "needsReview")
+                {
+                    throw new InvalidOperationException("已有 Maintenance 更新事务尚未安全结束；拒绝覆盖事务日志。");
+                }
+            }
+            var directory = Path.GetDirectoryName(path)!;
+            PathLinkSecurity.RejectLinks(directory);
+            if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
+            var bytes = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
+            if (bytes.Length is 0 or > MaximumTransactionBytes)
+                throw new IOException("Maintenance 更新事务超过存储上限。" );
+            var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+            try
+            {
+                using (new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+                AgentFileSecurity.SecurePrivateFile(temporary);
+                using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.Write, FileShare.None,
+                           16 * 1024, FileOptions.WriteThrough))
+                {
+                    stream.Write(bytes);
+                    stream.Flush(flushToDisk: true);
+                }
+                PathLinkSecurity.RejectLinks(directory);
+                File.Move(temporary, path, overwrite: true);
+                AgentFileSecurity.SecurePrivateFile(path);
+            }
+            finally { TryDeleteFile(temporary); }
+        }
+
+        private static IDisposable AcquireGate()
+        {
+            var mutex = new Mutex(initiallyOwned: false, JournalMutexName);
+            try
+            {
+                try
+                {
+                    if (!mutex.WaitOne(TimeSpan.FromSeconds(10)))
+                        throw new IOException("Maintenance 更新事务锁等待超时。" );
+                }
+                catch (AbandonedMutexException) { }
+                return new MutexLease(mutex);
+            }
+            catch
+            {
+                mutex.Dispose();
+                throw;
+            }
+        }
+
+        private sealed class MutexLease(Mutex mutex) : IDisposable
+        {
+            public void Dispose()
+            {
+                try { mutex.ReleaseMutex(); }
+                finally { mutex.Dispose(); }
+            }
         }
 
         private static string GetPath(string configPath) => Path.Combine(

@@ -567,6 +567,12 @@ if (-not $SkipRestore) {
             '--locked-mode', '-p:NuGetAudit=false',
             '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
             '-p:VeyonCampusIncludeInstaller=false')
+        if ($releasePublicKeyFullPath) {
+            $maintenanceServiceRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+        }
+        if ($testReleasePublicKeyFullPath) {
+            $maintenanceServiceRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+        }
         Invoke-Dotnet $maintenanceServiceRestoreArguments
 
         $companionRestoreArguments = @('restore', $companionProjectPath, '-r', 'win-x64', '--locked-mode',
@@ -675,6 +681,12 @@ if ($Role -eq 'StudentSetup') {
         '-p:AppHostDotNetSearch=Global', "-p:Version=$appVersion",
         '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
         '-p:VeyonCampusIncludeInstaller=false', '-o', $maintenanceServicePublishDirectory)
+    if ($releasePublicKeyFullPath) {
+        $maintenanceServicePublishArguments += "-p:VeyonCampusReleasePublicKeyPath=$releasePublicKeyFullPath"
+    }
+    if ($testReleasePublicKeyFullPath) {
+        $maintenanceServicePublishArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$testReleasePublicKeyFullPath"
+    }
     Invoke-Dotnet $maintenanceServicePublishArguments
 }
 

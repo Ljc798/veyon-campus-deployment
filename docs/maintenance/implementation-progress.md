@@ -9,6 +9,7 @@
 ## 当前基线
 
 - 开始本轮时 HEAD：`5b5cf7306e99f0fc8dab176f893e360c549a025b`（`develop`）。
+- 已形成的本地代码基线提交：`0090395 Implement Maintenance service foundation and workflows`（`develop`，领先 `origin/develop` 1 个提交；未推送）。
 - 工作区原有用户输入：未跟踪的 URL 编码完整实施计划；保留原样，未加入代码提交。
 - .NET SDK：需显式使用 `C:\Program Files\dotnet\dotnet.exe`（x64 SDK `10.0.401`）；PATH 中默认 `dotnet.exe` 指向 x86 且不能满足 `global.json`。
 
@@ -32,7 +33,7 @@
 | 14 | P1-06 AppLocker/Store/Appx-MSIX（Issue 009） | `SUPPORT-SCOPE-CLARIFIED; VM-PENDING` | 教师端明确说明 AppLocker 只约束 EXE、Appx/MSIX 保持全签名放行；Store 隐藏/常规安装限制不等于阻止已安装游戏启动。规则和 Edition 的真实效果仍未在 Windows VM 验收。 |
 | 15 | P2-01 独立 Maintenance Windows Service | `CODE-WIRED; TEST-DEFERRED; VM-PENDING` | 新增原生 SCM 服务宿主、LocalSystem 自动启动/失败重启与受限服务 DACL；StudentSetup 离线打包和 Inno 安装、更新停止/恢复、卸载接线已加入。尚未构建或在 Windows VM 安装验证。 |
 | 16 | P2-02 Maintenance 协议、重放保护与独立身份 | `NETWORK-WIRED; TEST-DEFERRED; VM-PENDING` | 独立 SYSTEM 身份登记与 pin、持久重放窗、教师发起 WebSocket 通道、签名健康/能力/版本/配置同步/事务查询恢复已接入服务 host 和教师 adapter；未运行自动化或 Windows VM 验收。 |
-| 17 | P2-03 复用 UpdateHelper 与既有事务 | `PARTIAL; TEST-DEFERRED` | 已增加固定签名 StudentSetup 包的局域网 ticket、SYSTEM 私有暂存、发行签名与 SHA 核验、UpdateHelper 交接和独立事务回读骨架；教师 adapter 的 Maintenance 更新发送/结果分类尚未接完，当前不能端到端使用，也未验证 Agent 停止与失败恢复。 |
+| 17 | P2-03 复用 UpdateHelper 与既有事务 | `PARTIAL-CODE-WIRED; BUILD-AND-TEST-DEFERRED; VM-PENDING` | Teacher adapter 已按设备拆分 Maintenance/旧 Agent 通道，Maintenance 分支签发 LAN ticket、发送签名发行清单并分类事务回执；服务端完成 SYSTEM 私有暂存、发行签名/SHA/版本核验、UpdateHelper 交接和签名事务读回；事务日志使用跨进程互斥并拒绝覆盖活动事务。Maintenance 文件已移至 StudentSetup 目录外；服务控制端根据 SCM ImagePath 只迁移旧路径，迁移后的服务在常规 StudentSetup 更新期间保持运行。包下载/Helper 启动在切换前失败时记录 rolledBack；未知 Agent 目标要求 Agent 不低于源版本。首次旧服务迁移与卸载清理仍需 VM 验证；Maintenance 自身独立升级/回滚仍属 P3，尚未构建或执行自动化、Windows VM、现场验收。 |
 | 18 | P2-04 StudentSetup 安装 Maintenance | `PACKAGE-WIRED; VM-PENDING` | StudentSetup 离线包包含独立服务文件；安装/更新时停止并重新注册服务，异常时尝试恢复旧服务；卸载前停止服务并在安全清理后移除 SCM 注册。ACL、升级覆盖、失败恢复和完整卸载均需后续 VM 验收。 |
 | 19–21 | P3 自更新、看门狗、离线恢复及故障注入 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 外部组件更新与强杀/断电/断网恢复仍未实现；VM 退出门槛保持。 |
 | 22–37 | P4–P5、LM、CM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 连续推进可执行代码/文档；测试、候选构建、隔离云、生产与现场门槛分开记录。 |
@@ -186,5 +187,11 @@
 - P2-02：新增 `MaintenanceServiceIdentityStore`，将独立 Maintenance 私钥存放在 Agent 配置目录下独立 `Maintenance` 子目录，目录/文件 ACL 限制到 SYSTEM 和 Administrators；密钥文件先保护 ACL 再写入私钥。Maintenance 公钥登记由既有固定 Agent 身份签名，教师端验证登记时同时核对已固定 Agent 密钥、校区、设备指纹、Maintenance 公钥摘要和短时效。
 - P2-02：新增 `MaintenanceServiceTrustStore`，只从已固定 Agent 密钥签名的登记凭据接受 Maintenance pin；Maintenance key 变更默认拒绝，显式传入轮换授权才替换。该 pin store 尚未接入教师端网络握手/设备状态 UI。
 - P2-02：`AgentFileSecurity.SecureTree` 现在识别 Maintenance 子目录并保留其 SYSTEM/Administrators 私有 ACL，拒绝该目录内的链接与嵌套目录。
-- 当前边界：P2-01 SCM 服务、主动 WebSocket 通道、dispatcher、命令执行/事务绑定和 StudentSetup 安装均未完成。协议及身份类属于未接线源码，`TEST-DEFERRED`；ACL、密钥首次登记、轮换与服务停止时独立运行均需后续 Windows VM 验收。
+- 上述身份与协议基座后续已继续接入 P2-01/P2-02：SCM 服务 host、主动 WebSocket 命令通道、dispatcher、StudentSetup 服务安装/更新/卸载接线已写入源码；Maintenance 更新也已接入 Teacher adapter、SYSTEM 暂存、UpdateHelper 和事务读回。本次提交纳入这些实现及其进度记录；没有执行构建或测试，因此这些条目不得视为可安装或验收通过。
+- P2-03 新增静态保护：服务进程与 SYSTEM UpdateHelper 通过跨进程命名互斥访问同一事务日志；新 commandId 不能覆盖 pending/inProgress/needsReview 事务；同 commandId 不能更改事务意图；committed/rolledBack 不能被迟到写入回退。下载/Helper 启动在安装器接管前失败时记录 rolledBack，允许下一次新 commandId 重试；无 signed Agent target 时，服务终态读回要求 Agent 版本不低于事务来源版本。该保护尚无自动化或 Windows VM 证据。
+- P2-03 服务路径调整：安装器现在把服务文件安装到 `{autopf}\Veyon Campus\MaintenanceService\Current`，从 StudentSetup `{app}` 递归文件安装中排除服务目录；首次安装创建服务，旧 SCM ImagePath 位于 StudentSetup 时执行一次迁移，已迁移的独立服务不在常规 StudentSetup 升级中替换或停止。UpdateHelper 不再主动停止服务。此实现仍是源码级接线，需 VM 证实旧路径迁移、并发服务进程、目录 ACL、升级失败和卸载行为；服务自身的版本升级/回滚仍需 P3-01。
+- LM-01 路由保护：Legacy adapter 现在区分“无 Maintenance 注册/通道”与“Maintenance 身份已固定但离线”或“存在未固定通道”。后两种转为 `ManualRequired`，不再静默回退到 Legacy；更新批次在发送前将这类设备排除，避免因超时或信任异常并行走第二条更新路径。该分支尚无自动化或现场验收证据。
+- CM-01 revision/journal 接线进行中：Maintenance 请求要求同步命令带正数 revision；SYSTEM bootstrap schema 2 持久化 revision，只接受严格 `current + 1`，签名 health 与同步回执都返回 revision。教师 adapter 读取 health 再发下一 revision，并核对回执。初次成功和恢复成功均将 Desired/Reported 写入 Schema 3 Teacher journal；恢复读回 revision 必须与既有 Desired 一致，同 revision 的签名报告只允许内容相同、采集时间更新的刷新。Desired signer fingerprint 来自本机教师签名公钥，信封摘要来自发送前持久化的签名命令摘要。界面尚未展示；schema 1 bootstrap 读取兼容。未构建/测试，CM-01 仍进行中。
+- CM-05 状态判定基础：新增配置对账状态计算，区分无 Desired、等待签名 Reported、Pending、Rejected、Drifted、InSync，并暴露 Desired/Reported revision、指纹及最后 Reported 时间；`IsConfigurationInSync` 改用完整状态判断。尚未接到 Teacher UI；未构建/测试。
+- 当前验证边界：本轮尚未构建安装包，用户现在没有可据此测试的 StudentSetup 安装包。完成代码实施后，仍需统一执行自动化检查与 Windows VM 安装/升级/回滚验收；随后才能打包给用户手动测试。Production 发布和真实校区推送仍是单独门槛。
 - P1-06 / Issue 009：`TeacherPolicyView.axaml` 已明确区分 EXE 运行限制、Store 可见/常规安装限制与已安装 Appx/MSIX 启动限制；不再暗示当前 AppLocker XML 能限制已安装游戏。没有变更 Appx 放行基线，也没有将范围说明当作现场验收；Edition 支持矩阵、实际 Store 下载/启动、策略撤销与系统必需包保护均 `VM-PENDING` / `NOT-TESTED`。

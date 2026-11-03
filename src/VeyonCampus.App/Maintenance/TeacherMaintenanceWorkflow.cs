@@ -274,6 +274,16 @@ public sealed class TeacherMaintenanceWorkflow
                 StudentAgentChannelHub.IsConnected(campusId, route), DateTimeOffset.UtcNow,
                 snapshotsByOperation[result.OperationId].TeacherChannelDiagnostics));
         }
+        for (var index = 0; index < outcomes.Count; index++)
+        {
+            var outcome = outcomes[index];
+            if (outcome.OperationId is not { } operationId ||
+                !snapshotsByOperation.TryGetValue(operationId, out var snapshot)) continue;
+            var configStatus = await _coordinator.GetConfigurationStatusAsync(
+                snapshot.Device.PinnedIdentityFingerprint, MaintenanceConfigurationModule.TeacherConnectivity,
+                cancellationToken).ConfigureAwait(false);
+            outcomes[index] = outcome with { Summary = AppendConfigurationStatus(outcome.Summary, configStatus) };
+        }
         return Array.AsReadOnly(outcomes.ToArray());
     }
 
@@ -294,10 +304,36 @@ public sealed class TeacherMaintenanceWorkflow
         {
             // A failed optional refresh must not erase the already reconciled transaction outcome.
         }
-        return ToOutcome(run, run.Transitions.LastOrDefault()?.Reason ?? "已重新核对维护事务。",
+        var outcome = ToOutcome(run, run.Transitions.LastOrDefault()?.Reason ?? "已重新核对维护事务。",
             StudentAgentChannelHub.IsConnected(run.Device.CampusId, run.Device.RouteAddress),
             run.VerifiedUpdateTransactionState ?? inspection?.UpdateTransactionState, DateTimeOffset.UtcNow,
             inspection?.TeacherChannelDiagnostics);
+        var configurationStatus = await _coordinator.GetConfigurationStatusAsync(
+            run.Device.PinnedIdentityFingerprint, MaintenanceConfigurationModule.TeacherConnectivity,
+            cancellationToken).ConfigureAwait(false);
+        return outcome with { Summary = AppendConfigurationStatus(outcome.Summary, configurationStatus) };
+    }
+
+    private static string AppendConfigurationStatus(string summary,
+        MaintenanceConfigurationReconciliationStatus status)
+    {
+        var label = status.State switch
+        {
+            MaintenanceConfigurationReconciliationState.NoDesiredConfiguration => "无教师连接配置目标",
+            MaintenanceConfigurationReconciliationState.AwaitingReport => "等待学生端签名读回",
+            MaintenanceConfigurationReconciliationState.PendingApplication => "配置等待应用",
+            MaintenanceConfigurationReconciliationState.Rejected => "学生端拒绝配置",
+            MaintenanceConfigurationReconciliationState.Drifted => "配置存在漂移",
+            MaintenanceConfigurationReconciliationState.InSync => "配置已同步",
+            _ => "配置状态未知"
+        };
+        var revisions = status.DesiredRevision is { } desiredRevision
+            ? $"Desired r{desiredRevision} / Reported {status.ReportedRevision?.ToString() ?? "未上报"}"
+            : "未设置 Desired revision";
+        var lastReport = status.LastReportedUtc is { } reportedUtc
+            ? $"；最近签名读回 {reportedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+            : "；尚无签名读回";
+        return $"{summary} 配置：{label}（{revisions}）{lastReport}。";
     }
 
     private static TeacherMaintenanceTargetResult ToOutcome(MaintenanceRun run, string summary,

@@ -11,6 +11,10 @@ public interface IMaintenanceRunStore
     Task<MaintenanceJournal> ReadAsync(CancellationToken cancellationToken = default);
     Task<MaintenanceJournal> AddOrGetAsync(MaintenanceRun run, CancellationToken cancellationToken = default);
     Task<MaintenanceJournal> UpdateAsync(MaintenanceRun run, CancellationToken cancellationToken = default);
+    Task<MaintenanceJournal> SetDesiredConfigurationAsync(DesiredMaintenanceConfiguration desired,
+        CancellationToken cancellationToken = default);
+    Task<MaintenanceJournal> SetReportedConfigurationAsync(ReportedMaintenanceConfiguration reported,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>Per-user atomic teacher-side journal; it stores public evidence digests, never signing keys.</summary>
@@ -66,6 +70,24 @@ public sealed class MaintenanceRunStore : IMaintenanceRunStore
         ArgumentNullException.ThrowIfNull(run);
         var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
         var updated = current.Update(run, DateTimeOffset.UtcNow);
+        await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }, cancellationToken);
+
+    public Task<MaintenanceJournal> SetDesiredConfigurationAsync(DesiredMaintenanceConfiguration desired,
+        CancellationToken cancellationToken = default) => ExecuteLockedAsync(async () =>
+    {
+        var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
+        var updated = current.SetDesiredConfiguration(desired, DateTimeOffset.UtcNow);
+        await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }, cancellationToken);
+
+    public Task<MaintenanceJournal> SetReportedConfigurationAsync(ReportedMaintenanceConfiguration reported,
+        CancellationToken cancellationToken = default) => ExecuteLockedAsync(async () =>
+    {
+        var current = await ReadJournalCoreAsync(cancellationToken).ConfigureAwait(false);
+        var updated = current.SetReportedConfiguration(reported, DateTimeOffset.UtcNow);
         await WriteJournalAsync(updated, cancellationToken).ConfigureAwait(false);
         return updated;
     }, cancellationToken);

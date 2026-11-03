@@ -17,6 +17,7 @@ internal static class Program
     private const uint ScManagerConnect = 0x0001;
     private const uint ScManagerCreateService = 0x0002;
     private const uint ServiceQueryStatus = 0x0004;
+    private const uint ServiceQueryConfig = 0x0001;
     private const uint ServiceChangeConfig = 0x0002;
     private const uint ServiceStartAccess = 0x0010;
     private const uint ServiceStopAccess = 0x0020;
@@ -132,10 +133,22 @@ internal static class Program
         }
         else
         {
-            var servicePath = "\"" + executablePath + "\"";
-            if (!ChangeServiceConfig(service, 0xFFFFFFFF, ServiceAutoStart, ServiceErrorNormal,
-                    servicePath, null, IntPtr.Zero, null, "LocalSystem", null, ServiceDisplayName))
-                throw LastError("无法更新 Maintenance 服务启动配置。" );
+            var configuredPath = QueryServiceBinaryPath(service);
+            var configuredExecutable = ExtractExecutablePath(configuredPath);
+            if (!PathsEqual(configuredExecutable, executablePath) &&
+                configuredExecutable.Contains(Path.Combine("Veyon Campus", "Student", "MaintenanceService"),
+                    StringComparison.OrdinalIgnoreCase))
+            {
+                StopServiceAndWait(service);
+                var servicePath = "\"" + executablePath + "\"";
+                if (!ChangeServiceConfig(service, 0xFFFFFFFF, ServiceAutoStart, ServiceErrorNormal,
+                        servicePath, null, IntPtr.Zero, null, "LocalSystem", null, ServiceDisplayName))
+                    throw LastError("无法迁移旧 StudentSetup 目录中的 Maintenance 服务注册。" );
+            }
+            else if (!PathsEqual(configuredExecutable, executablePath))
+            {
+                throw new InvalidDataException("Maintenance 服务已注册到未知路径；拒绝覆盖 SCM 配置。" );
+            }
         }
         ApplyServiceSecurity(service);
         ApplyFailureActions(service);
@@ -144,6 +157,42 @@ internal static class Program
         WriteLog("Maintenance service installed or updated and started.");
         return 0;
     }
+
+    private static string QueryServiceBinaryPath(SafeServiceHandle service)
+    {
+        _ = QueryServiceConfigNative(service, IntPtr.Zero, 0, out var required);
+        var error = Marshal.GetLastWin32Error();
+        if (required == 0 || error != 122)
+            throw new Win32Exception(error, "无法查询 Maintenance 服务启动路径。");
+        var buffer = Marshal.AllocHGlobal(checked((int)required));
+        try
+        {
+            if (!QueryServiceConfigNative(service, buffer, required, out _))
+                throw LastError("无法读取 Maintenance 服务启动路径。");
+            var config = Marshal.PtrToStructure<QueryServiceConfig>(buffer);
+            return Marshal.PtrToStringUni(config.BinaryPathName)
+                   ?? throw new InvalidDataException("Maintenance 服务 ImagePath 为空。");
+        }
+        finally { Marshal.FreeHGlobal(buffer); }
+    }
+
+    private static string ExtractExecutablePath(string servicePath)
+    {
+        var trimmed = servicePath.Trim();
+        if (trimmed.StartsWith('"'))
+        {
+            var endQuote = trimmed.IndexOf('"', 1);
+            if (endQuote <= 1) throw new InvalidDataException("Maintenance 服务 ImagePath 引号无效。");
+            return Path.GetFullPath(trimmed[1..endQuote]);
+        }
+        var exeIndex = trimmed.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
+        if (exeIndex < 0) throw new InvalidDataException("Maintenance 服务 ImagePath 缺少可执行文件路径。");
+        return Path.GetFullPath(trimmed[..(exeIndex + 4)]);
+    }
+
+    private static bool PathsEqual(string left, string right) =>
+        string.Equals(Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar),
+            Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
 
     private static int UninstallServiceCommand()
     {
@@ -262,6 +311,11 @@ internal static class Program
         using var manager = OpenServiceControlManager(ScManagerConnect);
         using var service = TryOpenService(manager, ServiceStopAccess | ServiceQueryStatus, out var notInstalled);
         if (notInstalled || service is null) return;
+        StopServiceAndWait(service);
+    }
+
+    private static void StopServiceAndWait(SafeServiceHandle service)
+    {
         var state = QueryServiceState(service);
         if (state == ServiceStopped) return;
         if (state != ServiceStopPending)
@@ -478,6 +532,20 @@ internal static class Program
         public uint ServiceFlags;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct QueryServiceConfig
+    {
+        public uint ServiceType;
+        public uint StartType;
+        public uint ErrorControl;
+        public IntPtr BinaryPathName;
+        public IntPtr LoadOrderGroup;
+        public uint TagId;
+        public IntPtr Dependencies;
+        public IntPtr ServiceStartName;
+        public IntPtr DisplayName;
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct ServiceFailureAction(uint type, uint delay)
     {
@@ -522,6 +590,12 @@ internal static class Program
     private static extern bool ChangeServiceConfig(SafeServiceHandle service, uint serviceType,
         uint startType, uint errorControl, string binaryPathName, string? loadOrderGroup, IntPtr tagId,
         string? dependencies, string serviceStartName, string? password, string displayName);
+
+    [DllImport("advapi32.dll", EntryPoint = "QueryServiceConfigW", CharSet = CharSet.Unicode,
+        SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool QueryServiceConfigNative(SafeServiceHandle service,
+        IntPtr serviceConfig, uint bufferSize, out uint bytesNeeded);
 
     [DllImport("advapi32.dll", EntryPoint = "StartServiceW", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]

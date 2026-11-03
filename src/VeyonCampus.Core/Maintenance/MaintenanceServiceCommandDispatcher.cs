@@ -15,7 +15,8 @@ public sealed record MaintenanceServiceHealthPayload(
     string AgentConfigurationFingerprint,
     DateTimeOffset CheckedUtc,
     bool RunningAsSystem,
-    bool? ManagedAgentTaskTrusted);
+    bool? ManagedAgentTaskTrusted,
+    long TeacherConfigurationRevision = 0);
 
 public sealed record MaintenanceServiceCapabilitiesPayload(
     int ProtocolVersion,
@@ -37,7 +38,8 @@ public sealed record MaintenanceServiceInstalledVersionsPayload(
 public sealed record MaintenanceServiceTeacherConfigurationSyncPayload(
     string ConfigurationFingerprint,
     DateTimeOffset UpdatedUtc,
-    MaintenanceServiceInstalledVersionsPayload InstalledVersions);
+    MaintenanceServiceInstalledVersionsPayload InstalledVersions,
+    long ConfigurationRevision = 0);
 
 public sealed record MaintenanceServiceTransactionReadbackPayload(
     StudentUpdateTransactionStatus Transaction,
@@ -166,7 +168,8 @@ public sealed class MaintenanceServiceCommandDispatcher
                     MaintenanceProtocolV1.CurrentVersion, bootstrap.ConfigurationFingerprint,
                     WebsitePolicyAgent.ConfigFingerprint(
                         MaintenanceServiceIdentityStore.ReadTrustedAgentConfiguration(configPath)), nowUtc,
-                    IsSystemIdentity(), ReadManagedAgentTask(configPath) is not null);
+                    IsSystemIdentity(), ReadManagedAgentTask(configPath) is not null,
+                    bootstrap.ConfigurationRevision);
                 return (state == "ready" ? "succeeded" : "pending",
                     state == "ready" ? "Maintenance 服务协议与受保护配置可读。" : "缺少教师连接配置，Maintenance 当前不能建立主动维护连接。",
                     SerializePayload(payload));
@@ -208,7 +211,8 @@ public sealed class MaintenanceServiceCommandDispatcher
                 return ("succeeded", "教师连接配置已写入 Maintenance 独立配置，并通过目标指纹读回。",
                     SerializePayload(new MaintenanceServiceTeacherConfigurationSyncPayload(
                         updated.ConfigurationFingerprint ?? throw new InvalidDataException(
-                            "Maintenance 配置读回缺少目标指纹。"), updated.UpdatedUtc, installedVersions)));
+                            "Maintenance 配置读回缺少目标指纹。"), updated.UpdatedUtc, installedVersions,
+                        updated.ConfigurationRevision)));
             }
             case MaintenanceProtocolV1Command.OfferSignedStudentSetupUpdate:
                 throw new InvalidOperationException("StudentSetup 更新命令未通过事务准备入口执行。" );

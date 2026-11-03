@@ -60,7 +60,8 @@ Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: 
 [Files]
 ; A push transaction must observe every replacement before committing. Do not queue
 ; locked files for reboot; let Setup fail so the transaction can restore the prior tree.
-Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "MaintenanceService\*"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Current"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
@@ -98,7 +99,7 @@ const
   EdgeForceListMarkerKey = 'SOFTWARE\VeyonCampus\StudentSetup\EdgeRealtime';
   EdgeStoreUpdateUrl = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx';
   StudentUpdateLeaseName = 'Local\VeyonCampus_StudentSetup_InstallUpdate';
-  MaintenanceServiceRelativePath = 'MaintenanceService\VeyonCampus.MaintenanceService.exe';
+  MaintenanceServiceRelativePath = 'Veyon Campus\MaintenanceService\Current\VeyonCampus.MaintenanceService.exe';
   WaitObject0 = 0;
   WaitTimeout = 258;
 
@@ -141,6 +142,11 @@ begin
     Log('Could not resolve the self-update source executable; using the normal student install/update lease.');
     Result := False;
   end;
+end;
+
+function IsMaintenanceServiceSelfUpdate(): Boolean;
+begin
+  Result := CompareText(GetEnv('VEYONCAMPUS_MAINTENANCE_SELF_UPDATE'), '1') = 0;
 end;
 
 function AcquireInstallUpdateLease(): Boolean;
@@ -186,7 +192,7 @@ function RunMaintenanceServiceControl(const Parameters: String; var ResultCode: 
 var
   ServiceExecutable: String;
 begin
-  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  ServiceExecutable := ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath);
   Result := FileExists(ServiceExecutable) and
     Exec(ServiceExecutable, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
@@ -195,9 +201,10 @@ function StopMaintenanceServiceBeforeUpdate(): String;
 var
   ResultCode: Integer;
   ServiceExecutable: String;
+  ServiceImagePath: String;
 begin
   Result := '';
-  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  ServiceExecutable := ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath);
   if not FileExists(ServiceExecutable) then Exit;
 
   MaintenanceServiceTouched := True;
@@ -214,6 +221,16 @@ begin
   end;
 
   MaintenanceServiceInitiallyInstalled := True;
+
+  if RegQueryStringValue(HKLM64,
+       'SYSTEM\CurrentControlSet\Services\VeyonCampusMaintenanceService', 'ImagePath', ServiceImagePath) and
+     (Pos(LowerCase(ExpandConstant('{app}\MaintenanceService\')),
+       LowerCase(ServiceImagePath)) = 0) then
+  begin
+    Log('Maintenance service is already installed outside StudentSetup; keeping it online during this application update.');
+    Exit;
+  end;
+
   if not RunMaintenanceServiceControl('--stop-service', ResultCode) or (ResultCode <> 0) then
   begin
     Result := '无法安全停止 Maintenance 后台服务；安装已停止，请重试或重启 Windows。';
@@ -254,7 +271,7 @@ var
   ResultCode: Integer;
 begin
   Result := True;
-  if not FileExists(ExpandConstant('{app}\' + MaintenanceServiceRelativePath)) then Exit;
+  if not FileExists(ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath)) then Exit;
   if not RunMaintenanceServiceControl('--query-service', ResultCode) then
   begin
     Result := False;
@@ -283,7 +300,12 @@ var
   ServiceExecutable: String;
 begin
   if not MaintenanceServiceTouched or MaintenanceServiceSetupCompleted then Exit;
-  ServiceExecutable := ExpandConstant('{app}\' + MaintenanceServiceRelativePath);
+  if IsMaintenanceServiceSelfUpdate() and MaintenanceServiceInitiallyInstalled then
+  begin
+    Log('Maintenance self-update failed; the external UpdateHelper will restore the prior StudentSetup tree and restart the service.');
+    Exit;
+  end;
+  ServiceExecutable := ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath);
   if not FileExists(ServiceExecutable) then Exit;
   if MaintenanceServiceInitiallyInstalled then
   begin
@@ -291,14 +313,16 @@ begin
       Log('Could not restart the previously installed Maintenance service after Setup failed.');
   end
   else if not UninstallMaintenanceService() then
-    Log('Could not remove the new Maintenance service registration after Setup failed.');
+    Log('Could not remove the new Maintenance service registration after Setup failed.')
+  else
+    DelTree(ExpandConstant('{autopf}\Veyon Campus\MaintenanceService\Current'), True, True, True);
 end;
 
 function InitializeSetup(): Boolean;
 begin
-  MaintenanceServiceInitiallyInstalled := False;
-  MaintenanceServiceWasStopped := False;
-  MaintenanceServiceTouched := False;
+  MaintenanceServiceInitiallyInstalled := IsMaintenanceServiceSelfUpdate();
+  MaintenanceServiceWasStopped := MaintenanceServiceInitiallyInstalled;
+  MaintenanceServiceTouched := MaintenanceServiceInitiallyInstalled;
   MaintenanceServiceSetupCompleted := False;
   Result := AcquireInstallUpdateLease();
   if not Result then
@@ -692,8 +716,6 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    if not InstallAndStartMaintenanceService() then
-      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
     if not RegisterEdgePolicyExecutorTask() then
       Log('Edge policy executor crash recovery task could not be installed; the all-users Startup shortcut remains as a fallback.');
     if IsEdgeExtensionConfigured() then
@@ -709,6 +731,8 @@ begin
       else
         RemoveOwnedEdgeExtensionPolicy();
     end;
+    if not InstallAndStartMaintenanceService() then
+      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
   end;
 end;
 
@@ -735,7 +759,10 @@ begin
     RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateRecovery'));
     if not DirExists(ExpandConstant('{autopf}\Veyon Campus\Student')) and
        not DirExists(ExpandConstant('{autopf}\Veyon Campus\Teacher')) then
+    begin
       RemoveDir(ExpandConstant('{autopf}\Veyon Campus\UpdateStaging'));
+      DelTree(ExpandConstant('{autopf}\Veyon Campus\MaintenanceService'), True, True, True);
+    end;
     RemoveDir(ExpandConstant('{autopf}\Veyon Campus'));
   end;
 end;

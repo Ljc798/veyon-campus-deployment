@@ -38,7 +38,8 @@ public sealed record MaintenanceProtocolV1Request(
     string? SignedReleaseEnvelopeJson = null,
     string? ArtifactTransferUrl = null,
     string? TargetTeacherConfigurationFingerprint = null,
-    MaintenanceTeacherBootstrapConfiguration? TeacherConfiguration = null);
+    MaintenanceTeacherBootstrapConfiguration? TeacherConfiguration = null,
+    long? TargetTeacherConfigurationRevision = null);
 
 public sealed record MaintenanceProtocolV1Response(
     int ProtocolVersion,
@@ -146,7 +147,8 @@ public static class MaintenanceProtocolV1
         var hasRelease = request.TargetSetupVersion is not null || request.ReleaseSha256 is not null ||
                          request.SignedReleaseEnvelopeJson is not null || request.ArtifactTransferUrl is not null;
         var hasTeacherConfiguration = request.TargetTeacherConfigurationFingerprint is not null ||
-                                      request.TeacherConfiguration is not null;
+                                      request.TeacherConfiguration is not null ||
+                                      request.TargetTeacherConfigurationRevision is not null;
         switch (request.Command)
         {
             case MaintenanceProtocolV1Command.GetHealth:
@@ -173,8 +175,9 @@ public static class MaintenanceProtocolV1
                 break;
             case MaintenanceProtocolV1Command.SyncTeacherEndpoint:
                 if (request.CommandId is null || hasRelease || !hasTeacherConfiguration ||
-                    request.TargetTeacherConfigurationFingerprint is null || request.TeacherConfiguration is null)
-                    throw new InvalidDataException("教师连接配置命令必须绑定 commandId、目标指纹和配置内容。");
+                    request.TargetTeacherConfigurationFingerprint is null || request.TeacherConfiguration is null ||
+                    request.TargetTeacherConfigurationRevision is not > 0)
+                    throw new InvalidDataException("教师连接配置命令必须绑定 commandId、revision、目标指纹和配置内容。");
                 var fingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(request.CampusId,
                     request.TeacherConfiguration.Endpoints, request.TeacherConfiguration.RootCertificateBase64);
                 if (!string.Equals(fingerprint, request.TargetTeacherConfigurationFingerprint,

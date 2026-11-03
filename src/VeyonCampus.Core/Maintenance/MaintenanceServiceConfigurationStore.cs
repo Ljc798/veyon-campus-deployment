@@ -16,7 +16,8 @@ public sealed record MaintenanceServiceBootstrapSnapshot(
     IReadOnlyList<string>? Endpoints,
     string? RootCertificateBase64,
     string? ConfigurationFingerprint,
-    DateTimeOffset UpdatedUtc);
+    DateTimeOffset UpdatedUtc,
+    long ConfigurationRevision = 0);
 
 /// <summary>
 /// Stores the Maintenance Service's own teacher-channel bootstrap. The initial endpoint is
@@ -29,6 +30,9 @@ public static class MaintenanceServiceConfigurationStore
     private const int MaximumFileBytes = 64 * 1024;
     private static readonly Regex CampusDirectoryPattern = new("^[A-Fa-f0-9]{24}$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private sealed record LegacyBootstrapSnapshot(int SchemaVersion, string CampusId,
+        string AgentIdentityFingerprint, string TeacherSigningPublicKeyPem, IReadOnlyList<string>? Endpoints,
+        string? RootCertificateBase64, string? ConfigurationFingerprint, DateTimeOffset UpdatedUtc);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -104,8 +108,11 @@ public static class MaintenanceServiceConfigurationStore
             current.TeacherSigningPublicKeyPem, current.CampusId, current.AgentIdentityFingerprint, nowUtc);
         if (request.Command != MaintenanceProtocolV1Command.SyncTeacherEndpoint ||
             request.CommandId is null || request.TeacherConfiguration is null ||
-            request.TargetTeacherConfigurationFingerprint is null)
-            throw new InvalidDataException("Maintenance 只接受带签名的教师端点同步命令。");
+            request.TargetTeacherConfigurationFingerprint is null ||
+            request.TargetTeacherConfigurationRevision is not { } targetRevision)
+            throw new InvalidDataException("Maintenance 只接受带签名且绑定 revision 的教师端点同步命令。");
+        if (targetRevision != checked(current.ConfigurationRevision + 1))
+            throw new InvalidDataException("教师连接配置 revision 已变化或不连续；拒绝覆盖新状态。");
 
         var endpoints = Array.AsReadOnly(request.TeacherConfiguration.Endpoints.ToArray());
         var rootCertificate = request.TeacherConfiguration.RootCertificateBase64;
@@ -118,10 +125,12 @@ public static class MaintenanceServiceConfigurationStore
 
         var updated = current with
         {
+            SchemaVersion = 2,
             Endpoints = endpoints,
             RootCertificateBase64 = rootCertificate,
             ConfigurationFingerprint = fingerprint,
-            UpdatedUtc = nowUtc.ToUniversalTime()
+            UpdatedUtc = nowUtc.ToUniversalTime(),
+            ConfigurationRevision = targetRevision
         };
         WriteSnapshot(path, directory, updated);
         return updated;
@@ -137,11 +146,11 @@ public static class MaintenanceServiceConfigurationStore
         var endpoints = config.TeacherChannelEndpoints is null
             ? null
             : Array.AsReadOnly(config.TeacherChannelEndpoints.ToArray());
-        return new MaintenanceServiceBootstrapSnapshot(1, config.CampusId,
+        return new MaintenanceServiceBootstrapSnapshot(2, config.CampusId,
             MaintenanceValidation.Fingerprint(agentFingerprint, nameof(agentFingerprint)), canonicalTeacherKey,
             endpoints, config.TeacherChannelRootCertificateBase64,
             StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(config.CampusId, endpoints,
-                config.TeacherChannelRootCertificateBase64), nowUtc.ToUniversalTime());
+                config.TeacherChannelRootCertificateBase64), nowUtc.ToUniversalTime(), 0);
     }
 
     private static MaintenanceServiceBootstrapSnapshot ReadAndValidate(string path,
@@ -156,7 +165,12 @@ public static class MaintenanceServiceConfigurationStore
         PolicyJson.RejectDuplicateFields(bytes);
         var snapshot = JsonSerializer.Deserialize<MaintenanceServiceBootstrapSnapshot>(bytes, JsonOptions)
                        ?? throw new InvalidDataException("Maintenance 教师连接配置为空。");
-        var canonical = JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonOptions);
+        var canonical = snapshot.SchemaVersion == 1
+            ? JsonSerializer.SerializeToUtf8Bytes(new LegacyBootstrapSnapshot(snapshot.SchemaVersion,
+                snapshot.CampusId, snapshot.AgentIdentityFingerprint, snapshot.TeacherSigningPublicKeyPem,
+                snapshot.Endpoints, snapshot.RootCertificateBase64, snapshot.ConfigurationFingerprint,
+                snapshot.UpdatedUtc), JsonOptions)
+            : JsonSerializer.SerializeToUtf8Bytes(snapshot, JsonOptions);
         if (!bytes.AsSpan().SequenceEqual(canonical))
             throw new InvalidDataException("Maintenance 教师连接配置不是规范 JSON。");
         var canonicalTeacherKey = CanonicalPublicKey(snapshot.TeacherSigningPublicKeyPem);
@@ -164,7 +178,9 @@ public static class MaintenanceServiceConfigurationStore
             snapshot.RootCertificateBase64);
         var actualConfigurationFingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(
             snapshot.CampusId, snapshot.Endpoints, snapshot.RootCertificateBase64);
-        if (snapshot.SchemaVersion != 1 || snapshot.CampusId != agentConfig.CampusId ||
+        if (snapshot.SchemaVersion is not (1 or 2) || snapshot.ConfigurationRevision < 0 ||
+            snapshot.SchemaVersion == 1 && snapshot.ConfigurationRevision != 0 ||
+            snapshot.CampusId != agentConfig.CampusId ||
             snapshot.AgentIdentityFingerprint != MaintenanceValidation.Fingerprint(agentFingerprint,
                 nameof(agentFingerprint)) ||
             !PublicKeysEqual(canonicalTeacherKey, CanonicalPublicKey(agentConfig.PublicKeyPem)) ||
@@ -172,7 +188,7 @@ public static class MaintenanceServiceConfigurationStore
             snapshot.UpdatedUtc.Offset != TimeSpan.Zero ||
             snapshot.UpdatedUtc > DateTimeOffset.UtcNow.AddMinutes(2))
             throw new InvalidDataException("Maintenance 教师连接配置与固定校区、Agent 或教师签名身份不匹配。");
-        return snapshot with { TeacherSigningPublicKeyPem = canonicalTeacherKey };
+        return snapshot with { SchemaVersion = 2, TeacherSigningPublicKeyPem = canonicalTeacherKey };
     }
 
     private static void WriteSnapshot(string path, string directory,

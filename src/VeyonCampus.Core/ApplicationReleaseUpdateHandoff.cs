@@ -195,6 +195,10 @@ public static class ApplicationReleaseUpdateHandoff
         var fullInstallerPath = Path.GetFullPath(installerPath);
         EnsureMaintenanceServiceStagingPath(fullInstallerPath, fullConfigPath);
         var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.StudentSetup);
+        var updateTransaction = MaintenanceServiceUpdateExecutor.ReadTransaction(fullConfigPath);
+        if (updateTransaction is null || updateTransaction.CommandId != commandId ||
+            updateTransaction.State is not ("pending" or "inProgress"))
+            throw new InvalidDataException("UpdateHelper 找不到可执行的原 commandId Maintenance 更新事务。" );
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("Maintenance StudentSetup 更新目标必须高于当前安装版本。" );
         EnsurePolicyCapabilities(ApplicationReleaseRole.StudentSetup, release.Manifest);
@@ -289,7 +293,7 @@ public static class ApplicationReleaseUpdateHandoff
     }
 
     private static void ApplyReleaseAsAdministrator(string installerPath, ApplicationReleaseRole role,
-        string currentVersion, bool requireUserStaging = true)
+        string currentVersion, bool requireUserStaging = true, bool maintenanceServiceSelfUpdate = false)
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
@@ -349,6 +353,8 @@ public static class ApplicationReleaseUpdateHandoff
                     WorkingDirectory = protectedStagingDirectory
                 };
                 installerStartInfo.Environment["VEYONCAMPUS_SELF_UPDATE"] = "1";
+                if (maintenanceServiceSelfUpdate)
+                    installerStartInfo.Environment["VEYONCAMPUS_MAINTENANCE_SELF_UPDATE"] = "1";
                 using (var installer = Process.Start(installerStartInfo)
                                        ?? throw new InvalidOperationException("无法启动签名安装器。"))
                 {
@@ -415,16 +421,62 @@ public static class ApplicationReleaseUpdateHandoff
         }
         catch
         {
+            TryRestartInstalledMaintenanceService(fullProgramFiles);
             var transaction = MaintenanceServiceUpdateExecutor.ReadTransaction(canonicalConfigPath);
             var installedVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
-            var failedState = transaction is not null &&
+            var installedAgentVersion = MaintenanceServiceUpdateExecutor.ReadInstalledVersions(canonicalConfigPath,
+                DateTimeOffset.UtcNow).AgentRuntimeVersion;
+            var failedState = transaction is not null && transaction.PreviousAgentVersion is { } previousAgent &&
                               string.Equals(installedVersion, transaction.PreviousSetupVersion,
-                                  StringComparison.Ordinal)
+                                  StringComparison.Ordinal) &&
+                              string.Equals(installedAgentVersion, previousAgent, StringComparison.Ordinal)
                 ? "rolledBack"
                 : "needsReview";
             MaintenanceServiceUpdateJournal.MarkCompleted(canonicalConfigPath, commandId, failedState);
+            if (failedState == "rolledBack")
+                MaintenanceServiceUpdateExecutor.TryDeleteStagedPackage(fullInstallerPath);
             throw;
         }
+    }
+
+    private static void TryRestartInstalledMaintenanceService(string programFiles)
+    {
+        try
+        {
+            var serviceExecutable = Path.Combine(programFiles, "Veyon Campus", "MaintenanceService", "Current",
+                "VeyonCampus.MaintenanceService.exe");
+            if (!File.Exists(serviceExecutable)) return;
+            PathLinkSecurity.RejectLinks(serviceExecutable);
+            if (RunMaintenanceServiceControl(serviceExecutable, "--query-service") == 0)
+                _ = RunMaintenanceServiceControl(serviceExecutable, "--start-service");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidOperationException or System.ComponentModel.Win32Exception or
+                                          System.Security.SecurityException or TimeoutException)
+        {
+            // The signed transaction remains needsReview; service restart is retried by SCM/installer recovery.
+        }
+    }
+
+    private static int RunMaintenanceServiceControl(string serviceExecutable, string argument)
+    {
+        var startInfo = new ProcessStartInfo(serviceExecutable)
+        {
+            CreateNoWindow = true,
+            UseShellExecute = false,
+            WorkingDirectory = Path.GetDirectoryName(serviceExecutable)!
+        };
+        startInfo.ArgumentList.Add(argument);
+        using var process = Process.Start(startInfo)
+                           ?? throw new InvalidOperationException("无法启动 Maintenance 服务控制命令。" );
+        if (!process.WaitForExit(35_000))
+        {
+            try { process.Kill(entireProcessTree: false); }
+            catch (Exception exception) when (exception is InvalidOperationException or
+                                              System.ComponentModel.Win32Exception) { }
+            throw new TimeoutException("Maintenance 服务控制命令超时。" );
+        }
+        return process.ExitCode;
     }
 
     private static void EnsureMaintenanceServiceStagingPath(string installerPath, string configPath)
