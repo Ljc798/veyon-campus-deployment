@@ -48,6 +48,37 @@ public static class PolicyTrustRotationCryptography
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
+    internal static T VerifyWithAnyRoot<T>(IReadOnlyList<string> publicKeys, Func<string, T> verify)
+    {
+        ArgumentNullException.ThrowIfNull(publicKeys);
+        ArgumentNullException.ThrowIfNull(verify);
+        var failures = new List<Exception>();
+        foreach (var publicKey in publicKeys)
+        {
+            try { return verify(publicKey); }
+            catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            { failures.Add(exception); }
+        }
+        throw new InvalidDataException("没有任何当前或过渡期策略信任根验证通过。", new AggregateException(failures));
+    }
+
+    internal static async Task<T> VerifyWithAnyRootAsync<T>(IReadOnlyList<string> publicKeys,
+        Func<string, Task<T>> verify)
+    {
+        ArgumentNullException.ThrowIfNull(publicKeys);
+        ArgumentNullException.ThrowIfNull(verify);
+        var failures = new List<Exception>();
+        foreach (var publicKey in publicKeys)
+        {
+            try { return await verify(publicKey).ConfigureAwait(false); }
+            catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            { failures.Add(exception); }
+        }
+        throw new InvalidDataException("没有任何当前或过渡期策略信任根验证通过。", new AggregateException(failures));
+    }
+
     public static string Create(string campusId, PolicyTrustKeyRole role, RSA previousPrivateKey,
         RSA newPrivateKey, DateTimeOffset issuedUtc, DateTimeOffset retirePreviousRootUtc)
     {

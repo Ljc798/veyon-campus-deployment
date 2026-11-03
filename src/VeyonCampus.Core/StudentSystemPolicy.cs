@@ -367,10 +367,17 @@ public sealed class StudentSystemPolicyRuntime(IStudentSystemPolicyBackend backe
     }
 
     public StudentSystemPolicyRuntimeState Apply(string signedEnvelope, DateTimeOffset nowUtc)
+        => Apply(signedEnvelope, nowUtc, [publicKeyPem]);
+
+    public StudentSystemPolicyRuntimeState Apply(string signedEnvelope, DateTimeOffset nowUtc,
+        IReadOnlyList<string> trustedPublicKeys)
     {
+        if (trustedPublicKeys is null || trustedPublicKeys.Count == 0)
+            throw new InvalidOperationException("当前没有可用于验证学生机系统策略的信任公钥。");
         var previous = Reconcile();
-        var document = StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId,
-            previous?.Revision ?? 0, nowUtc);
+        var document = PolicyTrustRotationCryptography.VerifyWithAnyRoot(trustedPublicKeys,
+            publicKey => StudentSystemPolicyCryptography.Verify(signedEnvelope, publicKey, campusId,
+                previous?.Revision ?? 0, nowUtc));
         var requestedSettings = document.Settings;
         var supportedSettings = backend.SelectSupportedSettings(requestedSettings);
         var skippedSettings = new List<string>();

@@ -625,7 +625,13 @@ public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyP
     Guid? DeploymentId = null, string? ApplicationVersion = null, string? ApplicationPolicyPublicKeyPem = null,
     string? StudentSystemPolicyPublicKeyPem = null,
     IReadOnlyList<string>? TeacherChannelEndpoints = null,
-    string? TeacherChannelRootCertificateBase64 = null);
+    string? TeacherChannelRootCertificateBase64 = null,
+    string? PreviousWebsitePolicyPublicKeyPem = null,
+    DateTimeOffset? WebsitePolicyPreviousRootRetireUtc = null,
+    string? PreviousApplicationPolicyPublicKeyPem = null,
+    DateTimeOffset? ApplicationPolicyPreviousRootRetireUtc = null,
+    string? PreviousStudentSystemPolicyPublicKeyPem = null,
+    DateTimeOffset? StudentSystemPolicyPreviousRootRetireUtc = null);
 
 public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath, string PreviousExecutablePath);
 
@@ -739,6 +745,7 @@ public static class WebsitePolicyAgentInstaller
             var config = ReadExistingConfig(configPath);
             if (config is null || !string.Equals(config.CampusId, package.Campus, StringComparison.Ordinal))
                 return new(step, ExecutionPlan.NeedsReview, "后台代理配置缺失或校区不匹配。" );
+            ValidateInstalledAgentTrustConfiguration(config);
             using var installedKey = RSA.Create();
             installedKey.ImportFromPem(config.PublicKeyPem);
             using var packageKey = RSA.Create();
@@ -1299,10 +1306,35 @@ public static class WebsitePolicyAgentInstaller
             using var systemKey = RSA.Create();
             systemKey.ImportFromPem(systemPem);
         }
+        ValidateOptionalRootTransition(config.PublicKeyPem, config.PreviousWebsitePolicyPublicKeyPem,
+            config.WebsitePolicyPreviousRootRetireUtc, "网站策略");
+        ValidateOptionalRootTransition(config.ApplicationPolicyPublicKeyPem,
+            config.PreviousApplicationPolicyPublicKeyPem, config.ApplicationPolicyPreviousRootRetireUtc,
+            "应用策略");
+        ValidateOptionalRootTransition(config.StudentSystemPolicyPublicKeyPem,
+            config.PreviousStudentSystemPolicyPublicKeyPem, config.StudentSystemPolicyPreviousRootRetireUtc,
+            "学生系统策略");
         StudentAgentChannelProtocol.ValidateBootstrapConfiguration(config.CampusId,
             config.TeacherChannelEndpoints, config.TeacherChannelRootCertificateBase64);
         if (!string.IsNullOrWhiteSpace(config.TelemetryEndpoint))
             AnonymousUsageHeartbeat.ValidateEndpoint(config.TelemetryEndpoint);
+    }
+
+    private static void ValidateOptionalRootTransition(string? currentPem, string? previousPem,
+        DateTimeOffset? retireUtc, string label)
+    {
+        if ((previousPem is null) != (retireUtc is null))
+            throw new InvalidDataException($"{label}旧根和退休时间必须同时存在。");
+        if (previousPem is null) return;
+        if (currentPem is null) throw new InvalidDataException($"{label}旧根不能在没有当前根时单独存在。");
+        using var currentKey = RSA.Create();
+        using var previousKey = RSA.Create();
+        currentKey.ImportFromPem(currentPem);
+        previousKey.ImportFromPem(previousPem);
+        if (PublicKeysEqual(currentPem, previousPem) ||
+            retireUtc!.Value.ToUniversalTime() - DateTimeOffset.UtcNow.ToUniversalTime() >
+            PolicyTrustRotationCryptography.MaximumTransition)
+            throw new InvalidDataException($"{label}根过渡状态重复或超过 90 天。");
     }
 
     [SupportedOSPlatform("windows")]
@@ -1419,16 +1451,40 @@ public static class WebsitePolicyAgentInstaller
                 !PolicyTrustRootsEqual(existing, canonicalPem,
                     applicationPolicyPem ?? existing.ApplicationPolicyPublicKeyPem,
                     studentSystemPolicyPem ?? existing.StudentSystemPolicyPublicKeyPem);
-            if (mustRemovePreviousCampus || trustRootChanged)
+            var rotationAuthorizations = (package.PolicyTrustRotationAuthorizations ??
+                    Array.Empty<string>())
+                .Select(PolicyTrustRotationCryptography.Parse)
+                .ToDictionary(item => item.Role);
+            var consumedRotationRoles = new HashSet<PolicyTrustKeyRole>();
+            var nowUtc = DateTimeOffset.UtcNow;
+            var websitePreviousRoot = ResolvePolicyTrustRotation(existing, package.Campus,
+                PolicyTrustKeyRole.WebsitePolicy, existing?.PublicKeyPem, canonicalPem,
+                existing?.PreviousWebsitePolicyPublicKeyPem, existing?.WebsitePolicyPreviousRootRetireUtc,
+                rotationAuthorizations, consumedRotationRoles, nowUtc);
+            var applicationPreviousRoot = ResolvePolicyTrustRotation(existing, package.Campus,
+                PolicyTrustKeyRole.ApplicationPolicy, existing?.ApplicationPolicyPublicKeyPem,
+                applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem,
+                existing?.PreviousApplicationPolicyPublicKeyPem,
+                existing?.ApplicationPolicyPreviousRootRetireUtc, rotationAuthorizations,
+                consumedRotationRoles, nowUtc);
+            var systemPreviousRoot = ResolvePolicyTrustRotation(existing, package.Campus,
+                PolicyTrustKeyRole.StudentSystemPolicy, existing?.StudentSystemPolicyPublicKeyPem,
+                studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem,
+                existing?.PreviousStudentSystemPolicyPublicKeyPem,
+                existing?.StudentSystemPolicyPreviousRootRetireUtc, rotationAuthorizations,
+                consumedRotationRoles, nowUtc);
+            if (consumedRotationRoles.Count != rotationAuthorizations.Count)
+                throw new InvalidDataException("配置包包含没有对应信任根变化的轮换授权；拒绝安装。" );
+            if (mustRemovePreviousCampus)
             {
-                stage = mustRemovePreviousCampus ? "恢复并清理原校区策略" : "安全清理旧密钥和策略";
+                stage = "恢复并清理原校区策略";
                 var removal = Uninstall();
                 if (removal.Status != ExecutionPlan.Succeeded)
-                    throw new IOException("旧 Agent 未能安全清理，未切换校区或密钥。" + removal.Detail);
+                    throw new IOException("旧 Agent 未能安全清理，未切换校区。" + removal.Detail);
                 existing = null;
             }
 
-            if (existing is not null && !mustRemovePreviousCampus && !trustRootChanged)
+            if (existing is not null && !mustRemovePreviousCampus)
             {
                 var previousTask = ReadTaskForRemoval();
                 if (previousTask is null)
@@ -1441,9 +1497,9 @@ public static class WebsitePolicyAgentInstaller
                     rollbackUnavailableReason = "任务校区标识不匹配";
                 else if (!File.Exists(previousTask.ExecutablePath))
                     rollbackUnavailableReason = "旧 Agent 文件缺失";
-                else if (!PolicyTrustRootsEqual(previousTask.Config, canonicalPem,
-                             applicationPolicyPem ?? previousTask.Config.ApplicationPolicyPublicKeyPem,
-                             studentSystemPolicyPem ?? previousTask.Config.StudentSystemPolicyPublicKeyPem))
+                else if (!PolicyTrustRootsEqual(previousTask.Config, existing.PublicKeyPem,
+                              existing.ApplicationPolicyPublicKeyPem,
+                              existing.StudentSystemPolicyPublicKeyPem))
                     rollbackUnavailableReason = "任务信任根不匹配";
                 else if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(previousTask.Config),
                              WebsitePolicyAgent.ConfigFingerprint(existing), StringComparison.Ordinal))
@@ -1456,8 +1512,6 @@ public static class WebsitePolicyAgentInstaller
             }
             else if (mustRemovePreviousCampus)
                 rollbackUnavailableReason = "校区切换前的旧 Agent 已清理";
-            else if (trustRootChanged)
-                rollbackUnavailableReason = "信任根变更前的旧 Agent 已清理";
 
             stage = "复制并保护 Agent 程序文件";
             installationMutationStarted = true;
@@ -1501,7 +1555,10 @@ public static class WebsitePolicyAgentInstaller
                 package.DeploymentId ?? existing?.DeploymentId, studentSetupVersion,
                 applicationPolicyPem ?? existing?.ApplicationPolicyPublicKeyPem,
                 studentSystemPolicyPem ?? existing?.StudentSystemPolicyPublicKeyPem,
-                teacherChannelEndpoints, teacherChannelRootCertificateBase64);
+                teacherChannelEndpoints, teacherChannelRootCertificateBase64,
+                websitePreviousRoot.PublicKeyPem, websitePreviousRoot.RetireUtc,
+                applicationPreviousRoot.PublicKeyPem, applicationPreviousRoot.RetireUtc,
+                systemPreviousRoot.PublicKeyPem, systemPreviousRoot.RetireUtc);
             var configBytes = JsonSerializer.SerializeToUtf8Bytes(config, WebsitePolicyAgent.JsonOptions);
 
             var existingAgentMatchesConfiguration = existing is not null &&
@@ -1519,7 +1576,8 @@ public static class WebsitePolicyAgentInstaller
                     throw new IOException("旧代理仍在运行；没有替换配置。请稍后重试。");
             }
 
-            WriteSecureConfig(configPath, configBytes);
+            WriteSecureConfig(configPath, configBytes,
+                allowAuthorizedTrustRotation: trustRootChanged && !mustRemovePreviousCampus);
 
             stage = "预留 HTTP.sys 监听地址";
             EnsureUrlReservation();
@@ -1560,7 +1618,7 @@ public static class WebsitePolicyAgentInstaller
             var installDetail = mustRemovePreviousCampus
                 ? $"已清除旧校区网站限制，并切换到校区 {package.Campus}。"
                 : trustRootChanged
-                    ? "旧网站限制已清理，信任密钥已更新。"
+                    ? "已核验旧根授权并启用新策略根；旧根在授权退休时间前仍可验证策略，原策略状态已保留。"
                     : existing is not null
                         ? "已修复现有网站限制；当前校区设置已保留。"
                         : $"校区 {package.Campus} 的网站限制已安装。";
@@ -1590,6 +1648,78 @@ public static class WebsitePolicyAgentInstaller
     private sealed record AgentInstallRollbackState(AgentTaskForRemoval PreviousTask,
         byte[] PreviousConfigBytes, string PreviousConfigFingerprint);
 
+    private sealed record PreviousPolicyTrustRoot(string? PublicKeyPem, DateTimeOffset? RetireUtc);
+
+    private static PreviousPolicyTrustRoot ResolvePolicyTrustRotation(WebsitePolicyAgentConfig? existing,
+        string campusId, PolicyTrustKeyRole role, string? currentRoot, string? packageRoot,
+        string? existingPreviousRoot, DateTimeOffset? existingRetireUtc,
+        IReadOnlyDictionary<PolicyTrustKeyRole, PolicyTrustRotationAuthorization> authorizations,
+        ISet<PolicyTrustKeyRole> consumedRoles, DateTimeOffset nowUtc)
+    {
+        if (existing is null)
+        {
+            if (authorizations.Count > 0)
+                throw new InvalidDataException("首次安装没有旧学生端固定根；不能用轮换授权代替首次配对。" );
+            return new PreviousPolicyTrustRoot(null, null);
+        }
+        if (packageRoot is null)
+        {
+            if (authorizations.ContainsKey(role))
+                throw new InvalidDataException("移除策略根的包不能附带该用途的轮换授权。" );
+            return new PreviousPolicyTrustRoot(null, null);
+        }
+
+        var changed = currentRoot is null || !PublicKeysEqual(currentRoot, packageRoot);
+        if (!changed)
+        {
+            if (authorizations.TryGetValue(role, out var alreadyAppliedAuthorization))
+            {
+                if (existingPreviousRoot is null || existingRetireUtc is null ||
+                    existingRetireUtc.Value.ToUniversalTime() <= nowUtc.ToUniversalTime())
+                    throw new InvalidDataException("轮换授权与当前策略根一致，但旧根过渡状态不存在或已结束。" );
+                var previous = PolicyTrustRotationCryptography.Verify(
+                    JsonSerializer.Serialize(alreadyAppliedAuthorization), campusId, role,
+                    existingPreviousRoot, nowUtc);
+                using var currentKey = RSA.Create();
+                currentKey.ImportFromPem(packageRoot);
+                if (!PublicKeysEqual(currentKey.ExportSubjectPublicKeyInfoPem(), previous.NewPublicKeyPem) ||
+                    previous.RetirePreviousRootUtc != existingRetireUtc.Value.ToUniversalTime())
+                    throw new InvalidDataException("已应用轮换授权与当前旧根过渡状态不匹配。" );
+                consumedRoles.Add(role);
+                return new PreviousPolicyTrustRoot(existingPreviousRoot,
+                    existingRetireUtc.Value.ToUniversalTime());
+            }
+            if (existingPreviousRoot is null || existingRetireUtc is null ||
+                existingRetireUtc.Value.ToUniversalTime() <= nowUtc.ToUniversalTime())
+                return new PreviousPolicyTrustRoot(null, null);
+            if (existingRetireUtc.Value.ToUniversalTime() - nowUtc.ToUniversalTime() >
+                PolicyTrustRotationCryptography.MaximumTransition)
+                throw new InvalidDataException("现有策略根过渡期限超过 90 天；拒绝沿用。" );
+            return new PreviousPolicyTrustRoot(existingPreviousRoot, existingRetireUtc.Value.ToUniversalTime());
+        }
+
+        if (existingPreviousRoot is not null && existingRetireUtc is { } oldRetire &&
+            oldRetire.ToUniversalTime() > nowUtc.ToUniversalTime())
+            throw new InvalidDataException("上一轮策略根仍在过渡期；必须等其退休后再启动下一轮。" );
+        if (!authorizations.TryGetValue(role, out var authorization))
+            throw new InvalidDataException($"{role} 信任根变化缺少旧可信根授权；拒绝自动接受新公钥。" );
+
+        // When a policy module is first added to an already paired device, its existing
+        // website root is the authorizing root. Replacements are authorized by that module's
+        // own currently pinned root.
+        var authorizingRoot = currentRoot ?? existing.PublicKeyPem;
+        var verified = PolicyTrustRotationCryptography.Verify(
+            JsonSerializer.Serialize(authorization), campusId, role, authorizingRoot, nowUtc);
+        using var candidateKey = RSA.Create();
+        candidateKey.ImportFromPem(packageRoot);
+        if (!PublicKeysEqual(candidateKey.ExportSubjectPublicKeyInfoPem(), verified.NewPublicKeyPem))
+            throw new InvalidDataException("轮换授权的新根与配置包中的新公钥不一致。" );
+        consumedRoles.Add(role);
+        return currentRoot is null
+            ? new PreviousPolicyTrustRoot(null, null)
+            : new PreviousPolicyTrustRoot(currentRoot, verified.RetirePreviousRootUtc);
+    }
+
     private static bool PolicyTrustRootsEqual(WebsitePolicyAgentConfig current, string websitePublicKeyPem,
         string? applicationPolicyPublicKeyPem, string? studentSystemPolicyPublicKeyPem)
     {
@@ -1616,7 +1746,8 @@ public static class WebsitePolicyAgentInstaller
 
             if (previousAgentFilesBackup is not null)
                 RestoreAgentFilesBackup(previousAgentFilesBackup, previousTask.ExecutablePath);
-            WriteSecureConfig(previousTask.ConfigPath, rollback.PreviousConfigBytes);
+            WriteSecureConfig(previousTask.ConfigPath, rollback.PreviousConfigBytes,
+                allowVerifiedTrustRollback: true);
             EnsureUrlReservation();
             EnsureFirewallRule(previousTask.ExecutablePath);
             EnsureScheduledTask(previousTask.ExecutablePath, previousTask.ConfigPath);
@@ -2690,7 +2821,15 @@ public static class WebsitePolicyAgentInstaller
         first.DeploymentId == second.DeploymentId &&
         string.Equals(first.ApplicationVersion, second.ApplicationVersion, StringComparison.Ordinal) &&
         OptionalPublicKeysEqual(first.ApplicationPolicyPublicKeyPem, second.ApplicationPolicyPublicKeyPem) &&
-        OptionalPublicKeysEqual(first.StudentSystemPolicyPublicKeyPem, second.StudentSystemPolicyPublicKeyPem);
+        OptionalPublicKeysEqual(first.StudentSystemPolicyPublicKeyPem, second.StudentSystemPolicyPublicKeyPem) &&
+        OptionalPublicKeysEqual(first.PreviousWebsitePolicyPublicKeyPem, second.PreviousWebsitePolicyPublicKeyPem) &&
+        first.WebsitePolicyPreviousRootRetireUtc == second.WebsitePolicyPreviousRootRetireUtc &&
+        OptionalPublicKeysEqual(first.PreviousApplicationPolicyPublicKeyPem,
+            second.PreviousApplicationPolicyPublicKeyPem) &&
+        first.ApplicationPolicyPreviousRootRetireUtc == second.ApplicationPolicyPreviousRootRetireUtc &&
+        OptionalPublicKeysEqual(first.PreviousStudentSystemPolicyPublicKeyPem,
+            second.PreviousStudentSystemPolicyPublicKeyPem) &&
+        first.StudentSystemPolicyPreviousRootRetireUtc == second.StudentSystemPolicyPreviousRootRetireUtc;
 
     private static bool OptionalPublicKeysEqual(string? first, string? second) =>
         first is null || second is null
@@ -2698,7 +2837,8 @@ public static class WebsitePolicyAgentInstaller
             : PublicKeysEqual(first, second);
 
     [SupportedOSPlatform("windows")]
-    internal static void WriteSecureConfig(string path, byte[] bytes)
+    internal static void WriteSecureConfig(string path, byte[] bytes, bool allowAuthorizedTrustRotation = false,
+        bool allowVerifiedTrustRollback = false)
     {
         var tempPath = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try
@@ -2722,17 +2862,57 @@ public static class WebsitePolicyAgentInstaller
                 var replacement = JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(bytes,
                                      WebsitePolicyAgent.JsonOptions)
                                   ?? throw new InvalidDataException("新学生网站策略代理配置无效。");
+                var websiteChanged = !PublicKeysEqual(current.PublicKeyPem, replacement.PublicKeyPem);
+                var applicationChanged = current.ApplicationPolicyPublicKeyPem is not null &&
+                    (replacement.ApplicationPolicyPublicKeyPem is null ||
+                     !PublicKeysEqual(current.ApplicationPolicyPublicKeyPem,
+                         replacement.ApplicationPolicyPublicKeyPem));
+                var systemChanged = current.StudentSystemPolicyPublicKeyPem is not null &&
+                    (replacement.StudentSystemPolicyPublicKeyPem is null ||
+                     !PublicKeysEqual(current.StudentSystemPolicyPublicKeyPem,
+                         replacement.StudentSystemPolicyPublicKeyPem));
+                var websiteAuthorized = allowAuthorizedTrustRotation && websiteChanged &&
+                    replacement.PreviousWebsitePolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.PublicKeyPem, replacement.PreviousWebsitePolicyPublicKeyPem) &&
+                    replacement.WebsitePolicyPreviousRootRetireUtc is { } websiteRetire &&
+                    websiteRetire > DateTimeOffset.UtcNow;
+                var websiteRollback = allowVerifiedTrustRollback && websiteChanged &&
+                    current.PreviousWebsitePolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.PreviousWebsitePolicyPublicKeyPem, replacement.PublicKeyPem) &&
+                    current.WebsitePolicyPreviousRootRetireUtc is { } websiteRollbackRetire &&
+                    websiteRollbackRetire > DateTimeOffset.UtcNow;
+                var applicationAuthorized = allowAuthorizedTrustRotation && applicationChanged &&
+                    current.ApplicationPolicyPublicKeyPem is not null &&
+                    replacement.PreviousApplicationPolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.ApplicationPolicyPublicKeyPem,
+                        replacement.PreviousApplicationPolicyPublicKeyPem) &&
+                    replacement.ApplicationPolicyPreviousRootRetireUtc is { } applicationRetire &&
+                    applicationRetire > DateTimeOffset.UtcNow;
+                var applicationRollback = allowVerifiedTrustRollback && applicationChanged &&
+                    current.PreviousApplicationPolicyPublicKeyPem is not null &&
+                    replacement.ApplicationPolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.PreviousApplicationPolicyPublicKeyPem,
+                        replacement.ApplicationPolicyPublicKeyPem) &&
+                    current.ApplicationPolicyPreviousRootRetireUtc is { } applicationRollbackRetire &&
+                    applicationRollbackRetire > DateTimeOffset.UtcNow;
+                var systemAuthorized = allowAuthorizedTrustRotation && systemChanged &&
+                    current.StudentSystemPolicyPublicKeyPem is not null &&
+                    replacement.PreviousStudentSystemPolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.StudentSystemPolicyPublicKeyPem,
+                        replacement.PreviousStudentSystemPolicyPublicKeyPem) &&
+                    replacement.StudentSystemPolicyPreviousRootRetireUtc is { } systemRetire &&
+                    systemRetire > DateTimeOffset.UtcNow;
+                var systemRollback = allowVerifiedTrustRollback && systemChanged &&
+                    current.PreviousStudentSystemPolicyPublicKeyPem is not null &&
+                    replacement.StudentSystemPolicyPublicKeyPem is not null &&
+                    PublicKeysEqual(current.PreviousStudentSystemPolicyPublicKeyPem,
+                        replacement.StudentSystemPolicyPublicKeyPem) &&
+                    current.StudentSystemPolicyPreviousRootRetireUtc is { } systemRollbackRetire &&
+                    systemRollbackRetire > DateTimeOffset.UtcNow;
                 if (!string.Equals(current.CampusId, replacement.CampusId, StringComparison.Ordinal) ||
-                    !PublicKeysEqual(current.PublicKeyPem, replacement.PublicKeyPem) ||
-                    (current.ApplicationPolicyPublicKeyPem is not null &&
-                     (replacement.ApplicationPolicyPublicKeyPem is null ||
-                      !PublicKeysEqual(current.ApplicationPolicyPublicKeyPem,
-                          replacement.ApplicationPolicyPublicKeyPem))) ||
-                    (current.StudentSystemPolicyPublicKeyPem is not null &&
-                     (replacement.StudentSystemPolicyPublicKeyPem is null ||
-                      !PublicKeysEqual(current.StudentSystemPolicyPublicKeyPem,
-                          replacement.StudentSystemPolicyPublicKeyPem)))
-                   )
+                    (websiteChanged && !websiteAuthorized && !websiteRollback) ||
+                    (applicationChanged && !applicationAuthorized && !applicationRollback) ||
+                    (systemChanged && !systemAuthorized && !systemRollback))
                     throw new IOException("拒绝在未安全清理旧策略前更换网站策略信任配置。");
                 File.Replace(tempPath, path, null, ignoreMetadataErrors: true);
             }
@@ -4192,8 +4372,66 @@ public sealed class WebsitePolicyAgent
             config.CampusId + "\n" + config.PublicKeyPem + "\n" + (config.TelemetryEndpoint ?? "") + "\n" +
             config.DeploymentId + "\n" + config.ApplicationVersion + "\n" + (config.ApplicationPolicyPublicKeyPem ?? "") + "\n" +
             (config.StudentSystemPolicyPublicKeyPem ?? "") + "\n" +
+            (config.PreviousWebsitePolicyPublicKeyPem ?? "") + "\n" +
+            config.WebsitePolicyPreviousRootRetireUtc?.ToUniversalTime().ToString("O") + "\n" +
+            (config.PreviousApplicationPolicyPublicKeyPem ?? "") + "\n" +
+            config.ApplicationPolicyPreviousRootRetireUtc?.ToUniversalTime().ToString("O") + "\n" +
+            (config.PreviousStudentSystemPolicyPublicKeyPem ?? "") + "\n" +
+            config.StudentSystemPolicyPreviousRootRetireUtc?.ToUniversalTime().ToString("O") + "\n" +
             string.Join(";", config.TeacherChannelEndpoints ?? Array.Empty<string>()) + "\n" +
             (config.TeacherChannelRootCertificateBase64 ?? ""))));
+
+    internal static IReadOnlyList<string> AcceptedPolicyTrustRoots(WebsitePolicyAgentConfig config,
+        PolicyTrustKeyRole role, DateTimeOffset nowUtc)
+    {
+        var now = nowUtc.ToUniversalTime();
+        var (current, previous, retire) = role switch
+        {
+            PolicyTrustKeyRole.WebsitePolicy => (config.PublicKeyPem, config.PreviousWebsitePolicyPublicKeyPem,
+                config.WebsitePolicyPreviousRootRetireUtc),
+            PolicyTrustKeyRole.ApplicationPolicy => (config.ApplicationPolicyPublicKeyPem,
+                config.PreviousApplicationPolicyPublicKeyPem,
+                config.ApplicationPolicyPreviousRootRetireUtc),
+            PolicyTrustKeyRole.StudentSystemPolicy => (config.StudentSystemPolicyPublicKeyPem,
+                config.PreviousStudentSystemPolicyPublicKeyPem,
+                config.StudentSystemPolicyPreviousRootRetireUtc),
+            _ => throw new ArgumentOutOfRangeException(nameof(role))
+        };
+        if (current is null) return Array.Empty<string>();
+        if (previous is null || retire is null || retire.Value.ToUniversalTime() <= now)
+            return Array.AsReadOnly(new[] { current });
+        return Array.AsReadOnly(new[] { current, previous });
+    }
+
+    internal static T VerifyWithPolicyTrustRoots<T>(WebsitePolicyAgentConfig config, PolicyTrustKeyRole role,
+        Func<string, T> verify, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(verify);
+        var failures = new List<Exception>();
+        foreach (var publicKey in AcceptedPolicyTrustRoots(config, role, nowUtc))
+        {
+            try { return verify(publicKey); }
+            catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            { failures.Add(exception); }
+        }
+        throw new InvalidDataException("没有任何当前或过渡期策略信任根验证通过。", new AggregateException(failures));
+    }
+
+    internal static async Task<T> VerifyWithPolicyTrustRootsAsync<T>(WebsitePolicyAgentConfig config,
+        PolicyTrustKeyRole role, Func<string, Task<T>> verify, DateTimeOffset nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(verify);
+        var failures = new List<Exception>();
+        foreach (var publicKey in AcceptedPolicyTrustRoots(config, role, nowUtc))
+        {
+            try { return await verify(publicKey).ConfigureAwait(false); }
+            catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            { failures.Add(exception); }
+        }
+        throw new InvalidDataException("没有任何当前或过渡期策略信任根验证通过。", new AggregateException(failures));
+    }
 
     private static StudentAgentTeacherChannelDiagnosticsSnapshot ReadTeacherChannelDiagnostics(string configPath)
     {
@@ -4456,8 +4694,8 @@ public sealed class WebsitePolicyAgent
                     ClassroomStatusCryptography.MaximumCommandBytes, cancellationToken).ConfigureAwait(false);
                 var signedCommandJson = signedCommand;
                 var now = DateTimeOffset.UtcNow;
-                var command = classroomStatus.Apply(signedCommandJson, config.CampusId,
-                    config.PublicKeyPem, now);
+                var command = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => classroomStatus.Apply(signedCommandJson, config.CampusId, publicKey, now), now);
                 classroomEvents.ClearUnless(command.Active ? command.SessionId : null);
                 var classroomAcknowledgement = ClassroomStatusCryptography.SignAcknowledgement(command,
                     signedCommandJson, now, agentIdentityKey);
@@ -4478,8 +4716,9 @@ public sealed class WebsitePolicyAgent
                 var active = classroomStatus.Read(config.CampusId, now);
                 if (!active.Connected || active.SessionId is not { } activeSession)
                     throw new InvalidDataException("当前没有活动课堂；拒绝课堂事件授权。");
-                var grant = classroomEvents.Apply(signedGrant, config.CampusId, config.PublicKeyPem,
-                    activeSession, now);
+                var grant = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => classroomEvents.Apply(signedGrant, config.CampusId, publicKey,
+                        activeSession, now), now);
                 var eventGrantAcknowledgement = ClassroomEventGrantTransport.SignAcknowledgement(grant, signedGrant,
                     now, agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(eventGrantAcknowledgement),
@@ -4508,8 +4747,9 @@ public sealed class WebsitePolicyAgent
                     var page = !active.Connected || active.SessionId is not { } activeSession
                         ? new StudentAgentClassroomEventPage(false, null, after, Array.Empty<ClassroomEvent>())
                         : classroomEvents.Read(config.CampusId, activeSession, now) is { } grant
-                            ? await ClassroomEventTransport.ReadTeacherEventsAsync(grant, after,
-                                config.PublicKeyPem, agentIdentityKey, cancellationToken).ConfigureAwait(false)
+                            ? await VerifyWithPolicyTrustRootsAsync(config, PolicyTrustKeyRole.WebsitePolicy,
+                                publicKey => ClassroomEventTransport.ReadTeacherEventsAsync(grant, after,
+                                    publicKey, agentIdentityKey, cancellationToken), now).ConfigureAwait(false)
                             : new StudentAgentClassroomEventPage(false, null, after, Array.Empty<ClassroomEvent>());
                     var signedPage = StudentAgentResponseCryptography.Sign(page, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedPage),
@@ -4718,8 +4958,10 @@ public sealed class WebsitePolicyAgent
                     EdgeWebsitePolicyModeCommandCryptography.MaximumEnvelopeBytes, cancellationToken)
                     .ConfigureAwait(false);
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
-                var command = EdgeWebsitePolicyModeCommandCryptography.Verify(signedModeCommand,
-                    config.PublicKeyPem, config.CampusId, currentRevision, DateTimeOffset.UtcNow);
+                var commandNow = DateTimeOffset.UtcNow;
+                var command = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => EdgeWebsitePolicyModeCommandCryptography.Verify(signedModeCommand,
+                        publicKey, config.CampusId, currentRevision, commandNow), commandNow);
                 if (ReadCommandNonce(context.Request) != command.Nonce)
                     throw new InvalidDataException("Edge 实时模式切换命令与 HTTP 随机数不匹配。");
 
@@ -4792,8 +5034,9 @@ public sealed class WebsitePolicyAgent
                 var signedStatusRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
                     cancellationToken).ConfigureAwait(false);
                 var now = DateTimeOffset.UtcNow;
-                var statusRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedStatusRequest,
-                    config.PublicKeyPem, config.CampusId, now);
+                var statusRequest = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedStatusRequest,
+                        publicKey, config.CampusId, now), now);
                 if (statusRequest.SchemaVersion != 4 || statusRequest.UpdateCommandId is not null)
                     throw new InvalidDataException("InputGuard 状态必须使用无命令编号的签名状态协议 v4。");
                 AcceptStatusNonce(statusRequest.Nonce, statusRequest.IssuedUtc, now);
@@ -4820,9 +5063,10 @@ public sealed class WebsitePolicyAgent
                     StudentInputGuardCommandCryptography.MaximumEnvelopeBytes, cancellationToken)
                     .ConfigureAwait(false);
                 var now = DateTimeOffset.UtcNow;
-                var command = StudentInputGuardCommandCryptography.Verify(signedCommand, config.PublicKeyPem,
-                    config.CampusId, inputGuardState.DeviceFingerprint, inputGuardState.AgentRunId,
-                    inputGuardState.ControlEpoch, StudentInputGuardMachineIdentity.ReadLocalMachineId(), now);
+                var command = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => StudentInputGuardCommandCryptography.Verify(signedCommand, publicKey,
+                        config.CampusId, inputGuardState.DeviceFingerprint, inputGuardState.AgentRunId,
+                        inputGuardState.ControlEpoch, StudentInputGuardMachineIdentity.ReadLocalMachineId(), now), now);
                 if (ReadCommandNonce(context.Request) != command.Nonce)
                     throw new InvalidDataException("InputGuard 命令与 HTTP 随机数不匹配。");
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -4856,8 +5100,9 @@ public sealed class WebsitePolicyAgent
                 var signedCapabilityRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
                     cancellationToken).ConfigureAwait(false);
                 var now = DateTimeOffset.UtcNow;
-                var capabilityRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedCapabilityRequest,
-                    config.PublicKeyPem, config.CampusId, now);
+                var capabilityRequest = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedCapabilityRequest,
+                        publicKey, config.CampusId, now), now);
                 if (capabilityRequest.SchemaVersion != 4 || capabilityRequest.UpdateCommandId is not null)
                     throw new InvalidDataException("学生更新下载能力请求必须使用无命令编号的状态协议 v4。");
                 AcceptStatusNonce(capabilityRequest.Nonce, capabilityRequest.IssuedUtc, now);
@@ -4912,8 +5157,9 @@ public sealed class WebsitePolicyAgent
                 var signedSummaryRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
                     cancellationToken).ConfigureAwait(false);
                 var summaryNow = DateTimeOffset.UtcNow;
-                var summaryRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedSummaryRequest,
-                    config.PublicKeyPem, config.CampusId, summaryNow);
+                var summaryRequest = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedSummaryRequest,
+                        publicKey, config.CampusId, summaryNow), summaryNow);
                 if (summaryRequest.SchemaVersion != 4 || summaryRequest.UpdateCommandId is not null)
                     throw new InvalidDataException("轻量运行摘要必须使用无命令编号的状态协议 v4。");
                 AcceptStatusNonce(summaryRequest.Nonce, summaryRequest.IssuedUtc, summaryNow);
@@ -4981,8 +5227,9 @@ public sealed class WebsitePolicyAgent
                 var signedRequest = await ReadBoundedAsync(context.Request.InputStream, 8192, cancellationToken)
                     .ConfigureAwait(false);
                 var now = DateTimeOffset.UtcNow;
-                var request = WebsitePolicyStatusCryptography.VerifyRequest(signedRequest, config.PublicKeyPem,
-                    config.CampusId, now);
+                var request = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedRequest,
+                        publicKey, config.CampusId, now), now);
                 var healthSnapshotHeaders = context.Request.Headers.GetValues(
                     WebsitePolicyStatusTransport.HealthSnapshotRequestHeader);
                 var includeHealthSnapshot = healthSnapshotHeaders is { Length: 1 } &&
@@ -5074,8 +5321,10 @@ public sealed class WebsitePolicyAgent
                 StudentAgentHealthRepairCommand repairCommand;
                 try
                 {
-                    repairCommand = StudentAgentHealthRepairCommandCryptography.Verify(signedRepairCommand,
-                        config.PublicKeyPem, config.CampusId, DateTimeOffset.UtcNow);
+                    var repairNow = DateTimeOffset.UtcNow;
+                    repairCommand = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                        publicKey => StudentAgentHealthRepairCommandCryptography.Verify(signedRepairCommand,
+                            publicKey, config.CampusId, repairNow), repairNow);
                 }
                 catch (Exception exception) when (exception is System.Text.Json.JsonException or FormatException or
                                                   ArgumentException or CryptographicException)
@@ -5186,8 +5435,9 @@ public sealed class WebsitePolicyAgent
                 var signedTimingRequest = await ReadBoundedAsync(context.Request.InputStream, 8192, cancellationToken)
                     .ConfigureAwait(false);
                 var timingRequestUtc = DateTimeOffset.UtcNow;
-                var timingRequest = WebsitePolicyStatusCryptography.VerifyRequest(signedTimingRequest,
-                    config.PublicKeyPem, config.CampusId, timingRequestUtc);
+                var timingRequest = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedTimingRequest,
+                        publicKey, config.CampusId, timingRequestUtc), timingRequestUtc);
                 if (timingRequest.SchemaVersion != 4 || timingRequest.UpdateCommandId is not { } timingCommandId)
                 {
                     await RespondAsync(response, 400, "timing request requires v4 command binding", cancellationToken)
@@ -5233,8 +5483,10 @@ public sealed class WebsitePolicyAgent
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    applicationPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
-                    var state = applicationPolicyAgent.Runtime.ReadForAudit(DateTimeOffset.UtcNow);
+                    var now = DateTimeOffset.UtcNow;
+                    var trustedRoots = AcceptedPolicyTrustRoots(config, PolicyTrustKeyRole.ApplicationPolicy, now);
+                    applicationPolicyAgent.Runtime.Apply(signedPolicy, now, trustedRoots);
+                    var state = applicationPolicyAgent.Runtime.ReadForAudit(now);
                     await RespondCommandAcknowledgementAsync(response, context.Request, 200,
                         $"application policy accepted; revision={state?.Revision}; mode={state?.Policy.Mode}",
                         config.CampusId, signedPolicy, agentIdentityKey, cancellationToken).ConfigureAwait(false);
@@ -5259,7 +5511,9 @@ public sealed class WebsitePolicyAgent
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, DateTimeOffset.UtcNow);
+                    var now = DateTimeOffset.UtcNow;
+                    var trustedRoots = AcceptedPolicyTrustRoots(config, PolicyTrustKeyRole.StudentSystemPolicy, now);
+                    var state = studentSystemPolicyAgent.Runtime.Apply(signedPolicy, now, trustedRoots);
                     var softwareReadback = state.Policy.Settings.ProhibitSoftwareInstallation
                         ? "long-term software execution baseline was locally read back"
                         : "long-term software execution baseline is disabled";
@@ -5288,8 +5542,9 @@ public sealed class WebsitePolicyAgent
                 await ApplyGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var audit = applicationPolicyAgent.ReadAudit(auditRequest, config.ApplicationPolicyPublicKeyPem,
-                        DateTimeOffset.UtcNow);
+                    var now = DateTimeOffset.UtcNow;
+                    var audit = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.ApplicationPolicy,
+                        publicKey => applicationPolicyAgent.ReadAudit(auditRequest, publicKey, now), now);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(audit, JsonOptions);
                     await RespondCommandAcknowledgementAsync(response, context.Request, 200,
                         Encoding.UTF8.GetString(bytes), config.CampusId, auditRequest, agentIdentityKey, cancellationToken)
@@ -5320,14 +5575,17 @@ public sealed class WebsitePolicyAgent
                 await ApplicationInventoryReadGate.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
-                    var inventory = await Task.Run<object>(() => accountsOnly
-                        ? applicationPolicyAgent.ReadStudentAccounts(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow)
+                    var now = DateTimeOffset.UtcNow;
+                    var inventory = await Task.Run<object>(() => VerifyWithPolicyTrustRoots(config,
+                        PolicyTrustKeyRole.ApplicationPolicy, publicKey => accountsOnly
+                        ? applicationPolicyAgent.ReadStudentAccounts(inventoryRequest, publicKey, now)
                         : isCatalogRequest
-                            ? applicationPolicyAgent.ReadApplicationCatalog(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow)
+                            ? applicationPolicyAgent.ReadApplicationCatalog(inventoryRequest, publicKey, now)
                             : isCatalogDetailsRequest
                                 ? applicationPolicyAgent.ReadSelectedApplicationDetails(inventoryRequest,
-                                    config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken)
-                                : applicationPolicyAgent.ReadInventory(inventoryRequest, config.ApplicationPolicyPublicKeyPem, DateTimeOffset.UtcNow, cancellationToken), cancellationToken)
+                                    publicKey, now, cancellationToken)
+                                : applicationPolicyAgent.ReadInventory(inventoryRequest, publicKey, now, cancellationToken),
+                        now), cancellationToken)
                         .ConfigureAwait(false);
                     var bytes = JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions);
                     var responseLimit = isCatalogRequest
@@ -5375,7 +5633,10 @@ public sealed class WebsitePolicyAgent
             try
             {
                 var currentRevision = WebsitePolicyRegistryStore.ReadRevision(config.CampusId);
-                var policy = WebsitePolicyCryptography.Verify(body, config.PublicKeyPem, config.CampusId, currentRevision);
+                var policyNow = DateTimeOffset.UtcNow;
+                var policy = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyCryptography.Verify(body, publicKey, config.CampusId,
+                        currentRevision), policyNow);
                 // Ordinary website policy updates are independent from the transient InputGuard lease.
                 // Classroom quick-control mode switches perform their own signed status preflight.
                 edgePolicyChanged = WebsitePolicyRegistryStore.Apply(policy);
@@ -5447,8 +5708,10 @@ public sealed class WebsitePolicyAgent
             StudentAgentConfigurationSyncCryptography.MaximumEnvelopeBytes, cancellationToken).ConfigureAwait(false);
         var nonce = ReadCommandNonce(context.Request)
                     ?? throw new InvalidDataException("配置同步命令缺少请求随机数。");
-        var command = StudentAgentConfigurationSyncCryptography.Verify(signedCommand, config.PublicKeyPem,
-            config.CampusId, nonce, DateTimeOffset.UtcNow);
+        var commandNow = DateTimeOffset.UtcNow;
+        var command = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+            publicKey => StudentAgentConfigurationSyncCryptography.Verify(signedCommand, publicKey,
+                config.CampusId, nonce, commandNow), commandNow);
         var localFingerprint = StudentAgentResponseCryptography.GetFingerprint(
             agentIdentityKey.ExportSubjectPublicKeyInfoPem());
         if (!string.Equals(command.ExpectedAgentFingerprint, localFingerprint, StringComparison.OrdinalIgnoreCase))

@@ -41,8 +41,17 @@ public sealed class ApplicationPolicyRuntime(IApplicationPolicyBackend backend, 
     {
         if (string.IsNullOrWhiteSpace(publicKeyPem))
             throw new InvalidOperationException("此学生端只启用了系统软件限制，没有课堂应用策略信任公钥。");
+        Apply(signedEnvelope, nowUtc, [publicKeyPem]);
+    }
+
+    public void Apply(string signedEnvelope, DateTimeOffset nowUtc, IReadOnlyList<string> trustedPublicKeys)
+    {
+        if (trustedPublicKeys is null || trustedPublicKeys.Count == 0)
+            throw new InvalidOperationException("当前没有可用于验证应用策略的信任公钥。");
         var state = Reconcile(nowUtc);
-        var policy = ApplicationPolicyCryptography.Verify(signedEnvelope, publicKeyPem, campusId, state?.Revision ?? 0, nowUtc);
+        var policy = PolicyTrustRotationCryptography.VerifyWithAnyRoot(trustedPublicKeys,
+            publicKey => ApplicationPolicyCryptography.Verify(signedEnvelope, publicKey, campusId,
+                state?.Revision ?? 0, nowUtc));
         backend.VerifyEnvironmentAndStudents(OperationalStudentSids(state, policy.StudentSids));
         VerifyStudentSoftwareAllowPaths(state?.SoftwareRestrictionStudentSids);
         var current = CanonicalXml(backend.ReadLocalPolicyXml());
