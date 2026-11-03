@@ -614,6 +614,8 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 服务版本化目录与 Setup/Agent 版本目录分开；禁止误用 StudentSetup 版本充当 Maintenance 版本。
 - [ ] 升级期间保留原有信任根、设备身份、已接受事务与待处理状态；设计密钥轮换双信任窗口及最终退役条件。
 
+**实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。当前在线更新执行器仍下载 StudentSetup，未使用 MaintenanceService 专属发行包；独立 SYSTEM Helper、健康核验/回滚、最低旧协议门槛和密钥轮换尚未实现。CloudBase migration 未部署；本轮禁止构建、测试和打包，故无可安装测试包。状态：`PARTIAL-CODE; TEST-DEFERRED; VM-PENDING; FIELD-PENDING`。
+
 ### P3-02：恢复任务和健康自检
 
 - [ ] 使用 SCM 恢复选项、必要时独立 SYSTEM 恢复任务，确保服务启动失败、意外退出、主机重启后可恢复。

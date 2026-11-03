@@ -155,19 +155,19 @@ internal static class Program
         {
             var configuredPath = QueryServiceBinaryPath(service);
             var configuredExecutable = ExtractExecutablePath(configuredPath);
-            if (!PathsEqual(configuredExecutable, executablePath) &&
-                configuredExecutable.Contains(Path.Combine("Veyon Campus", "Student", "MaintenanceService"),
-                    StringComparison.OrdinalIgnoreCase))
+            if (!PathsEqual(configuredExecutable, executablePath))
             {
+                if (!IsLegacyStudentServiceExecutable(configuredExecutable) &&
+                    !IsManagedMaintenanceServiceExecutable(configuredExecutable))
+                    throw new InvalidDataException("Maintenance 服务已注册到未知路径；拒绝覆盖 SCM 配置。" );
+                if (!IsManagedMaintenanceServiceExecutable(executablePath))
+                    throw new InvalidDataException("新 Maintenance 服务必须位于受管 Current 或 Versions 目录；拒绝切换 SCM 路径。" );
+                PathLinkSecurity.RejectLinks(configuredExecutable);
                 StopServiceAndWait(service);
                 var servicePath = "\"" + executablePath + "\"";
                 if (!ChangeServiceConfig(service, 0xFFFFFFFF, ServiceAutoStart, ServiceErrorNormal,
                         servicePath, null, IntPtr.Zero, null, "LocalSystem", null, ServiceDisplayName))
-                    throw LastError("无法迁移旧 StudentSetup 目录中的 Maintenance 服务注册。" );
-            }
-            else if (!PathsEqual(configuredExecutable, executablePath))
-            {
-                throw new InvalidDataException("Maintenance 服务已注册到未知路径；拒绝覆盖 SCM 配置。" );
+                    throw LastError("无法切换到签名安装包指定的 Maintenance 服务版本目录。" );
             }
         }
         ApplyServiceSecurity(service);
@@ -213,6 +213,38 @@ internal static class Program
     private static bool PathsEqual(string left, string right) =>
         string.Equals(Path.GetFullPath(left).TrimEnd(Path.DirectorySeparatorChar),
             Path.GetFullPath(right).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsManagedMaintenanceServiceExecutable(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        if (!File.Exists(fullPath)) return false;
+        PathLinkSecurity.RejectLinks(fullPath);
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var serviceRoot = Path.Combine(programFiles, "Veyon Campus", "MaintenanceService");
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(serviceRoot);
+        var currentExecutable = Path.Combine(serviceRoot, "Current", "VeyonCampus.MaintenanceService.exe");
+        if (PathsEqual(fullPath, currentExecutable)) return true;
+
+        var versionsRoot = Path.Combine(serviceRoot, "Versions");
+        var versionDirectory = Path.GetDirectoryName(fullPath);
+        if (versionDirectory is null || !string.Equals(Path.GetDirectoryName(versionDirectory), versionsRoot,
+                StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Path.GetFileName(fullPath), "VeyonCampus.MaintenanceService.exe",
+                StringComparison.OrdinalIgnoreCase))
+            return false;
+        var version = Path.GetFileName(versionDirectory);
+        try { _ = ApplicationReleaseClient.CompareVersions(version, version); }
+        catch (InvalidDataException) { return false; }
+        return true;
+    }
+
+    private static bool IsLegacyStudentServiceExecutable(string path)
+    {
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var studentServiceRoot = Path.Combine(programFiles, "Veyon Campus", "Student", "MaintenanceService");
+        return PathsEqual(path, Path.Combine(studentServiceRoot, "VeyonCampus.MaintenanceService.exe")) ||
+               PathsEqual(path, Path.Combine(studentServiceRoot, "Current", "VeyonCampus.MaintenanceService.exe"));
+    }
 
     private static int UninstallServiceCommand()
     {

@@ -3,7 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PublishDirectory,
     [Parameter(Mandatory = $true)]
-    [ValidateSet('StudentSetup', 'TeacherConsole')]
+    [ValidateSet('StudentSetup', 'TeacherConsole', 'MaintenanceService')]
     [string]$Role,
     [Parameter(Mandatory = $true)]
     [string]$RepositoryRoot
@@ -14,11 +14,23 @@ $ErrorActionPreference = 'Stop'
 
 $publishDirectory = [IO.Path]::GetFullPath($PublishDirectory)
 $repositoryRoot = [IO.Path]::GetFullPath($RepositoryRoot)
-$appRoot = Join-Path $repositoryRoot 'src/VeyonCampus.App'
-$lockFileName = if ($Role -eq 'StudentSetup') { 'packages.StudentSetup.lock.json' } else { 'packages.TeacherConsole.win-x64.lock.json' }
+$appRoot = if ($Role -eq 'MaintenanceService') {
+    Join-Path $repositoryRoot 'src/VeyonCampus.MaintenanceService'
+} else {
+    Join-Path $repositoryRoot 'src/VeyonCampus.App'
+}
+$lockFileName = switch ($Role) {
+    'StudentSetup' { 'packages.StudentSetup.lock.json' }
+    'TeacherConsole' { 'packages.TeacherConsole.win-x64.lock.json' }
+    'MaintenanceService' { 'packages.lock.json' }
+}
 $lockPath = Join-Path $appRoot $lockFileName
 $trustPath = Join-Path $repositoryRoot 'src/VeyonCampus.Core/VeyonInstallerTrust.cs'
-$appName = if ($Role -eq 'StudentSetup') { 'VeyonCampus.StudentSetup' } else { 'VeyonCampus.Teacher' }
+$appName = switch ($Role) {
+    'StudentSetup' { 'VeyonCampus.StudentSetup' }
+    'TeacherConsole' { 'VeyonCampus.Teacher' }
+    'MaintenanceService' { 'VeyonCampus.MaintenanceService' }
+}
 $runtimeConfigPath = Join-Path $publishDirectory "$appName.runtimeconfig.json"
 $reviewedLicenseOverrides = @{
     'sukiui@7.0.1' = [pscustomobject]@{

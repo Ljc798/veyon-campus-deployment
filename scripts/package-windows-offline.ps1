@@ -177,6 +177,12 @@ function Invoke-InnoSetup {
 $appProjectXml = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
 $appVersion = [string](@($appProjectXml.Project.PropertyGroup | ForEach-Object { $_.Version } |
     Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+$maintenanceServiceProjectXml = [xml](Get-Content -LiteralPath $maintenanceServiceProjectPath -Raw -Encoding UTF8)
+$maintenanceServiceVersion = [string](@($maintenanceServiceProjectXml.Project.PropertyGroup | ForEach-Object { $_.Version } |
+    Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+if ([string]::IsNullOrWhiteSpace($maintenanceServiceVersion)) {
+    throw '无法从 MaintenanceService 项目读取独立服务版本。'
+}
 if ([string]::IsNullOrWhiteSpace($appVersion)) {
     throw '无法从 VeyonCampus.App.csproj 读取应用版本。'
 }
@@ -678,7 +684,8 @@ if ($Role -eq 'StudentSetup') {
     $maintenanceServicePublishDirectory = Join-Path $publishDirectory 'MaintenanceService'
     $maintenanceServicePublishArguments = @('publish', $maintenanceServiceProjectPath, '-c', 'Release',
         '-r', 'win-x64', '--self-contained', 'false', '--no-restore',
-        '-p:AppHostDotNetSearch=Global', "-p:Version=$appVersion",
+        '-p:AppHostDotNetSearch=Global', "-p:Version=$maintenanceServiceVersion",
+        "-p:InformationalVersion=$maintenanceServiceVersion", '-p:IncludeSourceRevisionInInformationalVersion=false',
         '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json',
         '-p:VeyonCampusIncludeInstaller=false', '-o', $maintenanceServicePublishDirectory)
     if ($releasePublicKeyFullPath) {
@@ -771,9 +778,10 @@ if ($Role -eq 'StudentSetup') {
         -not (Test-Path -LiteralPath $maintenanceServiceRuntimeConfigPath -PathType Leaf)) {
         throw "StudentSetup 缺少独立 Maintenance Service 发布产物：$maintenanceServicePublishDirectory"
     }
-    $maintenanceServiceVersion = [Reflection.AssemblyName]::GetAssemblyName($maintenanceServiceAssemblyPath).Version.ToString(3)
-    if ($maintenanceServiceVersion -cne $appVersion) {
-        throw "Maintenance Service 版本与 StudentSetup 不一致：期望 $appVersion，实际 $maintenanceServiceVersion。"
+    $maintenanceServiceAssemblyVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($maintenanceServiceExePath).ProductVersion
+    if ([string]::IsNullOrWhiteSpace($maintenanceServiceAssemblyVersion) -or
+        $maintenanceServiceAssemblyVersion.Split('+')[0] -cne $maintenanceServiceVersion.Split('+')[0]) {
+        throw "StudentSetup 内嵌 Maintenance Service 版本不匹配：期望 $maintenanceServiceVersion，实际 $maintenanceServiceAssemblyVersion。"
     }
     $maintenanceServiceRuntimeConfig = Get-Content -LiteralPath $maintenanceServiceRuntimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
     $maintenanceFrameworksProperty = $maintenanceServiceRuntimeConfig.runtimeOptions.PSObject.Properties['frameworks']
@@ -1102,6 +1110,7 @@ $generatedInstallerScript = @(
     ('#define public PublishDirectory ' + (ConvertTo-InnoPascalStringLiteral $publishDirectory))
     ('#define public UpdateHelperDirectory ' + (ConvertTo-InnoPascalStringLiteral $updateHelperOutputDirectory))
     ('#define public RuntimeVersion ' + (ConvertTo-InnoPascalStringLiteral $runtimeVersion))
+    ('#define public MaintenanceServiceVersion ' + (ConvertTo-InnoPascalStringLiteral $maintenanceServiceVersion))
     ('#define public DotNetRuntimeInstallerPath ' + (ConvertTo-InnoPascalStringLiteral $dotnetRuntimeInstallerPath))
     ('#define public AspNetCoreRuntimeInstallerPath ' + (ConvertTo-InnoPascalStringLiteral $aspnetCoreRuntimeInstallerPath))
     ('#define public EdgeExtensionId "' + $EdgeExtensionId + '"')
