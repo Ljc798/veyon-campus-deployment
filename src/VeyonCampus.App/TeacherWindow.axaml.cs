@@ -214,6 +214,7 @@ public partial class TeacherWindow : Window
             nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.IsHealthCenterPage) or
             nameof(TeacherViewModel.IsUpdatesPage) or
+            nameof(TeacherViewModel.IsTeacherAboutPage) or
             nameof(TeacherViewModel.IsRoomPage) or
             nameof(TeacherViewModel.IsSetupPage))
             SyncTeacherPageTemplate();
@@ -242,6 +243,7 @@ public partial class TeacherWindow : Window
     {
         var templateKey = _model.IsRoomPage ? "RoomPageTemplate"
             : _model.IsSetupPage ? "SetupPageTemplate"
+            : _model.IsTeacherAboutPage ? "AboutPageTemplate"
             : _model.IsUpdatesPage ? "UpdatesPageTemplate"
             : _model.IsClassroomExperiencePage ? "ClassroomPageTemplate"
             : "PolicyPageTemplate";
@@ -1135,10 +1137,6 @@ public partial class TeacherWindow : Window
         SynchronizeUpdatesNavigationHighlight();
 
     private void NavigateDeviceStatusSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("status");
-    private void NavigateDeviceAlertsSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("alerts");
-    private void NavigateStudentRosterSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("students");
-    private void NavigateMaintenanceSection(object? sender, RoutedEventArgs e) => NavigateHealthSection("maintenance");
-    private void NavigateTeacherUpdateSection(object? sender, RoutedEventArgs e) => NavigateUpdatesSection("teacher-update");
     private void NavigateStudentMaintenanceSection(object? sender, RoutedEventArgs e) => NavigateUpdatesSection("student-maintenance");
 
     private void NavigateHealthSection(string section)
@@ -1179,7 +1177,7 @@ public partial class TeacherWindow : Window
             var position = target.TranslatePoint(new Point(0, 0), scroll);
             if (position is { } point && point.Y <= threshold) active = key;
         }
-        SetUpdatesNavigationActive(active);
+        SetUpdatesNavigationActive(active == "student-maintenance" ? "student-maintenance" : "status");
     }
 
     private void SetUpdatesNavigationActive(string section)
@@ -1187,10 +1185,6 @@ public partial class TeacherWindow : Window
         var buttons = new (string Key, string Name)[]
         {
             ("status", "UpdatesNavStatus"),
-            ("alerts", "UpdatesNavAlerts"),
-            ("students", "UpdatesNavRoster"),
-            ("maintenance", "UpdatesNavMaintenance"),
-            ("teacher-update", "UpdatesNavTeacher"),
             ("student-maintenance", "UpdatesNavStudent")
         };
         foreach (var (key, name) in buttons)
@@ -2126,10 +2120,6 @@ public partial class TeacherWindow : Window
     {
         if (_model.InstallOfflineTeacherUpdate()) ExitForUpdate();
     }
-    private void SelectAllStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
-        _model.SelectAllStudentUpdateTargets(selected: true);
-    private void ClearStudentUpdateTargets(object? sender, RoutedEventArgs e) =>
-        _model.SelectAllStudentUpdateTargets(selected: false);
     private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
         await TrustStudentAgentIdentitiesAsync();
 

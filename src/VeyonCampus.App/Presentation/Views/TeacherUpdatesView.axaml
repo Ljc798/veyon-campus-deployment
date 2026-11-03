@@ -4,7 +4,7 @@
              x:Class="VeyonCampus.App.Presentation.Views.TeacherUpdatesView"
              x:DataType="vm:TeacherViewModel">
   <StackPanel Spacing="20">
-    <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
+    <StackPanel IsVisible="{Binding IsTeacherAboutPage}" Spacing="20">
       <Border x:Name="TeacherUpdateSection" Classes="section-card">
         <StackPanel Spacing="12">
           <TextBlock Text="教师端更新" Classes="section-title" />
@@ -33,6 +33,8 @@
           </Expander>
         </StackPanel>
       </Border>
+    </StackPanel>
+    <StackPanel IsVisible="{Binding IsUpdatesPage}" Spacing="20">
       <Border x:Name="StudentUpdateSection" Classes="section-card">
         <StackPanel Spacing="12">
           <TextBlock Text="学生端维护" Classes="section-title" />
@@ -59,46 +61,21 @@
             </StackPanel>
           </Border>
           <WrapPanel Orientation="Horizontal">
-            <Button Content="首次/身份变化时核对" Click="RequestTrustStudentAgentIdentities" IsEnabled="{Binding CanTrustStudentAgentIdentities}" Margin="0,0,8,6" />
             <Button Classes="primary" Content="检查并维护所选学生端" Click="RequestMaintainStudentDevices" IsEnabled="{Binding CanMaintainStudentDevices}" Margin="0,0,8,6" />
           </WrapPanel>
           <TextBlock Text="已是最新的软件会跳过安装；支持的旧 Agent 使用已验证的兼容通道。没有可信原子更新协议的设备会明确要求人工引导，不会跳过签名或身份校验。"
                      Classes="supporting-copy" TextWrapping="Wrap" />
           <TextBlock Text="{Binding StudentMaintenanceStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
-          <Border Classes="subtle-panel">
-            <StackPanel Spacing="8">
-              <TextBlock Text="更新目标电脑" Classes="component-title" />
-              <TextBlock Text="更新范围独立于策略页勾选；新加入的电脑默认选中。"
-                         Classes="muted" TextWrapping="Wrap" />
-              <TextBlock Text="{Binding StudentUpdateTargetSelectionSummary}"
-                         Classes="supporting-copy" TextWrapping="Wrap" />
-              <WrapPanel Orientation="Horizontal">
-                <Button Classes="secondary" Content="全选" Click="RequestSelectAllStudentUpdateTargets"
-                        IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
-                <Button Classes="secondary" Content="全不选" Click="RequestClearStudentUpdateTargets"
-                        IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
-              </WrapPanel>
-              <ScrollViewer MaxHeight="190" VerticalScrollBarVisibility="Auto"
-                            IsEnabled="{Binding !IsExecuting}">
-                <ItemsControl ItemsSource="{Binding StudentUpdateTargetChoices}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
-                      <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
-                        <StackPanel Spacing="1">
-                          <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
-                          <TextBlock Text="{Binding Target}" Classes="muted" TextWrapping="Wrap" />
-                        </StackPanel>
-                      </CheckBox>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-              </ScrollViewer>
-            </StackPanel>
-          </Border>
+          <TextBlock Text="维护范围使用“设备概览”中当前选中的学生电脑；修改选择后，健康状态和策略操作也会使用同一范围。"
+                     Classes="muted" TextWrapping="Wrap" />
           <Expander Header="高级维护操作" Theme="{StaticResource App.DetailExpander}" IsExpanded="False">
             <StackPanel Spacing="8" Margin="0,8,0,0">
               <TextBlock Text="通常使用上方的统一维护入口；需要单独排查时，可分别执行以下操作。"
                          Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="secondary" Content="核对首次或变化的设备身份"
+                      Click="RequestTrustStudentAgentIdentities"
+                      IsEnabled="{Binding CanTrustStudentAgentIdentities}"
+                      HorizontalAlignment="Left" Margin="0,0,8,6" />
               <WrapPanel Orientation="Horizontal">
                 <Button Classes="secondary" Content="仅更新软件" Click="RequestDeployStudentUpdate"
                         IsEnabled="{Binding CanDeployStudentUpdate}" Margin="0,0,8,6" />

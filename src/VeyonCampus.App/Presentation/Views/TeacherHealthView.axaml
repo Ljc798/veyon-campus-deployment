@@ -154,6 +154,35 @@
           <TextBlock Text="学生电脑" Classes="section-title" VerticalAlignment="Center" />
           <TextBlock Grid.Column="1" Text="{Binding DeviceHealthListSummary}" Classes="supporting-copy" VerticalAlignment="Center" />
         </Grid>
+        <Border Classes="subtle-panel" Padding="12" IsVisible="{Binding HasDeviceHealthTargets}">
+          <StackPanel Spacing="8">
+            <TextBlock Text="本页统一设备选择" Classes="component-title" />
+            <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy" />
+            <WrapPanel Orientation="Horizontal">
+              <Button Classes="secondary" Content="全选设备" Click="RequestSelectAllDeviceTargets"
+                      IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
+              <Button Classes="secondary" Content="清空选择" Click="RequestClearDeviceTargets"
+                      IsEnabled="{Binding !IsExecuting}" Margin="0,0,8,4" />
+            </WrapPanel>
+            <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto" IsEnabled="{Binding !IsExecuting}">
+              <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                <ItemsControl.ItemsPanel>
+                  <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}" Margin="0,2">
+                      <StackPanel Spacing="1">
+                        <TextBlock Text="{Binding StudentName}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Target}" Classes="muted" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </CheckBox>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </ScrollViewer>
+          </StackPanel>
+        </Border>
         <Grid ColumnDefinitions="*,190" ColumnSpacing="10" IsVisible="{Binding HasDeviceHealthRows}">
           <TextBox Text="{Binding DeviceHealthSearchText, Mode=TwoWay}" PlaceholderText="搜索学生姓名或状态" />
           <ComboBox Grid.Column="1" ItemsSource="{Binding DeviceHealthCategoryFilters}"

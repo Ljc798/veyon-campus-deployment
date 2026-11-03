@@ -249,7 +249,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _roomPreviewRows = Array.Empty<string>();
     private IReadOnlyList<VeyonNetworkLocation> _websiteLocations = Array.Empty<VeyonNetworkLocation>();
     private IReadOnlyList<TeacherPolicyTargetChoice> _websitePolicyTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
-    private IReadOnlyList<TeacherPolicyTargetChoice> _studentUpdateTargetChoices = Array.Empty<TeacherPolicyTargetChoice>();
     private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
     private readonly ObservableCollection<TeacherDeviceHealthAlert> _deviceHealthAlerts = [];
     private readonly ObservableCollection<TeacherClassroomQuickControlDeviceItem> _classroomQuickControlDevices = [];
@@ -2116,6 +2115,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     }
     public bool IsUpdatesPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
     public bool IsHealthCenterPage { get => _selectedPage == "updates"; set { if (value) SelectPage("updates"); } }
+    public bool IsTeacherAboutPage { get => _selectedPage == "about"; set { if (value) SelectPage("about"); } }
     public ObservableCollection<TeacherDeviceHealthRow> DeviceHealthRows => _deviceHealthRows;
     public IReadOnlyList<TeacherDeviceHealthRow> DeviceHealthPageRows => _deviceHealthPageRows;
     public ObservableCollection<TeacherDeviceHealthAlert> DeviceHealthAlerts => _deviceHealthAlerts;
@@ -6767,6 +6767,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RefreshRuntimeSummaryCounts();
             Changed();
             Changed(nameof(WebsitePolicyTargetSelectionSummary));
+            Changed(nameof(StudentUpdateTargetChoices));
+            NotifyStudentUpdateTargetSelectionChanged();
             Changed(nameof(CanFillFailedWebsiteTargets));
             Changed(nameof(WebsitePolicyNextStepGuidance));
             Changed(nameof(ClassroomTargetSummary));
@@ -6785,11 +6787,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string WebsitePolicyTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
         ? "请先从 Veyon 读取电脑名单。"
         : $"已选择 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
-    public IReadOnlyList<TeacherPolicyTargetChoice> StudentUpdateTargetChoices => _studentUpdateTargetChoices;
-    public int StudentUpdateSelectedTargetCount => _studentUpdateTargetChoices.Count(item => item.IsSelected);
-    public string StudentUpdateTargetSelectionSummary => _studentUpdateTargetChoices.Count == 0
+    public IReadOnlyList<TeacherPolicyTargetChoice> StudentUpdateTargetChoices => WebsitePolicyTargetChoices;
+    public int StudentUpdateSelectedTargetCount => WebsitePolicyTargetChoices.Count(item => item.IsSelected);
+    public string StudentUpdateTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
         ? "请先在“地点与学生名单”配置学生电脑。"
-        : $"更新范围：已选 {StudentUpdateSelectedTargetCount}/{_studentUpdateTargetChoices.Count} 台学生电脑";
+        : $"维护范围与设备概览共用勾选：已选 {StudentUpdateSelectedTargetCount}/{WebsitePolicyTargetChoices.Count} 台学生电脑";
     public IReadOnlyList<string> SelectedWebsitePolicyStudentNames => WebsitePolicyTargetChoices
         .Where(item => item.IsSelected).Select(item => item.StudentName).ToArray();
     public string WebsitePolicyConfirmationSummary => BuildWebsitePolicyTargetSummary(includePolicy: true);
@@ -6942,60 +6944,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 !previous.TryGetValue(targetKey, out var selected) || selected);
         }).ToArray();
         WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
-        RebuildStudentUpdateTargetChoices();
-    }
-
-    private void RebuildStudentUpdateTargetChoices()
-    {
-        var previous = _studentUpdateTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
-            item => item.IsSelected, StringComparer.OrdinalIgnoreCase);
-        var studentNames = WebsitePolicyTargetChoices.ToDictionary(item => NormalizeTargetKey(item.Target),
-            item => item.StudentName, StringComparer.OrdinalIgnoreCase);
-        var targets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .Select(target => target.Trim()).Where(target => target.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-
-        foreach (var choice in _studentUpdateTargetChoices)
-            choice.PropertyChanged -= StudentUpdateTargetChoiceChanged;
-        _studentUpdateTargetChoices = Array.AsReadOnly(targets.Select(target =>
-        {
-            var key = NormalizeTargetKey(target);
-            var studentName = studentNames.GetValueOrDefault(key, "未填写姓名");
-            var isSelected = !previous.TryGetValue(key, out var selected) || selected;
-            return new TeacherPolicyTargetChoice(target, studentName, isSelected);
-        }).ToArray());
-        foreach (var choice in _studentUpdateTargetChoices)
-            choice.PropertyChanged += StudentUpdateTargetChoiceChanged;
-
-        Changed(nameof(StudentUpdateTargetChoices));
-        NotifyStudentUpdateTargetSelectionChanged();
-    }
-
-    private void StudentUpdateTargetChoiceChanged(object? sender, PropertyChangedEventArgs args)
-    {
-        if (sender is not TeacherPolicyTargetChoice choice || !_studentUpdateTargetChoices.Contains(choice) ||
-            args.PropertyName is not (null or nameof(TeacherPolicyTargetChoice.IsSelected)) ||
-            _isUpdatingStudentUpdateTargetSelection) return;
-        NotifyStudentUpdateTargetSelectionChanged();
-    }
-
-    private bool _isUpdatingStudentUpdateTargetSelection;
-
-    public void SelectAllStudentUpdateTargets(bool selected)
-    {
-        var changed = false;
-        _isUpdatingStudentUpdateTargetSelection = true;
-        try
-        {
-            foreach (var choice in _studentUpdateTargetChoices)
-            {
-                if (choice.IsSelected == selected) continue;
-                choice.IsSelected = selected;
-                changed = true;
-            }
-        }
-        finally { _isUpdatingStudentUpdateTargetSelection = false; }
-        if (changed) NotifyStudentUpdateTargetSelectionChanged();
     }
 
     private void NotifyStudentUpdateTargetSelectionChanged()
@@ -7038,6 +6986,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanReadApplicationPolicyAudit));
         Changed(nameof(CanReadApplicationInventory));
         NotifyApplicationPolicyInputs();
+        NotifyStudentUpdateTargetSelectionChanged();
     }
 
     private void InvalidateDeviceHealthSnapshot(string reason)
@@ -7173,8 +7122,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
         .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
 
-    private IReadOnlyList<string> GetSelectedStudentUpdateTargets() => _studentUpdateTargetChoices
-        .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
+    private IReadOnlyList<string> GetSelectedStudentUpdateTargets() => GetSelectedWebsitePolicyTargets();
 
     private IReadOnlyList<TeacherDeviceHealthRow> GetSelectedHealthRows()
     {
@@ -8627,10 +8575,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public void SelectPage(string page)
     {
         if (page == "health") page = "updates";
-        if (page is not ("classroom" or "lesson" or "updates" or "rooms" or "setup") || _selectedPage == page) return;
+        if (page is not ("classroom" or "lesson" or "updates" or "rooms" or "setup" or "about") ||
+            _selectedPage == page) return;
         _selectedPage = page;
         Changed(nameof(IsClassroomPage)); Changed(nameof(IsClassroomExperiencePage));
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsHealthCenterPage));
+        Changed(nameof(IsTeacherAboutPage));
         Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
         Changed(nameof(ClassroomQuickControlPresetSummary));

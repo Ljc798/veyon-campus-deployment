@@ -43,7 +43,9 @@
 | 24 | CM-03 Schema 迁移与回滚 | `PARTIAL-CODE; TEST-DEFERRED` | 修复 Schema 7 校区包归档器缺口；新增 Maintenance bootstrap Schema 1→2 显式迁移：保留原始字节快照、原子替换、核对 schema/revision/固定身份/配置指纹，失败时恢复原字节。Agent 本地主配置没有 schema 字段；校区包未来版本与 7→8→9 迁移语义尚未定义，未虚构目标 schema。未构建/测试/VM 验收。 |
 | 25 | CM-04 无包首次安全配对 | `PARTIAL-CODE; TEST-DEFERRED` | Agent 首次身份由 SYSTEM 生成并通过签名状态披露；教师首次固定仍需显式勾选确认。新增学生课堂助手 12 位身份核对码，并在教师首次信任/身份轮换对话中并列显示，帮助现场核对设备。仅覆盖已装有签名校区公钥/证书配置的设备；限时无包入网、首次公钥/证书/公开配置安全分发、审计记录与 VM 验收仍未完成。 |
 | 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；受控根密钥轮换、独立失败阶段/恢复建议视图仍未实现。 |
-| 27–37 | P3–P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 连续推进可执行代码/文档；测试、候选构建、隔离云、生产与现场门槛分开记录。 |
+| 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
+| 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
+| 29–37 | P4-02～P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 继续实施代码和文档；环形发布、CI/安装器、隔离云、候选包与实机验收各自保留门槛。 |
 
 ## 最近完成：P0-07 / Issue 007
 

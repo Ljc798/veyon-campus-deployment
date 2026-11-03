@@ -44,6 +44,8 @@ public partial class TeacherHealthView : UserControl
     public event EventHandler<RoutedEventArgs>? CopyDeviceHealthDiagnosticRequested;
     public event EventHandler<RoutedEventArgs>? CopyDeviceHealthFingerprintRequested;
     public event EventHandler<RoutedEventArgs>? ToggleDeviceHealthFingerprintsRequested;
+    public event EventHandler<RoutedEventArgs>? SelectAllDeviceTargetsRequested;
+    public event EventHandler<RoutedEventArgs>? ClearDeviceTargetsRequested;
 
     private void RequestAcknowledgeDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
         AcknowledgeDeviceHealthAlertRequested?.Invoke(sender, e);
@@ -95,4 +97,10 @@ public partial class TeacherHealthView : UserControl
 
     private void RequestToggleDeviceHealthFingerprints(object? sender, RoutedEventArgs e) =>
         ToggleDeviceHealthFingerprintsRequested?.Invoke(sender, e);
+
+    private void RequestSelectAllDeviceTargets(object? sender, RoutedEventArgs e) =>
+        SelectAllDeviceTargetsRequested?.Invoke(sender, e);
+
+    private void RequestClearDeviceTargets(object? sender, RoutedEventArgs e) =>
+        ClearDeviceTargetsRequested?.Invoke(sender, e);
 }
