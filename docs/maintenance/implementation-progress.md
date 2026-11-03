@@ -227,6 +227,7 @@
 - P1-05 故障分类修正：TLS 证书回调失败、子协议不兼容和教师端认证挑战拒绝现在以类型化故障码传播，不再依赖解析本地化异常文本；教师 URL host 非 IPv4 地址走配置错误，不再由 `IPAddress.Parse` 产生未分类异常。未运行连接故障测试或 VM。
 - P1-05 分类覆盖增量：教师配置重载失败包装为 `InvalidConfiguration`；服务端 JSON/消息结构无效、未知连接消息和无效 WebSocket 帧使用 `ProtocolMismatch`；教师端就绪目标身份不合格使用 `AuthenticationRejected`。通用分类器移除异常消息文本分析。未运行测试或 VM。
 - P1-05 Supervisor 配置诊断修正：连接 Supervisor 现在在缺教师地址/根证书时立即刷新诊断 sidecar；每次加载配置记录指纹；JSON、读取和配置验证失败时记录 `InvalidConfiguration`，不再只写日志并保留先前“已连接”快照。源码审阅完成，未运行测试或 VM。
+- P1-05 聚合异常分类修正：诊断分类递归展开 `AggregateException` 中的所有内部异常，以保留嵌套 DNS/TCP/TLS 类型码，而不是退化成普通网络失败。未运行测试。
 - P1-05 诊断时间修正：每次故障记录都会刷新 `LastAttemptUtc` 和 `LastFailureUtc`，避免重试多次后界面仍显示首次连接失败时间。未运行测试。
 - 独立发行元数据第一步：`ApplicationReleaseRole` 新增 `MaintenanceService`，Core 发布清单 verifier 增加 schema 5，签名规范载荷绑定独立产品/文件名/`maintenanceProtocolVersion`，并拒绝把 schema 5 用于 TeacherConsole/StudentSetup，或把旧 schema 用于 Maintenance。通用 Teacher/Student `Start` handoff 明确拒绝 Maintenance 角色，避免误用应用更新器。新增 v5 latest API response、MaintenanceService 发布脚本分支、固定 GitCode 文件名映射与 CloudBase migration/RPC 源码；这些服务端源码没有部署或执行。独立安装器和 SYSTEM 更新执行器还未消费该发行类型，现阶段不能安装 Maintenance 专属包。
 - P3-02 恢复接线增量：SCM 既有失败动作已限制为 5/15/30 秒三次自动重启、24 小时重置；Maintenance Worker 现在在教师通道启动前单次读取未终结更新事务。仍运行的 SYSTEM UpdateHelper 会保留 inProgress；Helper 不在时，仅读回 StudentSetup、Agent 和当前 Service 版本都达到事务目标才提交，否则事务转人工核对。恢复决定和异常类型写服务日志，不覆盖或清理快照。若服务 EXE 自身损坏到无法启动，仍没有独立 SYSTEM 计划任务/静态恢复宿主来用快照替换它；限次退避和断电/强杀阶段矩阵也待后续实现与 Windows VM 验收。

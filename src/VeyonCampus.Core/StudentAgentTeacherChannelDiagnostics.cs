@@ -250,8 +250,20 @@ public static class StudentAgentTeacherChannelDiagnostics
 
     private static IEnumerable<Exception> Flatten(Exception exception)
     {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
+        var pending = new Stack<Exception>();
+        pending.Push(exception);
+        while (pending.TryPop(out var current))
+        {
             yield return current;
+            if (current is AggregateException aggregate)
+            {
+                foreach (var inner in aggregate.InnerExceptions.Reverse()) pending.Push(inner);
+            }
+            else if (current.InnerException is { } inner)
+            {
+                pending.Push(inner);
+            }
+        }
     }
 
     private static bool IsUtc(DateTimeOffset? value) => value is null || value.Value.Offset == TimeSpan.Zero;
