@@ -21,7 +21,9 @@ async function sha256(filePath) {
 function assertPrivateKeyOutsideRepository(privateKeyPath) {
   const realPath = fs.realpathSync.native(privateKeyPath);
   const relative = path.relative(REPOSITORY_ROOT, realPath);
-  if (!relative.startsWith('..') && !path.isAbsolute(relative))
+  const isOutsideRepository = path.isAbsolute(relative) || relative === '..' ||
+    relative.startsWith(`..${path.sep}`);
+  if (!isOutsideRepository)
     throw new Error('Keep the Developer Release private key outside the repository.');
   const info = fs.lstatSync(privateKeyPath);
   if (!info.isFile() || info.isSymbolicLink() || info.nlink !== 1 ||
