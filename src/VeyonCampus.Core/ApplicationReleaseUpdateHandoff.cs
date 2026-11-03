@@ -21,6 +21,8 @@ public static class ApplicationReleaseUpdateHandoff
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("应用更新安装仅支持 Windows。");
+        if (role == ApplicationReleaseRole.MaintenanceService)
+            throw new NotSupportedException("MaintenanceService 必须走独立 SYSTEM 服务更新事务；不能使用 Teacher/Student 应用更新助手。");
 
         _ = ApplicationReleaseClient.CompareVersions(currentVersion, currentVersion);
         var fullInstallerPath = Path.GetFullPath(installerPath);

@@ -13,7 +13,8 @@ namespace VeyonCampus.Core;
 public enum ApplicationReleaseRole
 {
     TeacherConsole,
-    StudentSetup
+    StudentSetup,
+    MaintenanceService
 }
 
 public sealed record ApplicationReleasePolicyCapabilities(
@@ -33,7 +34,8 @@ public sealed record ApplicationReleaseManifest(
     [property: JsonPropertyName("downloadUrl")] string DownloadUrl,
     [property: JsonPropertyName("policyCapabilities")] ApplicationReleasePolicyCapabilities? PolicyCapabilities = null,
     [property: JsonPropertyName("studentAgentVersion")] string? StudentAgentVersion = null,
-    [property: JsonPropertyName("releaseChannel")] string? ReleaseChannel = null);
+    [property: JsonPropertyName("releaseChannel")] string? ReleaseChannel = null,
+    [property: JsonPropertyName("maintenanceProtocolVersion")] int? MaintenanceProtocolVersion = null);
 
 public sealed record ApplicationReleaseEnvelope(
     [property: JsonPropertyName("manifest")] ApplicationReleaseManifest Manifest,
@@ -596,10 +598,13 @@ public sealed class ApplicationReleaseClient
                 writer.WriteNumber("studentSystemPolicy", manifest.PolicyCapabilities.StudentSystemPolicy);
                 writer.WriteEndObject();
             }
-            if (manifest.SchemaVersion == 4)
+            if (manifest.SchemaVersion is 4 or 5)
             {
-                writer.WriteString("studentAgentVersion", manifest.StudentAgentVersion);
                 writer.WriteString("releaseChannel", manifest.ReleaseChannel);
+                if (manifest.SchemaVersion == 4)
+                    writer.WriteString("studentAgentVersion", manifest.StudentAgentVersion);
+                else
+                    writer.WriteNumber("maintenanceProtocolVersion", manifest.MaintenanceProtocolVersion!.Value);
             }
             writer.WriteEndObject();
         }
@@ -616,13 +621,16 @@ public sealed class ApplicationReleaseClient
             throw new InvalidDataException("更新验证器只能使用 Developer Release 公钥。");
         var manifest = release.Manifest ?? throw new InvalidDataException("发布清单缺失。");
         var roleName = RoleName(expectedRole);
-        var product = expectedRole == ApplicationReleaseRole.TeacherConsole
-            ? "VeyonCampus.TeacherConsole"
-            : "VeyonCampus.StudentSetup";
-        var roleFileName = expectedRole == ApplicationReleaseRole.TeacherConsole ? "Teacher" : "Student";
+        var (product, roleFileName) = expectedRole switch
+        {
+            ApplicationReleaseRole.TeacherConsole => ("VeyonCampus.TeacherConsole", "Teacher"),
+            ApplicationReleaseRole.StudentSetup => ("VeyonCampus.StudentSetup", "Student"),
+            ApplicationReleaseRole.MaintenanceService => ("VeyonCampus.MaintenanceService", "Maintenance"),
+            _ => throw new InvalidDataException("更新角色无效。")
+        };
         var isLocalTest = string.Equals(manifest.ReleaseChannel, "local-test", StringComparison.Ordinal);
         var isStable = manifest.ReleaseChannel is null or "stable";
-        if (manifest.SchemaVersion is not (1 or 2 or 3 or 4) || manifest.Role != roleName || manifest.Product != product ||
+        if (manifest.SchemaVersion is not (1 or 2 or 3 or 4 or 5) || manifest.Role != roleName || manifest.Product != product ||
             manifest.Architecture != "win-x64" || !IsSemanticVersion(manifest.Version) ||
             manifest.FileName != $"VeyonCampus-{roleFileName}-Setup-{manifest.Version}-win-x64.exe" ||
             manifest.SizeBytes is < 1 or > MaximumArtifactBytes ||
@@ -635,6 +643,12 @@ public sealed class ApplicationReleaseClient
                 manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
                 manifest.PolicyCapabilities.ApplicationPolicy is < 1 or > 32767 ||
                 manifest.StudentAgentVersion is null || !IsSemanticVersion(manifest.StudentAgentVersion))) ||
+            (manifest.SchemaVersion == 5 && (expectedRole != ApplicationReleaseRole.MaintenanceService ||
+                !isStable || manifest.PolicyCapabilities is not null || manifest.StudentAgentVersion is not null ||
+                manifest.MaintenanceProtocolVersion is not (>= 1 and <= 32767))) ||
+            (manifest.SchemaVersion < 5 && manifest.MaintenanceProtocolVersion is not null) ||
+            (expectedRole == ApplicationReleaseRole.MaintenanceService && manifest.SchemaVersion != 5) ||
+            (expectedRole != ApplicationReleaseRole.MaintenanceService && manifest.SchemaVersion == 5) ||
             (manifest.SchemaVersion == 1 && manifest.PolicyCapabilities is not null) ||
             (manifest.SchemaVersion == 2 && (manifest.PolicyCapabilities is null ||
                 manifest.PolicyCapabilities.StudentSystemPolicy is < 1 or > 32767 ||
@@ -795,6 +809,7 @@ public sealed class ApplicationReleaseClient
     {
         ApplicationReleaseRole.TeacherConsole => "TeacherConsole",
         ApplicationReleaseRole.StudentSetup => "StudentSetup",
+        ApplicationReleaseRole.MaintenanceService => "MaintenanceService",
         _ => throw new InvalidDataException("更新角色无效。")
     };
 
