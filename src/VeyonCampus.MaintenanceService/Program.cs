@@ -188,6 +188,8 @@ internal static class Program
         ApplyFailureActions(service);
         StartServiceHandle(service);
         WaitForServiceState(service, ServiceRunning);
+        MaintenanceServiceRecoveryTask.Register(Environment.ProcessPath
+            ?? throw new InvalidOperationException("无法定位 Maintenance Recovery task 的服务版本目录。"));
         WriteLog("Maintenance service installed or updated and started.");
         return 0;
     }
@@ -263,7 +265,11 @@ internal static class Program
     private static int UninstallServiceCommand()
     {
         EnsureAdministrator();
-        if (!IsServiceInstalled()) return 0;
+        if (!IsServiceInstalled())
+        {
+            MaintenanceServiceRecoveryTask.Remove();
+            return 0;
+        }
         StopServiceAndWait();
         using var manager = OpenServiceControlManager(ScManagerConnect);
         using var service = TryOpenService(manager, DeleteAccess | ServiceQueryStatus, out var notInstalled);
@@ -274,7 +280,11 @@ internal static class Program
         while (DateTime.UtcNow < deadline)
         {
             using var check = TryOpenService(manager, ServiceQueryStatus, out var removed);
-            if (removed) return 0;
+            if (removed)
+            {
+                MaintenanceServiceRecoveryTask.Remove();
+                return 0;
+            }
             Thread.Sleep(250);
         }
         throw new TimeoutException("Maintenance 服务仍在 SCM 中登记；不能继续移除服务文件。" );

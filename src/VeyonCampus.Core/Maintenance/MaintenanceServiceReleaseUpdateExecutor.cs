@@ -261,6 +261,87 @@ public static class MaintenanceServiceReleaseUpdateExecutor
         TryDelete(Path.GetFullPath(installerPath) + ".release.json");
     }
 
+    [SupportedOSPlatform("windows")]
+    public static int RecoverInterruptedUpdateFromStartup()
+    {
+        EnsureSystemIdentity();
+        string configPath;
+        MaintenanceServiceReleaseUpdateTransaction? record;
+        try
+        {
+            configPath = MaintenanceServiceConfigurationStore.ResolveAgentConfigurationPath();
+            record = ReadTransaction(configPath);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or System.Text.Json.JsonException or
+                                          InvalidOperationException or System.Security.SecurityException or
+                                          ArgumentException)
+        {
+            WriteRecoveryLog("MaintenanceService startup recovery could not read the bound transaction/configuration (" +
+                             exception.GetType().Name + "); evidence retained.");
+            return 2;
+        }
+        if (record is null || record.State is "committed" or "rolledBack") return 0;
+        if (record.State == "needsReview") return 2;
+
+        Exception? lastFailure = null;
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            if (attempt > 0) Thread.Sleep(TimeSpan.FromSeconds(attempt * 10));
+            try
+            {
+                record = ReadTransaction(configPath)
+                         ?? throw new InvalidDataException("MaintenanceService 恢复事务记录丢失。");
+                if (record.State is "committed" or "rolledBack") return 0;
+                if (record.State == "needsReview") return 2;
+                if (IsHelperRunning(record)) return 3;
+
+                using var machineLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero);
+                var previousExecutable = GetServiceExecutable(record.PreviousVersion);
+                var targetExecutable = GetServiceExecutable(record.TargetVersion);
+                if (VerifyInstalledService(record.TargetVersion))
+                {
+                    MarkCompleted(configPath, record.CommandId, "committed");
+                    TryDeleteStagedPackage(GetStagedInstallerPath(configPath, record));
+                    return 0;
+                }
+
+                PathLinkSecurity.RejectLinks(previousExecutable);
+                if (!File.Exists(previousExecutable) ||
+                    !string.Equals(ReadProductVersion(previousExecutable), record.PreviousVersion,
+                        StringComparison.Ordinal))
+                    throw new FileNotFoundException("MaintenanceService 原版本恢复文件不存在或版本不符。",
+                        previousExecutable);
+                if (File.Exists(targetExecutable)) PathLinkSecurity.RejectLinks(targetExecutable);
+                if (!File.Exists(targetExecutable) ||
+                    !string.Equals(ReadProductVersion(targetExecutable), record.TargetVersion,
+                        StringComparison.Ordinal))
+                    WriteRecoveryLog("目标 MaintenanceService 文件缺失或版本不符；尝试恢复已记录的原版本。");
+
+                if (RunServiceCommand(previousExecutable, "--install-and-start-service", TimeSpan.FromMinutes(2)) != 0)
+                    throw new InvalidOperationException("MaintenanceService 原版本安装/启动命令失败。");
+                if (!VerifyInstalledService(record.PreviousVersion))
+                    throw new InvalidOperationException("MaintenanceService 原版本切回后未通过 SCM 和 SYSTEM 健康核验。");
+                MarkCompleted(configPath, record.CommandId, "rolledBack");
+                TryDeleteStagedPackage(GetStagedInstallerPath(configPath, record));
+                WriteRecoveryLog("MaintenanceService interrupted update rolled back to " + record.PreviousVersion + ".");
+                return 0;
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or TimeoutException or
+                                              System.ComponentModel.Win32Exception or System.Security.SecurityException or
+                                              ArgumentException or System.Text.Json.JsonException)
+            {
+                lastFailure = exception;
+            }
+        }
+
+        if (lastFailure is not null)
+            WriteRecoveryLog("MaintenanceService startup recovery exhausted three attempts; transaction evidence retained (" +
+                             lastFailure.GetType().Name + ").");
+        return 2;
+    }
+
     private static async Task StartHelperAndRecordFailure(string configPath, string installerPath, Guid commandId)
     {
         try { ApplicationReleaseUpdateHandoff.StartMaintenanceServiceReleaseHelper(installerPath, configPath, commandId); }
@@ -438,7 +519,27 @@ public static class MaintenanceServiceReleaseUpdateExecutor
         { return false; }
     }
 
-    private static int RunServiceCommand(string executablePath, string arguments)
+    private static string GetServiceExecutable(string version)
+    {
+        _ = ApplicationReleaseClient.CompareVersions(version, version);
+        var executable = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            "Veyon Campus", "MaintenanceService", "Versions", version,
+            "VeyonCampus.MaintenanceService.exe");
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(executable);
+        return executable;
+    }
+
+    private static string GetStagedInstallerPath(string configPath,
+        MaintenanceServiceReleaseUpdateTransaction record)
+    {
+        var directory = Path.Combine(MaintenanceServiceIdentityStore.GetServiceDirectory(configPath),
+            StagingDirectoryName);
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(directory);
+        return Path.Combine(directory,
+            $"VeyonCampus-Maintenance-Setup-{record.TargetVersion}-win-x64.exe");
+    }
+
+    private static int RunServiceCommand(string executablePath, string arguments, TimeSpan? timeout = null)
     {
         try
         {
@@ -449,7 +550,13 @@ public static class MaintenanceServiceReleaseUpdateExecutor
                 UseShellExecute = false,
                 WorkingDirectory = Path.GetDirectoryName(executablePath)!
             });
-            if (process is null || !process.WaitForExit(30_000)) return -1;
+            if (process is null) return -1;
+            if (!process.WaitForExit(checked((int)(timeout ?? TimeSpan.FromSeconds(30)).TotalMilliseconds)))
+            {
+                try { process.Kill(entireProcessTree: true); }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException) { }
+                return -1;
+            }
             return process.ExitCode;
         }
         catch (Exception exception) when (exception is Win32Exception or IOException or UnauthorizedAccessException or
@@ -488,6 +595,25 @@ public static class MaintenanceServiceReleaseUpdateExecutor
     private static void TryDelete(string path)
     {
         try { if (File.Exists(path)) { PathLinkSecurity.RejectLinks(path); File.Delete(path); } }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException) { }
+    }
+
+    private static void WriteRecoveryLog(string message)
+    {
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "VeyonCampus", "MaintenanceServiceHost");
+            Directory.CreateDirectory(directory);
+            PathLinkSecurity.RejectLinks(directory);
+            AgentFileSecurity.SecurePrivateDirectory(directory);
+            var path = Path.Combine(directory, "service.log");
+            if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
+            File.AppendAllText(path, DateTimeOffset.UtcNow.ToString("O") + " " +
+                new string(message.Where(character => !char.IsControl(character)).Take(512).ToArray()) + "\r\n",
+                new UTF8Encoding(false));
+        }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.Security.SecurityException) { }
     }

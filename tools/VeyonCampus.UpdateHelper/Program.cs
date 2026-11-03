@@ -1,5 +1,10 @@
 using VeyonCampus.Core;
 
+if (args is ["--recover-maintenance-service"])
+    return OperatingSystem.IsWindows()
+        ? VeyonCampus.Core.Maintenance.MaintenanceServiceReleaseUpdateExecutor.RecoverInterruptedUpdateFromStartup()
+        : 2;
+
 if (args.Length > 0 && args[0] == "--verify-release-key")
 {
     if (args.Length > 2)
