@@ -340,6 +340,13 @@ public static class ApplicationPolicyCryptography
 /// <summary>The application policy signing trust is stored under a distinct, one-way campus namespace.</summary>
 public static class ApplicationPolicySigningKeyStore
 {
+    public static ApplicationPolicySigningKey CreateUnpinnedReplacement(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return new ApplicationPolicySigningKey(
+            WebsitePolicySigningKeyStore.CreateUnpinnedReplacement(NamespaceFor(campusId)));
+    }
+
     public static ApplicationPolicySigningKey GetOrCreate(string campusId)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
@@ -352,6 +359,19 @@ public static class ApplicationPolicySigningKeyStore
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         return new ApplicationPolicySigningKey(WebsitePolicySigningKeyStore.Open(NamespaceFor(campusId)));
+    }
+
+    public static ApplicationPolicySigningKey OpenReplacementByThumbprint(string campusId, string thumbprint)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        return new ApplicationPolicySigningKey(
+            WebsitePolicySigningKeyStore.OpenByThumbprint(NamespaceFor(campusId), thumbprint));
+    }
+
+    public static void ActivateReplacement(string campusId, string thumbprint)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        WebsitePolicySigningKeyStore.PinExistingKey(NamespaceFor(campusId), thumbprint);
     }
 
     private static string NamespaceFor(string campusId) => "app-policy-" +

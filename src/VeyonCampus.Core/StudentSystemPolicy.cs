@@ -272,6 +272,9 @@ public static class StudentSystemPolicyCryptography
 public static class StudentSystemPolicySigningKeyStore
 {
     private const string NamespacePrefix = "VeyonCampus-SystemPolicy-";
+    public static WebsitePolicySigningKey CreateUnpinnedReplacement(string campusId) =>
+        WebsitePolicySigningKeyStore.CreateUnpinnedReplacement(NamespaceId(campusId));
+
     public static WebsitePolicySigningKey GetOrCreate(string campusId, bool replaceUnavailableKey = false)
     {
         return WebsitePolicySigningKeyStore.GetOrCreate(NamespaceId(campusId), replaceUnavailableKey);
@@ -280,6 +283,12 @@ public static class StudentSystemPolicySigningKeyStore
     {
         return WebsitePolicySigningKeyStore.Open(NamespaceId(campusId));
     }
+
+    public static WebsitePolicySigningKey OpenReplacementByThumbprint(string campusId, string thumbprint) =>
+        WebsitePolicySigningKeyStore.OpenByThumbprint(NamespaceId(campusId), thumbprint);
+
+    public static void ActivateReplacement(string campusId, string thumbprint) =>
+        WebsitePolicySigningKeyStore.PinExistingKey(NamespaceId(campusId), thumbprint);
     public static long NextRevision(string campusId, long minimumExclusiveRevision = 0)
     {
         return WebsitePolicyRevisionStore.Next(NamespaceId(campusId), minimumExclusiveRevision);

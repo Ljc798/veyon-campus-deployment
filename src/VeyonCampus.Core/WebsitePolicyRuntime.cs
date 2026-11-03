@@ -122,7 +122,75 @@ public static class WebsitePolicySigningKeyStore
         return CreateSigningKey(certificate, privateKey);
     }
 
+    /// <summary>Creates a non-exportable candidate key without changing the active campus pin.</summary>
+    public static WebsitePolicySigningKey CreateUnpinnedReplacement(string campusId)
+    {
+        ValidateCampusId(campusId);
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("策略信任根候选密钥目前只能在 Windows 用户证书库中安全暂存。");
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadWrite);
+        return CreateStoredKey(store, campusId, replacement: true, pin: false);
+    }
+
+    /// <summary>Opens a product certificate by thumbprint for a staged rotation workflow.</summary>
+    public static WebsitePolicySigningKey OpenByThumbprint(string campusId, string thumbprint)
+    {
+        ValidateCampusId(campusId);
+        var normalized = NormalizeThumbprint(thumbprint);
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadOnly);
+        using var certificate = FindByThumbprint(store, normalized) ??
+            throw new CryptographicException("找不到指定的策略签名证书；没有导出或替换任何密钥。");
+        if (!string.Equals(certificate.Subject, SubjectFor(campusId), StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException("指定证书不属于此校区；拒绝打开策略签名密钥。");
+        var privateKey = TryGetPrivateKey(certificate) ??
+            throw new CryptographicException("候选策略签名密钥无法使用；没有替换当前密钥。");
+        if (!IsOwnedReplacementKey(campusId, privateKey))
+        {
+            privateKey.Dispose();
+            throw new CryptographicException("指定私钥不是本产品为此校区生成的不可导出轮换候选密钥。");
+        }
+        return CreateSigningKey(certificate, privateKey);
+    }
+
+    /// <summary>Activates an existing candidate only after verifying its certificate and private key.</summary>
+    public static void PinExistingKey(string campusId, string thumbprint)
+    {
+        ValidateCampusId(campusId);
+        var normalized = NormalizeThumbprint(thumbprint);
+        using var store = new X509Store(StoreName.My, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadOnly);
+        using var certificate = FindByThumbprint(store, normalized) ??
+            throw new CryptographicException("找不到待激活的策略签名证书；原固定密钥未更改。");
+        if (!string.Equals(certificate.Subject, SubjectFor(campusId), StringComparison.OrdinalIgnoreCase))
+            throw new CryptographicException("待激活证书不属于此校区；原固定密钥未更改。");
+        using var privateKey = TryGetPrivateKey(certificate) ??
+            throw new CryptographicException("待激活策略私钥不可用；原固定密钥未更改。");
+        if (!IsOwnedReplacementKey(campusId, privateKey))
+            throw new CryptographicException("待激活私钥不是本产品为此校区生成的不可导出轮换候选密钥；原固定密钥未更改。");
+        using var publicKey = certificate.GetRSAPublicKey() ??
+            throw new CryptographicException("待激活策略证书缺少 RSA 公钥；原固定密钥未更改。");
+        if (publicKey.KeySize is < 2048 or > 4096 || privateKey.KeySize != publicKey.KeySize)
+            throw new CryptographicException("待激活策略密钥位长无效；原固定密钥未更改。");
+        PinThumbprint(campusId, normalized);
+    }
+
+    private static bool IsOwnedReplacementKey(string campusId, RSA privateKey)
+    {
+        if (!OperatingSystem.IsWindows() || privateKey is not RSACng cng || cng.Key.KeySize != SigningKeySize ||
+            cng.Key.AlgorithmGroup != CngAlgorithmGroup.Rsa || cng.Key.ExportPolicy != CngExportPolicies.None)
+            return false;
+        var name = cng.Key.KeyName;
+        var prefix = KeyNameFor(campusId) + "-";
+        return name is not null && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static WebsitePolicySigningKey CreateAndPin(X509Store store, string campusId, bool replacement)
+        => CreateStoredKey(store, campusId, replacement, pin: true);
+
+    private static WebsitePolicySigningKey CreateStoredKey(X509Store store, string campusId, bool replacement,
+        bool pin)
     {
         using var rsa = OperatingSystem.IsWindows()
             ? CreatePersistedSigningKey(campusId, replacement)
@@ -142,7 +210,7 @@ public static class WebsitePolicySigningKeyStore
             throw new CryptographicException("教师网站策略证书写入当前用户证书库后无法按指纹读回。");
         var privateKey = TryGetPrivateKey(stored) ??
             throw new CryptographicException("教师密钥已保存，但无法重新打开；未用于生成配置包。");
-        PinThumbprint(campusId, stored.Thumbprint);
+        if (pin) PinThumbprint(campusId, stored.Thumbprint);
         return CreateSigningKey(stored, privateKey);
     }
 
