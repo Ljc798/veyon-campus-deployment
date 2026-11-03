@@ -251,7 +251,7 @@ internal static class Program
         {
             SetServiceStatus(ServiceRunning, 0, 0);
             WriteLog("Maintenance service host entered SERVICE_RUNNING.");
-            new MaintenanceServiceWorker().RunAsync(stopSource.Token).GetAwaiter().GetResult();
+            new MaintenanceServiceWorker(log: WriteLog).RunAsync(stopSource.Token).GetAwaiter().GetResult();
             SetServiceStatus(ServiceStopped, 0, 0);
             WriteLog("Maintenance service stopped cleanly.");
         }

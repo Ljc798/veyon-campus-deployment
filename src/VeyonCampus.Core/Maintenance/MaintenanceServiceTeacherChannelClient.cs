@@ -267,9 +267,14 @@ public sealed class MaintenanceServiceTeacherChannelClient
 public sealed class MaintenanceServiceWorker
 {
     private readonly MaintenanceServiceTeacherChannelClient _channel;
+    private readonly Action<string> _log;
 
-    public MaintenanceServiceWorker(MaintenanceServiceTeacherChannelClient? channel = null) =>
+    public MaintenanceServiceWorker(MaintenanceServiceTeacherChannelClient? channel = null,
+        Action<string>? log = null)
+    {
         _channel = channel ?? new MaintenanceServiceTeacherChannelClient();
+        _log = log ?? (_ => { });
+    }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
     public async Task RunAsync(CancellationToken cancellationToken = default)
@@ -306,6 +311,35 @@ public sealed class MaintenanceServiceWorker
         }
         _ = MaintenanceServiceConfigurationStore.LoadOrInitializeForSystemService(configPath);
         _ = StudentUpdateAtomicTransaction.RecoverFromCommand(configPath);
+        _log(ReconcileInterruptedMaintenanceUpdate(configPath));
         await _channel.RunAsync(configPath, cancellationToken).ConfigureAwait(false);
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static string ReconcileInterruptedMaintenanceUpdate(string configPath)
+    {
+        try
+        {
+            var transaction = MaintenanceServiceUpdateExecutor.ReadTransaction(configPath);
+            if (transaction is null || transaction.State is not ("pending" or "inProgress"))
+                return "Maintenance startup recovery found no interrupted service update.";
+
+            // A helper that survived the SCM restart still owns the transaction. Otherwise,
+            // ReadStatus verifies the installed Setup, Agent and Maintenance versions before
+            // committing; any mixed or unreadable state remains pending/needsReview for teachers.
+            var status = MaintenanceServiceUpdateExecutor.ReadStatus(configPath, transaction.CommandId,
+                DateTimeOffset.UtcNow);
+            return "Maintenance startup recovery reconciled command " + transaction.CommandId.ToString("N") +
+                   " to state " + (status?.State ?? "needsReview") + ".";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException or
+                                          InvalidOperationException or TimeoutException or
+                                          System.Security.SecurityException or ArgumentException)
+        {
+            // Do not make the service unavailable because recovery evidence is damaged. Keep the
+            // journal and recovery snapshot intact; signed transaction queries will report review.
+            return "Maintenance startup recovery deferred; evidence retained (" + exception.GetType().Name + ").";
+        }
     }
 }
