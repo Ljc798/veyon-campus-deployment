@@ -27,12 +27,18 @@ public sealed record MaintenanceServiceBootstrapSnapshot(
 public static class MaintenanceServiceConfigurationStore
 {
     public const string BootstrapFileName = "maintenance-bootstrap.json";
+    public const string ConfigurationSyncRecoveryFileName = "teacher-connectivity-sync-recovery.json";
     private const int MaximumFileBytes = 64 * 1024;
+    private const int MaximumRecoveryFileBytes = 128 * 1024;
     private static readonly Regex CampusDirectoryPattern = new("^[A-Fa-f0-9]{24}$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private sealed record LegacyBootstrapSnapshot(int SchemaVersion, string CampusId,
         string AgentIdentityFingerprint, string TeacherSigningPublicKeyPem, IReadOnlyList<string>? Endpoints,
         string? RootCertificateBase64, string? ConfigurationFingerprint, DateTimeOffset UpdatedUtc);
+    private sealed record TeacherConnectivitySyncRecoveryRecord(int SchemaVersion, Guid CommandId,
+        string AgentIdentityFingerprint, long TargetRevision, string TargetConfigurationFingerprint,
+        DateTimeOffset StartedUtc, bool OriginalBootstrapExisted,
+        MaintenanceServiceBootstrapSnapshot? OriginalBootstrap, string OriginalAgentConfigurationBase64);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -85,6 +91,60 @@ public static class MaintenanceServiceConfigurationStore
         var snapshot = CreateSnapshot(agentConfig, agentFingerprint, nowUtc ?? DateTimeOffset.UtcNow);
         WriteSnapshot(path, directory, snapshot);
         return snapshot;
+    }
+
+    [SupportedOSPlatform("windows")]
+    public static bool RecoverInterruptedTeacherEndpointUpdate(string configPath)
+    {
+        EnsureWindowsSystemIdentity();
+        var agentFingerprint = StudentAgentIdentityKeyStore.ReadFingerprint(configPath);
+        var directory = MaintenanceServiceIdentityStore.GetServiceDirectory(configPath);
+        EnsurePrivateDirectory(directory);
+        var recoveryPath = Path.Combine(directory, ConfigurationSyncRecoveryFileName);
+        if (!File.Exists(recoveryPath)) return true;
+
+        var recovery = ReadRecoveryRecord(recoveryPath);
+        if (!string.Equals(recovery.AgentIdentityFingerprint, agentFingerprint, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("教师连接配置恢复记录绑定了其他 Student Agent 身份；拒绝自动恢复。");
+        var originalAgentBytes = DecodeOriginalAgentConfiguration(recovery.OriginalAgentConfigurationBase64);
+        var originalAgent = DeserializeAgentConfiguration(originalAgentBytes);
+        var currentAgent = MaintenanceServiceIdentityStore.ReadTrustedAgentConfiguration(configPath);
+        if (!WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(currentAgent,
+                originalAgent))
+            throw new InvalidDataException("教师连接配置恢复记录与当前固定校区/策略身份不一致；拒绝自动恢复。");
+        ValidateRecoveryBootstrap(recovery, originalAgent, agentFingerprint);
+
+        StudentUpdateAtomicTransaction.MachineLock updateLock;
+        try { updateLock = StudentUpdateAtomicTransaction.AcquireMachineLock(TimeSpan.Zero); }
+        catch (StudentUpdateLockBusyException) { return false; }
+        using (updateLock)
+        {
+            var lockedAgentFingerprint = StudentAgentIdentityKeyStore.ReadFingerprint(configPath);
+            var lockedAgent = MaintenanceServiceIdentityStore.ReadTrustedAgentConfiguration(configPath);
+            if (!string.Equals(lockedAgentFingerprint, agentFingerprint, StringComparison.OrdinalIgnoreCase) ||
+                !WebsitePolicyAgentInstaller.ConfigurationSnapshotsShareImmutableRuntimeState(lockedAgent,
+                    originalAgent))
+                throw new InvalidDataException("Student Agent 身份在配置恢复期间发生变化；保留恢复记录供人工核对。");
+            var transaction = StudentUpdateAtomicTransaction.Read(configPath);
+            if (transaction is not null && transaction.State is not (StudentUpdateTransactionState.Committed or
+                    StudentUpdateTransactionState.RolledBack or StudentUpdateTransactionState.Superseded))
+                return false;
+
+            PathLinkSecurity.RejectLinks(configPath);
+            WebsitePolicyAgentInstaller.WriteSecureConfig(configPath, originalAgentBytes);
+            var bootstrapPath = Path.Combine(directory, BootstrapFileName);
+            if (recovery.OriginalBootstrapExisted)
+                WriteSnapshot(bootstrapPath, directory, recovery.OriginalBootstrap!);
+            else if (File.Exists(bootstrapPath))
+            {
+                PathLinkSecurity.RejectLinks(bootstrapPath);
+                File.Delete(bootstrapPath);
+            }
+            WebsitePolicyAgentInstaller.RestartCurrentAgentTaskForConfigurationSync(configPath,
+                WebsitePolicyAgent.ConfigFingerprint(originalAgent), TimeSpan.FromSeconds(20));
+            DeleteRecoveryRecord(recoveryPath);
+            return true;
+        }
     }
 
     /// <summary>
@@ -158,9 +218,16 @@ public static class MaintenanceServiceConfigurationStore
             UpdatedUtc = nowUtc.ToUniversalTime(),
             ConfigurationRevision = targetRevision
         };
+        var recoveryPath = Path.Combine(directory, ConfigurationSyncRecoveryFileName);
+        if (File.Exists(recoveryPath))
+            throw new InvalidOperationException("已有教师连接配置恢复记录尚未处理；拒绝覆盖恢复材料。");
+        var recoveryRecord = new TeacherConnectivitySyncRecoveryRecord(1, request.CommandId!.Value,
+            agentFingerprint, targetRevision, fingerprint, nowUtc.ToUniversalTime(), originalBootstrapExisted,
+            originalBootstrapExisted ? current : null, Convert.ToBase64String(originalAgentConfigurationBytes));
 
         try
         {
+            WriteRecoveryRecord(recoveryPath, directory, recoveryRecord);
             PathLinkSecurity.RejectLinks(configPath);
             WebsitePolicyAgentInstaller.WriteSecureConfig(configPath,
                 JsonSerializer.SerializeToUtf8Bytes(updatedAgentConfiguration, WebsitePolicyAgent.JsonOptions));
@@ -175,6 +242,7 @@ public static class MaintenanceServiceConfigurationStore
             WriteSnapshot(path, directory, updated);
             WebsitePolicyAgentInstaller.RestartCurrentAgentTaskForConfigurationSync(configPath,
                 WebsitePolicyAgent.ConfigFingerprint(updatedAgentConfiguration), TimeSpan.FromSeconds(20));
+            DeleteRecoveryRecord(recoveryPath);
             return updated;
         }
         catch (Exception updateFailure)
@@ -192,6 +260,7 @@ public static class MaintenanceServiceConfigurationStore
                 }
                 WebsitePolicyAgentInstaller.RestartCurrentAgentTaskForConfigurationSync(configPath,
                     WebsitePolicyAgent.ConfigFingerprint(originalAgentConfiguration), TimeSpan.FromSeconds(20));
+                DeleteRecoveryRecordIfExists(recoveryPath);
             }
             catch (Exception rollbackFailure)
             {
@@ -218,6 +287,111 @@ public static class MaintenanceServiceConfigurationStore
             endpoints, config.TeacherChannelRootCertificateBase64,
             StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(config.CampusId, endpoints,
                 config.TeacherChannelRootCertificateBase64), nowUtc.ToUniversalTime(), 0);
+    }
+
+    private static TeacherConnectivitySyncRecoveryRecord ReadRecoveryRecord(string path)
+    {
+        PathLinkSecurity.RejectLinks(path);
+        AgentFileSecurity.SecurePrivateFile(path);
+        var info = new FileInfo(path);
+        if (info.Length is <= 0 or > MaximumRecoveryFileBytes)
+            throw new InvalidDataException("教师连接配置恢复记录大小无效；保留记录供人工核对。");
+        var bytes = File.ReadAllBytes(path);
+        PolicyJson.RejectDuplicateFields(bytes);
+        var record = JsonSerializer.Deserialize<TeacherConnectivitySyncRecoveryRecord>(bytes, JsonOptions)
+                     ?? throw new InvalidDataException("教师连接配置恢复记录为空。");
+        var canonical = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
+        if (!bytes.AsSpan().SequenceEqual(canonical) || record.SchemaVersion != 1 ||
+            record.CommandId == Guid.Empty || record.TargetRevision <= 0 ||
+            record.StartedUtc.Offset != TimeSpan.Zero || record.StartedUtc > DateTimeOffset.UtcNow.AddMinutes(2) ||
+            record.TargetConfigurationFingerprint is not { Length: 64 } targetFingerprint ||
+            targetFingerprint.Any(character => !Uri.IsHexDigit(character)) ||
+            record.AgentIdentityFingerprint is not { Length: 64 } recordedAgentFingerprint ||
+            recordedAgentFingerprint.Any(character => !Uri.IsHexDigit(character)) ||
+            string.IsNullOrWhiteSpace(record.OriginalAgentConfigurationBase64) ||
+            record.OriginalBootstrapExisted != (record.OriginalBootstrap is not null))
+            throw new InvalidDataException("教师连接配置恢复记录字段或规范格式无效；保留记录供人工核对。");
+        return record;
+    }
+
+    private static byte[] DecodeOriginalAgentConfiguration(string encoded)
+    {
+        byte[] bytes;
+        try { bytes = Convert.FromBase64String(encoded); }
+        catch (FormatException exception)
+        { throw new InvalidDataException("恢复记录中的 Agent 配置编码无效。", exception); }
+        if (bytes.Length is 0 or > MaximumFileBytes ||
+            !string.Equals(Convert.ToBase64String(bytes), encoded, StringComparison.Ordinal))
+            throw new InvalidDataException("恢复记录中的 Agent 配置大小或编码无效。");
+        PolicyJson.RejectDuplicateFields(bytes);
+        return bytes;
+    }
+
+    private static WebsitePolicyAgentConfig DeserializeAgentConfiguration(byte[] bytes) =>
+        JsonSerializer.Deserialize<WebsitePolicyAgentConfig>(bytes, WebsitePolicyAgent.JsonOptions)
+        ?? throw new InvalidDataException("恢复记录中的 Student Agent 配置为空。");
+
+    private static void ValidateRecoveryBootstrap(TeacherConnectivitySyncRecoveryRecord recovery,
+        WebsitePolicyAgentConfig originalAgent, string agentFingerprint)
+    {
+        if (!recovery.OriginalBootstrapExisted) return;
+        var snapshot = recovery.OriginalBootstrap
+                       ?? throw new InvalidDataException("教师连接配置恢复记录缺少原始 Maintenance bootstrap。");
+        var publicKey = CanonicalPublicKey(snapshot.TeacherSigningPublicKeyPem);
+        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(snapshot.CampusId, snapshot.Endpoints,
+            snapshot.RootCertificateBase64);
+        var actualFingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(
+            snapshot.CampusId, snapshot.Endpoints, snapshot.RootCertificateBase64);
+        if (snapshot.SchemaVersion != 2 || snapshot.CampusId != originalAgent.CampusId ||
+            snapshot.AgentIdentityFingerprint != MaintenanceValidation.Fingerprint(agentFingerprint,
+                nameof(agentFingerprint)) || !PublicKeysEqual(publicKey, CanonicalPublicKey(originalAgent.PublicKeyPem)) ||
+            snapshot.ConfigurationFingerprint != actualFingerprint || snapshot.ConfigurationRevision < 0 ||
+            snapshot.UpdatedUtc.Offset != TimeSpan.Zero || snapshot.UpdatedUtc > DateTimeOffset.UtcNow.AddMinutes(2))
+            throw new InvalidDataException("恢复记录中的原始 Maintenance bootstrap 与 Agent 身份不匹配。");
+    }
+
+    private static void WriteRecoveryRecord(string path, string directory,
+        TeacherConnectivitySyncRecoveryRecord record)
+    {
+        PathLinkSecurity.RejectLinks(directory);
+        if (File.Exists(path)) throw new IOException("教师连接配置恢复记录已存在；拒绝覆盖。");
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
+        if (bytes.Length is 0 or > MaximumRecoveryFileBytes)
+            throw new InvalidDataException("教师连接配置恢复记录超过大小限制。");
+        var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            using (new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None)) { }
+            AgentFileSecurity.SecurePrivateFile(temporary);
+            using (var stream = new FileStream(temporary, FileMode.Open, FileAccess.Write, FileShare.None,
+                       16 * 1024, FileOptions.WriteThrough))
+            {
+                stream.Write(bytes);
+                stream.Flush(flushToDisk: true);
+            }
+            PathLinkSecurity.RejectLinks(directory);
+            if (File.Exists(path)) throw new IOException("教师连接配置恢复记录在写入期间已出现；拒绝覆盖。");
+            File.Move(temporary, path);
+            AgentFileSecurity.SecurePrivateFile(path);
+        }
+        finally
+        {
+            try { if (File.Exists(temporary)) File.Delete(temporary); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    private static void DeleteRecoveryRecord(string path)
+    {
+        PathLinkSecurity.RejectLinks(path);
+        AgentFileSecurity.SecurePrivateFile(path);
+        File.Delete(path);
+    }
+
+    private static void DeleteRecoveryRecordIfExists(string path)
+    {
+        if (File.Exists(path)) DeleteRecoveryRecord(path);
     }
 
     private static MaintenanceServiceBootstrapSnapshot ReadAndValidate(string path,

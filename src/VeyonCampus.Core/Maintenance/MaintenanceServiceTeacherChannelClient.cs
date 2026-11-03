@@ -292,6 +292,18 @@ public sealed class MaintenanceServiceWorker
             }
         }
         using (MaintenanceServiceIdentityStore.LoadOrCreateForSystemService(configPath)) { }
+        while (!MaintenanceServiceConfigurationStore.RecoverInterruptedTeacherEndpointUpdate(configPath))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try { _ = StudentUpdateAtomicTransaction.RecoverFromCommand(configPath); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or System.Security.SecurityException or
+                                              InvalidOperationException or ArgumentException)
+            {
+                // Keep the recovery journal and retry after the independent update transaction settles.
+            }
+            await DelayAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+        }
         _ = MaintenanceServiceConfigurationStore.LoadOrInitializeForSystemService(configPath);
         _ = StudentUpdateAtomicTransaction.RecoverFromCommand(configPath);
         await _channel.RunAsync(configPath, cancellationToken).ConfigureAwait(false);
