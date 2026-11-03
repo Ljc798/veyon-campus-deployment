@@ -234,6 +234,8 @@ public sealed class MaintenanceJournal
         return first.OperationId == second.OperationId && first.OperationKind == second.OperationKind &&
                string.Equals(first.TargetSetupVersion, second.TargetSetupVersion, StringComparison.Ordinal) &&
                string.Equals(first.TargetAgentVersion, second.TargetAgentVersion, StringComparison.Ordinal) &&
+               string.Equals(first.TargetMaintenanceServiceVersion, second.TargetMaintenanceServiceVersion,
+                   StringComparison.Ordinal) &&
                string.Equals(first.TargetReleaseSha256, second.TargetReleaseSha256, StringComparison.Ordinal) &&
                string.Equals(first.ConfigurationSha256, second.ConfigurationSha256, StringComparison.Ordinal) &&
                first.Channel == second.Channel &&
