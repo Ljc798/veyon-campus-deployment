@@ -174,6 +174,7 @@ public sealed class MaintenanceRunStore : IMaintenanceRunStore
 
     private async Task WriteJournalAsync(MaintenanceJournal journal, CancellationToken cancellationToken)
     {
+        journal = journal.Prune(DateTimeOffset.UtcNow);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(journal, JsonOptions);
         if (bytes.LongLength > MaximumJournalBytes)
             throw new IOException("Teacher Maintenance journal 超过写入限制；未覆盖现有记录。");

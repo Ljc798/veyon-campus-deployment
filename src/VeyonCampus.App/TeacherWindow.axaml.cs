@@ -2045,6 +2045,40 @@ public partial class TeacherWindow : Window
             _model.ReportStudentUpdatePerformanceReportExportFailure();
         }
     }
+
+    private async void ExportMaintenanceEventReport(object? sender, RoutedEventArgs e)
+    {
+        if (!StorageProvider.CanSave)
+        {
+            _model.ReportMaintenanceEventReportExportFailure();
+            return;
+        }
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "导出匿名 Maintenance 事件",
+                SuggestedFileName = $"veyon-campus-maintenance-events-{DateTimeOffset.UtcNow:yyyyMMdd-HHmmss}.json",
+                DefaultExtension = "json",
+                FileTypeChoices = [new FilePickerFileType("JSON Maintenance 事件") { Patterns = ["*.json"] }],
+                ShowOverwritePrompt = true
+            });
+            if (file is null) return;
+            using (file)
+            {
+                var path = file.TryGetLocalPath();
+                if (string.IsNullOrWhiteSpace(path))
+                    _model.ReportMaintenanceEventReportExportFailure();
+                else
+                    await _model.ExportMaintenanceEventReportAsync(path);
+            }
+        }
+        catch (Exception)
+        {
+            _model.ReportMaintenanceEventReportExportFailure();
+        }
+    }
+
     private async void DownloadTeacherUpdate(object? sender, RoutedEventArgs e)
     {
         if (await _model.DownloadTeacherUpdateAsync()) ExitForUpdate();

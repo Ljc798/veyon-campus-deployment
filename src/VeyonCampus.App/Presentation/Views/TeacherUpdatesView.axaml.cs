@@ -34,6 +34,7 @@ public partial class TeacherUpdatesView : UserControl
     public event EventHandler<RoutedEventArgs>? ReviewConfigurationIdentityRequested;
     public event EventHandler<RoutedEventArgs>? ReviewStudentUpdateIdentityRequested;
     public event EventHandler<RoutedEventArgs>? ExportStudentUpdatePerformanceReportRequested;
+    public event EventHandler<RoutedEventArgs>? ExportMaintenanceEventReportRequested;
     public event EventHandler<RoutedEventArgs>? RecheckStudentUpdateResultRequested;
 
     private void RequestCheckTeacherUpdate(object? sender, RoutedEventArgs e) =>
@@ -77,6 +78,9 @@ public partial class TeacherUpdatesView : UserControl
 
     private void RequestExportStudentUpdatePerformanceReport(object? sender, RoutedEventArgs e) =>
         ExportStudentUpdatePerformanceReportRequested?.Invoke(sender, e);
+
+    private void RequestExportMaintenanceEventReport(object? sender, RoutedEventArgs e) =>
+        ExportMaintenanceEventReportRequested?.Invoke(sender, e);
 
     private void RequestRecheckStudentUpdateResult(object? sender, RoutedEventArgs e) =>
         RecheckStudentUpdateResultRequested?.Invoke(sender, e);

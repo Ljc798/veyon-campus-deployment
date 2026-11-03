@@ -81,6 +81,7 @@
             ReviewConfigurationIdentityRequested="ReviewConfigurationIdentity"
             ReviewStudentUpdateIdentityRequested="ReviewStudentUpdateIdentity"
             ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport"
+            ExportMaintenanceEventReportRequested="ExportMaintenanceEventReport"
             RecheckStudentUpdateResultRequested="RecheckStudentUpdateResult" />
       </StackPanel>
     </DataTemplate>

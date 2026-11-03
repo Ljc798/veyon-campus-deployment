@@ -45,7 +45,8 @@
 | 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；受控根密钥轮换、独立失败阶段/恢复建议视图仍未实现。 |
 | 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
 | 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
-| 29–37 | P4-02～P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 继续实施代码和文档；环形发布、CI/安装器、隔离云、候选包与实机验收各自保留门槛。 |
+| 29 | P4-03 运维可观察性 | `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录在下次写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON，省略设备身份、路由、操作号、自由文本；当前批次显示 Maintenance / Legacy / 需现场维护分类。仍缺全局问题列表与从单条失败结果直接定向重试；分类规则及匿名性需审查，未构建或测试。 |
+| 30–37 | P4-02、P4-04～P5、LM 与候选发行任务 | `NOT-STARTED / DEPENDENCY-REVIEW` | 继续实施代码和文档；环形发布、CI/安装器、隔离云、候选包与实机验收各自保留门槛。 |
 
 ## 最近完成：P0-07 / Issue 007
 
@@ -216,3 +217,11 @@
 - CM-02 教师连接配置双写及离线重发：Maintenance 接收一条已验签命令后，在 StudentUpdate 原子锁内确认无活动更新，只修改 Agent 的 endpoints/TLS root 和独立 Maintenance bootstrap；保留校区身份、签名公钥、策略公钥等不可变字段。写入前先持久化 SYSTEM/Administrators 私有恢复记录，含设备 pin、目标 revision/fingerprint、原始 Agent 配置和原 bootstrap；Agent 与服务配置写完并重启健康读回后删除记录。运行时失败会恢复两侧旧快照；若断电/强杀留有记录，服务启动会等更新事务结束后恢复旧快照，再开放维护通道。签名同步回执带 Agent 配置指纹，教师端检查其格式。Teacher journal 现按固定 Agent 身份保存离线 TeacherConnectivity 目标；Agent 或 Maintenance WebSocket 经认证建立后触发重连对账，执行前确认无活动维护事务，revision 仍从签名健康读回产生。已补齐源码级自动重发接线；尚未证明实际重连、跨进程队列恢复或并发竞争，且只覆盖教师连接模块。未构建/测试/VM 验收。
 - 当前验证边界：本轮尚未构建安装包，用户现在没有可据此测试的 StudentSetup 或 Maintenance Service 安装包。完成代码实施后，仍需统一执行自动化检查与 Windows VM 安装/升级/回滚验收；随后才能打包给用户手动测试。Production 发布和真实校区推送仍是单独门槛。
 - P1-06 / Issue 009：`TeacherPolicyView.axaml` 已明确区分 EXE 运行限制、Store 可见/常规安装限制与已安装 Appx/MSIX 启动限制；不再暗示当前 AppLocker XML 能限制已安装游戏。没有变更 Appx 放行基线，也没有将范围说明当作现场验收；Edition 支持矩阵、实际 Store 下载/启动、策略撤销与系统必需包保护均 `VM-PENDING` / `NOT-TESTED`。
+
+## 2026-11-03 连续实施补记：P4-03 可观察性（部分代码）
+
+- Maintenance journal 在每次成功写入前清理已完成/终态记录：最多保留最近 500 条且只保留近 180 天；活动操作始终保留。清理不在单纯读取时触发，Desired/Reported/Pending 配置记录不随 run 清理。
+- 高级维护操作新增本机“导出匿名 Maintenance 事件”入口，输出最多 500 条、最大 512 KiB 的 JSON；含报告内设备别名、操作/终态、失败阶段、目标与读回版本、Maintenance/Legacy 协议模式、通道和时间。导出不含 campusId、设备固定身份、IP/主机名、operationId、错误自由文本或密钥/令牌；不自动上传。
+- 当前维护批次状态文字汇总已验证 Maintenance 服务、签名 Legacy Agent、需现场维护及未分类数量；底层事务完成/待验证/失败数仍单独保留。分类依赖已有签名能力快照，不等同于全校在线资产盘点。
+- 未实现持续全局问题列表和从某条失败行一键新建/重试；可通过设备概览筛选单台后重新执行维护，现有逐台“重新核对”只恢复/检查事务，不会把失败操作当成更新重试。P4-03 仍为部分实施。
+- 本补记为源码审阅和改动记录；未构建、测试、安装或做 UI/匿名数据审计。导出 JSON 字段/大小、journal 裁剪与中断写入行为待统一测试安排验证。

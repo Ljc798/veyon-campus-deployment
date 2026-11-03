@@ -4,6 +4,8 @@ namespace VeyonCampus.Core.Maintenance;
 public sealed class MaintenanceJournal
 {
     public const int CurrentSchemaVersion = 4;
+    public const int MaximumRetainedTerminalRuns = 500;
+    public static readonly TimeSpan TerminalRunRetention = TimeSpan.FromDays(180);
     public int SchemaVersion { get; }
     public DateTimeOffset UpdatedUtc { get; }
     public IReadOnlyList<MaintenanceRun> Runs { get; }
@@ -49,6 +51,21 @@ public sealed class MaintenanceJournal
     }
 
     public static MaintenanceJournal Empty(DateTimeOffset nowUtc) => new(nowUtc, Array.Empty<MaintenanceRun>());
+
+    public MaintenanceJournal Prune(DateTimeOffset nowUtc)
+    {
+        var now = MaintenanceValidation.Utc(nowUtc);
+        var cutoff = now - TerminalRunRetention;
+        var active = Runs.Where(run => !run.IsTerminal).ToArray();
+        var terminal = Runs.Where(run => run.IsTerminal && run.UpdatedUtc >= cutoff)
+            .OrderByDescending(run => run.UpdatedUtc)
+            .Take(MaximumRetainedTerminalRuns)
+            .ToArray();
+        var retained = active.Concat(terminal).OrderBy(run => run.CreatedUtc).ToArray();
+        if (retained.Length == Runs.Count && retained.SequenceEqual(Runs)) return this;
+        return new MaintenanceJournal(now, retained, SchemaVersion, DesiredConfigurations,
+            ReportedConfigurations, PendingConfigurations);
+    }
 
     /// <summary>Returns the existing operation on retries; never creates a second active run for one device.</summary>
     public MaintenanceJournal AddOrGet(MaintenanceRun requested, DateTimeOffset nowUtc)

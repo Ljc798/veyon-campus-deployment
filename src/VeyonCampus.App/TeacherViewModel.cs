@@ -220,6 +220,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly CampusOperationsTelemetryStore _operationsTelemetryStore;
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly TeacherMaintenanceWorkflow? _maintenanceWorkflow;
+    private readonly MaintenanceRunStore _maintenanceRunStore = new();
     private readonly string? _releaseClientError;
     private readonly TeacherCampusHeartbeatClient? _teacherHeartbeatClient;
     private readonly string? _teacherHeartbeatClientError;
@@ -531,7 +532,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             var artifactProvider = new TeacherMaintenanceArtifactProvider(_releaseClient,
                 () => _localTestStudentSetupInstallerPath);
-            var coordinator = new TeacherMaintenanceCoordinator(new MaintenanceRunStore(),
+            var coordinator = new TeacherMaintenanceCoordinator(_maintenanceRunStore,
                 new LegacyAgentMaintenanceAdapter(artifactProvider));
             _maintenanceWorkflow = new TeacherMaintenanceWorkflow(coordinator, artifactProvider);
         }
@@ -4051,6 +4052,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         get => _studentMaintenanceStatus;
         private set { if (_studentMaintenanceStatus == value) return; _studentMaintenanceStatus = value; Changed(); }
     }
+    public string MaintenanceEventReportExportStatus { get; private set; } = "";
     public bool UseLocalTestStudentUpdateSource
     {
         get => _useLocalTestStudentUpdateSource;
@@ -4643,6 +4645,33 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         StudentUpdatePerformanceReportExportStatus = "无法打开保存位置或保存性能汇总文件。";
         Changed(nameof(StudentUpdatePerformanceReportExportStatus));
+    }
+
+    public async Task<bool> ExportMaintenanceEventReportAsync(string destinationPath)
+    {
+        try
+        {
+            var journal = await _maintenanceRunStore.ReadAsync();
+            var report = MaintenanceEventReportBuilder.Create(journal, DateTimeOffset.UtcNow);
+            var bytes = MaintenanceEventReportBuilder.Serialize(report);
+            await File.WriteAllBytesAsync(destinationPath, bytes);
+            MaintenanceEventReportExportStatus = $"已导出 {report.Events.Count} 条匿名 Maintenance 事件；文件只保存在本机选择的位置，不会自动上传。";
+            Changed(nameof(MaintenanceEventReportExportStatus));
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+            InvalidDataException or InvalidOperationException)
+        {
+            MaintenanceEventReportExportStatus = "无法读取本机维护记录或保存匿名事件文件。";
+            Changed(nameof(MaintenanceEventReportExportStatus));
+            return false;
+        }
+    }
+
+    public void ReportMaintenanceEventReportExportFailure()
+    {
+        MaintenanceEventReportExportStatus = "无法打开保存位置或保存匿名 Maintenance 事件文件。";
+        Changed(nameof(MaintenanceEventReportExportStatus));
     }
 
     public void ReportDiagnosticExportFailure() =>
@@ -10413,7 +10442,22 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             var manual = results.Count(item => item.State is MaintenanceRunState.ManualRequired or
                 MaintenanceRunState.RecoveryRequired);
             var failed = results.Count(item => item.State == MaintenanceRunState.Failed);
-            StudentMaintenanceStatus = $"Maintenance 已记录 {results.Count} 台 · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}。";
+            var uniqueResults = results.GroupBy(item => NormalizeTargetKey(item.Target),
+                StringComparer.OrdinalIgnoreCase).Select(group => group.Last()).ToArray();
+            static bool RequiresFieldMaintenance(TeacherMaintenanceTargetResult item) => item.State is
+                MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired;
+            var fieldMaintenance = uniqueResults.Count(RequiresFieldMaintenance);
+            var maintenanceAccepted = uniqueResults.Count(item => !RequiresFieldMaintenance(item) &&
+                item.Capabilities?.Names.Contains(
+                "maintenance-service.v1", StringComparer.Ordinal) == true);
+            var legacy = uniqueResults.Count(item => !RequiresFieldMaintenance(item) &&
+                item.Capabilities is not null &&
+                item.Capabilities.Names.Contains("maintenance-service.v1",
+                    StringComparer.Ordinal) == false);
+            var unclassified = uniqueResults.Length - maintenanceAccepted - legacy - fieldMaintenance;
+            StudentMaintenanceStatus = $"本批设备：Maintenance 已接管 {maintenanceAccepted} · Legacy {legacy} · 需现场维护 {fieldMaintenance}" +
+                (unclassified > 0 ? $" · 结果未分类 {unclassified}" : "") +
+                $"。事务：已记录 {results.Count} · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}。";
             StudentUpdateStatus = results.Count == 0
                 ? "没有可执行的维护目标。"
                 : $"维护操作已持久化 · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}";
