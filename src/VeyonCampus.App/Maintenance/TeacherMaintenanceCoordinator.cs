@@ -42,7 +42,9 @@ public sealed record MaintenanceInspectionSnapshot(Guid OperationId, Maintenance
     StudentAgentTeacherChannelDiagnosticsSnapshot? TeacherChannelDiagnostics = null);
 
 public sealed record MaintenanceCoordinatorProgress(Guid OperationId, MaintenanceRunState State,
-    string Detail, int Completed, int Total, Guid? CommandId = null, string? Target = null);
+    string Detail, int Completed, int Total, Guid? CommandId = null, string? Target = null,
+    IReadOnlyList<StudentUpdatePhaseTiming>? PhaseTimings = null,
+    StudentUpdateEnvironmentCategories? Environment = null);
 
 /// <summary>Legacy adapter boundary; the implementation uses signed status/HTTP and the existing LAN updater.</summary>
 public interface ITeacherMaintenanceAdapter

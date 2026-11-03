@@ -275,7 +275,7 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             progress.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
                 value.CommandId is null ? MaintenanceRunState.UpdateOffered : MaintenanceRunState.Updating,
                 value.Stage, value.CompletedTargets, value.TotalTargets, value.CommandId,
-                plan.Device.RouteAddress));
+                plan.Device.RouteAddress, value.PhaseTimings, value.Environment));
         });
         var output = new List<MaintenanceAdapterResult>(plans.Length);
         var maintenancePlanList = new List<MaintenancePlan>();

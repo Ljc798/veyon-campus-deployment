@@ -10392,6 +10392,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 var row = FindStudentUpdateTargetRow(value.Target ?? string.Empty);
                 row?.SetMaintenanceOperation(value.OperationId);
                 row?.SetTransportProgress(value.Detail, value.CommandId);
+                if (value.PhaseTimings is { Count: > 0 } phaseTimings)
+                    row?.SetPhaseTimings(phaseTimings);
                 if (requestedOperation == MaintenanceOperationKind.ConfigurationSync)
                 {
                     var configurationRow = _studentConfigurationSyncTargetProgressItems.FirstOrDefault(item =>
