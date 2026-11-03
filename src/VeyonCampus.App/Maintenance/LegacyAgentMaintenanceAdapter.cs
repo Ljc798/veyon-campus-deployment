@@ -623,12 +623,13 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         var stalePlanReason = ValidateBeforeConfigurationSync(plan, freshInspection);
         if (stalePlanReason is not null)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                stalePlanReason, null);
+                stalePlanReason, null, Stage: "计划预检");
         var identity = ReadTeacherChannelIdentity(plan.Device.CampusId, cancellationToken);
         if (plan.ConfigurationSha256 is null || !string.Equals(plan.ConfigurationSha256,
                 identity.BootstrapFingerprint, StringComparison.OrdinalIgnoreCase))
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                "教师连接身份在维护计划生成后发生变化；请重新检查并生成新计划。", null);
+                "教师连接身份在维护计划生成后发生变化；请重新检查并生成新计划。", null,
+                Stage: "配置快照校验");
         using var signingKey = WebsitePolicySigningKeyStore.Open(plan.Device.CampusId);
         if (_maintenanceServiceClient.IsAvailable(plan.Device))
             return await SynchronizeConfigurationViaMaintenanceServiceAsync(plan, identity, signingKey.PrivateKey,
@@ -657,7 +658,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             commandId is not null ? MaintenanceAdapterDisposition.PendingVerification :
                 result.NeedsReview ? MaintenanceAdapterDisposition.ManualRequired :
                 MaintenanceAdapterDisposition.Failed,
-            result.Detail, null);
+            result.Detail, null, Stage: commandId is null ? "签名配置命令发送" :
+                result.NeedsReview ? "设备身份与命令授权核对" : "学生端签名回执核验");
     }
 
     private async Task<MaintenanceAdapterResult> SynchronizeConfigurationViaMaintenanceServiceAsync(
@@ -672,7 +674,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         if (currentHealth.Response.ResultCode != "succeeded" || currentHealth.Payload is null ||
             currentHealth.Payload.State != "ready" || currentHealth.Payload.TeacherConfigurationRevision < 0)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance 未提供可用于递增教师配置 revision 的可信当前状态。", null);
+                "Maintenance 未提供可用于递增教师配置 revision 的可信当前状态。", null,
+                Stage: "Maintenance 当前状态读回");
         var targetRevision = checked(currentHealth.Payload.TeacherConfigurationRevision + 1);
         var configuration = new MaintenanceTeacherBootstrapConfiguration(identity.Endpoints,
             identity.RootCertificateBase64);
@@ -699,7 +702,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                 _ => MaintenanceAdapterDisposition.Failed
             };
             return new MaintenanceAdapterResult(plan.OperationId, disposition,
-                "Maintenance 服务未确认配置同步：" + reply.Response.Detail, evidence);
+                "Maintenance 服务未确认配置同步：" + reply.Response.Detail, evidence,
+                Stage: "学生端配置应用回执");
         }
 
         var payload = reply.Payload;
@@ -712,29 +716,35 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             payload.UpdatedUtc > reply.Response.CollectedUtc.AddMinutes(1) ||
             payload.UpdatedUtc < reply.Response.CollectedUtc.AddMinutes(-5))
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance 已回执，但 Agent/Maintenance 配置指纹或持久化时间未通过签名读回校验。", evidence);
+                "Maintenance 已回执，但 Agent/Maintenance 配置指纹或持久化时间未通过签名读回校验。", evidence,
+                Stage: "Agent 配置指纹与持久化时间读回");
 
         var installed = payload.InstalledVersions;
         if (installed is null)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance 已回执教师连接指纹，但未返回组件和健康状态读回。", evidence);
+                "Maintenance 已回执教师连接指纹，但未返回组件和健康状态读回。", evidence,
+                Stage: "Agent 健康状态读回");
         var versions = ToMaintenanceVersions(installed);
         if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted == false)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                 "教师连接配置已读回，但 SYSTEM 身份或受保护 Agent 启动任务核验失败。", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc);
+                versions, installed.TransactionState, reply.Response.CollectedUtc,
+                Stage: "SYSTEM 身份与 Agent 任务校验");
         if (installed.ManagedAgentTaskTrusted is null)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
                 "教师连接配置已读回，但 Agent 受保护启动任务状态未知。", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc);
+                versions, installed.TransactionState, reply.Response.CollectedUtc,
+                Stage: "Agent 任务状态核验");
         if (installed.TransactionState == "needsReview")
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                 "教师连接配置已读回，但 Agent 更新事务需要恢复核对。", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc);
+                versions, installed.TransactionState, reply.Response.CollectedUtc,
+                Stage: "Agent 更新事务核验");
         if (installed.TransactionState == "inProgress")
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
                 "教师连接配置已读回，但 Agent 更新事务仍在进行。", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc);
+                versions, installed.TransactionState, reply.Response.CollectedUtc,
+                Stage: "Agent 更新事务等待完成");
 
         var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
         var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
@@ -744,7 +754,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, expectedAgent) < 0)
             return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                 "教师连接配置已读回，但实际 Setup/Agent 版本低于本维护计划要求。", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc);
+                versions, installed.TransactionState, reply.Response.CollectedUtc,
+                Stage: "Setup/Agent 版本核验");
 
         return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ConfigurationSynchronized,
             "Maintenance 与 Student Agent 均已通过签名回执确认教师连接配置，且核验了 SYSTEM、Agent 任务和组件版本。",
@@ -831,14 +842,17 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                     StringComparison.OrdinalIgnoreCase))
                 return new MaintenanceAdapterResult(run.OperationId,
                     MaintenanceAdapterDisposition.PendingVerification,
-                    "Maintenance 服务尚未签名确认原计划的教师连接指纹。", evidence);
+                    "Maintenance 服务尚未签名确认原计划的教师连接指纹。", evidence,
+                    Stage: "Maintenance 教师连接指纹读回");
             if (!reply.Payload.RunningAsSystem || reply.Payload.ManagedAgentTaskTrusted == false)
                 return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    "目标教师连接配置已读回，但 SYSTEM 或受保护 Agent 启动任务核验失败。", evidence);
+                    "目标教师连接配置已读回，但 SYSTEM 或受保护 Agent 启动任务核验失败。", evidence,
+                    Stage: "SYSTEM 身份与 Agent 任务校验");
             if (reply.Payload.ManagedAgentTaskTrusted is null)
                 return new MaintenanceAdapterResult(run.OperationId,
                     MaintenanceAdapterDisposition.PendingVerification,
-                    "目标教师连接配置已读回，但 Agent 受保护启动任务状态未知。", evidence);
+                    "目标教师连接配置已读回，但 Agent 受保护启动任务状态未知。", evidence,
+                    Stage: "Agent 任务状态核验");
 
             var versionsReply = await _maintenanceServiceClient.SendAsync<
                 MaintenanceServiceInstalledVersionsPayload>(plan.Device, run.OperationId, null,
@@ -848,25 +862,30 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             if (versionsReply.Response.ResultCode != "succeeded" || installed is null)
                 return new MaintenanceAdapterResult(run.OperationId,
                     MaintenanceAdapterDisposition.PendingVerification,
-                    "教师连接指纹已读回，但组件版本和更新事务快照暂不可用。", evidence);
+                    "教师连接指纹已读回，但组件版本和更新事务快照暂不可用。", evidence,
+                    Stage: "组件版本与事务快照读回");
             var versions = ToMaintenanceVersions(installed);
             if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted == false)
                 return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                     "目标教师连接配置已读回，但 SYSTEM 或受保护 Agent 启动任务核验失败。", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc);
+                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
+                    Stage: "SYSTEM 身份与 Agent 任务校验");
             if (installed.ManagedAgentTaskTrusted is null)
                 return new MaintenanceAdapterResult(run.OperationId,
                     MaintenanceAdapterDisposition.PendingVerification,
                     "目标教师连接配置已读回，但 Agent 受保护启动任务状态未知。", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc);
+                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
+                    Stage: "Agent 任务状态核验");
             if (installed.TransactionState == "needsReview")
                 return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                     "目标教师连接配置已读回，但 Agent 更新事务需要恢复核对。", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc);
+                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
+                    Stage: "Agent 更新事务核验");
             if (installed.TransactionState == "inProgress")
                 return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
                     "目标教师连接配置已读回，但 Agent 更新事务仍在进行。", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc);
+                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
+                    Stage: "Agent 更新事务等待完成");
             var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
             var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
             if (versions.StudentSetupVersion is null || versions.AgentRuntimeVersion is null ||
@@ -875,7 +894,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                 ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, expectedAgent) < 0)
                 return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
                     "目标教师连接配置已读回，但实际 Setup/Agent 版本低于原维护计划。", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc);
+                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
+                    Stage: "Setup/Agent 版本校验");
             return new MaintenanceAdapterResult(run.OperationId,
                 MaintenanceAdapterDisposition.ConfigurationSynchronized,
                 "Maintenance 服务已签名读回原教师连接指纹、组件版本和受保护 SYSTEM Agent 启动任务。",
@@ -1310,15 +1330,18 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             plan.Device.RouteAddress, plan.Device.CampusId, signingKey, cancellationToken).ConfigureAwait(false);
         if (capability is null)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "学生端没有提供兼容的签名能力读回。", null);
+                pending + "学生端没有提供兼容的签名能力读回。", null,
+                Stage: "学生端签名能力读回");
         if (string.IsNullOrWhiteSpace(capability.Capability.ConfigurationFingerprint) ||
             capability.Capability.TeacherChannelConfigurationReady != true)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "签名能力回执缺少完整活动配置指纹。", null);
+                pending + "签名能力回执缺少完整活动配置指纹。", null,
+                Stage: "教师连接配置指纹读回");
         if (!string.Equals(capability.Capability.TeacherChannelConfigurationFingerprint,
                 plan.ConfigurationSha256, StringComparison.OrdinalIgnoreCase))
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "教师连接配置指纹尚未达到计划目标。", null);
+                pending + "教师连接配置指纹尚未达到计划目标。", null,
+                Stage: "教师连接配置指纹核验");
 
         var statusResults = await WebsitePolicyStatusTransport.ReadAsync([plan.Device.RouteAddress],
             plan.Device.CampusId, signingKey, cancellationToken, includeHealthSnapshot: true,
@@ -1326,27 +1349,32 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         var statusResult = statusResults.Single();
         if (!statusResult.Succeeded || statusResult.Status is null || statusResult.VerifiedResponseSha256 is null)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "签名状态/健康读回暂不可用。 " + Sanitize(statusResult.Detail), null);
+                pending + "签名状态/健康读回暂不可用。 " + Sanitize(statusResult.Detail), null,
+                Stage: "学生端签名状态与健康读回");
 
         var status = statusResult.Status;
         var health = status.Health;
         if (health is null)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "学生端没有返回带时间戳的健康快照。", null);
+                pending + "学生端没有返回带时间戳的健康快照。", null,
+                Stage: "学生端健康快照核验");
         if (health.UpdateTransactionState is "inProgress" or "needsReview")
             return new MaintenanceAdapterResult(operationId,
                 health.UpdateTransactionState == "needsReview"
                     ? MaintenanceAdapterDisposition.RecoveryRequired
                     : MaintenanceAdapterDisposition.PendingVerification,
-                pending + "学生端仍有未完成或需恢复核对的原子更新事务。", null);
+                pending + "学生端仍有未完成或需恢复核对的原子更新事务。", null,
+                Stage: "原子更新事务核验");
         if (health.RunningAsSystem == false || health.ManagedTaskMatchesAgent == false ||
             health.ManagedTaskAclRestricted == false)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "连接配置已读回，但 SYSTEM Agent 健康、任务指向或 ACL 核验失败；需现场恢复。", null);
+                "连接配置已读回，但 SYSTEM Agent 健康、任务指向或 ACL 核验失败；需现场恢复。", null,
+                Stage: "SYSTEM 身份与 Agent 任务 ACL 校验");
         if (health.RunningAsSystem != true || health.ManagedTaskMatchesAgent != true ||
             health.ManagedTaskAclRestricted != true)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "SYSTEM Agent 健康事实不完整。", null);
+                pending + "SYSTEM Agent 健康事实不完整。", null,
+                Stage: "SYSTEM Agent 健康事实核验");
 
         var reported = capability.Capability;
         if (!string.Equals(status.ConfigFingerprint, reported.ConfigurationFingerprint,
@@ -1354,7 +1382,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             !string.Equals(status.AgentVersion, reported.AgentRuntimeVersion, StringComparison.Ordinal) ||
             !string.Equals(status.StudentSetupVersion, reported.StudentSetupVersion, StringComparison.Ordinal))
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "签名状态与签名能力的版本/配置快照不一致。", null);
+                pending + "签名状态与签名能力的版本/配置快照不一致。", null,
+                Stage: "签名状态与能力快照一致性校验");
 
         var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
         var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
@@ -1363,12 +1392,14 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             ApplicationReleaseClient.CompareVersions(status.StudentSetupVersion, expectedSetup) < 0 ||
             ApplicationReleaseClient.CompareVersions(status.AgentVersion, expectedAgent) < 0)
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "连接配置已读回，但实际 Setup/Agent 版本低于本维护计划要求。", null);
+                "连接配置已读回，但实际 Setup/Agent 版本低于本维护计划要求。", null,
+                Stage: "Setup/Agent 版本校验");
 
         if (statusResult.VerifiedResponseSha256 is not { Length: 64 } responseSha256 ||
             responseSha256.Any(character => !Uri.IsHexDigit(character)))
             return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "签名状态响应摘要格式无效。", null);
+                pending + "签名状态响应摘要格式无效。", null,
+                Stage: "学生端签名状态响应摘要校验");
         var evidence = new MaintenanceEvidence("signed-configuration-final-status",
             plan.Device.PinnedIdentityFingerprint, responseSha256, commandId, status.CollectedUtc);
         return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ConfigurationSynchronized,

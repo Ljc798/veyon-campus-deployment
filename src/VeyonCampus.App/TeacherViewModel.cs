@@ -14694,8 +14694,8 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
         _ => module.ToString()
     };
     private bool HasFailedConfigurationRun => status.State != MaintenanceConfigurationReconciliationState.InSync &&
-        configurationRun?.State is MaintenanceRunState.Failed or MaintenanceRunState.RolledBack or
-            MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ManualRequired;
+        configurationRun?.State is MaintenanceRunState.PendingVerification or MaintenanceRunState.Failed or
+            MaintenanceRunState.RolledBack or MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ManualRequired;
     public string StateText => HasFailedConfigurationRun && status.State != MaintenanceConfigurationReconciliationState.InSync
         ? configurationRun!.State switch
         {
@@ -14703,6 +14703,7 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
             MaintenanceRunState.RolledBack => "配置操作已回滚",
             MaintenanceRunState.RecoveryRequired => "配置操作需恢复",
             MaintenanceRunState.ManualRequired => "配置操作需现场处理",
+            MaintenanceRunState.PendingVerification => "配置操作待核对",
             _ => "配置操作待核对"
         }
         : status.State switch
@@ -14717,15 +14718,36 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
     };
     public bool HasConfigurationFailureDetail => HasFailedConfigurationRun &&
         configurationRun?.Transitions.LastOrDefault()?.Reason is { Length: > 0 };
-    public string FailureStageText => configurationRun?.Transitions.LastOrDefault()?.To switch
+    public string FailureStageText
     {
-        MaintenanceRunState.Failed => "失败阶段：配置同步/事务终态",
-        MaintenanceRunState.RolledBack => "失败阶段：配置事务回滚",
-        MaintenanceRunState.RecoveryRequired => "失败阶段：等待恢复核对",
-        MaintenanceRunState.ManualRequired => "失败阶段：需要人工处理",
-        _ => "最近配置事务仍在处理或已完成"
-    };
-    public string FailureDetailText => configurationRun?.Transitions.LastOrDefault()?.Reason ?? "";
+        get
+        {
+            var reason = configurationRun?.Transitions.LastOrDefault()?.Reason;
+            if (reason is not null && reason.StartsWith("阶段：", StringComparison.Ordinal))
+            {
+                var separator = reason.IndexOf('。');
+                return separator > 3 ? reason[..separator] : "操作阶段：配置同步结果核对";
+            }
+            return configurationRun?.State switch
+            {
+                MaintenanceRunState.Failed => "操作阶段：配置事务失败",
+                MaintenanceRunState.RolledBack => "操作阶段：配置事务回滚",
+                MaintenanceRunState.RecoveryRequired => "操作阶段：等待恢复核对",
+                MaintenanceRunState.ManualRequired => "操作阶段：需要人工处理",
+                _ => "操作阶段：配置同步结果核对"
+            };
+        }
+    }
+    public string FailureDetailText
+    {
+        get
+        {
+            var reason = configurationRun?.Transitions.LastOrDefault()?.Reason ?? "";
+            if (!reason.StartsWith("阶段：", StringComparison.Ordinal)) return reason;
+            var separator = reason.IndexOf('。');
+            return separator >= 0 ? reason[(separator + 1)..].Trim() : reason;
+        }
+    }
     public string RevisionText => $"Desired r{status.DesiredRevision?.ToString() ?? "—"} / Reported r{status.ReportedRevision?.ToString() ?? "—"}";
     public string LastReportedText => status.LastReportedUtc is { } reported
         ? (status.State == MaintenanceConfigurationReconciliationState.InSync ? "最后同步 " : "最后回报 ") +
@@ -14739,6 +14761,8 @@ public sealed class TeacherMaintenanceConfigurationItem(string displayName, stri
             "建议：暂停自动重试，按失败原因核对设备身份、配置兼容性和签名通道后现场处理。",
         _ when HasFailedConfigurationRun && configurationRun?.State == MaintenanceRunState.RolledBack =>
             "建议：确认回滚后设备状态，再修复失败原因并创建新的配置修订。",
+        _ when HasFailedConfigurationRun && configurationRun?.State == MaintenanceRunState.PendingVerification =>
+            "建议：继续核对同一配置事务与学生端签名读回；结果明确前不要再次下发。",
         _ when HasFailedConfigurationRun =>
             "建议：先处理最近配置事务的失败阶段；核对完成后再创建新修订，不要重发未决 commandId。",
         MaintenanceConfigurationReconciliationState.QueuedForDelivery =>

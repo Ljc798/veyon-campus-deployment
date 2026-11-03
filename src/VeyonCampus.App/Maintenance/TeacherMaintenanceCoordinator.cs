@@ -28,7 +28,7 @@ public sealed record MaintenanceAdapterResult(Guid OperationId, MaintenanceAdapt
     string Detail, MaintenanceEvidence? Evidence,
     MaintenanceComponentVersions? VerifiedCurrentVersions = null,
     string? VerifiedUpdateTransactionState = null, DateTimeOffset? VerifiedStatusUtc = null,
-    long? ConfigurationRevision = null);
+    long? ConfigurationRevision = null, string? Stage = null);
 
 public sealed record MaintenanceUpdateRequest(MaintenancePlan Plan);
 
@@ -558,7 +558,7 @@ public sealed class TeacherMaintenanceCoordinator
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             await MarkPendingOrFailedAsync(plan.OperationId,
-                "教师端停止等待配置同步；结果需重新读取学生端状态。", CancellationToken.None)
+                "阶段：等待学生端签名读回。教师端停止等待配置同步；结果需重新读取学生端状态。", CancellationToken.None)
                 .ConfigureAwait(false);
             throw;
         }
@@ -567,9 +567,12 @@ public sealed class TeacherMaintenanceCoordinator
                                           InvalidOperationException or ArgumentException or TimeoutException)
         {
             await MarkPendingOrFailedAsync(plan.OperationId,
-                "配置同步异常：" + Sanitize(exception.Message), CancellationToken.None).ConfigureAwait(false);
+                "阶段：配置命令发送或签名读回。配置同步异常：" + Sanitize(exception.Message), CancellationToken.None)
+                .ConfigureAwait(false);
             return;
         }
+
+        var resultDetail = FormatAdapterResultDetail(result);
 
         run = await RequireRunAsync(plan.OperationId, cancellationToken).ConfigureAwait(false);
         run = await RecordVerifiedStatusAsync(run, result, cancellationToken).ConfigureAwait(false);
@@ -587,11 +590,11 @@ public sealed class TeacherMaintenanceCoordinator
         }
         else if (result.Disposition == MaintenanceAdapterDisposition.PendingVerification)
         {
-            await MarkPendingOrFailedAsync(plan.OperationId, result.Detail, cancellationToken).ConfigureAwait(false);
+            await MarkPendingOrFailedAsync(plan.OperationId, resultDetail, cancellationToken).ConfigureAwait(false);
         }
         else if (result.Disposition == MaintenanceAdapterDisposition.RecoveryRequired)
         {
-            run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, result.Detail, result.Evidence,
+            run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, resultDetail, result.Evidence,
                 DateTimeOffset.UtcNow);
             await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
         }
@@ -600,10 +603,10 @@ public sealed class TeacherMaintenanceCoordinator
             run = run.TransitionTo(result.Disposition == MaintenanceAdapterDisposition.ManualRequired
                     ? MaintenanceRunState.ManualRequired
                     : MaintenanceRunState.Failed,
-                result.Detail, result.Evidence, DateTimeOffset.UtcNow);
+                resultDetail, result.Evidence, DateTimeOffset.UtcNow);
             await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
         }
-        progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId, run.State, result.Detail,
+        progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId, run.State, resultDetail,
             index + 1, total, result.Evidence?.CommandId, plan.Device.RouteAddress));
     }
 
@@ -611,7 +614,17 @@ public sealed class TeacherMaintenanceCoordinator
         MaintenanceAdapterResult result, CancellationToken cancellationToken)
     {
         run = await RecordVerifiedStatusAsync(run, result, cancellationToken).ConfigureAwait(false);
-        if (result.Disposition == MaintenanceAdapterDisposition.PendingVerification) return run;
+        var resultDetail = FormatAdapterResultDetail(result);
+        if (result.Disposition == MaintenanceAdapterDisposition.PendingVerification)
+        {
+            if (run.State == MaintenanceRunState.ConfigurationSyncing)
+            {
+                run = run.TransitionTo(MaintenanceRunState.PendingVerification, resultDetail,
+                    result.Evidence, DateTimeOffset.UtcNow);
+                await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
+            }
+            return run;
+        }
         if (result.Disposition == MaintenanceAdapterDisposition.ConfigurationSynchronized)
         {
             var evidence = RequireEvidence(run, result.Evidence, requireCommand: false);
@@ -624,17 +637,17 @@ public sealed class TeacherMaintenanceCoordinator
         else if (result.Disposition == MaintenanceAdapterDisposition.UpdateRolledBack)
         {
             run = RequireRunHasCommand(run, result.Evidence);
-            run = run.TransitionTo(MaintenanceRunState.RolledBack, result.Detail, result.Evidence,
+            run = run.TransitionTo(MaintenanceRunState.RolledBack, resultDetail, result.Evidence,
                 DateTimeOffset.UtcNow);
         }
         else if (result.Disposition == MaintenanceAdapterDisposition.RecoveryRequired)
         {
             if (run.State == MaintenanceRunState.PendingVerification)
-                run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, result.Detail, result.Evidence,
+                run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, resultDetail, result.Evidence,
                     DateTimeOffset.UtcNow);
             else if (run.State != MaintenanceRunState.RecoveryRequired)
-                run = run.TransitionTo(MaintenanceRunState.PendingVerification, result.Detail, result.Evidence,
-                    DateTimeOffset.UtcNow).TransitionTo(MaintenanceRunState.RecoveryRequired, result.Detail,
+                run = run.TransitionTo(MaintenanceRunState.PendingVerification, resultDetail, result.Evidence,
+                    DateTimeOffset.UtcNow).TransitionTo(MaintenanceRunState.RecoveryRequired, resultDetail,
                     result.Evidence, DateTimeOffset.UtcNow);
         }
         else if (result.Disposition is MaintenanceAdapterDisposition.ManualRequired or
@@ -643,11 +656,14 @@ public sealed class TeacherMaintenanceCoordinator
             var next = result.Disposition == MaintenanceAdapterDisposition.ManualRequired
                 ? MaintenanceRunState.ManualRequired
                 : MaintenanceRunState.Failed;
-            run = run.TransitionTo(next, result.Detail, result.Evidence, DateTimeOffset.UtcNow);
+            run = run.TransitionTo(next, resultDetail, result.Evidence, DateTimeOffset.UtcNow);
         }
         await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
         return run;
     }
+
+    private static string FormatAdapterResultDetail(MaintenanceAdapterResult result) =>
+        string.IsNullOrWhiteSpace(result.Stage) ? result.Detail : $"阶段：{result.Stage}。{result.Detail}";
 
     private async Task PersistConfigurationSnapshotsAsync(MaintenanceRun run, MaintenanceAdapterResult result,
         CancellationToken cancellationToken)
