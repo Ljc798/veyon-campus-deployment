@@ -16,6 +16,7 @@ $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $artifactsRoot = [IO.Path]::GetFullPath((Join-Path $repoRoot 'artifacts'))
 $artifactsPrefix = $artifactsRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
 $projectPath = Join-Path $repoRoot 'src/VeyonCampus.MaintenanceService/VeyonCampus.MaintenanceService.csproj'
+$helperProjectPath = Join-Path $repoRoot 'tools/VeyonCampus.UpdateHelper/VeyonCampus.UpdateHelper.csproj'
 $installerTemplatePath = Join-Path $repoRoot 'installer/VeyonCampus-MaintenanceService.iss'
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -139,6 +140,42 @@ if (-not $SkipRestore) {
 }
 & $dotnetPath @arguments
 if ($LASTEXITCODE -ne 0) { throw "Maintenance Service publish failed ($LASTEXITCODE)." }
+
+$helperAssetsPath = Join-Path (Split-Path -Parent $helperProjectPath) 'obj/project.assets.json'
+if (-not $SkipRestore) {
+    $helperRestoreArguments = @('restore', $helperProjectPath, '-r', 'win-x64', '-p:NuGetAudit=false',
+        '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json')
+    if ($ReleasePublicKeyPath) {
+        $helperRestoreArguments += "-p:VeyonCampusReleasePublicKeyPath=$([IO.Path]::GetFullPath($ReleasePublicKeyPath))"
+    }
+    if ($TestReleasePublicKeyPath) {
+        $helperRestoreArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$([IO.Path]::GetFullPath($TestReleasePublicKeyPath))"
+    }
+    & $dotnetPath @helperRestoreArguments
+    if ($LASTEXITCODE -ne 0) { throw "Maintenance UpdateHelper restore failed ($LASTEXITCODE)." }
+} elseif (-not (Test-Path -LiteralPath $helperAssetsPath -PathType Leaf)) {
+    throw 'Maintenance UpdateHelper 缺少 NuGet assets；请先不使用 -SkipRestore 完成一次还原。'
+}
+$helperPublishDirectory = Join-Path $publishDirectory '.maintenance-helper-publish'
+$helperArguments = @('publish', $helperProjectPath, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
+    '--no-restore', '-p:PublishSingleFile=true', '-p:AppHostDotNetSearch=Global', '-p:DebugType=None',
+    "-p:Version=$Version", "-p:InformationalVersion=$Version", '-p:IncludeSourceRevisionInInformationalVersion=false',
+    '-p:VeyonCampusCoreLockFile=packages.win-x64.lock.json', '-p:VeyonCampusIncludeInstaller=false',
+    '-o', $helperPublishDirectory)
+if ($ReleasePublicKeyPath) {
+    $helperArguments += "-p:VeyonCampusReleasePublicKeyPath=$([IO.Path]::GetFullPath($ReleasePublicKeyPath))"
+}
+if ($TestReleasePublicKeyPath) {
+    $helperArguments += "-p:VeyonCampusTestReleasePublicKeyPath=$([IO.Path]::GetFullPath($TestReleasePublicKeyPath))"
+}
+& $dotnetPath @helperArguments
+if ($LASTEXITCODE -ne 0) { throw "Maintenance UpdateHelper publish failed ($LASTEXITCODE)." }
+$helperExePath = Join-Path $helperPublishDirectory 'VeyonCampus.UpdateHelper.exe'
+if (-not (Test-Path -LiteralPath $helperExePath -PathType Leaf)) {
+    throw "Maintenance 发布结果缺少 SYSTEM UpdateHelper：$helperExePath"
+}
+Copy-Item -LiteralPath $helperExePath -Destination (Join-Path $publishDirectory 'VeyonCampus.UpdateHelper.exe')
+Remove-Item -LiteralPath $helperPublishDirectory -Recurse -Force
 
 $exePath = Join-Path $publishDirectory 'VeyonCampus.MaintenanceService.exe'
 $assemblyPath = Join-Path $publishDirectory 'VeyonCampus.MaintenanceService.dll'

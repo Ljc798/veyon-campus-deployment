@@ -207,10 +207,16 @@ public static class ApplicationReleaseUpdateHandoff
         EnsurePolicyCapabilities(ApplicationReleaseRole.StudentSetup, release.Manifest);
 
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var helperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(programFiles, currentVersion);
+        var serviceExecutable = Environment.ProcessPath
+                                ?? throw new InvalidOperationException("无法确定当前 Maintenance 服务路径。");
+        var serviceDirectory = Path.GetDirectoryName(Path.GetFullPath(serviceExecutable))
+                               ?? throw new InvalidDataException("Maintenance 服务目录无效。");
+        var helperPath = Path.Combine(serviceDirectory, HelperFileName);
+        if (!File.Exists(helperPath))
+            helperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(programFiles, currentVersion);
         PathLinkSecurity.RejectLinks(helperPath);
         if (!File.Exists(helperPath))
-            throw new FileNotFoundException("当前 StudentSetup 版本缺少 UpdateHelper；未启动更新。", helperPath);
+            throw new FileNotFoundException("Maintenance 与 StudentSetup 版本目录均缺少 UpdateHelper；未启动更新。", helperPath);
         var startInfo = new ProcessStartInfo(helperPath)
         {
             CreateNoWindow = true,
@@ -403,10 +409,23 @@ public static class ApplicationReleaseUpdateHandoff
         var fullInstallerPath = Path.GetFullPath(installerPath);
         EnsureMaintenanceServiceStagingPath(fullInstallerPath, canonicalConfigPath);
         var fullProgramFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
-        var expectedHelperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(fullProgramFiles,
+        var helperExecutable = Path.GetFullPath(Environment.ProcessPath ??
+            throw new InvalidOperationException("无法确定 SYSTEM UpdateHelper 路径。"));
+        var helperDirectory = Path.GetDirectoryName(helperExecutable)
+                              ?? throw new InvalidDataException("SYSTEM UpdateHelper 目录无效。");
+        var maintenanceHelperPath = Path.Combine(helperDirectory, HelperFileName);
+        var maintenanceServiceExecutable = Path.Combine(helperDirectory, "VeyonCampus.MaintenanceService.exe");
+        var studentHelperPath = StudentApplicationUpdateHandoff.GetUpdateHelperPath(fullProgramFiles,
             currentVersion);
-        EnsureSamePath(Environment.ProcessPath ?? "", expectedHelperPath,
-            "Maintenance 更新必须由当前已安装 StudentSetup 版本对应的 UpdateHelper 执行。" );
+        if (File.Exists(maintenanceServiceExecutable))
+        {
+            EnsureSamePath(helperExecutable, maintenanceHelperPath,
+                "Maintenance 更新必须由与当前独立服务同目录的版本化 UpdateHelper 执行。" );
+            PathLinkSecurity.RejectLinks(maintenanceServiceExecutable);
+        }
+        else
+            EnsureSamePath(helperExecutable, studentHelperPath,
+                "兼容的 StudentSetup 维护事务必须由当前 StudentSetup 版本的 UpdateHelper 执行。" );
         var release = ReadVerifiedRelease(fullInstallerPath, ApplicationReleaseRole.StudentSetup);
         if (ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0)
             throw new InvalidDataException("Maintenance StudentSetup 更新目标必须高于当前安装版本。" );
