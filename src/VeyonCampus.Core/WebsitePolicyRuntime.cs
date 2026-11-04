@@ -167,8 +167,8 @@ public static class WebsitePolicySigningKeyStore
             throw new CryptographicException("待激活证书不属于此校区；原固定密钥未更改。");
         using var privateKey = TryGetPrivateKey(certificate) ??
             throw new CryptographicException("待激活策略私钥不可用；原固定密钥未更改。");
-        if (!IsOwnedReplacementKey(campusId, privateKey))
-            throw new CryptographicException("待激活私钥不是本产品为此校区生成的不可导出轮换候选密钥；原固定密钥未更改。");
+        if (!IsOwnedProductSigningKey(campusId, privateKey))
+            throw new CryptographicException("待激活私钥不是本产品为此校区生成的不可导出签名密钥；原固定密钥未更改。");
         using var publicKey = certificate.GetRSAPublicKey() ??
             throw new CryptographicException("待激活策略证书缺少 RSA 公钥；原固定密钥未更改。");
         if (publicKey.KeySize is < 2048 or > 4096 || privateKey.KeySize != publicKey.KeySize)
@@ -184,6 +184,17 @@ public static class WebsitePolicySigningKeyStore
         var name = cng.Key.KeyName;
         var prefix = KeyNameFor(campusId) + "-";
         return name is not null && name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsOwnedProductSigningKey(string campusId, RSA privateKey)
+    {
+        if (!OperatingSystem.IsWindows() || privateKey is not RSACng cng || cng.Key.KeySize != SigningKeySize ||
+            cng.Key.AlgorithmGroup != CngAlgorithmGroup.Rsa || cng.Key.ExportPolicy != CngExportPolicies.None)
+            return false;
+        var name = cng.Key.KeyName;
+        var stableName = KeyNameFor(campusId);
+        return string.Equals(name, stableName, StringComparison.OrdinalIgnoreCase) ||
+               (name?.StartsWith(stableName + "-", StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
     private static WebsitePolicySigningKey CreateAndPin(X509Store store, string campusId, bool replacement)
