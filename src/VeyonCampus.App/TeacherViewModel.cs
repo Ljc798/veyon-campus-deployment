@@ -10207,6 +10207,11 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
 
     public void SetManualRequired(string detail)
     {
+        if (_maintenanceCanResume)
+        {
+            _maintenanceCanResume = false;
+            Raise(nameof(CanRequery));
+        }
         _isRechecking = false;
         _phase = 5;
         _priority = 1;
