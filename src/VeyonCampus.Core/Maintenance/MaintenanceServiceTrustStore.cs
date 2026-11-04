@@ -36,7 +36,10 @@ public sealed record PendingMaintenanceServiceIdentityRotation(
 /// <summary>
 /// Teacher-side pins for Maintenance identities. A new key is admitted only through an
 /// enrollment signed by the already pinned Agent identity; changed keys require an explicit
-/// rotation decision and the same enrollment proof.
+/// rotation decision and the same enrollment proof. Routine rotation may retain the old public
+/// key for a bounded rollback window; emergency rotation revokes it immediately. Active pins do
+/// not expire solely by wall clock, so offline devices are not stranded; they require explicit
+/// rotation or revocation through the still-trusted Agent identity.
 /// </summary>
 public sealed class MaintenanceServiceTrustStore
 {
@@ -72,6 +75,7 @@ public sealed class MaintenanceServiceTrustStore
 
     public IReadOnlyList<MaintenanceServiceIdentityTrustPin> List()
     {
+        RetireExpiredPreviousKeys(DateTimeOffset.UtcNow);
         lock (_gate) return Array.AsReadOnly(ReadPins().ToArray());
     }
 
@@ -80,6 +84,7 @@ public sealed class MaintenanceServiceTrustStore
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        RetireExpiredPreviousKeys(now);
         lock (_gate)
         {
             var pins = ReadPins();
@@ -99,6 +104,7 @@ public sealed class MaintenanceServiceTrustStore
         var normalizedTarget = NormalizeTarget(target);
         var agentFingerprint = MaintenanceValidation.Fingerprint(agentIdentityFingerprint,
             nameof(agentIdentityFingerprint));
+        RetireExpiredPreviousKeys(DateTimeOffset.UtcNow);
         lock (_gate)
             return ReadPins().SingleOrDefault(pin => pin.CampusId == campusId &&
                 string.Equals(pin.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
@@ -121,28 +127,12 @@ public sealed class MaintenanceServiceTrustStore
         var maintenanceFingerprint = MaintenanceValidation.Fingerprint(maintenanceIdentityFingerprint,
             nameof(maintenanceIdentityFingerprint));
         var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        RetireExpiredPreviousKeys(now);
         lock (_gate)
         {
-            var pins = ReadPins().ToList();
-            var index = pins.FindIndex(pin => pin.CampusId == campusId && pin.Target == normalizedTarget &&
-                pin.AgentIdentityFingerprint == agentFingerprint);
-            if (index < 0) return null;
-
-            var pin = pins[index];
-            if (pin.PreviousMaintenanceIdentityFingerprint is { } previousFingerprint &&
-                pin.PreviousMaintenanceKeyExpiresUtc is { } previousKeyExpiresUtc && previousKeyExpiresUtc <= now)
-            {
-                pins[index] = pin with
-                {
-                    PreviousMaintenanceIdentityFingerprint = null,
-                    PreviousMaintenancePublicKeyPem = null,
-                    PreviousMaintenanceKeyExpiresUtc = null
-                };
-                WritePins(pins);
-                _ = MaintenanceServiceChannelHub.InvalidateConnectionIfIdentity(campusId, normalizedTarget,
-                    previousFingerprint);
-                pin = pins[index];
-            }
+            var pin = ReadPins().SingleOrDefault(item => item.CampusId == campusId &&
+                item.Target == normalizedTarget && item.AgentIdentityFingerprint == agentFingerprint);
+            if (pin is null) return null;
 
             if (pin.MaintenanceIdentityFingerprint == maintenanceFingerprint)
                 return pin.MaintenancePublicKeyPem;
@@ -488,6 +478,37 @@ public sealed class MaintenanceServiceTrustStore
         var fresh = rotations.Where(item => IsPendingRotationFresh(item, nowUtc)).ToArray();
         if (fresh.Length != rotations.Count) WritePendingRotations(fresh);
         return fresh;
+    }
+
+    private void RetireExpiredPreviousKeys(DateTimeOffset nowUtc)
+    {
+        lock (_gate)
+        {
+            var pins = ReadPins().ToList();
+            var expiredFingerprints = new List<(string CampusId, string Target, string Fingerprint)>();
+            var changed = false;
+            for (var index = 0; index < pins.Count; index++)
+            {
+                var pin = pins[index];
+                if (pin.PreviousMaintenanceIdentityFingerprint is not { } previousFingerprint ||
+                    pin.PreviousMaintenanceKeyExpiresUtc is not { } expiresUtc || expiresUtc > nowUtc)
+                    continue;
+                pins[index] = pin with
+                {
+                    PreviousMaintenanceIdentityFingerprint = null,
+                    PreviousMaintenancePublicKeyPem = null,
+                    PreviousMaintenanceKeyExpiresUtc = null
+                };
+                expiredFingerprints.Add((pin.CampusId, pin.Target, previousFingerprint));
+                changed = true;
+            }
+
+            if (!changed) return;
+            WritePins(pins);
+            foreach (var expired in expiredFingerprints)
+                _ = MaintenanceServiceChannelHub.InvalidateConnectionIfIdentity(expired.CampusId,
+                    expired.Target, expired.Fingerprint);
+        }
     }
 
     private static bool IsPendingRotationFresh(PendingMaintenanceServiceIdentityRotation request,
