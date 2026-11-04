@@ -33,6 +33,7 @@ public sealed class MaintenancePlan
     public MaintenanceReleaseChannel Channel { get; }
     public string Reason { get; }
     public DateTimeOffset PlannedUtc { get; }
+    public Guid RolloutId { get; }
 
     public MaintenancePlan(Guid operationId, MaintenanceDeviceIdentity device,
         MaintenanceOperationKind operationKind, MaintenanceComponentVersions currentVersions,
@@ -40,7 +41,8 @@ public sealed class MaintenancePlan
         string? targetReleaseSha256, string? configurationSha256, MaintenanceReleaseChannel channel,
         string reason, DateTimeOffset plannedUtc, bool synchronizeConfiguration = false,
         string? targetMaintenanceServiceVersion = null,
-        string? targetMaintenanceServiceReleaseSha256 = null)
+        string? targetMaintenanceServiceReleaseSha256 = null,
+        Guid rolloutId = default)
     {
         if (operationId == Guid.Empty) throw new ArgumentException("维护 operationId 不能为空。", nameof(operationId));
         OperationId = operationId;
@@ -105,10 +107,12 @@ public sealed class MaintenancePlan
         Channel = channel;
         Reason = MaintenanceValidation.RequiredText(reason, nameof(reason));
         PlannedUtc = MaintenanceValidation.Utc(plannedUtc);
+        RolloutId = rolloutId;
     }
 
     public MaintenancePlan WithDevice(MaintenanceDeviceIdentity device) =>
         new(OperationId, device, OperationKind, CurrentVersions, TargetSetupVersion, TargetAgentVersion,
             Capabilities, TargetReleaseSha256, ConfigurationSha256, Channel, Reason, PlannedUtc,
-            SynchronizeConfiguration, TargetMaintenanceServiceVersion, TargetMaintenanceServiceReleaseSha256);
+            SynchronizeConfiguration, TargetMaintenanceServiceVersion, TargetMaintenanceServiceReleaseSha256,
+            RolloutId);
 }

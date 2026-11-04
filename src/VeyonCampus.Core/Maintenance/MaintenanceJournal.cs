@@ -3,7 +3,7 @@ namespace VeyonCampus.Core.Maintenance;
 /// <summary>Immutable persistence DTO with per-device active-operation deduplication.</summary>
 public sealed class MaintenanceJournal
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 5;
     public const int MaximumRetainedTerminalRuns = 500;
     public static readonly TimeSpan TerminalRunRetention = TimeSpan.FromDays(180);
     public int SchemaVersion { get; }
@@ -23,7 +23,7 @@ public sealed class MaintenanceJournal
             throw new InvalidDataException($"不支持的 Maintenance journal Schema {schemaVersion}。");
         ArgumentNullException.ThrowIfNull(runs);
         // Schema 2 adds signed transaction readbacks; Schema 3 adds Desired/Reported snapshots;
-        // Schema 4 adds durable offline configuration intents.
+        // Schema 4 adds durable offline configuration intents; Schema 5 records rollout identity on plans.
         SchemaVersion = CurrentSchemaVersion;
         UpdatedUtc = MaintenanceValidation.Utc(updatedUtc);
         var snapshots = runs.ToArray();
@@ -233,6 +233,7 @@ public sealed class MaintenanceJournal
     {
         if (first is null || second is null) return first is null && second is null;
         return first.OperationId == second.OperationId && first.OperationKind == second.OperationKind &&
+               first.RolloutId == second.RolloutId &&
                string.Equals(first.TargetSetupVersion, second.TargetSetupVersion, StringComparison.Ordinal) &&
                string.Equals(first.TargetAgentVersion, second.TargetAgentVersion, StringComparison.Ordinal) &&
                string.Equals(first.TargetMaintenanceServiceVersion, second.TargetMaintenanceServiceVersion,

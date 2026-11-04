@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using VeyonCampus.Core.Maintenance;
 using System.Security.Cryptography;
 using VeyonCampus.Core;
@@ -71,6 +72,11 @@ public interface ITeacherMaintenanceAdapter
 /// <summary>Device-level workflow; UI callers only submit identities/plans and render structured results.</summary>
 public sealed class TeacherMaintenanceCoordinator
 {
+    private const int SameFailureRolloutCircuitThreshold = 3;
+    private const string RolloutCircuitBreakMarker = "[RolloutCircuitBreak]";
+    private static readonly ConcurrentDictionary<MaintenanceDeviceKey, SemaphoreSlim> DeviceExecutionGates = new();
+    private static readonly AsyncLocal<HashSet<MaintenanceDeviceKey>?> HeldDeviceExecutionGates = new();
+
     private readonly IMaintenanceRunStore _store;
     private readonly ITeacherMaintenanceAdapter _adapter;
 
@@ -161,6 +167,17 @@ public sealed class TeacherMaintenanceCoordinator
         ArgumentNullException.ThrowIfNull(operationIds);
         var ids = operationIds.Where(id => id != Guid.Empty).Distinct().ToArray();
         var initial = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var keys = ids.Select(id => initial.Find(id) ?? throw new KeyNotFoundException(
+                $"Maintenance operationId {id:D} 不存在。"))
+            .Select(run => run.Device.Key).Distinct().ToArray();
+        return await WithDeviceExecutionGatesAsync(keys,
+            () => ExecuteCoreAsync(ids, progress, cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<IReadOnlyList<MaintenanceResult>> ExecuteCoreAsync(Guid[] ids,
+        IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken)
+    {
+        var initial = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
         var runs = ids.Select(id => initial.Find(id) ?? throw new KeyNotFoundException(
             $"Maintenance operationId {id:D} 不存在。" )).ToArray();
         var ready = runs.Where(run => (run.State is MaintenanceRunState.PlanReady or
@@ -169,12 +186,26 @@ public sealed class TeacherMaintenanceCoordinator
         foreach (var run in ready.Where(item => item.Plan!.OperationKind == MaintenanceOperationKind.Reconcile))
             await ResumeAsync(run.OperationId, cancellationToken).ConfigureAwait(false);
 
-        foreach (var run in ready.Where(item => item.State == MaintenanceRunState.PlanReady &&
-                     (item.Plan!.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate ||
-                      item.Plan.OperationKind == MaintenanceOperationKind.FullMaintenance &&
-                      item.Plan.TargetMaintenanceServiceVersion is not null)))
+        var maintenanceServiceUpdates = ready.Where(item => item.State == MaintenanceRunState.PlanReady &&
+                (item.Plan!.OperationKind == MaintenanceOperationKind.MaintenanceServiceUpdate ||
+                 item.Plan.OperationKind == MaintenanceOperationKind.FullMaintenance &&
+                 item.Plan.TargetMaintenanceServiceVersion is not null))
+            .Select(item => new MaintenanceUpdateRequest(item.Plan!)).ToArray();
+        for (var index = 0; index < maintenanceServiceUpdates.Length; index++)
         {
-            var plan = run.Plan!;
+            cancellationToken.ThrowIfCancellationRequested();
+            var request = maintenanceServiceUpdates[index];
+            var plan = request.Plan;
+            var beforeSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var priorFailures = GetTrailingRolloutFailureStreak(beforeSendJournal.Runs, plan,
+                maintenanceServiceStage: true);
+            if (priorFailures.Count >= SameFailureRolloutCircuitThreshold)
+            {
+                await MarkRolloutCircuitBlockedAsync(maintenanceServiceUpdates.Skip(index),
+                    priorFailures.Signature!, cancellationToken).ConfigureAwait(false);
+                break;
+            }
+
             try
             {
                 var result = await _adapter.OfferMaintenanceServiceUpdateAsync(plan,
@@ -184,9 +215,14 @@ public sealed class TeacherMaintenanceCoordinator
                         progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
                             MaintenanceRunState.Updating,
                             "MaintenanceService 签名更新命令已写入 journal，正在由独立 SYSTEM 服务执行。",
-                            0, 1, prepared.CommandId, plan.Device.RouteAddress));
+                            index, maintenanceServiceUpdates.Length, prepared.CommandId, plan.Device.RouteAddress));
                     }, progress, cancellationToken).ConfigureAwait(false);
-                await ApplyUpdateResultAsync(result, cancellationToken).ConfigureAwait(false);
+                if (result.OperationId != plan.OperationId)
+                    await MarkPendingOrFailedAsync(plan.OperationId,
+                        "阶段：MaintenanceService 结果核对。适配器返回了不匹配的 operationId；原事务需要重新查询。",
+                        CancellationToken.None).ConfigureAwait(false);
+                else
+                    await ApplyUpdateResultAsync(result, cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -200,8 +236,19 @@ public sealed class TeacherMaintenanceCoordinator
                                               InvalidOperationException or ArgumentException or TimeoutException)
             {
                 await MarkPendingOrFailedAsync(plan.OperationId,
-                    "MaintenanceService 更新工作流异常：" + Sanitize(exception.Message), CancellationToken.None)
+                    "阶段：MaintenanceService 更新或结果读回。" + Sanitize(exception.Message), CancellationToken.None)
                     .ConfigureAwait(false);
+            }
+
+            var afterSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+            var failureStreak = GetTrailingRolloutFailureStreak(afterSendJournal.Runs, plan,
+                maintenanceServiceStage: true);
+            if (failureStreak.Count >= SameFailureRolloutCircuitThreshold &&
+                index + 1 < maintenanceServiceUpdates.Length)
+            {
+                await MarkRolloutCircuitBlockedAsync(maintenanceServiceUpdates.Skip(index + 1),
+                    failureStreak.Signature!, cancellationToken).ConfigureAwait(false);
+                break;
             }
         }
 
@@ -246,47 +293,89 @@ public sealed class TeacherMaintenanceCoordinator
 
         if (softwareUpdates.Count > 0)
         {
-            try
+            for (var index = 0; index < softwareUpdates.Count; index++)
             {
-                var results = await _adapter.OfferUpdatesAsync(softwareUpdates,
-                    async (prepared, token) =>
-                    {
-                        await PersistPreparedUpdateCommandAsync(prepared, token).ConfigureAwait(false);
-                        var target = softwareUpdates.FirstOrDefault(request =>
-                            request.Plan.OperationId == prepared.OperationId)?.Plan.Device.RouteAddress;
-                        progress?.Report(new MaintenanceCoordinatorProgress(prepared.OperationId,
-                            MaintenanceRunState.Updating,
-                            "签名更新命令与 operationId 已写入 journal，正在发送至学生 Agent。",
-                            0, softwareUpdates.Count, prepared.CommandId, target));
-                    }, progress, cancellationToken).ConfigureAwait(false);
-                var byOperation = results.ToDictionary(result => result.OperationId);
-                foreach (var request in softwareUpdates)
+                cancellationToken.ThrowIfCancellationRequested();
+                var request = softwareUpdates[index];
+                var plan = request.Plan;
+                var beforeSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+                var priorFailures = GetTrailingRolloutFailureStreak(beforeSendJournal.Runs, plan);
+                if (priorFailures.Count >= SameFailureRolloutCircuitThreshold)
                 {
-                    if (!byOperation.TryGetValue(request.Plan.OperationId, out var result))
-                    {
-                        await MarkPendingOrFailedAsync(request.Plan.OperationId,
-                            "更新适配器未返回此设备的结果。", cancellationToken).ConfigureAwait(false);
-                        continue;
-                    }
-                    await ApplyUpdateResultAsync(result, cancellationToken).ConfigureAwait(false);
+                    await MarkRolloutCircuitBlockedAsync(softwareUpdates.Skip(index), priorFailures.Signature!,
+                        cancellationToken).ConfigureAwait(false);
+                    break;
                 }
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                foreach (var request in softwareUpdates)
-                    await MarkPendingOrFailedAsync(request.Plan.OperationId,
-                        "教师端停止等待；已发送或可能已发送的设备需重新查询事务。",
-                        CancellationToken.None).ConfigureAwait(false);
-                throw;
-            }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or CryptographicException or
-                                              InvalidOperationException or ArgumentException or TimeoutException)
-            {
-                foreach (var request in softwareUpdates)
-                    await MarkPendingOrFailedAsync(request.Plan.OperationId,
-                        "更新适配器异常：" + Sanitize(exception.Message), CancellationToken.None)
+
+                var completedBefore = index;
+                IProgress<MaintenanceCoordinatorProgress>? requestProgress = progress is null
+                    ? null
+                    : new Progress<MaintenanceCoordinatorProgress>(value => progress.Report(value with
+                    {
+                        Completed = completedBefore + value.Completed,
+                        Total = softwareUpdates.Count
+                    }));
+
+                try
+                {
+                    var results = await _adapter.OfferUpdatesAsync([request],
+                        async (prepared, token) =>
+                        {
+                            if (prepared.OperationId != plan.OperationId)
+                                throw new InvalidDataException("更新适配器准备了不属于当前设备 operationId 的命令。");
+                            await PersistPreparedUpdateCommandAsync(prepared, token).ConfigureAwait(false);
+                            progress?.Report(new MaintenanceCoordinatorProgress(prepared.OperationId,
+                                MaintenanceRunState.Updating,
+                                "签名更新命令与 operationId 已写入 journal，正在发送至学生 Agent。",
+                                index, softwareUpdates.Count, prepared.CommandId, plan.Device.RouteAddress));
+                        }, requestProgress, cancellationToken).ConfigureAwait(false);
+                    var matchingResults = results.Where(result => result.OperationId == plan.OperationId).Take(2).ToArray();
+                    if (matchingResults.Length != 1 || results.Count != 1)
+                    {
+                        await MarkPendingOrFailedAsync(plan.OperationId,
+                            "阶段：更新适配器结果核对。适配器未返回当前设备唯一且匹配的结果。",
+                            CancellationToken.None).ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await ApplyUpdateResultAsync(matchingResults[0], cancellationToken).ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException exception)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                    {
+                        await MarkPendingOrFailedAsync(plan.OperationId,
+                            "阶段：更新命令等待或结果读回。教师端停止等待；当前设备需重新查询原事务，不会自动重发。",
+                            CancellationToken.None).ConfigureAwait(false);
+                        throw;
+                    }
+                    await MarkPendingOrFailedAsync(plan.OperationId,
+                        "阶段：更新适配器超时。" + Sanitize(exception.Message), CancellationToken.None)
                         .ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or CryptographicException or
+                                                  InvalidOperationException or ArgumentException or TimeoutException)
+                {
+                    await MarkPendingOrFailedAsync(plan.OperationId,
+                        "阶段：签名更新或结果读回。更新适配器异常：" + Sanitize(exception.Message),
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+
+                var afterSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+                var failureStreak = GetTrailingRolloutFailureStreak(afterSendJournal.Runs, plan);
+                var currentRun = afterSendJournal.Find(plan.OperationId);
+                progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
+                    currentRun?.State ?? MaintenanceRunState.Failed,
+                    currentRun?.Transitions.LastOrDefault()?.Reason ?? "设备维护结果已写入 journal。",
+                    index + 1, softwareUpdates.Count, currentRun?.AgentCommandId, plan.Device.RouteAddress));
+                if (failureStreak.Count >= SameFailureRolloutCircuitThreshold && index + 1 < softwareUpdates.Count)
+                {
+                    await MarkRolloutCircuitBlockedAsync(softwareUpdates.Skip(index + 1),
+                        failureStreak.Signature!, cancellationToken).ConfigureAwait(false);
+                    break;
+                }
             }
         }
 
@@ -314,6 +403,14 @@ public sealed class TeacherMaintenanceCoordinator
 
     public async Task<MaintenanceRun> ResumeAsync(Guid operationId,
         CancellationToken cancellationToken = default)
+    {
+        var run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
+        return await WithDeviceExecutionGatesAsync([run.Device.Key],
+            () => ResumeCoreAsync(operationId, cancellationToken), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<MaintenanceRun> ResumeCoreAsync(Guid operationId,
+        CancellationToken cancellationToken)
     {
         var run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
         if (run.IsTerminal) return run;
@@ -356,6 +453,41 @@ public sealed class TeacherMaintenanceCoordinator
             return await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
         }
         return await ApplyReconciliationResultAsync(run, result, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static async Task<T> WithDeviceExecutionGatesAsync<T>(IEnumerable<MaintenanceDeviceKey> deviceKeys,
+        Func<Task<T>> action, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(action);
+        var keys = deviceKeys.Distinct().ToArray();
+        var previouslyHeld = HeldDeviceExecutionGates.Value;
+        var requested = keys
+            .Where(key => previouslyHeld?.Contains(key) != true)
+            .OrderBy(key => key.CampusId, StringComparer.Ordinal)
+            .ThenBy(key => key.PinnedIdentityFingerprint, StringComparer.Ordinal)
+            .ToArray();
+        var acquired = new List<SemaphoreSlim>(requested.Length);
+        try
+        {
+            foreach (var key in requested)
+            {
+                var gate = DeviceExecutionGates.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                acquired.Add(gate);
+            }
+
+            var held = previouslyHeld is null
+                ? new HashSet<MaintenanceDeviceKey>()
+                : new HashSet<MaintenanceDeviceKey>(previouslyHeld);
+            held.UnionWith(keys);
+            HeldDeviceExecutionGates.Value = held;
+            return await action().ConfigureAwait(false);
+        }
+        finally
+        {
+            HeldDeviceExecutionGates.Value = previouslyHeld;
+            for (var index = acquired.Count - 1; index >= 0; index--) acquired[index].Release();
+        }
     }
 
     public async Task<IReadOnlyList<MaintenanceResult>> GetResultsAsync(MaintenanceDeviceKey? device = null,
@@ -490,13 +622,13 @@ public sealed class TeacherMaintenanceCoordinator
                 break;
             case MaintenanceAdapterDisposition.UpdateRolledBack:
                 run = RequireRunHasCommand(run, result.Evidence);
-                run = run.TransitionTo(MaintenanceRunState.RolledBack, result.Detail, result.Evidence,
+                run = run.TransitionTo(MaintenanceRunState.RolledBack, FormatAdapterResultDetail(result), result.Evidence,
                     DateTimeOffset.UtcNow);
                 await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
                 break;
             case MaintenanceAdapterDisposition.RecoveryRequired:
                 run = RequireRunHasCommand(run, result.Evidence);
-                run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, result.Detail, result.Evidence,
+                run = run.TransitionTo(MaintenanceRunState.RecoveryRequired, FormatAdapterResultDetail(result), result.Evidence,
                     DateTimeOffset.UtcNow);
                 await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
                 break;
@@ -509,7 +641,7 @@ public sealed class TeacherMaintenanceCoordinator
                     var failed = run.TransitionTo(result.Disposition == MaintenanceAdapterDisposition.ManualRequired
                             ? MaintenanceRunState.ManualRequired
                             : MaintenanceRunState.Failed,
-                        result.Detail, result.Evidence, DateTimeOffset.UtcNow);
+                        FormatAdapterResultDetail(result), result.Evidence, DateTimeOffset.UtcNow);
                     await _store.UpdateAsync(failed, cancellationToken).ConfigureAwait(false);
                 }
                 else await MarkPendingOrFailedAsync(result.OperationId, result.Detail, cancellationToken)
@@ -660,6 +792,135 @@ public sealed class TeacherMaintenanceCoordinator
         }
         await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
         return run;
+    }
+
+    private async Task MarkRolloutCircuitBlockedAsync(IEnumerable<MaintenanceUpdateRequest> requests,
+        string failureSignature, CancellationToken cancellationToken)
+    {
+        const string reason = RolloutCircuitBreakMarker +
+            " 同一签名发行的连续设备更新出现相同失败，已暂停后续发送；这些设备尚未接收更新命令。请重新核对失败设备，再启动新的维护批次。";
+        var safeSignature = Sanitize(failureSignature);
+        if (safeSignature.Length > 160) safeSignature = safeSignature[..160];
+        foreach (var request in requests)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var run = await RequireRunAsync(request.Plan.OperationId, cancellationToken).ConfigureAwait(false);
+            var serviceStageOnly = run.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
+                                   run.LastUpdateCommandIsMaintenanceService;
+            if (run.IsTerminal || run.AgentCommandId is not null && !serviceStageOnly || run.State is not
+                (MaintenanceRunState.PlanReady or MaintenanceRunState.MaintenanceServiceHealthVerified))
+                continue;
+            var blocked = run.TransitionTo(MaintenanceRunState.ManualRequired,
+                reason + " 熔断类别：" + safeSignature + "。", null, DateTimeOffset.UtcNow);
+            await _store.UpdateAsync(blocked, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private static (int Count, string? Signature) GetTrailingRolloutFailureStreak(
+        IEnumerable<MaintenanceRun> runs, MaintenancePlan plan, bool maintenanceServiceStage = false)
+    {
+        var releaseSha256 = maintenanceServiceStage
+            ? plan.TargetMaintenanceServiceReleaseSha256
+            : plan.TargetReleaseSha256;
+        if (plan.RolloutId == Guid.Empty || releaseSha256 is null)
+            return (0, null);
+        if (maintenanceServiceStage &&
+            (plan.OperationKind is not (MaintenanceOperationKind.MaintenanceServiceUpdate or
+                MaintenanceOperationKind.FullMaintenance) || plan.TargetMaintenanceServiceVersion is null) ||
+            !maintenanceServiceStage &&
+            plan.OperationKind is not (MaintenanceOperationKind.SoftwareUpdate or
+                MaintenanceOperationKind.FullMaintenance)) return (0, null);
+
+        var outcomes = runs.Where(run => run.Plan is { } candidate &&
+                candidate.RolloutId == plan.RolloutId && candidate.Device.CampusId == plan.Device.CampusId &&
+                candidate.Channel == plan.Channel &&
+                MatchesRolloutRelease(candidate, maintenanceServiceStage, releaseSha256) &&
+                (maintenanceServiceStage || candidate.TargetMaintenanceServiceVersion is null ||
+                 HasMaintenanceServiceSuccess(run)))
+            .Where(run => maintenanceServiceStage
+                ? IsMaintenanceServiceRolloutOutcome(run)
+                : IsStudentSetupRolloutOutcome(run))
+            .OrderByDescending(run => maintenanceServiceStage
+                ? MaintenanceServiceOutcomeUtc(run)
+                : run.Transitions.LastOrDefault()?.OccurredUtc ?? run.UpdatedUtc)
+            .ThenByDescending(run => run.CreatedUtc)
+            .ToArray();
+
+        var count = 0;
+        string? signature = null;
+        foreach (var run in outcomes)
+        {
+            if (maintenanceServiceStage && HasMaintenanceServiceSuccess(run)) return (0, null);
+            if (run.State == MaintenanceRunState.ManualRequired) continue;
+            if (run.State == MaintenanceRunState.PendingVerification && IsAdapterTimeoutOrError(run))
+            {
+                var pendingSignature = RolloutFailureSignature(run);
+                if (signature is not null && !string.Equals(signature, pendingSignature, StringComparison.Ordinal)) break;
+                signature = pendingSignature;
+                count++;
+                continue;
+            }
+            if (run.State is not (MaintenanceRunState.Failed or MaintenanceRunState.RecoveryRequired or
+                MaintenanceRunState.RolledBack)) break;
+            var current = RolloutFailureSignature(run);
+            if (signature is not null && !string.Equals(signature, current, StringComparison.Ordinal)) break;
+            signature = current;
+            count++;
+        }
+        return (count, signature);
+    }
+
+    private static bool MatchesRolloutRelease(MaintenancePlan candidate, bool maintenanceServiceStage,
+        string releaseSha256) => maintenanceServiceStage
+        ? candidate.OperationKind is MaintenanceOperationKind.MaintenanceServiceUpdate or
+            MaintenanceOperationKind.FullMaintenance &&
+          candidate.TargetMaintenanceServiceVersion is not null &&
+          string.Equals(candidate.TargetMaintenanceServiceReleaseSha256, releaseSha256,
+              StringComparison.OrdinalIgnoreCase)
+        : candidate.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
+          MaintenanceOperationKind.FullMaintenance &&
+          string.Equals(candidate.TargetReleaseSha256, releaseSha256, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsMaintenanceServiceRolloutOutcome(MaintenanceRun run) =>
+        HasMaintenanceServiceSuccess(run) || run.State is MaintenanceRunState.Failed or
+            MaintenanceRunState.RecoveryRequired or MaintenanceRunState.RolledBack ||
+        run.State == MaintenanceRunState.PendingVerification && IsAdapterTimeoutOrError(run);
+
+    private static bool IsStudentSetupRolloutOutcome(MaintenanceRun run) =>
+        run.State is MaintenanceRunState.Failed or MaintenanceRunState.RecoveryRequired or
+            MaintenanceRunState.RolledBack or MaintenanceRunState.Completed or MaintenanceRunState.NoChanges ||
+        run.State == MaintenanceRunState.PendingVerification && IsAdapterTimeoutOrError(run) ||
+        run.State == MaintenanceRunState.ManualRequired &&
+        run.Transitions.LastOrDefault()?.Reason.StartsWith(RolloutCircuitBreakMarker,
+            StringComparison.Ordinal) == true;
+
+    private static bool HasMaintenanceServiceSuccess(MaintenanceRun run) =>
+        run.Transitions.Any(item => item.To == MaintenanceRunState.MaintenanceServiceHealthVerified) ||
+        run.Transitions.Any(item => item.To == MaintenanceRunState.Completed) &&
+        run.Transitions.Any(item => item.To == MaintenanceRunState.NoChanges);
+
+    private static DateTimeOffset MaintenanceServiceOutcomeUtc(MaintenanceRun run) =>
+        run.Transitions.LastOrDefault(item => item.To == MaintenanceRunState.MaintenanceServiceHealthVerified)
+            ?.OccurredUtc ?? run.Transitions.LastOrDefault()?.OccurredUtc ?? run.UpdatedUtc;
+
+    private static string RolloutFailureSignature(MaintenanceRun run)
+    {
+        var reason = run.Transitions.LastOrDefault()?.Reason ?? string.Empty;
+        const string stagePrefix = "阶段：";
+        if (!reason.StartsWith(stagePrefix, StringComparison.Ordinal)) return run.State + ":unknown-stage";
+        var end = reason.IndexOf('。', stagePrefix.Length);
+        var stage = end < 0 ? reason[stagePrefix.Length..] : reason[stagePrefix.Length..end];
+        return "stage:" + (stage.Length == 0 ? "unknown-stage" : stage);
+    }
+
+    private static bool IsAdapterTimeoutOrError(MaintenanceRun run)
+    {
+        var reason = run.Transitions.LastOrDefault()?.Reason;
+        return reason?.StartsWith("阶段：更新适配器超时。", StringComparison.Ordinal) == true ||
+               reason?.StartsWith("阶段：签名更新或结果读回。", StringComparison.Ordinal) == true ||
+               reason?.StartsWith("阶段：更新适配器结果核对。", StringComparison.Ordinal) == true ||
+               reason?.StartsWith("阶段：MaintenanceService 更新或结果读回。", StringComparison.Ordinal) == true ||
+               reason?.StartsWith("阶段：MaintenanceService 结果核对。", StringComparison.Ordinal) == true;
     }
 
     private static string FormatAdapterResultDetail(MaintenanceAdapterResult result) =>

@@ -41,6 +41,7 @@ public sealed class TeacherMaintenanceWorkflow
                 MaintenanceOperationKind.MaintenanceServiceUpdate))
             throw new ArgumentOutOfRangeException(nameof(requestedOperation));
         var normalizedTargets = WebsitePolicyTransport.NormalizeTargets(targets);
+        var rolloutId = Guid.NewGuid();
         var outcomes = new List<TeacherMaintenanceTargetResult>();
         var devices = new List<MaintenanceDeviceIdentity>();
         var devicesByKey = new Dictionary<MaintenanceDeviceKey, MaintenanceDeviceIdentity>();
@@ -237,7 +238,8 @@ public sealed class TeacherMaintenanceWorkflow
                         "更新至签名 MaintenanceService 发行 " + serviceArtifact.Release.Manifest.Version + "。",
                     DateTimeOffset.UtcNow, synchronizeConfiguration: false,
                     targetMaintenanceServiceVersion: serviceArtifact?.Release.Manifest.Version,
-                    targetMaintenanceServiceReleaseSha256: serviceArtifact?.Release.Manifest.Sha256);
+                    targetMaintenanceServiceReleaseSha256: serviceArtifact?.Release.Manifest.Sha256,
+                    rolloutId: rolloutId);
                 var servicePlanEvidence = new MaintenanceEvidence("signed-maintenance-service-plan",
                     snapshot.Device.PinnedIdentityFingerprint,
                     serviceArtifact?.Release.Manifest.Sha256 ?? snapshot.Capabilities.SignedResponseSha256,
@@ -395,7 +397,8 @@ public sealed class TeacherMaintenanceWorkflow
                 targetMaintenanceServiceVersion: needsMaintenanceServiceUpdate
                     ? maintenanceArtifact!.Release.Manifest.Version : null,
                 targetMaintenanceServiceReleaseSha256: needsMaintenanceServiceUpdate
-                    ? maintenanceArtifact!.Release.Manifest.Sha256 : null);
+                    ? maintenanceArtifact!.Release.Manifest.Sha256 : null,
+                rolloutId: rolloutId);
             var planEvidence = new MaintenanceEvidence("signed-maintenance-plan",
                 snapshot.Device.PinnedIdentityFingerprint, capability.SignedResponseSha256, null,
                 capability.VerifiedUtc);
