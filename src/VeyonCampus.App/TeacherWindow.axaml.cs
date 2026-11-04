@@ -18,6 +18,7 @@ using System.Security.Cryptography;
 using System.Text;
 using VeyonCampus.App.Presentation.Views;
 using VeyonCampus.Core;
+using VeyonCampus.Core.Maintenance;
 
 namespace VeyonCampus.App;
 
@@ -2589,8 +2590,9 @@ public partial class TeacherWindow : Window
     {
         if (sender is not Button { DataContext: PendingMaintenanceIdentityRotationItem item } || !item.CanAct)
             return;
-        if (!await ConfirmMaintenanceIdentityRotationAsync(item)) return;
-        await _model.ApproveMaintenanceIdentityRotationAsync(item);
+        var rotationMode = await ConfirmMaintenanceIdentityRotationAsync(item);
+        if (rotationMode is not { } selectedMode) return;
+        await _model.ApproveMaintenanceIdentityRotationAsync(item, selectedMode);
     }
 
     private async void RejectMaintenanceIdentityRotation(object? sender, RoutedEventArgs e)
@@ -2599,7 +2601,7 @@ public partial class TeacherWindow : Window
             await _model.RejectMaintenanceIdentityRotationAsync(item);
     }
 
-    private async Task<bool> ConfirmMaintenanceIdentityRotationAsync(
+    private async Task<MaintenanceServiceKeyRotationMode?> ConfirmMaintenanceIdentityRotationAsync(
         PendingMaintenanceIdentityRotationItem item)
     {
         var dialog = new Window
@@ -2614,6 +2616,16 @@ public partial class TeacherWindow : Window
         {
             Content = "我已根据现场变更记录核对目标设备及完整新旧指纹，并确认批准这次服务身份轮换。",
             IsChecked = false
+        };
+        var rotationMode = new ComboBox
+        {
+            ItemsSource = new[]
+            {
+                "紧急或怀疑泄露：立即撤销旧服务密钥",
+                "已计划且旧密钥仍安全：保留 24 小时回退信任"
+            },
+            SelectedIndex = 0,
+            HorizontalAlignment = HorizontalAlignment.Stretch
         };
         var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
         cancel.Classes.Add("secondary");
@@ -2637,16 +2649,21 @@ public partial class TeacherWindow : Window
             {
                 new TextBlock
                 {
-                    Text = $"设备：{item.DisplayName} · {item.Target}\n\n原固定 Maintenance 指纹：\n{item.PreviousFingerprint}\n\nAgent 签名登记的新 Maintenance 指纹：\n{item.CandidateFingerprint}\n\n新指纹已由此设备当前固定的 Agent 身份签名授权。批准后本机信任库会替换该设备的旧 Maintenance 公钥；服务需重新连接后才会建立维护通道。",
+                    Text = $"设备：{item.DisplayName} · {item.Target}\n\n原固定 Maintenance 指纹：\n{item.PreviousFingerprint}\n\nAgent 签名登记的新 Maintenance 指纹：\n{item.CandidateFingerprint}\n\n新指纹已由此设备当前固定的 Agent 身份签名授权。紧急轮换会立即停用旧密钥；24 小时回退仅适用于确认旧密钥仍安全的计划轮换，过期后旧信任会自动清除。",
                     TextWrapping = Avalonia.Media.TextWrapping.Wrap,
                     FontFamily = "Consolas"
                 },
+                new TextBlock { Text = "轮换方式", FontWeight = Avalonia.Media.FontWeight.SemiBold },
+                rotationMode,
                 verified,
                 actions
             }
         };
         dialog.Content = layout;
-        return await dialog.ShowDialog<bool>(this);
+        if (!await dialog.ShowDialog<bool>(this)) return null;
+        return rotationMode.SelectedIndex == 1
+            ? MaintenanceServiceKeyRotationMode.TemporaryRollbackTrust
+            : MaintenanceServiceKeyRotationMode.ImmediateRevocation;
     }
 
     private async void SelectLocalStudentTestInstaller(object? sender, RoutedEventArgs e)

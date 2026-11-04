@@ -90,9 +90,11 @@ internal sealed partial class TeacherMobileControlService
 
             var existingMaintenancePin = _maintenanceTrustStore.FindTrustedPin(agentPin.CampusId,
                 agentPin.Target, agentPin.Fingerprint);
+            var trustedMaintenanceKey = _maintenanceTrustStore.FindTrustedPublicKeyForIdentity(
+                agentPin.CampusId, agentPin.Target, agentPin.Fingerprint,
+                verifiedEnrollment.MaintenanceIdentityFingerprint);
             if (existingMaintenancePin is not null &&
-                existingMaintenancePin.MaintenanceIdentityFingerprint !=
-                verifiedEnrollment.MaintenanceIdentityFingerprint)
+                trustedMaintenanceKey is null)
             {
                 _ = _maintenanceTrustStore.QueueKeyRotation(agentPin.Target, campusId, agentPin.Fingerprint,
                     existingMaintenancePin.MaintenanceIdentityFingerprint, hello.SignedEnrollmentJson,
@@ -105,12 +107,14 @@ internal sealed partial class TeacherMobileControlService
 
             // First-time pinning occurs only after both the Agent-signed enrollment and a fresh
             // challenge signature prove the service possesses its separately stored private key.
-            var maintenancePin = _maintenanceTrustStore.PinEnrollment(agentPin.Target, campusId,
-                agentPin.Fingerprint, hello.SignedEnrollmentJson);
+            // A previous key is accepted here only during a teacher-approved rollback window.
+            if (trustedMaintenanceKey is null)
+                _ = _maintenanceTrustStore.PinEnrollment(agentPin.Target, campusId,
+                    agentPin.Fingerprint, hello.SignedEnrollmentJson);
             await SendMaintenanceMessageAsync(socket, new MaintenanceServiceChannelMessage(
                 MaintenanceServiceChannelProtocol.CurrentVersion, "ready", campusId,
                 Target: agentPin.Target,
-                MaintenanceIdentityFingerprint: maintenancePin.MaintenanceIdentityFingerprint),
+                MaintenanceIdentityFingerprint: verifiedEnrollment.MaintenanceIdentityFingerprint),
                 handshakeTimeout.Token).ConfigureAwait(false);
 
             await using var connection = new TeacherMaintenanceServiceConnection(socket);
@@ -281,5 +285,4 @@ internal sealed class TeacherMaintenanceServiceConnection(WebSocket socket) : IA
         catch (WebSocketException) { }
     }
 }
-
 

@@ -12,7 +12,16 @@ public sealed record MaintenanceServiceIdentityTrustPin(
     string AgentIdentityFingerprint,
     string MaintenanceIdentityFingerprint,
     string MaintenancePublicKeyPem,
-    DateTimeOffset PinnedUtc);
+    DateTimeOffset PinnedUtc,
+    string? PreviousMaintenanceIdentityFingerprint = null,
+    string? PreviousMaintenancePublicKeyPem = null,
+    DateTimeOffset? PreviousMaintenanceKeyExpiresUtc = null);
+
+public enum MaintenanceServiceKeyRotationMode
+{
+    ImmediateRevocation,
+    TemporaryRollbackTrust
+}
 
 public sealed record PendingMaintenanceServiceIdentityRotation(
     string Target,
@@ -31,6 +40,7 @@ public sealed record PendingMaintenanceServiceIdentityRotation(
 /// </summary>
 public sealed class MaintenanceServiceTrustStore
 {
+    public static readonly TimeSpan RoutineRotationTrustWindow = TimeSpan.FromHours(24);
     private const int MaximumFileBytes = 1024 * 1024;
     private const int MaximumPins = 5000;
     private const int MaximumPendingRotations = 1000;
@@ -100,6 +110,49 @@ public sealed class MaintenanceServiceTrustStore
         return FindTrustedPin(campusId, target, agentIdentityFingerprint)?.MaintenancePublicKeyPem;
     }
 
+    public string? FindTrustedPublicKeyForIdentity(string campusId, string target,
+        string agentIdentityFingerprint, string maintenanceIdentityFingerprint,
+        DateTimeOffset? nowUtc = null)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var normalizedTarget = NormalizeTarget(target);
+        var agentFingerprint = MaintenanceValidation.Fingerprint(agentIdentityFingerprint,
+            nameof(agentIdentityFingerprint));
+        var maintenanceFingerprint = MaintenanceValidation.Fingerprint(maintenanceIdentityFingerprint,
+            nameof(maintenanceIdentityFingerprint));
+        var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
+        lock (_gate)
+        {
+            var pins = ReadPins().ToList();
+            var index = pins.FindIndex(pin => pin.CampusId == campusId && pin.Target == normalizedTarget &&
+                pin.AgentIdentityFingerprint == agentFingerprint);
+            if (index < 0) return null;
+
+            var pin = pins[index];
+            if (pin.PreviousMaintenanceIdentityFingerprint is { } previousFingerprint &&
+                pin.PreviousMaintenanceKeyExpiresUtc is { } previousKeyExpiresUtc && previousKeyExpiresUtc <= now)
+            {
+                pins[index] = pin with
+                {
+                    PreviousMaintenanceIdentityFingerprint = null,
+                    PreviousMaintenancePublicKeyPem = null,
+                    PreviousMaintenanceKeyExpiresUtc = null
+                };
+                WritePins(pins);
+                _ = MaintenanceServiceChannelHub.InvalidateConnectionIfIdentity(campusId, normalizedTarget,
+                    previousFingerprint);
+                pin = pins[index];
+            }
+
+            if (pin.MaintenanceIdentityFingerprint == maintenanceFingerprint)
+                return pin.MaintenancePublicKeyPem;
+            return pin.PreviousMaintenanceIdentityFingerprint == maintenanceFingerprint &&
+                   pin.PreviousMaintenanceKeyExpiresUtc is { } expiresUtc && expiresUtc > now
+                ? pin.PreviousMaintenancePublicKeyPem
+                : null;
+        }
+    }
+
     public PendingMaintenanceServiceIdentityRotation QueueKeyRotation(string target, string campusId,
         string agentIdentityFingerprint, string expectedPreviousMaintenanceIdentityFingerprint,
         string signedEnrollmentJson, DateTimeOffset? nowUtc = null)
@@ -149,13 +202,15 @@ public sealed class MaintenanceServiceTrustStore
 
     public MaintenanceServiceIdentityTrustPin ApproveKeyRotation(
         PendingMaintenanceServiceIdentityRotation request, string expectedPreviousFingerprint,
-        string expectedCandidateFingerprint, DateTimeOffset? nowUtc = null)
+        string expectedCandidateFingerprint, DateTimeOffset? nowUtc = null,
+        MaintenanceServiceKeyRotationMode rotationMode = MaintenanceServiceKeyRotationMode.ImmediateRevocation)
     {
         ArgumentNullException.ThrowIfNull(request);
         var previousFingerprint = MaintenanceValidation.Fingerprint(expectedPreviousFingerprint,
             nameof(expectedPreviousFingerprint));
         var candidateFingerprint = MaintenanceValidation.Fingerprint(expectedCandidateFingerprint,
             nameof(expectedCandidateFingerprint));
+        if (!Enum.IsDefined(rotationMode)) throw new ArgumentOutOfRangeException(nameof(rotationMode));
         var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
         lock (_gate)
         {
@@ -192,13 +247,21 @@ public sealed class MaintenanceServiceTrustStore
                 verified.MaintenancePublicKeyPem != pending.CandidateMaintenancePublicKeyPem)
                 throw new InvalidDataException("新 Maintenance 公钥与 Agent 签名授权内容不匹配。");
 
+            var previousKeyExpiresUtc = rotationMode == MaintenanceServiceKeyRotationMode.TemporaryRollbackTrust
+                ? now + RoutineRotationTrustWindow
+                : (DateTimeOffset?)null;
             var rotated = PinEnrollmentCore(pending.Target, pending.CampusId, pending.AgentIdentityFingerprint,
-                pending.SignedEnrollmentJson, allowKeyRotation: true, now);
+                pending.SignedEnrollmentJson, allowKeyRotation: true, nowUtc: now,
+                previousKeyExpiresUtc: previousKeyExpiresUtc);
             WritePendingRotations(ReadPendingRotations().Where(item => item.CampusId != pending.CampusId ||
                 item.Target != pending.Target || item.AgentIdentityFingerprint != pending.AgentIdentityFingerprint)
                 .ToArray());
-            _ = MaintenanceServiceChannelHub.InvalidateConnectionsWithDifferentIdentity(rotated.CampusId,
-                rotated.Target, rotated.MaintenanceIdentityFingerprint);
+            var trustedIdentities = rotated.PreviousMaintenanceIdentityFingerprint is { } previous &&
+                                    rotationMode == MaintenanceServiceKeyRotationMode.TemporaryRollbackTrust
+                ? new[] { rotated.MaintenanceIdentityFingerprint, previous }
+                : [rotated.MaintenanceIdentityFingerprint];
+            _ = MaintenanceServiceChannelHub.InvalidateConnectionUnlessIdentityIn(rotated.CampusId,
+                rotated.Target, trustedIdentities);
             return rotated;
         }
     }
@@ -224,7 +287,7 @@ public sealed class MaintenanceServiceTrustStore
 
     private MaintenanceServiceIdentityTrustPin PinEnrollmentCore(string target, string campusId,
         string agentIdentityFingerprint, string signedEnrollmentJson, bool allowKeyRotation,
-        DateTimeOffset nowUtc)
+        DateTimeOffset nowUtc, DateTimeOffset? previousKeyExpiresUtc = null)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         var normalizedTarget = NormalizeTarget(target);
@@ -243,6 +306,7 @@ public sealed class MaintenanceServiceTrustStore
         lock (_gate)
         {
             var pins = ReadPins().ToList();
+            MaintenanceServiceIdentityTrustPin? previousPin = null;
             var existingIndex = pins.FindIndex(pin => pin.CampusId == campusId &&
                 string.Equals(pin.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(pin.AgentIdentityFingerprint, agentFingerprint, StringComparison.Ordinal));
@@ -254,6 +318,7 @@ public sealed class MaintenanceServiceTrustStore
                     return existing;
                 if (!allowKeyRotation)
                     throw new InvalidDataException("Maintenance 身份密钥已变化；须先核对新旧指纹并明确批准轮换。");
+                previousPin = existing;
                 pins.RemoveAt(existingIndex);
             }
             if (pins.Count >= MaximumPins)
@@ -261,7 +326,12 @@ public sealed class MaintenanceServiceTrustStore
 
             var pin = new MaintenanceServiceIdentityTrustPin(normalizedTarget, campusId, agentFingerprint,
                 verified.MaintenanceIdentityFingerprint, verified.MaintenancePublicKeyPem,
-                nowUtc.ToUniversalTime());
+                nowUtc.ToUniversalTime(),
+                previousKeyExpiresUtc is not null ? previousPin?.MaintenanceIdentityFingerprint : null,
+                previousKeyExpiresUtc is not null ? previousPin?.MaintenancePublicKeyPem : null,
+                previousKeyExpiresUtc is not null && previousPin is not null
+                    ? previousKeyExpiresUtc.Value.ToUniversalTime()
+                    : null);
             pins.Add(pin);
             WritePins(pins);
             return pin;
@@ -332,11 +402,36 @@ public sealed class MaintenanceServiceTrustStore
             key.ImportFromPem(pin.MaintenancePublicKeyPem);
             var canonicalPem = key.ExportSubjectPublicKeyInfoPem();
             var actualFingerprint = StudentAgentResponseCryptography.GetFingerprint(canonicalPem);
+            var previousFingerprint = pin.PreviousMaintenanceIdentityFingerprint is { } previousIdentity
+                ? MaintenanceValidation.Fingerprint(previousIdentity,
+                    nameof(pin.PreviousMaintenanceIdentityFingerprint))
+                : null;
+            var hasPreviousIdentity = previousFingerprint is not null;
+            var hasPreviousKey = pin.PreviousMaintenancePublicKeyPem is not null;
+            var hasPreviousExpiry = pin.PreviousMaintenanceKeyExpiresUtc is not null;
+            string? canonicalPreviousPem = null;
+            string? actualPreviousFingerprint = null;
+            if (hasPreviousKey)
+            {
+                using var previousKey = RSA.Create();
+                previousKey.ImportFromPem(pin.PreviousMaintenancePublicKeyPem);
+                canonicalPreviousPem = previousKey.ExportSubjectPublicKeyInfoPem();
+                actualPreviousFingerprint = StudentAgentResponseCryptography.GetFingerprint(canonicalPreviousPem);
+            }
             var identity = pin.CampusId + "\n" + target + "\n" + agentFingerprint;
             if (pin.Target != target || pin.AgentIdentityFingerprint != agentFingerprint ||
                 pin.MaintenanceIdentityFingerprint != maintenanceFingerprint ||
                 pin.MaintenancePublicKeyPem != canonicalPem || maintenanceFingerprint != actualFingerprint ||
-                pin.PinnedUtc.Offset != TimeSpan.Zero || !seen.Add(identity))
+                pin.PinnedUtc.Offset != TimeSpan.Zero ||
+                hasPreviousIdentity != hasPreviousKey || hasPreviousIdentity != hasPreviousExpiry ||
+                hasPreviousIdentity && (previousFingerprint != pin.PreviousMaintenanceIdentityFingerprint ||
+                    previousFingerprint == maintenanceFingerprint ||
+                    pin.PreviousMaintenancePublicKeyPem != canonicalPreviousPem ||
+                    previousFingerprint != actualPreviousFingerprint ||
+                    pin.PreviousMaintenanceKeyExpiresUtc!.Value.Offset != TimeSpan.Zero ||
+                    pin.PreviousMaintenanceKeyExpiresUtc.Value <= pin.PinnedUtc ||
+                    pin.PreviousMaintenanceKeyExpiresUtc.Value - pin.PinnedUtc > RoutineRotationTrustWindow) ||
+                !seen.Add(identity))
                 throw new InvalidDataException("Maintenance 身份信任条目无效或重复。");
         }
         return document.Pins;

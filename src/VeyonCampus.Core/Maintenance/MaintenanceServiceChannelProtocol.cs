@@ -254,6 +254,30 @@ public static class MaintenanceServiceChannelHub
         return true;
     }
 
+    public static string? GetConnectedIdentityFingerprint(string campusId, string target) =>
+        Connections.TryGetValue(Key(campusId, target), out var registration)
+            ? registration.MaintenanceIdentityFingerprint
+            : null;
+
+    public static bool InvalidateConnectionIfIdentity(string campusId, string target,
+        string expectedMaintenanceIdentityFingerprint)
+    {
+        var expectedFingerprint = MaintenanceValidation.Fingerprint(expectedMaintenanceIdentityFingerprint,
+            nameof(expectedMaintenanceIdentityFingerprint));
+        var key = Key(campusId, target);
+        Registration? revoked = null;
+        lock (RegistrationGate)
+        {
+            if (Connections.TryGetValue(key, out var current) &&
+                string.Equals(current.MaintenanceIdentityFingerprint, expectedFingerprint,
+                    StringComparison.Ordinal))
+                Connections.TryRemove(key, out revoked);
+        }
+        if (revoked is null) return false;
+        revoked.Invalidate();
+        return true;
+    }
+
     public static IDisposable Register(string campusId, string target, string maintenanceIdentityFingerprint,
         Func<string, CancellationToken, Task<string>> sendAsync, Action invalidate)
     {
@@ -280,15 +304,25 @@ public static class MaintenanceServiceChannelHub
     public static bool InvalidateConnectionsWithDifferentIdentity(string campusId, string target,
         string approvedMaintenanceIdentityFingerprint)
     {
-        var approvedFingerprint = MaintenanceValidation.Fingerprint(approvedMaintenanceIdentityFingerprint,
-            nameof(approvedMaintenanceIdentityFingerprint));
+        return InvalidateConnectionUnlessIdentityIn(campusId, target,
+            [MaintenanceValidation.Fingerprint(approvedMaintenanceIdentityFingerprint,
+                nameof(approvedMaintenanceIdentityFingerprint))]);
+    }
+
+    public static bool InvalidateConnectionUnlessIdentityIn(string campusId, string target,
+        IEnumerable<string> trustedMaintenanceIdentityFingerprints)
+    {
+        ArgumentNullException.ThrowIfNull(trustedMaintenanceIdentityFingerprints);
+        var trustedFingerprints = trustedMaintenanceIdentityFingerprints
+            .Select(fingerprint => MaintenanceValidation.Fingerprint(fingerprint,
+                nameof(trustedMaintenanceIdentityFingerprints)))
+            .ToHashSet(StringComparer.Ordinal);
         var key = Key(campusId, target);
         Registration? revoked = null;
         lock (RegistrationGate)
         {
             if (Connections.TryGetValue(key, out var current) &&
-                !string.Equals(current.MaintenanceIdentityFingerprint, approvedFingerprint,
-                    StringComparison.Ordinal))
+                !trustedFingerprints.Contains(current.MaintenanceIdentityFingerprint))
             {
                 Connections.TryRemove(key, out revoked);
             }
@@ -337,5 +371,4 @@ public static class MaintenanceServiceChannelHub
         }
     }
 }
-
 

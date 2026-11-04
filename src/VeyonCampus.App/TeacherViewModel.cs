@@ -5601,7 +5601,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             : "配置 Desired/Reported 对账（" + string.Join("；", summaries) + "）。统计仅覆盖本机 journal 中有事务记录的固定身份设备，不代表全校实时状态。";
     }
 
-    public async Task ApproveMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item)
+    public async Task ApproveMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item,
+        MaintenanceServiceKeyRotationMode rotationMode = MaintenanceServiceKeyRotationMode.ImmediateRevocation)
     {
         ArgumentNullException.ThrowIfNull(item);
         if (!item.CanAct) return;
@@ -5609,8 +5610,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         try
         {
             _ = _maintenanceIdentityTrustStore.ApproveKeyRotation(item.Request,
-                item.PreviousFingerprint, item.CandidateFingerprint);
-            MaintenanceIdentityRotationStatus = "已批准该设备的 Maintenance 服务密钥轮换；服务重新连接后会继续身份核验。";
+                item.PreviousFingerprint, item.CandidateFingerprint, rotationMode: rotationMode);
+            MaintenanceIdentityRotationStatus = rotationMode == MaintenanceServiceKeyRotationMode.TemporaryRollbackTrust
+                ? "已批准常规密钥轮换；新旧服务身份并行信任 24 小时，之后旧身份会自动退役。"
+                : "已批准紧急密钥轮换；旧服务身份已立即撤销，服务重新连接后会继续身份核验。";
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                           UnauthorizedAccessException or InvalidOperationException or

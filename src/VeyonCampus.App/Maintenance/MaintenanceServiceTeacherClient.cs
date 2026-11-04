@@ -33,8 +33,15 @@ internal sealed class MaintenanceServiceTeacherClient
         device is not null && _trustStore.FindTrustedPublicKey(device.CampusId, device.RouteAddress,
             device.PinnedIdentityFingerprint) is not null;
 
-    public bool HasConnectedChannel(MaintenanceDeviceIdentity device) =>
-        device is not null && MaintenanceServiceChannelHub.IsConnected(device.CampusId, device.RouteAddress);
+    public bool HasConnectedChannel(MaintenanceDeviceIdentity device)
+    {
+        if (device is null) return false;
+        var connectedIdentityFingerprint = MaintenanceServiceChannelHub.GetConnectedIdentityFingerprint(
+            device.CampusId, device.RouteAddress);
+        return connectedIdentityFingerprint is not null &&
+               _trustStore.FindTrustedPublicKeyForIdentity(device.CampusId, device.RouteAddress,
+                   device.PinnedIdentityFingerprint, connectedIdentityFingerprint) is not null;
+    }
 
     public bool IsAvailable(MaintenanceDeviceIdentity device) =>
         HasConnectedChannel(device) && HasPinnedIdentity(device);
@@ -86,11 +93,19 @@ internal sealed class MaintenanceServiceTeacherClient
             await beforeSend(preparedCommandId, signedRequestSha256, cancellationToken).ConfigureAwait(false);
         }
 
-        var trustedPublicKey = _trustStore.FindTrustedPublicKey(device.CampusId, device.RouteAddress,
-                             device.PinnedIdentityFingerprint)
-                             ?? throw new InvalidDataException("目标 Maintenance 独立身份尚未固定；不能发送签名命令。" );
+        var connectedIdentityFingerprint = MaintenanceServiceChannelHub.GetConnectedIdentityFingerprint(
+            device.CampusId, device.RouteAddress)
+            ?? throw new IOException("目标 Maintenance 服务当前没有已认证连接。" );
+        var trustedPublicKey = _trustStore.FindTrustedPublicKeyForIdentity(device.CampusId,
+                                 device.RouteAddress, device.PinnedIdentityFingerprint,
+                                 connectedIdentityFingerprint)
+                             ?? throw new InvalidDataException("当前 Maintenance 服务身份未固定或回退信任窗口已到期；未发送签名命令。" );
         var signedResponse = await MaintenanceServiceChannelHub.SendAsync(device.CampusId,
             device.RouteAddress, signedRequest, cancellationToken).ConfigureAwait(false);
+        var currentTrustedPublicKey = _trustStore.FindTrustedPublicKeyForIdentity(device.CampusId,
+            device.RouteAddress, device.PinnedIdentityFingerprint, connectedIdentityFingerprint);
+        if (!string.Equals(currentTrustedPublicKey, trustedPublicKey, StringComparison.Ordinal))
+            throw new InvalidDataException("Maintenance 服务身份信任已变化；拒绝接受该响应。" );
         var response = MaintenanceProtocolV1.VerifyResponse(signedResponse, trustedPublicKey, request,
             DateTimeOffset.UtcNow);
         var responseSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedResponse)));
