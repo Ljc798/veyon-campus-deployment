@@ -285,10 +285,23 @@ public sealed class MaintenanceServiceTrustStore
                 string.Equals(pin.AgentIdentityFingerprint, agentFingerprint, StringComparison.Ordinal) &&
                 string.Equals(pin.MaintenanceIdentityFingerprint, maintenanceFingerprint,
                     StringComparison.Ordinal));
-            if (index < 0) return false;
-            pins.RemoveAt(index);
-            WritePins(pins);
-            return true;
+            var rotations = ReadPendingRotations().ToList();
+            var removedRotationCount = rotations.RemoveAll(item => item.CampusId == campusId &&
+                string.Equals(item.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.AgentIdentityFingerprint, agentFingerprint, StringComparison.Ordinal));
+
+            // Persist the pending-approval cleanup first. If it fails, abort before removing
+            // the pin; if pin removal later fails, stale rotation evidence is still gone.
+            if (removedRotationCount > 0) WritePendingRotations(rotations);
+            if (index >= 0)
+            {
+                pins.RemoveAt(index);
+                WritePins(pins);
+            }
+
+            if (index >= 0 || removedRotationCount > 0)
+                _ = MaintenanceServiceChannelHub.InvalidateConnection(campusId, normalizedTarget);
+            return index >= 0 || removedRotationCount > 0;
         }
     }
 
