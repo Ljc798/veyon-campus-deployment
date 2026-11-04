@@ -3118,4 +3118,670 @@ public sealed partial class TeacherViewModel
         }
         finally { Volatile.Write(ref _initialTeacherHeartbeatWaitScheduled, 0); }
     }
+
+
+    // Restored members omitted by the in-progress partial-class extraction.
+    public void AddClassroomTask()
+    {
+        if (!CanAddClassroomTask || _activeClassroomSession is not { } active) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.Add(active.SessionId,
+                ClassroomTaskProgressDraft, DateTimeOffset.UtcNow);
+            ClassroomTaskProgressDraft = "";
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法保存；原文件已保留。";
+        }
+    }
+
+    internal void ApplyClassroomEvents(Guid sessionId, IEnumerable<ClassroomEvent> events)
+    {
+        ResetClassroomEventFeed(sessionId);
+        var seatLabels = ReadActiveSeatLabels(sessionId);
+        var studentNames = _activeClassroomSession is { } active && active.SessionId == sessionId
+            ? ResolveClassroomStudentDisplayNames(active, ResolveClassroomNetworkTargets(active))
+            : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in ClassroomEventItems.Where(item => item.IsHelpRequest))
+        {
+            item.SetSeatLocation(seatLabels.GetValueOrDefault(item.Event.Target));
+            item.SetStudentName(studentNames.GetValueOrDefault(item.Event.Target, "未填写姓名"));
+        }
+        foreach (var classroomEvent in events)
+        {
+            if (!_classroomEventIds.Add(classroomEvent.EventId))
+            {
+                if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
+                    classroomEvent.Sender == ClassroomEventSender.Teacher &&
+                    _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var retriedThread))
+                    retriedThread.MarkRetrySubmitted(classroomEvent.EventId, classroomEvent.ExpiresUtc);
+                continue;
+            }
+            _classroomEventOrder.Enqueue(classroomEvent.EventId);
+            if (classroomEvent.Type == ClassroomEventType.HelpRequested &&
+                classroomEvent.Sender == ClassroomEventSender.Student)
+            {
+                var row = new TeacherClassroomEventItem(classroomEvent,
+                    seatLabels.GetValueOrDefault(classroomEvent.Target),
+                    studentNames.GetValueOrDefault(classroomEvent.Target, "未填写姓名"));
+                _classroomHelpRows[classroomEvent.EventId] = row;
+                ClassroomEventItems.Insert(0, row);
+            }
+            else if (classroomEvent.Type == ClassroomEventType.TeacherReply &&
+                     classroomEvent.Sender == ClassroomEventSender.Teacher &&
+                     classroomEvent.CorrelationId is { } helpEventId &&
+                     _classroomHelpRows.TryGetValue(helpEventId, out var helpRow))
+            {
+                helpRow.MarkReply(classroomEvent.Message ?? "");
+            }
+            else if (classroomEvent.Type == ClassroomEventType.HelpAcknowledged &&
+                     classroomEvent.CorrelationId is { } acknowledgedHelpId &&
+                     _classroomHelpRows.TryGetValue(acknowledgedHelpId, out var acknowledgedRow))
+            {
+                acknowledgedRow.MarkAcknowledged();
+            }
+            else if (classroomEvent.Type == ClassroomEventType.HelpResolved &&
+                     classroomEvent.Sender == ClassroomEventSender.Student &&
+                     classroomEvent.CorrelationId is { } resolvedHelpId &&
+                     _classroomHelpRows.TryGetValue(resolvedHelpId, out var resolvedRow))
+            {
+                resolvedRow.MarkResolved();
+            }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomNotice)
+            {
+                ClassroomEventItems.Insert(0, new TeacherClassroomEventItem(classroomEvent,
+                    displayName: studentNames.GetValueOrDefault(classroomEvent.Target, "未填写姓名")));
+            }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomChatMessage &&
+                     _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var chatThread))
+            {
+                chatThread.AddMessage(classroomEvent,
+                    isIncoming: classroomEvent.Sender == ClassroomEventSender.Student &&
+                        (!IsClassroomChatDrawerOpen ||
+                         !ReferenceEquals(chatThread, SelectedClassroomChatThread)));
+                Changed(nameof(UnreadClassroomChatCount));
+                Changed(nameof(ClassroomChatUnreadSummary));
+                Changed(nameof(HasUnreadClassroomChatMessages));
+                Changed(nameof(UnreadClassroomChatBadgeText));
+                Changed(nameof(ClassroomInteractionNavigationLabel));
+                if (ReferenceEquals(chatThread, SelectedClassroomChatThread))
+                {
+                    Changed(nameof(HasSelectedClassroomChatMessages));
+                    Changed(nameof(HasEmptySelectedClassroomChatThread));
+                }
+            }
+            else if (classroomEvent.Type == ClassroomEventType.ClassroomChatDelivered &&
+                     classroomEvent.CorrelationId is { } deliveredEventId &&
+                     _classroomChatThreadsByTarget.TryGetValue(classroomEvent.Target, out var deliveredThread))
+            {
+                deliveredThread.MarkDelivered(deliveredEventId);
+            }
+
+            while (_classroomEventOrder.Count > ClassroomEventBuffer.MaximumEventsPerSession)
+            {
+                var expiredEventId = _classroomEventOrder.Dequeue();
+                _classroomEventIds.Remove(expiredEventId);
+                if (_classroomHelpRows.Remove(expiredEventId, out var expiredRow))
+                    ClassroomEventItems.Remove(expiredRow);
+            }
+        }
+        // Keep the teacher view useful during a long class. The event channel is
+        // an audit stream; the UI only needs the most recent messages.
+        while (ClassroomEventItems.Count > 40)
+        {
+            var oldest = ClassroomEventItems[^1];
+            ClassroomEventItems.RemoveAt(ClassroomEventItems.Count - 1);
+            _classroomHelpRows.Remove(oldest.EventId);
+        }
+        foreach (var row in ClassroomEventItems) row.RefreshExpiry();
+        foreach (var thread in ClassroomChatThreads)
+            thread.RefreshDeliveryStatuses(DateTimeOffset.UtcNow);
+        Changed(nameof(HasClassroomEventItems));
+        Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(HasSelectedClassroomChatMessages));
+        Changed(nameof(HasEmptySelectedClassroomChatThread));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
+        Changed(nameof(ClassroomNavigationLabel));
+    }
+
+    public void EndClassroomCountdown()
+    {
+        if (!CanEndClassroomCountdown || _activeClassroomSession is not { } active) return;
+        try
+        {
+            _ = _classroomCountdownStore.End(active.SessionId);
+            _activeClassroomCountdown = null;
+            ClassroomCountdownStatus = "已结束倒计时。";
+            RefreshClassroomCountdownDisplay();
+            Changed(nameof(HasClassroomCountdown));
+            Changed(nameof(IsClassroomCountdownRunning));
+            Changed(nameof(CanStartClassroomCountdown));
+            Changed(nameof(CanEndClassroomCountdown));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomCountdownStatus = "课堂倒计时无法结束；原文件已保留。";
+        }
+    }
+
+    public async Task<bool> EndClassroomSessionAsync(Guid expectedSessionId)
+    {
+        if (expectedSessionId == Guid.Empty || _activeClassroomSession is not { } active ||
+            active.SessionId != expectedSessionId || _isClassroomTransitioning ||
+            IsClassroomCountdownRunning ||
+            ClassroomTaskProgressCompletedCount < ClassroomTaskProgressTotalCount)
+            return false;
+
+        _isClassroomTransitioning = true;
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSwitchClassroomScope));
+        try
+        {
+            var closeResult = await Task.Run(() =>
+            {
+                var modeState = _classroomModeStateStore.Read(expectedSessionId);
+                if (modeState?.OwnedPolicies.Count > 0) return (Ended: false, LedgerWarning: (string?)null);
+                var ended = _classroomSessionStore.EndSession(expectedSessionId, DateTimeOffset.UtcNow);
+                if (ended is null) return (Ended: false, LedgerWarning: (string?)null);
+                try
+                {
+                    _classroomModeStateStore.Save(modeState is null
+                        ? new ClassroomModeSessionState(ClassroomModeStateStore.CurrentSchemaVersion,
+                            expectedSessionId, ClassroomMode.Normal, false, DateTimeOffset.UtcNow, [])
+                        : modeState with { Active = false, UpdatedUtc = DateTimeOffset.UtcNow });
+                    return (Ended: true, LedgerWarning: (string?)null);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    return (Ended: true,
+                        LedgerWarning: "课堂已关闭；旧版课堂恢复记录尚未更新。" + exception.Message);
+                }
+            }).ConfigureAwait(true);
+            if (!closeResult.Ended) return false;
+
+            _activeClassroomSession = null;
+            if (closeResult.LedgerWarning is { } warning) RefreshClassroomRestoreLedger(warning);
+
+            RefreshClassroomSessionProperties();
+            try
+            {
+                await PublishClassroomStatusAsync(null, active);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException)
+            {
+                ClassroomDeliveryStatus = "课堂已在教师端关闭；部分学生电脑尚未收到结束通知，设备本地安全到期仍有效。";
+            }
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException)
+        {
+            ClassroomDeliveryStatus = "课堂状态未能关闭；请刷新后核对。" + exception.Message;
+            return false;
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            RefreshClassroomRestoreLedger();
+            Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanSwitchClassroomScope));
+        }
+    }
+
+    public async Task EnsureClassroomSessionAsync()
+    {
+        if (HasActiveClassroomSession || !CanToggleClassroomSession) return;
+        _isClassroomTransitioning = true;
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSwitchClassroomScope));
+        Changed(nameof(CanCheckRoomConflicts));
+        Changed(nameof(CanAddRoomToVeyon));
+        Changed(nameof(CanSendClassroomNotice));
+        try
+        {
+            var campus = SelectedCampusProfile ?? throw new InvalidDataException("请先选择一个校区模板。");
+            var room = SelectedRoomProfile ?? throw new InvalidDataException("请先选择一个地点模板。");
+            var now = DateTimeOffset.UtcNow;
+            var campusId = CampusId;
+            var started = await Task.Run(() =>
+            {
+                var session = _classroomSessionStore.StartSession(campus, room.RoomId, now);
+                string? ledgerWarning = null;
+                try
+                {
+                    _classroomModeStateStore.Save(new ClassroomModeSessionState(
+                        ClassroomModeStateStore.CurrentSchemaVersion, session.SessionId,
+                        ClassroomMode.Normal, true, now, []));
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException)
+                {
+                    ledgerWarning = "课堂持续会话已保存；旧版策略账本暂不可用。" + exception.Message;
+                }
+                _classroomSigningContextStore.Save(session.SessionId, campusId);
+                return (Session: session, LedgerWarning: ledgerWarning);
+            }).ConfigureAwait(true);
+            _activeClassroomSession = started.Session;
+            if (started.LedgerWarning is { } ledgerWarning)
+            {
+                RefreshClassroomRestoreLedger(ledgerWarning);
+            }
+            await LoadClassroomSessionProgressAsync(started.Session.SessionId).ConfigureAwait(true);
+            RefreshClassroomSessionProperties();
+            ClassroomDeliveryStatus = "课堂保持进行中；正在通知当前学生电脑。";
+            await PublishClassroomStatusAsync(started.Session, started.Session);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            ClassroomDeliveryStatus = "课堂范围尚未就绪；请检查地点和学生电脑名单。";
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            RefreshClassroomRestoreLedger();
+            Changed(nameof(CanToggleClassroomSession));
+            Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanCheckRoomConflicts));
+            Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanSendClassroomNotice));
+        }
+    }
+
+    public Task EnsureVeyonServiceRunningAsync(TeacherDeviceHealthRow row) =>
+        RunStudentHealthRepairAsync(row, StudentAgentHealthRepairAction.EnsureVeyonServiceRunning);
+
+    public Task EnsureVeyonServiceRunningForSelectedAsync() =>
+        RunStudentHealthRepairBatchAsync(StudentAgentHealthRepairAction.EnsureVeyonServiceRunning);
+
+    internal TeacherClassroomEventContext? GetActiveClassroomEventContext()
+    {
+        if (_activeClassroomSession is not { } active) return null;
+        var targets = ResolveClassroomNetworkTargets(active).ToArray();
+        if (targets.Length != active.Targets.Length)
+            throw new InvalidDataException("课堂目标与签名设备地址数量不匹配。");
+        var targetIds = active.Targets.Select((target, index) => (targets[index], target.TargetId))
+            .ToDictionary(item => item.Item1, item => item.TargetId, StringComparer.OrdinalIgnoreCase);
+        return new TeacherClassroomEventContext(ResolveClassroomSigningCampus(active), active.SessionId,
+            Array.AsReadOnly(targets), targetIds, active,
+            ResolveClassroomStudentDisplayNames(active, targets));
+    }
+
+    public string GetStudentDisplayNameForTarget(string computerLabel)
+    {
+        if (!string.IsNullOrWhiteSpace(computerLabel))
+        {
+            var key = NormalizeTargetKey(computerLabel);
+            var choice = WebsitePolicyTargetChoices.FirstOrDefault(item =>
+                string.Equals(NormalizeTargetKey(item.Target), key, StringComparison.OrdinalIgnoreCase));
+            if (choice is not null) return choice.StudentName;
+        }
+        return GetStudentNameForComputerLabel(computerLabel);
+    }
+
+    internal void MarkClassroomChatRetrySubmitted(Guid eventId, DateTimeOffset expiresUtc)
+    {
+        foreach (var thread in _classroomChatThreadsByTarget.Values)
+            if (thread.MarkRetrySubmitted(eventId, expiresUtc)) return;
+    }
+
+    internal void MarkClassroomEventReply(Guid helpEventId, string message)
+    {
+        if (_classroomHelpRows.TryGetValue(helpEventId, out var row))
+        {
+            row.MarkReply(message);
+            Changed(nameof(PendingClassroomHelpCount));
+            Changed(nameof(ClassroomInteractionNavigationLabel));
+            Changed(nameof(ClassroomNavigationLabel));
+        }
+    }
+
+    public void NextTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Min(3, _teacherSetupWizardStep + 1));
+
+    public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
+
+    public async Task RefreshActiveClassroomStatusAsync()
+    {
+        if (Interlocked.CompareExchange(ref _classroomStatusRefreshInFlight, 1, 0) != 0) return;
+        try
+        {
+            if (_activeClassroomSession is not { } active) return;
+            try { await PublishClassroomStatusAsync(active, active, requireCurrentSession: true); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException)
+            {
+                ClassroomDeliveryStatus = "学生互动仍在进行；设备状态暂时无法更新。";
+            }
+        }
+        finally { Volatile.Write(ref _classroomStatusRefreshInFlight, 0); }
+    }
+
+    public void RefreshClassroomCountdownDisplay()
+    {
+        Changed(nameof(ClassroomCountdownText));
+        Changed(nameof(IsClassroomCountdownRunning));
+    }
+
+    internal async Task RefreshClassroomRestoreLedgerAsync(string? status = null)
+    {
+        try
+        {
+            var pending = await Task.Run(() => ClassroomRestoreLedger.ListPending(
+                _classroomModeStateStore.ReadAll(), _classroomSessionStore.ReadRecent()));
+            _pendingClassroomRestores = pending;
+            if (status is not null) _classroomRestoreStatus = status;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            _classroomRestoreStatus = "无法读取本机待恢复记录；原记录已保留。";
+        }
+        Changed(nameof(HasClassroomRestores));
+        Changed(nameof(HasPendingClassroomRestoreItems));
+        Changed(nameof(PendingClassroomRestoreCount));
+        Changed(nameof(ClassroomRestoreSummary));
+        Changed(nameof(CanRetryClassroomRestores));
+    }
+
+    public Task RefreshLegacyEdgePolicyAsync(TeacherDeviceHealthRow row) =>
+        RunStudentHealthRepairAsync(row, StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy);
+
+    public Task RefreshLegacyEdgePolicyForSelectedAsync() =>
+        RunStudentHealthRepairBatchAsync(StudentAgentHealthRepairAction.RefreshActiveWebsitePolicy);
+
+    public void RemoveClassroomTask(Guid taskId)
+    {
+        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress ||
+            progress.Tasks.All(item => item.TaskId != taskId)) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.Remove(active.SessionId, taskId,
+                DateTimeOffset.UtcNow);
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法更新；原文件已保留。";
+        }
+    }
+
+    public void ReportDiagnosticExportFailure() =>
+        UpdateDiagnosticsStatus = "无法保存诊断文件。";
+
+    public void ReportLocalStudentTestReleaseSelectionError(string message) =>
+        StudentUpdateStatus = "本机测试版未能选择：" + (string.IsNullOrWhiteSpace(message) ? "文件不可用。" : message);
+
+    internal void ReportMacVeyonPrivateKeyImportError(string message) =>
+        SetMacVeyonKeyImportStatus(message);
+
+    public void ReportOfflineTeacherUpdateError(string message) =>
+        OfflineTeacherUpdateStatus = message;
+
+    internal void ResetClassroomEventFeed(Guid? sessionId)
+    {
+        if (_classroomEventFeedSessionId == sessionId) return;
+        _classroomEventFeedSessionId = sessionId;
+        IsClassroomChatDrawerOpen = false;
+        ClassroomChatSearch = "";
+        ClassroomNoticeDraft = "";
+        ClassroomNoticeStatus = "";
+        ClassroomEventItems.Clear();
+        _classroomHelpRows.Clear();
+        _classroomChatThreadsByTarget.Clear();
+        ClassroomChatThreads.Clear();
+        SelectedClassroomChatThread = null;
+        ClassroomChatDraft = "";
+        ClassroomChatStatus = "";
+        _classroomEventIds.Clear();
+        _classroomEventOrder.Clear();
+        Changed(nameof(HasClassroomEventItems));
+        Changed(nameof(PendingClassroomHelpCount));
+        Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(ClassroomChatUnreadSummary));
+        Changed(nameof(HasUnreadClassroomChatMessages));
+        Changed(nameof(UnreadClassroomChatBadgeText));
+        Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(FilteredClassroomChatThreads));
+        Changed(nameof(HasClassroomChatSearchResults));
+        Changed(nameof(HasNoClassroomChatSearchResults));
+        Changed(nameof(HasSelectedClassroomChatThread));
+        Changed(nameof(HasSelectedClassroomChatMessages));
+        Changed(nameof(HasEmptySelectedClassroomChatThread));
+        Changed(nameof(HasNoSelectedClassroomChatThread));
+        Changed(nameof(CanSendClassroomChat));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
+        Changed(nameof(ClassroomNavigationLabel));
+    }
+
+    internal void SetClassroomChatSendStatus(string status) => ClassroomChatStatus = status;
+
+    internal void SetClassroomEventReplyError(Guid helpEventId, string message)
+    {
+        if (_classroomHelpRows.TryGetValue(helpEventId, out var row)) row.SetError(message);
+    }
+
+    internal void SetClassroomEventStatus(string status) => ClassroomEventStatus = status;
+
+    internal void SetClassroomNoticeStatus(string status) => ClassroomNoticeStatus = status;
+
+    internal void SetClassroomRestoreRetrying(bool value)
+    {
+        if (_isRetryingClassroomRestores == value) return;
+        _isRetryingClassroomRestores = value;
+        Changed(nameof(CanRetryClassroomRestores));
+        Changed(nameof(CanToggleClassroomSession));
+        Changed(nameof(CanSwitchClassroomScope));
+    }
+
+    public void StartClassroomCountdown()
+    {
+        if (!CanStartClassroomCountdown || _activeClassroomSession is not { } active) return;
+        try
+        {
+            var duration = decimal.ToInt32(ClassroomCountdownMinutes);
+            _activeClassroomCountdown = _classroomCountdownStore.Start(active.SessionId, duration,
+                DateTimeOffset.UtcNow);
+            ClassroomCountdownStatus = "课堂倒计时已启动。";
+            RefreshClassroomCountdownDisplay();
+            Changed(nameof(HasClassroomCountdown));
+            Changed(nameof(IsClassroomCountdownRunning));
+            Changed(nameof(CanStartClassroomCountdown));
+            Changed(nameof(CanEndClassroomCountdown));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomCountdownStatus = "课堂倒计时无法保存；原文件已保留。";
+        }
+    }
+
+    internal void SyncClassroomChatTargets(Guid? sessionId, IEnumerable<string> supportedTargets)
+    {
+        if (sessionId is null || _activeClassroomSession is not { } active || active.SessionId != sessionId)
+        {
+            if (_classroomChatThreadsByTarget.Count > 0)
+            {
+                _classroomChatThreadsByTarget.Clear();
+                ClassroomChatThreads.Clear();
+                SelectedClassroomChatThread = null;
+                ClassroomChatStatus = "课堂已结束，聊天记录已清除。";
+                Changed(nameof(HasClassroomChatThreads));
+                Changed(nameof(FilteredClassroomChatThreads));
+                Changed(nameof(HasClassroomChatSearchResults));
+                Changed(nameof(HasNoClassroomChatSearchResults));
+            }
+            return;
+        }
+
+        var context = GetActiveClassroomEventContext();
+        if (context is null || context.SessionId != sessionId) return;
+        var supportedTargetList = supportedTargets.ToArray();
+        IReadOnlyList<string> normalizedSupportedTargets = supportedTargetList.Length == 0 ?
+            Array.Empty<string>() : WebsitePolicyTransport.NormalizeTargets(supportedTargetList);
+        var supported = new HashSet<string>(normalizedSupportedTargets, StringComparer.OrdinalIgnoreCase);
+        if (_classroomChatThreadsByTarget.Count == context.Targets.Count &&
+            context.Targets.All(target => _classroomChatThreadsByTarget.TryGetValue(target, out var existing) &&
+                existing.IsSupported == supported.Contains(target)))
+            return;
+        IReadOnlyList<ClassroomSeatGridLocation> seats = Array.Empty<ClassroomSeatGridLocation>();
+        try
+        {
+            var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId,
+                active.Room.StartNumber);
+            seats = ClassroomSeatGridStore.GetLocations(layout);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            // Keep chats addressable by computer label when the optional seating layout cannot be read.
+        }
+
+        var available = new HashSet<string>(context.Targets, StringComparer.OrdinalIgnoreCase);
+        foreach (var thread in _classroomChatThreadsByTarget.Values.Where(item => !available.Contains(item.Target)).ToArray())
+        {
+            _classroomChatThreadsByTarget.Remove(thread.Target);
+            ClassroomChatThreads.Remove(thread);
+            if (ReferenceEquals(SelectedClassroomChatThread, thread)) SelectedClassroomChatThread = null;
+        }
+
+        for (var index = 0; index < context.Targets.Count; index++)
+        {
+            var target = context.Targets[index];
+            var deviceLabel = index < active.Targets.Length ? active.Targets[index].DeviceLabel : "";
+            var computerNumber = active.Room.ComputerNumbers is { } explicitNumbers &&
+                                 index < explicitNumbers.Length ? explicitNumbers[index] : (int?)null;
+            var seat = FindUniqueClassroomSeat(active, seats, target, deviceLabel, index, computerNumber);
+            var studentName = context.TargetDisplayNames.GetValueOrDefault(target, "未填写姓名");
+            var seatName = seat is null ? "" : $"第 {seat.Row} 排 · 第 {seat.Column} 列";
+            var title = string.IsNullOrWhiteSpace(studentName) ? "未填写姓名" : studentName;
+            var detail = string.Join(" · ", new[] { seatName }
+                .Where(item => !string.IsNullOrWhiteSpace(item)));
+            var isSupported = supported.Contains(target);
+            if (!_classroomChatThreadsByTarget.TryGetValue(target, out var thread))
+            {
+                thread = new TeacherClassroomChatThread(target, title, detail, isSupported);
+                _classroomChatThreadsByTarget.Add(target, thread);
+                ClassroomChatThreads.Add(thread);
+            }
+            else
+            {
+                thread.UpdateDisplay(title, detail, isSupported);
+            }
+        }
+
+        if (SelectedClassroomChatThread is null && ClassroomChatThreads.Count > 0)
+            SelectedClassroomChatThread = ClassroomChatThreads.FirstOrDefault(item => item.IsSupported);
+        Changed(nameof(HasClassroomChatThreads));
+        Changed(nameof(FilteredClassroomChatThreads));
+        Changed(nameof(HasClassroomChatSearchResults));
+        Changed(nameof(HasNoClassroomChatSearchResults));
+        Changed(nameof(UnreadClassroomChatCount));
+        Changed(nameof(ClassroomChatUnreadSummary));
+        Changed(nameof(HasUnreadClassroomChatMessages));
+        Changed(nameof(UnreadClassroomChatBadgeText));
+        Changed(nameof(ClassroomInteractionNavigationLabel));
+        Changed(nameof(CanSendClassroomChat));
+    }
+
+    public void ToggleClassroomTask(Guid taskId)
+    {
+        if (_activeClassroomSession is not { } active || _activeClassroomTaskProgress is not { } progress) return;
+        var task = progress.Tasks.FirstOrDefault(item => item.TaskId == taskId);
+        if (task is null) return;
+        try
+        {
+            _activeClassroomTaskProgress = _classroomTaskProgressStore.SetCompleted(active.SessionId,
+                taskId, !task.IsCompleted, DateTimeOffset.UtcNow);
+            ClassroomTaskProgressStatus = "";
+            RefreshClassroomTaskProgressItems();
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            ClassroomTaskProgressStatus = "课堂任务进度无法更新；原文件已保留。";
+        }
+    }
+
+    internal async Task UpdateActiveClassroomScopeAsync(TeacherClassroomEventContext? previousContext = null)
+    {
+        if (_activeClassroomSession is null)
+        {
+            await EnsureClassroomSessionAsync();
+            return;
+        }
+        var selectedCampusId = SelectedCampusProfile?.ProfileId;
+        var selectedRoomId = SelectedRoomProfile?.RoomId;
+        var campus = selectedCampusId is { } campusId
+            ? CampusProfiles.FirstOrDefault(item => item.ProfileId == campusId) : null;
+        var room = campus?.Rooms.FirstOrDefault(item => item.RoomId == selectedRoomId);
+        if (_isClassroomTransitioning || campus is null || room is not { ComputerCount: > 0 })
+        {
+            ClassroomDeliveryStatus = "课堂仍保持进行中；请选择一个已配置学生电脑的地点以更新范围。";
+            return;
+        }
+
+        _isClassroomTransitioning = true;
+        Changed(nameof(CanSwitchClassroomScope));
+        Changed(nameof(CanCheckRoomConflicts));
+        Changed(nameof(CanAddRoomToVeyon));
+        Changed(nameof(CanSendClassroomNotice));
+        try
+        {
+            var previous = _activeClassroomSession;
+            var updated = await Task.Run(() =>
+                _classroomSessionStore.UpdateActiveSession(previous.SessionId, campus, room.RoomId));
+            _activeClassroomSession = updated;
+            if (previousContext is not null)
+            {
+                var activeTargetIds = updated.Targets.Select(target => target.TargetId).ToHashSet();
+                var removedTargetIds = previous.Targets.Where(target => !activeTargetIds.Contains(target.TargetId))
+                    .Select(target => target.TargetId).ToHashSet();
+                var previousTargetAddresses = previousContext.TargetIds
+                    .Where(pair => removedTargetIds.Contains(pair.Value)).Select(pair => pair.Key).ToArray();
+                if (previousTargetAddresses.Length > 0)
+                {
+                    try
+                    {
+                        await PublishClassroomStatusAsync(null, previous, explicitTargets: previousTargetAddresses);
+                    }
+                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                        InvalidDataException or InvalidOperationException or CryptographicException or
+                        PlatformNotSupportedException)
+                    {
+                        ClassroomDeliveryStatus = "课堂范围已更新；移出范围的电脑暂未收到结束通知。";
+                    }
+                }
+            }
+            if (previous.Room.CampusProfileId != updated.Room.CampusProfileId)
+            {
+                try { await Task.Run(() => _classroomSigningContextStore.Clear(updated.SessionId)); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
+                { ClassroomDeliveryStatus = "课堂地点已更新；签名校区上下文需要检查。" + exception.Message; }
+            }
+            SetClassroomQuickControlSessionNotice("课堂范围已更新，正在读取新范围的管控状态。", clearSnapshot: true);
+            RefreshClassroomSessionProperties();
+            ClassroomDeliveryStatus = "课堂控制范围已自动更新；正在通知新范围内的学生电脑。";
+            await PublishClassroomStatusAsync(updated, updated);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException)
+        {
+            ClassroomDeliveryStatus = "课堂仍在进行；新地点范围尚未确认。" + exception.Message;
+        }
+        finally
+        {
+            _isClassroomTransitioning = false;
+            await RefreshClassroomRestoreLedgerAsync();
+            Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanCheckRoomConflicts));
+            Changed(nameof(CanAddRoomToVeyon));
+            Changed(nameof(CanSendClassroomNotice));
+        }
+    }
 }
