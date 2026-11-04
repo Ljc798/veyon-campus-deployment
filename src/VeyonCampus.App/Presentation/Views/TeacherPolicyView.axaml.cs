@@ -19,7 +19,6 @@ public partial class TeacherPolicyView : UserControl
     public event EventHandler<RoutedEventArgs>? DisableWebsitePolicyRequested;
     public event EventHandler<RoutedEventArgs>? FillFailedWebsiteTargetsRequested;
     public event EventHandler<RoutedEventArgs>? FillSelectedWebsiteLocationRequested;
-    public event EventHandler<RoutedEventArgs>? FillWebsiteTargetsRequested;
     public event EventHandler<RoutedEventArgs>? GenerateApplicationCandidatesRequested;
     public event EventHandler<RoutedEventArgs>? ImportCommonWebsiteAllowlistRequested;
     public event EventHandler<RoutedEventArgs>? ImportCommonWebsiteBlacklistRequested;
@@ -52,7 +51,6 @@ public partial class TeacherPolicyView : UserControl
     private void RequestDisableWebsitePolicy(object? sender, RoutedEventArgs e) => DisableWebsitePolicyRequested?.Invoke(sender, e);
     private void RequestFillFailedWebsiteTargets(object? sender, RoutedEventArgs e) => FillFailedWebsiteTargetsRequested?.Invoke(sender, e);
     private void RequestFillSelectedWebsiteLocation(object? sender, RoutedEventArgs e) => FillSelectedWebsiteLocationRequested?.Invoke(sender, e);
-    private void RequestFillWebsiteTargets(object? sender, RoutedEventArgs e) => FillWebsiteTargetsRequested?.Invoke(sender, e);
     private void RequestGenerateApplicationCandidates(object? sender, RoutedEventArgs e) => GenerateApplicationCandidatesRequested?.Invoke(sender, e);
     private void RequestImportCommonWebsiteAllowlist(object? sender, RoutedEventArgs e) => ImportCommonWebsiteAllowlistRequested?.Invoke(sender, e);
     private void RequestImportCommonWebsiteBlacklist(object? sender, RoutedEventArgs e) => ImportCommonWebsiteBlacklistRequested?.Invoke(sender, e);

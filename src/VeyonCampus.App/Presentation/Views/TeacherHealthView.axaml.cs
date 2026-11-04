@@ -47,6 +47,8 @@ public partial class TeacherHealthView : UserControl
     public event EventHandler<RoutedEventArgs>? SelectAllDeviceTargetsRequested;
     public event EventHandler<RoutedEventArgs>? ClearDeviceTargetsRequested;
     public event EventHandler<RoutedEventArgs>? RetryMaintenanceIssueRequested;
+    public event EventHandler<RoutedEventArgs>? ApproveMaintenanceIdentityRotationRequested;
+    public event EventHandler<RoutedEventArgs>? RejectMaintenanceIdentityRotationRequested;
     public event EventHandler<RoutedEventArgs>? RefreshMaintenanceOverviewRequested;
 
     private void RequestAcknowledgeDeviceHealthAlert(object? sender, RoutedEventArgs e) =>
@@ -108,6 +110,12 @@ public partial class TeacherHealthView : UserControl
 
     private void RequestRetryMaintenanceIssue(object? sender, RoutedEventArgs e) =>
         RetryMaintenanceIssueRequested?.Invoke(sender, e);
+
+    private void RequestApproveMaintenanceIdentityRotation(object? sender, RoutedEventArgs e) =>
+        ApproveMaintenanceIdentityRotationRequested?.Invoke(sender, e);
+
+    private void RequestRejectMaintenanceIdentityRotation(object? sender, RoutedEventArgs e) =>
+        RejectMaintenanceIdentityRotationRequested?.Invoke(sender, e);
 
     private void RequestRefreshMaintenanceOverview(object? sender, RoutedEventArgs e) =>
         RefreshMaintenanceOverviewRequested?.Invoke(sender, e);

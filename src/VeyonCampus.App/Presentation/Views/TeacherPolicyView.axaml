@@ -33,8 +33,36 @@
                            IsVisible="{Binding HasWebsiteDirectoryError}" />
                 <TextBlock Text="{Binding VeyonDeviceDirectorySummary}" Classes="supporting-copy" TextWrapping="Wrap"
                            IsVisible="{Binding HasVeyonDeviceDirectorySummary}" />
-                <TextBlock Text="设备勾选请统一在“设备与更新 → 设备概览”中调整。" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
+              <Border Classes="subtle-panel" Padding="12" IsVisible="{Binding HasWebsitePolicyTargetChoices}">
+                <StackPanel Spacing="8">
+                  <WrapPanel Orientation="Horizontal">
+                    <Button Classes="secondary" Content="全选学生" Click="RequestSelectAllWebsitePolicyTargets"
+                            IsEnabled="{Binding CanSelectWebsitePolicyTargets}" Margin="0,0,8,4" />
+                    <Button Classes="secondary" Content="清空选择" Click="RequestClearWebsitePolicyTargets"
+                            IsEnabled="{Binding CanSelectWebsitePolicyTargets}" Margin="0,0,8,4" />
+                  </WrapPanel>
+                  <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto"
+                                IsEnabled="{Binding CanSelectWebsitePolicyTargets}">
+                    <ItemsControl ItemsSource="{Binding WebsitePolicyTargetChoices}">
+                      <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><UniformGrid Columns="3" /></ItemsPanelTemplate>
+                      </ItemsControl.ItemsPanel>
+                      <ItemsControl.ItemTemplate>
+                        <DataTemplate x:DataType="vm:TeacherPolicyTargetChoice">
+                          <CheckBox Content="{Binding StudentName}" IsChecked="{Binding IsSelected, Mode=TwoWay}"
+                                    Margin="0,2" />
+                        </DataTemplate>
+                      </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                  </ScrollViewer>
+                  <TextBlock Text="策略、课堂控制和设备概览共用这份学生选择。"
+                             Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Border>
+              <TextBlock Text="尚无可选择的学生电脑；请先完成地点与学生名单配置并读取 Veyon 目录。"
+                         Classes="supporting-copy" TextWrapping="Wrap"
+                         IsVisible="{Binding !HasWebsitePolicyTargetChoices}" />
               <Border Height="1" Background="{DynamicResource Teacher.Color.Border}" />
               <TextBlock Text="学生代理" Classes="component-title" />
               <TextBlock Text="Edge 实时同步启用后，可在这里读取逐台名单和扩展状态。"

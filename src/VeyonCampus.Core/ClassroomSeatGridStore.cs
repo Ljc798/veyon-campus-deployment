@@ -29,6 +29,10 @@ public sealed record ClassroomSeatGridLocation(Guid SeatId, int? SeatNumber, int
 public sealed record ClassroomSeatGridTargetBinding(Guid SeatId, string HostAddress, string ComputerName,
     Guid ObjectId, Guid LocationObjectId, int? ComputerNumber = null);
 
+/// <summary>Expected local binding state for a Veyon object confirmed absent from a complete directory snapshot.</summary>
+public sealed record ClassroomSeatGridStaleVeyonBinding(Guid SeatId, Guid ExpectedObjectId,
+    Guid? ExpectedLocationObjectId, string ExpectedHostAddress);
+
 /// <summary>An optimistic-concurrency guarded update from a confirmed Veyon Name to a Campus student name.</summary>
 public sealed record ClassroomSeatVeyonNameSync(Guid SeatId, Guid VeyonObjectId,
     Guid VeyonLocationObjectId, string HostAddress, string ExpectedVeyonName,
@@ -36,6 +40,19 @@ public sealed record ClassroomSeatVeyonNameSync(Guid SeatId, Guid VeyonObjectId,
 
 public sealed record ClassroomSeatGridNameSwapBinding(Guid SeatId, Guid VeyonObjectId,
     Guid VeyonLocationObjectId, string HostAddress, string OldName, string NewName);
+
+/// <summary>A previously saved local seat that already owns an imported Veyon device identity.</summary>
+public sealed record ClassroomSeatGridExistingBinding(Guid CampusProfileId, Guid RoomId, int Row, int Column,
+    Guid? VeyonLocationObjectId);
+
+/// <summary>Initial Veyon import would duplicate a device already bound to another local seat.</summary>
+public sealed class ClassroomSeatGridBindingConflictException : InvalidOperationException
+{
+    public ClassroomSeatGridBindingConflictException(IReadOnlyList<ClassroomSeatGridExistingBinding> bindings)
+        : base("一台或多台 Veyon 电脑已关联到本机其他座位；本次导入未写入。") => Bindings = bindings;
+
+    public IReadOnlyList<ClassroomSeatGridExistingBinding> Bindings { get; }
+}
 
 /// <summary>
 /// Per-user local storage for editable classroom seating grids. It never stores a network request,
@@ -150,6 +167,54 @@ public sealed class ClassroomSeatGridStore
         ArgumentNullException.ThrowIfNull(snapshot);
         ValidateLayout(snapshot);
         return Update(snapshot.CampusProfileId, snapshot.RoomId, _ => Clone(snapshot));
+    }
+
+    /// <summary>Seeds a room only while its current local layout is still empty.</summary>
+    public ClassroomSeatGridLayout PopulateEmptyLayout(ClassroomSeatGridLayout snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        ValidateLayout(snapshot);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            var document = File.Exists(_path)
+                ? ReadDocument()
+                : File.Exists(_legacyPath)
+                    ? ReadLegacyDocument()
+                    : new SeatGridDocument(CurrentSchemaVersion, []);
+            var current = document.Layouts.SingleOrDefault(layout =>
+                layout.CampusProfileId == snapshot.CampusProfileId && layout.RoomId == snapshot.RoomId)
+                ?? CreateDefault(snapshot.CampusProfileId, snapshot.RoomId);
+            if (current.Seats.Length > 0)
+                throw new InvalidOperationException("本机座位资料已变化；已取消自动导入，原座位保持不变。");
+            if (current.Rows != snapshot.Rows || current.Columns != snapshot.Columns)
+                throw new InvalidOperationException("本机座位图尺寸已变化；已取消自动导入，原设置保持不变。");
+
+            var incomingObjectIds = snapshot.Seats.Where(seat => seat.VeyonObjectId is not null)
+                .Select(seat => seat.VeyonObjectId!.Value).ToHashSet();
+            var incomingHosts = snapshot.Seats.Where(seat => seat.VeyonHostAddress is not null)
+                .Select(seat => seat.VeyonHostAddress!).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var conflicts = document.Layouts
+                .Where(layout => layout.CampusProfileId != snapshot.CampusProfileId ||
+                                 layout.RoomId != snapshot.RoomId)
+                .SelectMany(layout => layout.Seats
+                    .Where(seat => (seat.VeyonObjectId is { } objectId && incomingObjectIds.Contains(objectId)) ||
+                                   (seat.VeyonHostAddress is { } host && incomingHosts.Contains(host)))
+                    .Select(seat => new ClassroomSeatGridExistingBinding(layout.CampusProfileId,
+                        layout.RoomId, seat.Row, seat.Column, seat.VeyonLocationObjectId)))
+                .Distinct()
+                .OrderBy(binding => binding.CampusProfileId)
+                .ThenBy(binding => binding.RoomId)
+                .ThenBy(binding => binding.Row)
+                .ThenBy(binding => binding.Column)
+                .ToArray();
+            if (conflicts.Length > 0)
+                throw new ClassroomSeatGridBindingConflictException(Array.AsReadOnly(conflicts));
+
+            var imported = Clone(snapshot);
+            WriteDocument(Replace(document, imported));
+            return Clone(imported);
+        }
     }
 
     public ClassroomSeatGridLayout SetDimensions(Guid campusProfileId, Guid roomId, int rows, int columns,
@@ -281,6 +346,7 @@ public sealed class ClassroomSeatGridStore
         return Update(campusProfileId, roomId, layout =>
         {
             var pending = layout.Seats.Where(seat => seat.ComputerNumber is null &&
+                                                      seat.VeyonObjectId is null &&
                                                       !string.IsNullOrWhiteSpace(seat.StudentName))
                 .OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
             if (pending.Length == 0) return layout;
@@ -502,10 +568,8 @@ public sealed class ClassroomSeatGridStore
         var bindingsBySeat = normalizedBindings.ToDictionary(binding => binding.SeatId);
         return Update(campusProfileId, roomId, layout =>
         {
-            if (layout.Seats.Any(seat => bindingsBySeat.ContainsKey(seat.SeatId) &&
-                                         string.IsNullOrWhiteSpace(seat.StudentName)) ||
-                bindingsBySeat.Keys.Any(seatId => !layout.Seats.Any(seat => seat.SeatId == seatId)))
-                throw new InvalidDataException("座位姓名或座位清单在写入期间发生变化；本次没有保存座位关联。");
+            if (bindingsBySeat.Keys.Any(seatId => !layout.Seats.Any(seat => seat.SeatId == seatId)))
+                throw new InvalidDataException("座位清单在写入期间发生变化；本次没有保存座位关联。");
 
             var seats = layout.Seats.Select(seat =>
             {
@@ -537,6 +601,50 @@ public sealed class ClassroomSeatGridStore
                 VeyonHostAddress = null, VeyonComputerName = null, VeyonObjectId = null,
                 VeyonLocationObjectId = null
             };
+            return layout with { Seats = seats };
+        });
+    }
+
+    /// <summary>Clears only stale local Veyon links after a complete directory read confirms those UUIDs are absent.</summary>
+    public ClassroomSeatGridLayout ClearMissingVeyonTargets(Guid campusProfileId, Guid roomId,
+        IReadOnlyList<ClassroomSeatGridStaleVeyonBinding> bindings)
+    {
+        ValidateIdentity(campusProfileId, roomId);
+        ArgumentNullException.ThrowIfNull(bindings);
+        if (bindings.Count is < 1 or > MaximumSeats || bindings.Any(binding => binding is null) ||
+            bindings.Select(binding => binding.SeatId).Distinct().Count() != bindings.Count ||
+            bindings.Select(binding => binding.ExpectedObjectId).Distinct().Count() != bindings.Count)
+            throw new InvalidDataException("过期设备关联清单为空、过大或包含重复项。");
+
+        var normalized = bindings.Select(binding =>
+        {
+            if (binding.SeatId == Guid.Empty || binding.ExpectedObjectId == Guid.Empty)
+                throw new InvalidDataException("过期设备关联包含无效标识。");
+            var host = VeyonHostAddress.NormalizeOverride(binding.ExpectedHostAddress);
+            if (string.IsNullOrWhiteSpace(host))
+                throw new InvalidDataException("过期设备关联缺少 Host。");
+            return binding with { ExpectedHostAddress = host };
+        }).ToArray();
+
+        return Update(campusProfileId, roomId, layout =>
+        {
+            var seats = layout.Seats.ToArray();
+            foreach (var binding in normalized)
+            {
+                var index = Array.FindIndex(seats, seat => seat.SeatId == binding.SeatId);
+                if (index < 0 || seats[index].VeyonObjectId != binding.ExpectedObjectId ||
+                    seats[index].VeyonLocationObjectId != binding.ExpectedLocationObjectId ||
+                    !string.Equals(seats[index].VeyonHostAddress, binding.ExpectedHostAddress,
+                        StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidDataException("本机座位绑定在核对期间已变化；没有清除关联。");
+                seats[index] = seats[index] with
+                {
+                    VeyonHostAddress = null,
+                    VeyonComputerName = null,
+                    VeyonObjectId = null,
+                    VeyonLocationObjectId = null
+                };
+            }
             return layout with { Seats = seats };
         });
     }

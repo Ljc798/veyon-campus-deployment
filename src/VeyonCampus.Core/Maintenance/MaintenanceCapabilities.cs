@@ -38,6 +38,7 @@ public sealed class MaintenanceCapabilities
     public string? CapabilityResponseSha256 { get; }
     public string? MaintenanceVersion { get; }
     public IReadOnlyList<string> Names { get; }
+    public IReadOnlyList<string> SupportedCommands => Names;
     public string SignedResponseSha256 { get; }
     public string SignatureAlgorithm { get; }
     public DateTimeOffset VerifiedUtc { get; }

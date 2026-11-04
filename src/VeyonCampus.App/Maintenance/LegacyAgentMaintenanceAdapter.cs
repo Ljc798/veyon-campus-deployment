@@ -1,1506 +1,296 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
-using VeyonCampus.Core;
-using VeyonCampus.Core.Maintenance;
-
-namespace VeyonCampus.App.Maintenance;
-
-public sealed record LegacyStudentSetupArtifact(string InstallerPath, Uri ApiBaseAddress,
-    string DeveloperReleasePublicKeyPem, string? VerifiedAgentTargetVersion = null);
-
-public sealed record MaintenanceServiceReleaseArtifact(string InstallerPath, ApplicationReleaseEnvelope Release,
-    Uri ApiBaseAddress, string DeveloperReleasePublicKeyPem);
-
-public sealed record TeacherConnectivityConfiguration(IReadOnlyList<string> Endpoints,
-    string RootCertificateBase64, string Fingerprint);
-
-public interface ILegacyStudentSetupArtifactProvider
-{
-    Task<LegacyStudentSetupArtifact> GetVerifiedArtifactAsync(MaintenancePlan plan,
-        CancellationToken cancellationToken);
-}
-
-public interface IMaintenanceServiceReleaseArtifactProvider
-{
-    Task<MaintenanceServiceReleaseArtifact?> GetNewerMaintenanceServiceReleaseAsync(string currentVersion,
-        MaintenanceReleaseChannel channel, CancellationToken cancellationToken);
-}
-
-/// <summary>
-/// Adapts legacy students to the existing authenticated 39174 status/update/configuration paths and 39175 artifact
-/// server. Package selection stays injectable so the ViewModel migration can move its current stable/local-test
-/// preparation code without changing the legacy wire protocol.
-/// </summary>
-public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
-{
-    private readonly ILegacyStudentSetupArtifactProvider _artifactProvider;
-    private readonly IMaintenanceServiceReleaseArtifactProvider? _maintenanceServiceArtifactProvider;
-    private readonly MaintenanceServiceTeacherClient _maintenanceServiceClient = new();
-
-    public LegacyAgentMaintenanceAdapter(ILegacyStudentSetupArtifactProvider artifactProvider)
-    {
-        _artifactProvider = artifactProvider ?? throw new ArgumentNullException(nameof(artifactProvider));
-        _maintenanceServiceArtifactProvider = artifactProvider as IMaintenanceServiceReleaseArtifactProvider;
-    }
-
-    public async Task<MaintenanceAdapterInspection> InspectAsync(MaintenanceDeviceIdentity device,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(device);
-        if (_maintenanceServiceClient.IsAvailable(device))
-            return await InspectViaMaintenanceServiceAsync(device, cancellationToken).ConfigureAwait(false);
-        if (_maintenanceServiceClient.HasPinnedIdentity(device))
-            return Unverified("è®¾å¤‡å·²å›ºå®š Maintenance èº«ä»½ï¼Œä½†ç‹¬ç«‹é€šé“å½“å‰ä¸å¯ç”¨ï¼›æ‹’ç»é™é»˜å›é€€åˆ° Legacyï¼Œé¿å…å¹¶è¡Œæ›´æ–°æˆ–èº«ä»½é™çº§ã€‚");
-        if (_maintenanceServiceClient.HasConnectedChannel(device))
-            return Unverified("æ£€æµ‹åˆ°æœªå›ºå®šæˆ–ä¸åŒ¹é…çš„ Maintenance é€šé“èº«ä»½ï¼›æ‹’ç»å›é€€åˆ° Legacyï¼Œéœ€è¦é‡æ–°æ ¸å¯¹è®¾å¤‡èº«ä»½ã€‚");
-        using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
-        var pinnedPublicKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(device.CampusId,
-            device.RouteAddress);
-        if (pinnedPublicKey is null)
-            return Unverified("å­¦ç”Ÿ Agent èº«ä»½å°šæœªç”±æ•™å¸ˆæ ¸å¯¹å›ºå®šï¼›æœªåˆ›å»ºç»´æŠ¤è®¡åˆ’ã€‚");
-        var pinnedFingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedPublicKey);
-        if (!string.Equals(pinnedFingerprint, device.PinnedIdentityFingerprint, StringComparison.Ordinal))
-            return Unverified("å½“å‰æ•™å¸ˆèº«ä»½å›ºå®šå€¼ä¸ç»´æŠ¤è®¾å¤‡èº«ä»½ä¸ä¸€è‡´ï¼›éœ€è¦é‡æ–°æ ¸å¯¹ã€‚");
-
-        var results = await WebsitePolicyStatusTransport.ReadAsync([device.RouteAddress], device.CampusId,
-            signingKey.PrivateKey, cancellationToken, includeHealthSnapshot: true,
-            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true,
-            includeTeacherChannelDiagnostics: true).ConfigureAwait(false);
-        var result = results.Single();
-        if (!result.Succeeded || result.Status is null || result.VerifiedResponseSha256 is null)
-            return Unverified(result.Detail);
-
-        var status = result.Status;
-        var evidence = new MaintenanceEvidence("signed-student-status", pinnedFingerprint,
-            result.VerifiedResponseSha256, null, status.CollectedUtc);
-        var names = new List<string> { $"signed-status.v{status.SchemaVersion}" };
-        string? teacherChannelFingerprint = null;
-        string? teacherChannelResponseSha256 = null;
-        string? capabilitySetupVersion = null;
-        string? capabilityAgentAssemblyVersion = null;
-        int? capabilityUpdateProtocolVersion = null;
-        string? capabilityResponseSha256 = null;
-        try
-        {
-            var channelReadback = await StudentApplicationUpdateTransport.ReadVerifiedDownloadCapabilityAsync(
-                device.RouteAddress, device.CampusId, signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
-            if (channelReadback is not null)
-            {
-                var reported = channelReadback.Capability;
-                if (reported.AgentRuntimeVersion is { } reportedAgent &&
-                    !string.Equals(reportedAgent, status.AgentVersion, StringComparison.Ordinal) ||
-                    reported.StudentSetupVersion is { } reportedSetup && status.StudentSetupVersion is { } statusSetup &&
-                    !string.Equals(reportedSetup, statusSetup, StringComparison.Ordinal) ||
-                    reported.ConfigurationFingerprint is { } reportedConfig &&
-                    !string.Equals(reportedConfig, status.ConfigFingerprint, StringComparison.OrdinalIgnoreCase) ||
-                    reported.StudentUpdateProtocolVersion is { } reportedProtocol &&
-                    status.StudentUpdateProtocolVersion is { } statusProtocol && reportedProtocol != statusProtocol)
-                    throw new InvalidDataException("ç­¾åçŠ¶æ€å’Œèƒ½åŠ›æ¥å£è¯»å›çš„ Agentã€Setupã€é…ç½®æˆ–æ›´æ–°åè®®ç‰ˆæœ¬ä¸ä¸€è‡´ã€‚");
-                capabilitySetupVersion = reported.StudentSetupVersion;
-                capabilityAgentAssemblyVersion = reported.AgentProductVersion;
-                capabilityUpdateProtocolVersion = reported.StudentUpdateProtocolVersion;
-                capabilityResponseSha256 = channelReadback.SignedResponseSha256;
-                teacherChannelFingerprint = reported.TeacherChannelConfigurationFingerprint;
-                teacherChannelResponseSha256 = teacherChannelFingerprint is null
-                    ? null
-                    : channelReadback.SignedResponseSha256;
-            }
-            if (teacherChannelFingerprint is not null) names.Add("teacher-channel.bootstrap-fingerprint");
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
-                                          InvalidDataException or CryptographicException or IOException)
-        {
-            // Keep signed version/status facts; channel capability remains unknown and must not be assumed current.
-        }
-        if (status.StudentUpdateProtocolVersion is { } updateProtocol)
-            names.Add($"student-update.v{updateProtocol}");
-        else if (capabilityUpdateProtocolVersion is { } capabilityUpdateProtocol)
-            names.Add($"student-update.v{capabilityUpdateProtocol}");
-        if (capabilityAgentAssemblyVersion is not null) names.Add("student-agent.assembly-version");
-        if (status.UpdateTransaction is not null) names.Add("student-update.transaction-status");
-        if (status.Health is not null) names.Add("student-agent.health-snapshot");
-        var capabilities = new MaintenanceCapabilities(pinnedFingerprint, status.SchemaVersion,
-            status.StudentUpdateProtocolVersion ?? capabilityUpdateProtocolVersion, status.AgentVersion,
-            status.ConfigFingerprint, null, names,
-            result.VerifiedResponseSha256, "RSA-PSS-SHA256", status.CollectedUtc, teacherChannelFingerprint,
-            teacherChannelResponseSha256, capabilityResponseSha256);
-        var versions = new MaintenanceComponentVersions(status.StudentSetupVersion ?? capabilitySetupVersion,
-            status.AgentVersion, capabilityAgentAssemblyVersion, maintenanceVersion: null);
-        return new MaintenanceAdapterInspection(true, versions, capabilities, evidence, evidence,
-            "å·²é€šè¿‡ç­¾åçŠ¶æ€ã€å›ºå®š Agent èº«ä»½ã€ç‰ˆæœ¬ä¸é…ç½®æŒ‡çº¹æ ¸éªŒï¼›å…¼å®¹æ—§ Agent çš„çŠ¶æ€/æ›´æ–° HTTP é€šé“ã€‚",
-            status.Health?.UpdateTransactionState ?? status.UpdateTransaction?.State,
-            StudentAgentChannelHub.IsConnected(device.CampusId, device.RouteAddress), DateTimeOffset.UtcNow,
-            status.TeacherChannelDiagnostics);
-
-        MaintenanceAdapterInspection Unverified(string detail) => new(false,
-            new MaintenanceComponentVersions(null, null, null, null), null, null, null, detail);
-    }
-
-    private async Task<MaintenanceAdapterInspection> InspectViaMaintenanceServiceAsync(
-        MaintenanceDeviceIdentity device, CancellationToken cancellationToken)
-    {
-        using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
-        try
-        {
-            var health = await _maintenanceServiceClient.SendAsync<MaintenanceServiceHealthPayload>(device,
-                Guid.NewGuid(), null, MaintenanceProtocolV1Command.GetHealth, signingKey.PrivateKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            var capabilities = await _maintenanceServiceClient.SendAsync<MaintenanceServiceCapabilitiesPayload>(
-                device, health.Request.OperationId, null, MaintenanceProtocolV1Command.GetCapabilities,
-                signingKey.PrivateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-            var installed = await _maintenanceServiceClient.SendAsync<MaintenanceServiceInstalledVersionsPayload>(
-                device, health.Request.OperationId, null, MaintenanceProtocolV1Command.GetInstalledVersions,
-                signingKey.PrivateKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-
-            if (health.Response.ResultCode != "succeeded" || health.Payload is null ||
-                health.Payload.State != "ready" || !health.Payload.RunningAsSystem ||
-                health.Payload.ManagedAgentTaskTrusted != true)
-                return UnverifiedMaintenance("Maintenance æœåŠ¡èº«ä»½å·²è®¤è¯ï¼Œä½†æœåŠ¡é…ç½®æˆ–å—ä¿æŠ¤ SYSTEM Agent ä»»åŠ¡å°šæœªè¾¾åˆ°å¯ç»´æŠ¤çŠ¶æ€ã€‚");
-            if (capabilities.Response.ResultCode != "succeeded" || capabilities.Payload is null ||
-                installed.Response.ResultCode != "succeeded" || installed.Payload is null)
-                return UnverifiedMaintenance("Maintenance æœåŠ¡æœªè¿”å›å®Œæ•´çš„ç­¾åèƒ½åŠ›æˆ–ç‰ˆæœ¬å¿«ç…§ã€‚");
-            if (capabilities.Payload.ProtocolVersion != MaintenanceProtocolV1.CurrentVersion ||
-                health.Payload.ProtocolVersion != capabilities.Payload.ProtocolVersion ||
-                !string.Equals(health.Payload.AgentConfigurationFingerprint,
-                    capabilities.Payload.AgentConfigurationFingerprint, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(health.Payload.TeacherConfigurationFingerprint,
-                    capabilities.Payload.TeacherConfigurationFingerprint, StringComparison.OrdinalIgnoreCase))
-                return UnverifiedMaintenance("Maintenance å¥åº·ä¸èƒ½åŠ›å›æ‰§çš„åè®®æˆ–å—ä¿æŠ¤é…ç½®æŒ‡çº¹ä¸ä¸€è‡´ã€‚");
-
-            var versions = ToMaintenanceVersions(installed.Payload);
-            if (versions.StudentSetupVersion is null || versions.AgentRuntimeVersion is null ||
-                string.IsNullOrWhiteSpace(capabilities.Payload.AgentConfigurationFingerprint))
-                return UnverifiedMaintenance("Maintenance ç­¾åç‰ˆæœ¬æˆ– Agent é…ç½®æŒ‡çº¹ä¸å®Œæ•´ï¼›ä¸èƒ½å»ºç«‹ç»´æŠ¤è®¡åˆ’ã€‚");
-
-            var identityEvidence = new MaintenanceEvidence("signed-maintenance-service-health",
-                device.PinnedIdentityFingerprint, health.SignedResponseSha256, null,
-                health.Response.CollectedUtc);
-            var capabilitiesEvidence = new MaintenanceEvidence("signed-maintenance-service-capabilities",
-                device.PinnedIdentityFingerprint, capabilities.SignedResponseSha256, null,
-                capabilities.Response.CollectedUtc);
-            var names = capabilities.Payload.SupportedCommands
-                .Append("maintenance-service.v1").Distinct(StringComparer.Ordinal).ToArray();
-            var maintenanceCapabilities = new MaintenanceCapabilities(device.PinnedIdentityFingerprint,
-                capabilities.Payload.ProtocolVersion, null,
-                versions.AgentRuntimeVersion, capabilities.Payload.AgentConfigurationFingerprint,
-                versions.MaintenanceVersion, names, capabilities.SignedResponseSha256,
-                "RSA-PSS-SHA256", capabilities.Response.CollectedUtc,
-                capabilities.Payload.TeacherConfigurationFingerprint,
-                capabilities.Payload.TeacherConfigurationFingerprint is null
-                    ? null
-                    : capabilities.SignedResponseSha256,
-                capabilities.SignedResponseSha256);
-            return new MaintenanceAdapterInspection(true, versions, maintenanceCapabilities, identityEvidence,
-                capabilitiesEvidence,
-                "å·²é€šè¿‡ç‹¬ç«‹ Maintenance æœåŠ¡ç­¾åèº«ä»½ã€å—ä¿æŠ¤é…ç½®ã€SYSTEM ä»»åŠ¡ã€ç‰ˆæœ¬å’Œå›ºå®šå‘½ä»¤èƒ½åŠ›æ ¸éªŒï¼›æ•™å¸ˆç«¯å¯ç»è¯¥é€šé“æäº¤å·²ç­¾åçš„ StudentSetup æˆ– MaintenanceService æ›´æ–°ã€‚",
-                installed.Payload.TransactionState, StudentAgentChannelHub.IsConnected(device.CampusId,
-                    device.RouteAddress), health.Response.CollectedUtc);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or CryptographicException or TimeoutException or
-                                          InvalidOperationException or ArgumentException)
-        {
-            return UnverifiedMaintenance("Maintenance ç‹¬ç«‹æœåŠ¡ç­¾åæ ¸éªŒå¤±è´¥ï¼š" + Sanitize(exception.Message));
-        }
-
-        static MaintenanceAdapterInspection UnverifiedMaintenance(string detail) => new(false,
-            new MaintenanceComponentVersions(null, null, null, null), null, null, null, detail);
-    }
-
-    public async Task<IReadOnlyList<MaintenanceAdapterResult>> OfferUpdatesAsync(
-        IReadOnlyList<MaintenanceUpdateRequest> requests,
-        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
-        IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(requests);
-        ArgumentNullException.ThrowIfNull(beforeCommandSend);
-        if (requests.Count == 0) return Array.Empty<MaintenanceAdapterResult>();
-        var plans = requests.Select(request => request.Plan).ToArray();
-        var first = plans[0];
-        if (plans.Any(plan => plan.Device.CampusId != first.Device.CampusId ||
-                              !string.Equals(plan.TargetSetupVersion, first.TargetSetupVersion,
-                                  StringComparison.Ordinal) ||
-                              !string.Equals(plan.TargetAgentVersion, first.TargetAgentVersion,
-                                  StringComparison.Ordinal) ||
-                              !string.Equals(plan.TargetReleaseSha256, first.TargetReleaseSha256,
-                                  StringComparison.Ordinal) || plan.Channel != first.Channel))
-            throw new InvalidDataException("åŒä¸€æ—§ Agent æ›´æ–°æ‰¹æ¬¡å¿…é¡»ä½¿ç”¨åŒæ ¡åŒºã€åŒç›®æ ‡ StudentSetupã€åŒå‘è¡Œæ‘˜è¦å’ŒåŒé€šé“ã€‚");
-        if (first.TargetSetupVersion is null || first.TargetReleaseSha256 is null)
-            throw new InvalidDataException("æ—§ Agent æ›´æ–°è®¡åˆ’ç¼ºå°‘ StudentSetup ç›®æ ‡ç‰ˆæœ¬æˆ–å‘è¡Œ SHA-256ã€‚");
-
-        var artifact = await _artifactProvider.GetVerifiedArtifactAsync(first, cancellationToken)
-            .ConfigureAwait(false);
-        var release = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(
-            artifact.InstallerPath, ApplicationReleaseRole.StudentSetup, artifact.ApiBaseAddress,
-            artifact.DeveloperReleasePublicKeyPem), cancellationToken).ConfigureAwait(false);
-        ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.StudentSetup, artifact.ApiBaseAddress,
-            artifact.DeveloperReleasePublicKeyPem);
-        var stagedAgentVersion = artifact.VerifiedAgentTargetVersion ?? release.Manifest.StudentAgentVersion;
-        if (!string.Equals(release.Manifest.Version, first.TargetSetupVersion, StringComparison.Ordinal) ||
-            !string.Equals(release.Manifest.Sha256, first.TargetReleaseSha256, StringComparison.OrdinalIgnoreCase) ||
-            first.TargetAgentVersion is not null && !string.Equals(first.TargetAgentVersion, stagedAgentVersion,
-                StringComparison.Ordinal))
-            throw new InvalidDataException("å·²éªŒç­¾ StudentSetup åŒ…çš„ç‰ˆæœ¬æˆ–æ‘˜è¦ä¸ç»´æŠ¤è®¡åˆ’ä¸ä¸€è‡´ã€‚");
-        if (first.Channel == MaintenanceReleaseChannel.Stable &&
-            release.Manifest.ReleaseChannel == "local-test")
-            throw new InvalidDataException("Stable ç»´æŠ¤è®¡åˆ’ä¸èƒ½ä½¿ç”¨ local-test å‘è¡ŒåŒ…ã€‚");
-
-        var planByTarget = plans.ToDictionary(plan => plan.Device.RouteAddress,
-            StringComparer.OrdinalIgnoreCase);
-        var sourceVersions = new Dictionary<string, StudentApplicationUpdateSourceVersions>(
-            StringComparer.OrdinalIgnoreCase);
-        foreach (var plan in plans)
-        {
-            var currentSetup = plan.CurrentVersions.StudentSetupVersion
-                               ?? throw new InvalidDataException("æ—§ Agent æ›´æ–°ç¼ºå°‘å·²ç­¾å StudentSetup å½“å‰ç‰ˆæœ¬ã€‚");
-            var currentAgent = plan.CurrentVersions.AgentRuntimeVersion
-                               ?? throw new InvalidDataException("æ—§ Agent æ›´æ–°ç¼ºå°‘å·²ç­¾å Agent å½“å‰ç‰ˆæœ¬ã€‚");
-            sourceVersions.Add(plan.Device.RouteAddress, new StudentApplicationUpdateSourceVersions(currentSetup,
-                currentAgent, plan.Capabilities.StudentUpdateProtocolVersion,
-                plan.Capabilities.ConfigurationFingerprint, plan.TargetSetupVersion, plan.TargetAgentVersion,
-                release.Manifest.ReleaseChannel ?? "stable"));
-        }
-
-        var commandIds = new ConcurrentDictionary<Guid, Guid>();
-        using var signingKey = WebsitePolicySigningKeyStore.Open(first.Device.CampusId);
-        await using var lanServer = StudentApplicationUpdateLanServer.Start(artifact.InstallerPath,
-            release.Manifest.Sha256, release.Manifest.SizeBytes);
-        var developerPublicKey = artifact.DeveloperReleasePublicKeyPem;
-        var updateProgress = progress is null ? null : new Progress<StudentApplicationUpdateProgress>(value =>
-        {
-            if (!planByTarget.TryGetValue(value.Target, out var plan)) return;
-            progress.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
-                value.CommandId is null ? MaintenanceRunState.UpdateOffered : MaintenanceRunState.Updating,
-                value.Stage, value.CompletedTargets, value.TotalTargets, value.CommandId,
-                plan.Device.RouteAddress, value.PhaseTimings, value.Environment));
-        });
-        var output = new List<MaintenanceAdapterResult>(plans.Length);
-        var maintenancePlanList = new List<MaintenancePlan>();
-        var blockedPlans = new List<(MaintenancePlan Plan, bool HasPinnedIdentity)>();
-        var legacyPlanList = new List<MaintenancePlan>();
-        foreach (var plan in plans)
-        {
-            var hasConnectedChannel = _maintenanceServiceClient.HasConnectedChannel(plan.Device);
-            var hasPinnedIdentity = _maintenanceServiceClient.HasPinnedIdentity(plan.Device);
-            if (hasConnectedChannel && hasPinnedIdentity) maintenancePlanList.Add(plan);
-            else if (hasConnectedChannel || hasPinnedIdentity) blockedPlans.Add((plan, hasPinnedIdentity));
-            else legacyPlanList.Add(plan);
-        }
-        var maintenancePlans = maintenancePlanList.ToArray();
-        foreach (var (plan, hasPinnedIdentity) in blockedPlans)
-            output.Add(new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                hasPinnedIdentity
-                    ? "è®¾å¤‡å·²å›ºå®š Maintenance èº«ä»½ï¼Œä½†ç‹¬ç«‹é€šé“ä¸å¯ç”¨ï¼›æ‹’ç»é™é»˜å›é€€åˆ° Legacyã€‚"
-                    : "æ£€æµ‹åˆ°æœªå›ºå®šæˆ–ä¸åŒ¹é…çš„ Maintenance é€šé“èº«ä»½ï¼›éœ€è¦é‡æ–°æ ¸å¯¹è®¾å¤‡èº«ä»½ã€‚", null));
-        var legacyPlans = legacyPlanList.ToArray();
-        var signedReleaseEnvelopeJson = JsonSerializer.Serialize(release);
-        foreach (var plan in maintenancePlans)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var commandId = Guid.NewGuid();
-            try
-            {
-                var freshInspection = await InspectAsync(plan.Device, cancellationToken).ConfigureAwait(false);
-                var stalePlanReason = ValidateBeforeUpdateSend(plan, freshInspection);
-                if (stalePlanReason is not null)
-                {
-                    output.Add(new MaintenanceAdapterResult(plan.OperationId,
-                        MaintenanceAdapterDisposition.ManualRequired, stalePlanReason, null));
-                    continue;
-                }
-                var issuedUtc = DateTimeOffset.UtcNow;
-                var expiresUtc = issuedUtc + TimeSpan.FromMinutes(9);
-                var downloadUri = await lanServer.GetDownloadUriAsync(plan.Device.RouteAddress,
-                    plan.Device.CampusId, commandId, expiresUtc, targetAgentPublicKeyPem: null,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                var reply = await _maintenanceServiceClient.SendAsync<MaintenanceServiceTransactionReadbackPayload>(
-                    plan.Device, plan.OperationId, commandId,
-                    MaintenanceProtocolV1Command.OfferSignedStudentSetupUpdate, signingKey.PrivateKey,
-                    beforeSend: async (preparedCommandId, signedRequestSha256, token) =>
-                    {
-                        if (preparedCommandId != commandId)
-                            throw new InvalidDataException("Maintenance æ›´æ–° commandId åœ¨ç­¾åå‰åå‘ç”Ÿå˜åŒ–ã€‚" );
-                        commandIds[plan.OperationId] = preparedCommandId;
-                        await beforeCommandSend(new MaintenanceUpdateCommandPrepared(plan.OperationId,
-                            preparedCommandId, signedRequestSha256), token).ConfigureAwait(false);
-                    }, cancellationToken: cancellationToken,
-                    targetSetupVersion: release.Manifest.Version,
-                    releaseSha256: release.Manifest.Sha256,
-                    signedReleaseEnvelopeJson: signedReleaseEnvelopeJson,
-                    artifactTransferUrl: downloadUri.AbsoluteUri).ConfigureAwait(false);
-                output.Add(ClassifyMaintenanceUpdateOffer(plan, commandId, reply));
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or CryptographicException or TimeoutException or
-                                              InvalidOperationException or ArgumentException or HttpRequestException)
-            {
-                var commandWasPrepared = commandIds.ContainsKey(plan.OperationId);
-                output.Add(new MaintenanceAdapterResult(plan.OperationId,
-                    commandWasPrepared ? MaintenanceAdapterDisposition.PendingVerification :
-                        exception is InvalidDataException ? MaintenanceAdapterDisposition.ManualRequired :
-                        MaintenanceAdapterDisposition.Failed,
-                    commandWasPrepared
-                        ? "Maintenance æ›´æ–°å‘½ä»¤å·²æŒä¹…åŒ–ï¼Œä½†æœåŠ¡å›æ‰§æœªå®Œæˆï¼›è¯·æŒ‰åŸ commandId æŸ¥è¯¢äº‹åŠ¡ã€‚"
-                        : Sanitize(exception.Message), null));
-            }
-        }
-
-        var legacyTargets = legacyPlans.Select(plan => plan.Device.RouteAddress).ToArray();
-        var legacySourceVersions = sourceVersions.Where(pair => legacyTargets.Contains(pair.Key,
-                StringComparer.OrdinalIgnoreCase))
-            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
-        IReadOnlyList<StudentApplicationUpdatePushResult> deliveryResults =
-            Array.Empty<StudentApplicationUpdatePushResult>();
-        if (legacyTargets.Length > 0)
-        {
-            deliveryResults = await StudentApplicationUpdateTransport.PushAsync(legacyTargets,
-                first.Device.CampusId, first.TargetSetupVersion, signingKey.PrivateKey,
-                async (target, pinnedAgentPublicKey, downloadRequestProtocolVersion, token) =>
-                {
-                    if (!planByTarget.TryGetValue(target, out var plan))
-                        throw new InvalidDataException("æ—§ Agent æ›´æ–°ä¼ è¾“è¿”å›äº†æœªè®¡åˆ’çš„ç›®æ ‡åœ°å€ã€‚");
-                    var freshInspection = await InspectAsync(plan.Device, token).ConfigureAwait(false);
-                    var stalePlanReason = ValidateBeforeUpdateSend(plan, freshInspection);
-                    if (stalePlanReason is not null)
-                        throw new InvalidDataException(stalePlanReason);
-                    var issuedUtc = DateTimeOffset.UtcNow;
-                    var commandId = Guid.NewGuid();
-                    var expiresUtc = issuedUtc + StudentApplicationUpdateCryptography.MaximumCommandLifetime;
-                    var downloadRequestKey = downloadRequestProtocolVersion ==
-                                             StudentApplicationUpdateCryptography.DownloadRequestProtocolVersion
-                        ? pinnedAgentPublicKey
-                        : null;
-                    var downloadUri = await lanServer.GetDownloadUriAsync(target, plan.Device.CampusId,
-                        commandId, expiresUtc, downloadRequestKey, token).ConfigureAwait(false);
-                    var command = new StudentApplicationUpdateCommand(1, plan.Device.CampusId, commandId,
-                        issuedUtc, expiresUtc, release, downloadUri.AbsoluteUri);
-                    string signedCommand;
-                    lock (signingKey.PrivateKey)
-                        signedCommand = StudentApplicationUpdateCryptography.Sign(command, signingKey.PrivateKey,
-                            artifact.ApiBaseAddress, developerPublicKey);
-                    var signedCommandSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedCommand)));
-                    await beforeCommandSend(new MaintenanceUpdateCommandPrepared(plan.OperationId, commandId,
-                        signedCommandSha256), token).ConfigureAwait(false);
-                    commandIds[plan.OperationId] = commandId;
-                    return (commandId, signedCommand);
-                }, cancellationToken, progress: updateProgress, sourceVersions: legacySourceVersions)
-                .ConfigureAwait(false);
-        }
-
-        foreach (var delivery in deliveryResults)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!planByTarget.TryGetValue(delivery.Target, out var plan)) continue;
-            if (!commandIds.TryGetValue(plan.OperationId, out var commandId))
-            {
-                output.Add(new MaintenanceAdapterResult(plan.OperationId,
-                    delivery.NeedsReview ? MaintenanceAdapterDisposition.ManualRequired :
-                        MaintenanceAdapterDisposition.Failed, delivery.Detail, null));
-                continue;
-            }
-            var statusResult = await ReadStatusAsync(plan, commandId, signingKey.PrivateKey, cancellationToken)
-                .ConfigureAwait(false);
-            output.Add(ClassifyUpdateResult(plan, delivery, statusResult, commandId));
-        }
-        return Array.AsReadOnly(output.ToArray());
-    }
-
-    /// <summary>Runs the independent MaintenanceService release transaction for one authenticated service.</summary>
-    public async Task<MaintenanceAdapterResult> OfferMaintenanceServiceUpdateAsync(MaintenancePlan plan,
-        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
-        IProgress<MaintenanceCoordinatorProgress>? progress = null,
-        CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(plan);
-        var operationId = plan.OperationId;
-        var device = plan.Device;
-        if (plan.OperationKind is not (MaintenanceOperationKind.MaintenanceServiceUpdate or
-                MaintenanceOperationKind.FullMaintenance) ||
-            (plan.TargetMaintenanceServiceVersion is null) !=
-            (plan.TargetMaintenanceServiceReleaseSha256 is null))
-            throw new InvalidDataException("MaintenanceService æ£€æŸ¥è®¡åˆ’çš„ç›®æ ‡ç‰ˆæœ¬å’Œå‘è¡Œ SHA-256 ä¸åŒ¹é…ã€‚");
-        ArgumentNullException.ThrowIfNull(beforeCommandSend);
-        if (!_maintenanceServiceClient.IsAvailable(device))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
-                "Maintenance ç‹¬ç«‹èº«ä»½æˆ–è®¤è¯é€šé“ä¸å¯ç”¨ï¼›æ‹’ç»ç» Legacy Agent æ›´æ–°æœåŠ¡è‡ªèº«ã€‚", null);
-        if (_maintenanceServiceArtifactProvider is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
-                "å½“å‰å‘è¡Œæä¾›å™¨æœªå®ç°ç‹¬ç«‹ MaintenanceService åŒ…è·å–ã€‚", null);
-
-        using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
-        var inspection = await InspectAsync(device, cancellationToken).ConfigureAwait(false);
-        if (!inspection.IdentityVerified || inspection.CurrentVersions.MaintenanceVersion is not { } currentVersion ||
-            !string.Equals(currentVersion, plan.CurrentVersions.MaintenanceVersion, StringComparison.Ordinal))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
-                "æ— æ³•ä»ç­¾å Maintenance å¥åº·è¯»å›ç¡®è®¤å½“å‰æœåŠ¡ç‰ˆæœ¬ã€‚", inspection.IdentityEvidence,
-                inspection.CurrentVersions, inspection.UpdateTransactionState);
-        var supportedCommands = inspection.Capabilities?.SupportedCommands;
-        if (supportedCommands is null ||
-            !supportedCommands.Contains("offerSignedMaintenanceServiceUpdate", StringComparer.Ordinal) ||
-            !supportedCommands.Contains("getMaintenanceServiceUpdateStatus", StringComparer.Ordinal))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
-                "å½“å‰ Maintenance æœåŠ¡çš„ç­¾åèƒ½åŠ›åˆ—è¡¨æœªå£°æ˜è‡ªæ›´æ–°å‘½ä»¤å’Œäº‹åŠ¡æŸ¥è¯¢ï¼›ä¸ä¼šå‘é€å®ƒä¸è®¤è¯†çš„æ›´æ–°åè®®ã€‚è¯·å…ˆé€šè¿‡å—ä¿¡ä»» StudentSetup/å¼•å¯¼å‡çº§å®‰è£…æ”¯æŒè‡ªæ›´æ–°çš„ Maintenanceã€‚",
-                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
-        if (plan.TargetMaintenanceServiceVersion is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.NoChanges,
-                "MaintenanceService å·²æ˜¯å½“å‰å¯ç”¨å‘è¡Œç‰ˆæœ¬ã€‚", inspection.IdentityEvidence,
-                inspection.CurrentVersions, inspection.UpdateTransactionState);
-
-        MaintenanceServiceReleaseArtifact? artifact;
-        try
-        {
-            artifact = await _maintenanceServiceArtifactProvider.GetNewerMaintenanceServiceReleaseAsync(
-                currentVersion, plan.Channel, cancellationToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or CryptographicException or TimeoutException or
-                                          InvalidOperationException or ArgumentException or HttpRequestException)
-        {
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.Failed,
-                "æ— æ³•å‡†å¤‡ç»è¿‡ç­¾åæ ¸éªŒçš„ MaintenanceService æ›´æ–°ï¼š" + Sanitize(exception.Message),
-                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
-        }
-        if (artifact is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ManualRequired,
-                "ç»´æŠ¤è®¡åˆ’ä¸­çš„ MaintenanceService ç›®æ ‡å·²ä¸å†æ˜¯å¯ç”¨çš„è¾ƒæ–°å‘è¡Œï¼›è¯·é‡æ–°æ£€æŸ¥å¹¶ç”Ÿæˆè®¡åˆ’ã€‚",
-                inspection.IdentityEvidence, inspection.CurrentVersions, inspection.UpdateTransactionState);
-
-        var release = artifact.Release;
-        var commandId = Guid.NewGuid();
-        var evidence = new MaintenanceEvidence("signed-maintenance-service-release",
-            device.PinnedIdentityFingerprint, release.Manifest.Sha256, commandId, DateTimeOffset.UtcNow);
-        var commandWasPrepared = false;
-        try
-        {
-            ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.MaintenanceService,
-                artifact.ApiBaseAddress, artifact.DeveloperReleasePublicKeyPem);
-            if (release.Manifest.MaintenanceProtocolVersion != MaintenanceProtocolV1.CurrentVersion ||
-                ApplicationReleaseClient.CompareVersions(release.Manifest.Version, currentVersion) <= 0 ||
-                !string.Equals(release.Manifest.Version, plan.TargetMaintenanceServiceVersion,
-                    StringComparison.Ordinal) ||
-                !string.Equals(release.Manifest.Sha256, plan.TargetMaintenanceServiceReleaseSha256,
-                    StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("MaintenanceService å‘è¡Œç‰ˆæœ¬ã€æ‘˜è¦æˆ–åè®®é—¨æ§›ä¸ç»´æŠ¤è®¡åˆ’ä¸åŒ¹é…ã€‚");
-            await using var lanServer = StudentApplicationUpdateLanServer.Start(artifact.InstallerPath,
-                release.Manifest.Sha256, release.Manifest.SizeBytes);
-            var expiresUtc = DateTimeOffset.UtcNow.AddMinutes(4);
-            var downloadUri = await lanServer.GetDownloadUriAsync(device.RouteAddress, device.CampusId,
-                commandId, expiresUtc, targetAgentPublicKeyPem: null, cancellationToken: cancellationToken)
-                .ConfigureAwait(false);
-            var signedEnvelopeJson = JsonSerializer.Serialize(release);
-            var offer = await _maintenanceServiceClient.SendAsync<MaintenanceServiceReleaseUpdateReadbackPayload>(
-                device, operationId, commandId, MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate,
-                signingKey.PrivateKey,
-                beforeSend: async (preparedCommandId, signedCommandSha256, token) =>
-                {
-                    if (preparedCommandId != commandId)
-                        throw new InvalidDataException("MaintenanceService commandId åœ¨ç­¾åå‰åå‘ç”Ÿå˜åŒ–ã€‚");
-                    await beforeCommandSend(new MaintenanceUpdateCommandPrepared(operationId, commandId,
-                        signedCommandSha256, MaintenanceServiceUpdate: true), token).ConfigureAwait(false);
-                    commandWasPrepared = true;
-                }, cancellationToken: cancellationToken,
-                releaseSha256: release.Manifest.Sha256,
-                signedReleaseEnvelopeJson: signedEnvelopeJson,
-                artifactTransferUrl: downloadUri.AbsoluteUri,
-                targetMaintenanceServiceVersion: release.Manifest.Version).ConfigureAwait(false);
-            if (offer.Response.ResultCode == "needsReview")
-                return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    offer.Response.Detail, evidence, inspection.CurrentVersions, "needsReview",
-                    offer.Response.CollectedUtc);
-            if (offer.Response.ResultCode == "failed" || offer.Response.ResultCode == "notSupported")
-                return new MaintenanceAdapterResult(operationId,
-                    offer.Response.ResultCode == "notSupported" ? MaintenanceAdapterDisposition.ManualRequired :
-                    MaintenanceAdapterDisposition.Failed, offer.Response.Detail, evidence,
-                    inspection.CurrentVersions, null, offer.Response.CollectedUtc);
-            progress?.Report(new MaintenanceCoordinatorProgress(operationId, MaintenanceRunState.Updating,
-                "Maintenance Service å·²æ¥å—ç‹¬ç«‹ç­¾åæ›´æ–°ï¼›ç­‰å¾…ç‰ˆæœ¬åˆ‡æ¢å’Œå¥åº·æ ¸éªŒã€‚", 0, 1, commandId,
-                device.RouteAddress));
-            return await WaitForMaintenanceServiceReleaseAsync(operationId, device, commandId, release,
-                currentVersion, evidence, inspection.CurrentVersions, progress, cancellationToken)
-                .ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or CryptographicException or TimeoutException or
-                                          InvalidOperationException or ArgumentException or HttpRequestException)
-        {
-            return new MaintenanceAdapterResult(operationId,
-                commandWasPrepared ? MaintenanceAdapterDisposition.PendingVerification :
-                    exception is InvalidDataException ? MaintenanceAdapterDisposition.ManualRequired :
-                    MaintenanceAdapterDisposition.Failed,
-                commandWasPrepared
-                    ? "MaintenanceService æ›´æ–°å‘½ä»¤å·²æŒä¹…åŒ–ï¼›ä½¿ç”¨åŸ commandId æŸ¥è¯¢å…¶ç‹¬ç«‹ç‰ˆæœ¬äº‹åŠ¡ã€‚"
-                    : Sanitize(exception.Message), evidence, inspection.CurrentVersions,
-                commandWasPrepared ? "inProgress" : null, DateTimeOffset.UtcNow);
-        }
-    }
-
-    private async Task<MaintenanceAdapterResult> WaitForMaintenanceServiceReleaseAsync(Guid operationId,
-        MaintenanceDeviceIdentity device, Guid commandId, ApplicationReleaseEnvelope release,
-        string previousVersion, MaintenanceEvidence evidence, MaintenanceComponentVersions previousVersions,
-        IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken)
-    {
-        var deadline = DateTimeOffset.UtcNow.AddMinutes(10);
-        while (DateTimeOffset.UtcNow < deadline)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            try
-            {
-                using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
-                var status = await _maintenanceServiceClient.SendAsync<MaintenanceServiceReleaseUpdateReadbackPayload>(
-                    device, operationId, commandId, MaintenanceProtocolV1Command.GetMaintenanceServiceUpdateStatus,
-                    signingKey.PrivateKey,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                var transaction = status.Payload?.Transaction;
-                var installed = status.Payload?.InstalledVersions;
-                if (transaction is not null && (transaction.CommandId != commandId ||
-                                                transaction.OperationId != operationId))
-                    return new MaintenanceAdapterResult(operationId,
-                        MaintenanceAdapterDisposition.RecoveryRequired,
-                        "MaintenanceService äº‹åŠ¡è¯»å›æ²¡æœ‰ç»‘å®šåŸ operationId/commandIdã€‚", evidence,
-                        previousVersions, "needsReview", status.Response.CollectedUtc);
-                if (transaction is { State: "committed" })
-                {
-                    var fresh = await InspectAsync(device, cancellationToken).ConfigureAwait(false);
-                    if (fresh.IdentityVerified && fresh.CurrentVersions.MaintenanceVersion is { } serviceVersion &&
-                        string.Equals(serviceVersion, release.Manifest.Version, StringComparison.Ordinal) &&
-                        fresh.Capabilities?.ProtocolVersion == release.Manifest.MaintenanceProtocolVersion &&
-                        installed?.RunningAsSystem == true)
-                        return new MaintenanceAdapterResult(operationId,
-                            MaintenanceAdapterDisposition.UpdateCommittedAndHealthy,
-                            "MaintenanceService ç­¾ååŒ…å·²åˆ‡æ¢ï¼›SCM è·¯å¾„ã€ç‰ˆæœ¬ã€SYSTEM é…ç½®å’Œè®¤è¯å¥åº·é€šé“å‡å·²è¯»å›ã€‚",
-                            new MaintenanceEvidence("signed-maintenance-service-committed",
-                                device.PinnedIdentityFingerprint, release.Manifest.Sha256, commandId,
-                                status.Response.CollectedUtc), fresh.CurrentVersions, transaction.State,
-                            status.Response.CollectedUtc);
-                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                        "MaintenanceService äº‹åŠ¡æŠ¥å‘Šå®Œæˆï¼Œä½†æ–°ç‰ˆæœ¬å¥åº·è¯»å›ä¸ä¸€è‡´ï¼›åœæ­¢åç»­ Setup æ›´æ–°ã€‚",
-                        evidence, fresh.CurrentVersions, transaction.State, status.Response.CollectedUtc);
-                }
-                if (transaction is { State: "rolledBack" })
-                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.UpdateRolledBack,
-                        "MaintenanceService æ›´æ–°å¤±è´¥ï¼›å·²ç¡®è®¤æ—§ç‰ˆæœ¬ä»ç”± SCM è¿è¡Œã€‚", evidence,
-                        new MaintenanceComponentVersions(previousVersions.StudentSetupVersion,
-                            previousVersions.AgentRuntimeVersion, previousVersions.AgentAssemblyVersion,
-                            previousVersion), transaction.State,
-                        status.Response.CollectedUtc);
-                if (transaction is { State: "needsReview" } || status.Response.ResultCode == "needsReview")
-                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                        status.Response.Detail, evidence, previousVersions, "needsReview", status.Response.CollectedUtc);
-                if (status.Response.ResultCode == "failed")
-                    return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.Failed,
-                        status.Response.Detail, evidence, previousVersions, null, status.Response.CollectedUtc);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                              InvalidDataException or CryptographicException or TimeoutException or
-                                              InvalidOperationException or ArgumentException or HttpRequestException)
-            {
-                // Service restart drops the authenticated socket; reconnect and query the same commandId.
-            }
-            progress?.Report(new MaintenanceCoordinatorProgress(operationId, MaintenanceRunState.WaitingForCommit,
-                "ç­‰å¾… Maintenance Service é‡è¿å¹¶è¯»å›ç›¸åŒ commandId çš„ç‰ˆæœ¬äº‹åŠ¡ã€‚", 0, 1, commandId,
-                device.RouteAddress));
-            await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken).ConfigureAwait(false);
-        }
-        return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.UpdatePendingVerification,
-            "MaintenanceService æ­£åœ¨åˆ‡æ¢æˆ–æš‚æ—¶ç¦»çº¿ï¼›10 åˆ†é’Ÿå†…æœªå–å¾—ç­¾åç»ˆæ€ï¼Œä¿ç•™ commandId å¾…é‡æ–°æŸ¥è¯¢ã€‚",
-            evidence, previousVersions, "inProgress", DateTimeOffset.UtcNow);
-    }
-
-    public async Task<MaintenanceAdapterResult> SynchronizeConfigurationAsync(MaintenancePlan plan,
-        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(plan);
-        ArgumentNullException.ThrowIfNull(beforeCommandSend);
-        var freshInspection = await InspectAsync(plan.Device, cancellationToken).ConfigureAwait(false);
-        var stalePlanReason = ValidateBeforeConfigurationSync(plan, freshInspection);
-        if (stalePlanReason is not null)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                stalePlanReason, null, Stage: "è®¡åˆ’é¢„æ£€");
-        var identity = ReadTeacherChannelIdentity(plan.Device.CampusId, cancellationToken);
-        if (plan.ConfigurationSha256 is null || !string.Equals(plan.ConfigurationSha256,
-                identity.BootstrapFingerprint, StringComparison.OrdinalIgnoreCase))
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                "æ•™å¸ˆè¿æ¥èº«ä»½åœ¨ç»´æŠ¤è®¡åˆ’ç”Ÿæˆåå‘ç”Ÿå˜åŒ–ï¼›è¯·é‡æ–°æ£€æŸ¥å¹¶ç”Ÿæˆæ–°è®¡åˆ’ã€‚", null,
-                Stage: "é…ç½®å¿«ç…§æ ¡éªŒ");
-        using var signingKey = WebsitePolicySigningKeyStore.Open(plan.Device.CampusId);
-        if (_maintenanceServiceClient.IsAvailable(plan.Device))
-            return await SynchronizeConfigurationViaMaintenanceServiceAsync(plan, identity, signingKey.PrivateKey,
-                beforeCommandSend, cancellationToken).ConfigureAwait(false);
-
-        Guid? commandId = null;
-        var results = await StudentAgentConfigurationSyncTransport.ExecuteAsync([plan.Device.RouteAddress],
-            plan.Device.CampusId, identity.Endpoints, identity.RootCertificateBase64, signingKey.PrivateKey,
-            cancellationToken: cancellationToken,
-            onCommandPrepared: async (target, preparedCommandId, signedCommandSha256, token) =>
-            {
-                if (!string.Equals(target, plan.Device.RouteAddress, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("é…ç½®åŒæ­¥é€‚é…å™¨è¿”å›äº†æœªè®¡åˆ’çš„ç›®æ ‡åœ°å€ã€‚");
-                commandId = preparedCommandId;
-                await beforeCommandSend(new MaintenanceUpdateCommandPrepared(plan.OperationId,
-                    preparedCommandId, signedCommandSha256), token).ConfigureAwait(false);
-            }).ConfigureAwait(false);
-        var result = results.Single();
-        if (result.Succeeded && commandId is { } acceptedCommand &&
-            result.VerifiedAcknowledgementSha256 is not null)
-        {
-            return await VerifyConfigurationReadbackAsync(plan, acceptedCommand, result.Detail,
-                signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
-        }
-        return new MaintenanceAdapterResult(plan.OperationId,
-            commandId is not null ? MaintenanceAdapterDisposition.PendingVerification :
-                result.NeedsReview ? MaintenanceAdapterDisposition.ManualRequired :
-                MaintenanceAdapterDisposition.Failed,
-            result.Detail, null, Stage: commandId is null ? "ç­¾åé…ç½®å‘½ä»¤å‘é€" :
-                result.NeedsReview ? "è®¾å¤‡èº«ä»½ä¸å‘½ä»¤æˆæƒæ ¸å¯¹" : "å­¦ç”Ÿç«¯ç­¾åå›æ‰§æ ¸éªŒ");
-    }
-
-    private async Task<MaintenanceAdapterResult> SynchronizeConfigurationViaMaintenanceServiceAsync(
-        MaintenancePlan plan, TeacherChannelIdentity identity, RSA signingKey,
-        Func<MaintenanceUpdateCommandPrepared, CancellationToken, Task> beforeCommandSend,
-        CancellationToken cancellationToken)
-    {
-        var commandId = Guid.NewGuid();
-        var currentHealth = await _maintenanceServiceClient.SendAsync<MaintenanceServiceHealthPayload>(plan.Device,
-            plan.OperationId, null, MaintenanceProtocolV1Command.GetHealth, signingKey,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (currentHealth.Response.ResultCode != "succeeded" || currentHealth.Payload is null ||
-            currentHealth.Payload.State != "ready" || currentHealth.Payload.TeacherConfigurationRevision < 0)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance æœªæä¾›å¯ç”¨äºé€’å¢æ•™å¸ˆé…ç½® revision çš„å¯ä¿¡å½“å‰çŠ¶æ€ã€‚", null,
-                Stage: "Maintenance å½“å‰çŠ¶æ€è¯»å›");
-        var targetRevision = checked(currentHealth.Payload.TeacherConfigurationRevision + 1);
-        var configuration = new MaintenanceTeacherBootstrapConfiguration(identity.Endpoints,
-            identity.RootCertificateBase64);
-        var reply = await _maintenanceServiceClient.SendAsync<MaintenanceServiceTeacherConfigurationSyncPayload>(
-            plan.Device, plan.OperationId, commandId, MaintenanceProtocolV1Command.SyncTeacherEndpoint,
-            signingKey, configuration, identity.BootstrapFingerprint,
-            async (preparedCommandId, signedRequestSha256, token) =>
-            {
-                if (preparedCommandId != commandId)
-                    throw new InvalidDataException("Maintenance é…ç½®å‘½ä»¤ç¼–å·åœ¨ç­¾åå‰åå‘ç”Ÿå˜åŒ–ã€‚" );
-                await beforeCommandSend(new MaintenanceUpdateCommandPrepared(plan.OperationId,
-                    preparedCommandId, signedRequestSha256), token).ConfigureAwait(false);
-            }, cancellationToken, targetTeacherConfigurationRevision: targetRevision).ConfigureAwait(false);
-        var evidence = new MaintenanceEvidence("signed-maintenance-configuration-status",
-            plan.Device.PinnedIdentityFingerprint, reply.SignedResponseSha256, commandId,
-            reply.Response.CollectedUtc);
-        if (reply.Response.ResultCode != "succeeded")
-        {
-            var disposition = reply.Response.ResultCode switch
-            {
-                "needsReview" => MaintenanceAdapterDisposition.ManualRequired,
-                "pending" => MaintenanceAdapterDisposition.PendingVerification,
-                "notSupported" => MaintenanceAdapterDisposition.ManualRequired,
-                _ => MaintenanceAdapterDisposition.Failed
-            };
-            return new MaintenanceAdapterResult(plan.OperationId, disposition,
-                "Maintenance æœåŠ¡æœªç¡®è®¤é…ç½®åŒæ­¥ï¼š" + reply.Response.Detail, evidence,
-                Stage: "å­¦ç”Ÿç«¯é…ç½®åº”ç”¨å›æ‰§");
-        }
-
-        var payload = reply.Payload;
-        if (payload is null || string.IsNullOrWhiteSpace(payload.ConfigurationFingerprint) ||
-            !string.Equals(payload.ConfigurationFingerprint, identity.BootstrapFingerprint,
-                StringComparison.OrdinalIgnoreCase) || payload.UpdatedUtc.Offset != TimeSpan.Zero ||
-            payload.AgentConfigurationFingerprint is not { Length: 64 } agentConfigurationFingerprint ||
-            agentConfigurationFingerprint.Any(character => !Uri.IsHexDigit(character)) ||
-            payload.ConfigurationRevision != targetRevision ||
-            payload.UpdatedUtc > reply.Response.CollectedUtc.AddMinutes(1) ||
-            payload.UpdatedUtc < reply.Response.CollectedUtc.AddMinutes(-5))
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance å·²å›æ‰§ï¼Œä½† Agent/Maintenance é…ç½®æŒ‡çº¹æˆ–æŒä¹…åŒ–æ—¶é—´æœªé€šè¿‡ç­¾åè¯»å›æ ¡éªŒã€‚", evidence,
-                Stage: "Agent é…ç½®æŒ‡çº¹ä¸æŒä¹…åŒ–æ—¶é—´è¯»å›");
-
-        var installed = payload.InstalledVersions;
-        if (installed is null)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance å·²å›æ‰§æ•™å¸ˆè¿æ¥æŒ‡çº¹ï¼Œä½†æœªè¿”å›ç»„ä»¶å’Œå¥åº·çŠ¶æ€è¯»å›ã€‚", evidence,
-                Stage: "Agent å¥åº·çŠ¶æ€è¯»å›");
-        var versions = ToMaintenanceVersions(installed);
-        if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted == false)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† SYSTEM èº«ä»½æˆ–å—ä¿æŠ¤ Agent å¯åŠ¨ä»»åŠ¡æ ¸éªŒå¤±è´¥ã€‚", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc,
-                Stage: "SYSTEM èº«ä»½ä¸ Agent ä»»åŠ¡æ ¡éªŒ");
-        if (installed.ManagedAgentTaskTrusted is null)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent å—ä¿æŠ¤å¯åŠ¨ä»»åŠ¡çŠ¶æ€æœªçŸ¥ã€‚", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc,
-                Stage: "Agent ä»»åŠ¡çŠ¶æ€æ ¸éªŒ");
-        if (installed.TransactionState == "needsReview")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent æ›´æ–°äº‹åŠ¡éœ€è¦æ¢å¤æ ¸å¯¹ã€‚", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc,
-                Stage: "Agent æ›´æ–°äº‹åŠ¡æ ¸éªŒ");
-        if (installed.TransactionState == "inProgress")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent æ›´æ–°äº‹åŠ¡ä»åœ¨è¿›è¡Œã€‚", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc,
-                Stage: "Agent æ›´æ–°äº‹åŠ¡ç­‰å¾…å®Œæˆ");
-
-        var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
-        var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
-        if (versions.StudentSetupVersion is null || versions.AgentRuntimeVersion is null ||
-            expectedSetup is null || expectedAgent is null ||
-            ApplicationReleaseClient.CompareVersions(versions.StudentSetupVersion, expectedSetup) < 0 ||
-            ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, expectedAgent) < 0)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½†å®é™… Setup/Agent ç‰ˆæœ¬ä½äºæœ¬ç»´æŠ¤è®¡åˆ’è¦æ±‚ã€‚", evidence,
-                versions, installed.TransactionState, reply.Response.CollectedUtc,
-                Stage: "Setup/Agent ç‰ˆæœ¬æ ¸éªŒ");
-
-        return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ConfigurationSynchronized,
-            "Maintenance ä¸ Student Agent å‡å·²é€šè¿‡ç­¾åå›æ‰§ç¡®è®¤æ•™å¸ˆè¿æ¥é…ç½®ï¼Œä¸”æ ¸éªŒäº† SYSTEMã€Agent ä»»åŠ¡å’Œç»„ä»¶ç‰ˆæœ¬ã€‚",
-            evidence, versions, installed.TransactionState, reply.Response.CollectedUtc, targetRevision);
-    }
-
-    public async Task<MaintenanceAdapterResult> ReconcileAsync(MaintenanceRun run,
-        CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(run);
-        var plan = run.Plan ?? throw new InvalidDataException("æ¢å¤ç»´æŠ¤äº‹åŠ¡ç¼ºå°‘åŸç»´æŠ¤è®¡åˆ’ã€‚");
-        if (run.IsMaintenanceServiceUpdateStage && !_maintenanceServiceClient.IsAvailable(plan.Device))
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "MaintenanceService æ›´æ–°é˜¶æ®µçš„ç‹¬ç«‹é€šé“æš‚ä¸å¯ç”¨ï¼›ä¿ç•™åŸ commandIdï¼Œä¸å›é€€åˆ° Legacy Agent äº‹åŠ¡æŸ¥è¯¢ã€‚", null);
-        if (_maintenanceServiceClient.IsAvailable(plan.Device))
-            return await ReconcileThroughMaintenanceServiceAsync(run, plan, cancellationToken)
-                .ConfigureAwait(false);
-        if (IsConfigurationReconciliation(run))
-        {
-            if (plan.ConfigurationSha256 is not { } desiredConfiguration)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                    "ç»´æŠ¤è®¡åˆ’ç¼ºå°‘ç›®æ ‡æ•™å¸ˆè¿æ¥æŒ‡çº¹ï¼›ä¸èƒ½æ¢å¤é…ç½®åŒæ­¥ç»“æœã€‚", null);
-            using var key = WebsitePolicySigningKeyStore.Open(plan.Device.CampusId);
-            var configCommandId = run.Transitions.LastOrDefault(item =>
-                item.To == MaintenanceRunState.ConfigurationSyncing)?.Evidence?.CommandId;
-            if (configCommandId is null)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                    "æ¢å¤é…ç½®äº‹åŠ¡ç¼ºå°‘å·²è®°å½•çš„ commandIdï¼›ä¸é‡å‘å‘½ä»¤ã€‚", null);
-            if (!string.Equals(plan.ConfigurationSha256, desiredConfiguration, StringComparison.OrdinalIgnoreCase))
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                    "æ¢å¤é…ç½®äº‹åŠ¡çš„ç›®æ ‡æŒ‡çº¹ä¸åŸè®¡åˆ’ä¸ä¸€è‡´ï¼›ä¸é‡å‘å‘½ä»¤ã€‚", null);
-            return await VerifyConfigurationReadbackAsync(plan, configCommandId.Value,
-                "å·²é‡æ–°æ ¸å¯¹é…ç½®åŒæ­¥äº‹åŠ¡ã€‚", key.PrivateKey, cancellationToken).ConfigureAwait(false);
-        }
-        if (run.AgentCommandId is null)
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "å°šæ—  Agent æ›´æ–° commandIdï¼›åªè¯»çŠ¶æ€ä¸è¶³ä»¥åˆ¤æ–­å®‰è£…äº‹åŠ¡ã€‚", null);
-        using var signingKey = WebsitePolicySigningKeyStore.Open(run.Device.CampusId);
-        var status = await ReadStatusAsync(plan, run.AgentCommandId, signingKey.PrivateKey, cancellationToken)
-            .ConfigureAwait(false);
-        if (status.Status is null || status.ResponseSha256 is null)
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                status.Detail, null);
-        var evidence = new MaintenanceEvidence("signed-update-transaction-status",
-            run.Device.PinnedIdentityFingerprint, status.ResponseSha256, run.AgentCommandId,
-            status.Status.CollectedUtc);
-        return ClassifyStatus(plan, run.AgentCommandId.Value, status.Status, evidence,
-            "å·²é‡æ–°è¯»å–å­¦ç”Ÿäº‹åŠ¡çŠ¶æ€ã€‚", agentAssemblyVersion: status.AgentAssemblyVersion);
-    }
-
-    public static string? ReadCurrentTeacherChannelFingerprint(string campusId) =>
-        ReadCurrentTeacherChannelConfiguration(campusId).Fingerprint;
-
-    public static TeacherConnectivityConfiguration ReadCurrentTeacherChannelConfiguration(string campusId)
-    {
-        var identity = ReadTeacherChannelIdentity(campusId, CancellationToken.None);
-        return new TeacherConnectivityConfiguration(identity.Endpoints, identity.RootCertificateBase64,
-            identity.BootstrapFingerprint);
-    }
-
-    private async Task<MaintenanceAdapterResult> ReconcileThroughMaintenanceServiceAsync(MaintenanceRun run,
-        MaintenancePlan plan, CancellationToken cancellationToken)
-    {
-        using var signingKey = WebsitePolicySigningKeyStore.Open(plan.Device.CampusId);
-        if (run.IsMaintenanceServiceUpdateStage)
-            return await ReconcileMaintenanceServiceReleaseAsync(run, plan, signingKey.PrivateKey,
-                cancellationToken).ConfigureAwait(false);
-        if (IsConfigurationReconciliation(run))
-        {
-            var commandId = run.Transitions.LastOrDefault(item =>
-                item.To == MaintenanceRunState.ConfigurationSyncing)?.Evidence?.CommandId;
-            if (commandId is null || plan.ConfigurationSha256 is null)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                    "é…ç½®åŒæ­¥æ¢å¤ç¼ºå°‘åŸ commandId æˆ–ç›®æ ‡æ•™å¸ˆè¿æ¥æŒ‡çº¹ï¼›ä¸é‡å‘é…ç½®å‘½ä»¤ã€‚", null);
-
-            var reply = await _maintenanceServiceClient.SendAsync<MaintenanceServiceHealthPayload>(plan.Device,
-                run.OperationId, null, MaintenanceProtocolV1Command.GetHealth, signingKey.PrivateKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            var evidence = new MaintenanceEvidence("signed-maintenance-configuration-status",
-                plan.Device.PinnedIdentityFingerprint, reply.SignedResponseSha256, commandId,
-                reply.Response.CollectedUtc);
-            if (reply.Response.ResultCode != "succeeded" || reply.Payload is null ||
-                !string.Equals(reply.Payload.TeacherConfigurationFingerprint, plan.ConfigurationSha256,
-                    StringComparison.OrdinalIgnoreCase))
-                return new MaintenanceAdapterResult(run.OperationId,
-                    MaintenanceAdapterDisposition.PendingVerification,
-                    "Maintenance æœåŠ¡å°šæœªç­¾åç¡®è®¤åŸè®¡åˆ’çš„æ•™å¸ˆè¿æ¥æŒ‡çº¹ã€‚", evidence,
-                    Stage: "Maintenance æ•™å¸ˆè¿æ¥æŒ‡çº¹è¯»å›");
-            if (!reply.Payload.RunningAsSystem || reply.Payload.ManagedAgentTaskTrusted == false)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† SYSTEM æˆ–å—ä¿æŠ¤ Agent å¯åŠ¨ä»»åŠ¡æ ¸éªŒå¤±è´¥ã€‚", evidence,
-                    Stage: "SYSTEM èº«ä»½ä¸ Agent ä»»åŠ¡æ ¡éªŒ");
-            if (reply.Payload.ManagedAgentTaskTrusted is null)
-                return new MaintenanceAdapterResult(run.OperationId,
-                    MaintenanceAdapterDisposition.PendingVerification,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent å—ä¿æŠ¤å¯åŠ¨ä»»åŠ¡çŠ¶æ€æœªçŸ¥ã€‚", evidence,
-                    Stage: "Agent ä»»åŠ¡çŠ¶æ€æ ¸éªŒ");
-
-            var versionsReply = await _maintenanceServiceClient.SendAsync<
-                MaintenanceServiceInstalledVersionsPayload>(plan.Device, run.OperationId, null,
-                MaintenanceProtocolV1Command.GetInstalledVersions, signingKey.PrivateKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            var installed = versionsReply.Payload;
-            if (versionsReply.Response.ResultCode != "succeeded" || installed is null)
-                return new MaintenanceAdapterResult(run.OperationId,
-                    MaintenanceAdapterDisposition.PendingVerification,
-                    "æ•™å¸ˆè¿æ¥æŒ‡çº¹å·²è¯»å›ï¼Œä½†ç»„ä»¶ç‰ˆæœ¬å’Œæ›´æ–°äº‹åŠ¡å¿«ç…§æš‚ä¸å¯ç”¨ã€‚", evidence,
-                    Stage: "ç»„ä»¶ç‰ˆæœ¬ä¸äº‹åŠ¡å¿«ç…§è¯»å›");
-            var versions = ToMaintenanceVersions(installed);
-            if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted == false)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† SYSTEM æˆ–å—ä¿æŠ¤ Agent å¯åŠ¨ä»»åŠ¡æ ¸éªŒå¤±è´¥ã€‚", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
-                    Stage: "SYSTEM èº«ä»½ä¸ Agent ä»»åŠ¡æ ¡éªŒ");
-            if (installed.ManagedAgentTaskTrusted is null)
-                return new MaintenanceAdapterResult(run.OperationId,
-                    MaintenanceAdapterDisposition.PendingVerification,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent å—ä¿æŠ¤å¯åŠ¨ä»»åŠ¡çŠ¶æ€æœªçŸ¥ã€‚", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
-                    Stage: "Agent ä»»åŠ¡çŠ¶æ€æ ¸éªŒ");
-            if (installed.TransactionState == "needsReview")
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent æ›´æ–°äº‹åŠ¡éœ€è¦æ¢å¤æ ¸å¯¹ã€‚", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
-                    Stage: "Agent æ›´æ–°äº‹åŠ¡æ ¸éªŒ");
-            if (installed.TransactionState == "inProgress")
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† Agent æ›´æ–°äº‹åŠ¡ä»åœ¨è¿›è¡Œã€‚", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
-                    Stage: "Agent æ›´æ–°äº‹åŠ¡ç­‰å¾…å®Œæˆ");
-            var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
-            var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
-            if (versions.StudentSetupVersion is null || versions.AgentRuntimeVersion is null ||
-                expectedSetup is null || expectedAgent is null ||
-                ApplicationReleaseClient.CompareVersions(versions.StudentSetupVersion, expectedSetup) < 0 ||
-                ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, expectedAgent) < 0)
-                return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                    "ç›®æ ‡æ•™å¸ˆè¿æ¥é…ç½®å·²è¯»å›ï¼Œä½†å®é™… Setup/Agent ç‰ˆæœ¬ä½äºåŸç»´æŠ¤è®¡åˆ’ã€‚", evidence,
-                    versions, installed.TransactionState, versionsReply.Response.CollectedUtc,
-                    Stage: "Setup/Agent ç‰ˆæœ¬æ ¡éªŒ");
-            return new MaintenanceAdapterResult(run.OperationId,
-                MaintenanceAdapterDisposition.ConfigurationSynchronized,
-                "Maintenance æœåŠ¡å·²ç­¾åè¯»å›åŸæ•™å¸ˆè¿æ¥æŒ‡çº¹ã€ç»„ä»¶ç‰ˆæœ¬å’Œå—ä¿æŠ¤ SYSTEM Agent å¯åŠ¨ä»»åŠ¡ã€‚",
-                evidence, versions, installed.TransactionState, reply.Response.CollectedUtc,
-                reply.Payload.TeacherConfigurationRevision);
-        }
-
-        if (run.AgentCommandId is not { } agentCommandId)
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "å°šæ—  Agent æ›´æ–° commandIdï¼›åªè¯»çŠ¶æ€ä¸è¶³ä»¥åˆ¤æ–­å®‰è£…äº‹åŠ¡ã€‚", null);
-        var statusReply = await ReadMaintenanceTransactionAsync(plan, run.OperationId, agentCommandId,
-            signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
-        var statusPayload = statusReply.Payload
-                            ?? throw new InvalidDataException("Maintenance äº‹åŠ¡å“åº”æ­£æ–‡ä¸ºç©ºã€‚" );
-        if (statusPayload.Transaction.State == "inProgress")
-        {
-            var recovery = await _maintenanceServiceClient.SendAsync<MaintenanceServiceTransactionReadbackPayload>(
-                plan.Device, run.OperationId, agentCommandId,
-                MaintenanceProtocolV1Command.RecoverPendingTransaction, signingKey.PrivateKey,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
-            if (recovery.Response.ResultCode == "needsReview" || recovery.Payload?.Transaction.State == "needsReview")
-                return CreateMaintenanceTransactionResult(run, agentCommandId, recovery,
-                    MaintenanceAdapterDisposition.RecoveryRequired,
-                    "Maintenance ä¿ç•™åŸå­äº‹åŠ¡ææ–™ï¼Œä½†æ¢å¤è¿‡ç¨‹éœ€è¦ç°åœºæ ¸å¯¹ã€‚", recovery.Payload);
-            statusReply = await ReadMaintenanceTransactionAsync(plan, run.OperationId, agentCommandId,
-                signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
-            statusPayload = statusReply.Payload
-                            ?? throw new InvalidDataException("Maintenance äº‹åŠ¡å“åº”æ­£æ–‡ä¸ºç©ºã€‚" );
-        }
-
-        var transaction = statusPayload.Transaction;
-        if (transaction.State == "needsReview")
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.RecoveryRequired,
-                "ç­¾åäº‹åŠ¡çŠ¶æ€è¦æ±‚ä¿ç•™æ¢å¤ææ–™å¹¶è¿›è¡Œç°åœºæ ¸å¯¹ã€‚", statusPayload);
-        if (transaction.State == "superseded")
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.RecoveryRequired,
-                "åŸæ›´æ–°äº‹åŠ¡å·²è¢«å…¶ä»– commandId æ›¿ä»£ï¼›ä¿ç•™çŠ¶æ€å¹¶è¦æ±‚æ ¸å¯¹åç»­äº‹åŠ¡ã€‚", statusPayload);
-        if (transaction.State is not ("committed" or "rolledBack"))
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance æœåŠ¡å·²è¯»å–åŸ commandId çš„äº‹åŠ¡ï¼›äº‹åŠ¡å°šæœªè¾¾åˆ°å¯è£å®šçš„ç»ˆæ€ã€‚", statusPayload);
-
-        var installed = statusPayload.InstalledVersions;
-        var versions = ToMaintenanceVersions(installed);
-        if (installed.TransactionState != transaction.State)
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.PendingVerification,
-                "äº‹åŠ¡æ—¥å¿—å’Œç»„ä»¶å¿«ç…§åœ¨è¯»å–æœŸé—´å‘ç”Ÿå˜åŒ–ï¼›æš‚ä¸è£å®šæ›´æ–°ç»“æœã€‚", statusPayload);
-        if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted == false)
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.RecoveryRequired,
-                "äº‹åŠ¡å·²è¾¾åˆ°ç»ˆæ€ï¼Œä½† SYSTEM èº«ä»½æˆ– Agent å¯åŠ¨ä»»åŠ¡ä¿¡ä»»æ ¸éªŒå¤±è´¥ã€‚", statusPayload);
-        if (installed.ManagedAgentTaskTrusted is null || versions.StudentSetupVersion is null ||
-            versions.AgentRuntimeVersion is null)
-            return CreateMaintenanceTransactionResult(run, agentCommandId, statusReply,
-                MaintenanceAdapterDisposition.PendingVerification,
-                "äº‹åŠ¡å·²è¾¾åˆ°ç»ˆæ€ï¼Œä½†ç­¾åç‰ˆæœ¬æˆ– Agent å¯åŠ¨ä»»åŠ¡è¯»å›ä¸å®Œæ•´ã€‚", statusPayload);
-
-        var evidence = CreateMaintenanceTransactionEvidence(run, agentCommandId, statusReply);
-        if (transaction.State == "committed")
-        {
-            var setupMatches = plan.TargetSetupVersion is { } targetSetup &&
-                               string.Equals(versions.StudentSetupVersion, targetSetup, StringComparison.Ordinal) &&
-                               string.Equals(transaction.TargetSetupVersion, targetSetup, StringComparison.Ordinal);
-            var agentMatches = plan.TargetAgentVersion is { } targetAgent
-                ? string.Equals(versions.AgentRuntimeVersion, targetAgent, StringComparison.Ordinal) &&
-                  string.Equals(transaction.TargetAgentVersion, targetAgent, StringComparison.Ordinal)
-                : transaction.TargetAgentVersion is { } transactionAgent
-                    ? string.Equals(versions.AgentRuntimeVersion, transactionAgent, StringComparison.Ordinal) &&
-                      (plan.CurrentVersions.AgentRuntimeVersion is not { } sourceAgent ||
-                       ApplicationReleaseClient.CompareVersions(transactionAgent, sourceAgent) >= 0)
-                    : plan.CurrentVersions.AgentRuntimeVersion is { } sourceRuntime &&
-                      ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, sourceRuntime) >= 0;
-            return new MaintenanceAdapterResult(run.OperationId,
-                setupMatches && agentMatches
-                    ? MaintenanceAdapterDisposition.UpdateCommittedAndHealthy
-                    : MaintenanceAdapterDisposition.RecoveryRequired,
-                setupMatches && agentMatches
-                    ? "Maintenance ç­¾åäº‹åŠ¡ã€Setup/Agent ç‰ˆæœ¬å’Œå—ä¿æŠ¤ SYSTEM å¯åŠ¨ä»»åŠ¡å‡å·²æ ¸éªŒã€‚"
-                    : "äº‹åŠ¡æŠ¥å‘Š committedï¼Œä½†ç­¾åç»„ä»¶ç‰ˆæœ¬ä¸è®¡åˆ’ç›®æ ‡ä¸ä¸€è‡´ã€‚",
-                evidence, versions, transaction.State, statusReply.Response.CollectedUtc);
-        }
-
-        var setupRestored = string.Equals(versions.StudentSetupVersion,
-                                plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal) &&
-                            string.Equals(transaction.PreviousSetupVersion,
-                                plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal);
-        var agentRestored = string.Equals(versions.AgentRuntimeVersion,
-                                 plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal) &&
-                            string.Equals(transaction.PreviousAgentVersion,
-                                plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal);
-        return new MaintenanceAdapterResult(run.OperationId,
-            setupRestored && agentRestored
-                ? MaintenanceAdapterDisposition.UpdateRolledBack
-                : MaintenanceAdapterDisposition.RecoveryRequired,
-            setupRestored && agentRestored
-                ? "Maintenance ç­¾åè¯»å›ç¡®è®¤åŸç‰ˆæœ¬å·²æ¢å¤ï¼ŒSYSTEM Agent å¯åŠ¨ä»»åŠ¡ä»å—ä¿æŠ¤ã€‚"
-                : "äº‹åŠ¡æŠ¥å‘Š rolledBackï¼Œä½†ç­¾åç‰ˆæœ¬ä¸åŸç‰ˆæœ¬å¿«ç…§ä¸ä¸€è‡´ã€‚",
-            evidence, versions, transaction.State, statusReply.Response.CollectedUtc);
-    }
-
-    private async Task<MaintenanceAdapterResult> ReconcileMaintenanceServiceReleaseAsync(MaintenanceRun run,
-        MaintenancePlan plan, RSA teacherSigningKey, CancellationToken cancellationToken)
-    {
-        if (run.AgentCommandId is not { } commandId)
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "MaintenanceService æ›´æ–°æ¢å¤ç¼ºå°‘å·²æŒä¹…åŒ– commandIdï¼›ä¸é‡æ–°å‘é€å‘è¡ŒåŒ…ã€‚", null);
-        var reply = await _maintenanceServiceClient.SendAsync<MaintenanceServiceReleaseUpdateReadbackPayload>(
-            plan.Device, run.OperationId, commandId,
-            MaintenanceProtocolV1Command.GetMaintenanceServiceUpdateStatus, teacherSigningKey,
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-        var payload = reply.Payload;
-        var transaction = payload?.Transaction;
-        var installed = payload?.InstalledVersions;
-        var evidence = new MaintenanceEvidence(
-            transaction?.State == "committed"
-                ? "signed-maintenance-service-committed" : "signed-maintenance-service-transaction-status",
-            plan.Device.PinnedIdentityFingerprint, reply.SignedResponseSha256, commandId,
-            reply.Response.CollectedUtc);
-        var versions = installed is null ? null : ToMaintenanceVersions(installed);
-        var verifiedTransactionState = versions is null ? null : transaction?.State ?? "notFound";
-        if (transaction is not null && (transaction.OperationId != run.OperationId ||
-                                        transaction.CommandId != commandId))
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "MaintenanceService ç­¾åäº‹åŠ¡ä¸åŸ operationId/commandId ä¸ä¸€è‡´ï¼›ä¿ç•™ç°åœºä¾›æ ¸å¯¹ã€‚",
-                evidence, versions, versions is null ? null : "needsReview", reply.Response.CollectedUtc);
-        if (transaction?.State == "committed")
-        {
-            var health = await InspectAsync(plan.Device, cancellationToken).ConfigureAwait(false);
-            if (health.IdentityVerified && health.CurrentVersions.MaintenanceVersion is { } current &&
-                string.Equals(current, plan.TargetMaintenanceServiceVersion, StringComparison.Ordinal) &&
-                health.Capabilities?.ProtocolVersion == MaintenanceProtocolV1.CurrentVersion &&
-                installed?.RunningAsSystem == true)
-                return new MaintenanceAdapterResult(run.OperationId,
-                    MaintenanceAdapterDisposition.UpdateCommittedAndHealthy,
-                    "æ¢å¤è¯»å›ç¡®è®¤ MaintenanceService äº‹åŠ¡å·²æäº¤ï¼Œä¸”æ–°æœåŠ¡ç‰ˆæœ¬ã€åè®®ä¸ç­¾åå¥åº·é€šé“æ­£å¸¸ã€‚",
-                    evidence, health.CurrentVersions, transaction.State, reply.Response.CollectedUtc);
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "MaintenanceService äº‹åŠ¡å·²æäº¤ï¼Œä½†ç›®æ ‡æœåŠ¡å¥åº·è¯»å›ä¸ä¸€è‡´ï¼›åœæ­¢åç»­ StudentSetup é˜¶æ®µã€‚",
-                evidence, health.CurrentVersions, transaction.State, reply.Response.CollectedUtc);
-        }
-        if (transaction?.State == "rolledBack")
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.UpdateRolledBack,
-                "ç­¾åè¯»å›ç¡®è®¤ MaintenanceService æ›´æ–°å·²å›æ»šã€‚", evidence, versions,
-                versions is null ? null : transaction.State, reply.Response.CollectedUtc);
-        if (transaction?.State == "needsReview")
-            return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "MaintenanceService æ›´æ–°äº‹åŠ¡éœ€è¦ç°åœºæ ¸å¯¹ï¼›åç»­å­¦ç”Ÿæ›´æ–°ä¿æŒåœæ­¢ã€‚", evidence, versions,
-                versions is null ? null : transaction.State, reply.Response.CollectedUtc);
-        return new MaintenanceAdapterResult(run.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-            transaction is null
-                ? "MaintenanceService æ›´æ–°äº‹åŠ¡å°šæœªå‡ºç°åœ¨ç­¾åè¯»å›ï¼›ä¿ç•™åŸ commandId å¹¶ç»§ç»­æ ¸å¯¹ã€‚"
-                : "MaintenanceService æ›´æ–°äº‹åŠ¡ä»æœªåˆ°è¾¾å¯ç¡®è®¤ç»ˆæ€ï¼›ä¿ç•™åŸ commandId å¹¶ç»§ç»­æ ¸å¯¹ã€‚",
-            evidence, versions, verifiedTransactionState, reply.Response.CollectedUtc);
-    }
-
-    private async Task<MaintenanceServiceTeacherReply<MaintenanceServiceTransactionReadbackPayload>>
-        ReadMaintenanceTransactionAsync(MaintenancePlan plan, Guid operationId, Guid commandId,
-            RSA signingKey, CancellationToken cancellationToken)
-    {
-        var reply = await _maintenanceServiceClient.SendAsync<MaintenanceServiceTransactionReadbackPayload>(
-            plan.Device, operationId, commandId, MaintenanceProtocolV1Command.GetTransactionStatus,
-            signingKey, cancellationToken: cancellationToken).ConfigureAwait(false);
-        if (reply.Payload is null || reply.Payload.Transaction.CommandId != commandId)
-            throw new InvalidDataException("Maintenance äº‹åŠ¡å“åº”æ²¡æœ‰ç»‘å®šåŸ commandIdã€‚" );
-        return reply;
-    }
-
-    private static MaintenanceAdapterResult CreateMaintenanceTransactionResult(MaintenanceRun run,
-        Guid commandId,
-        MaintenanceServiceTeacherReply<MaintenanceServiceTransactionReadbackPayload> reply,
-        MaintenanceAdapterDisposition disposition, string detail,
-        MaintenanceServiceTransactionReadbackPayload? payload)
-    {
-        var evidence = CreateMaintenanceTransactionEvidence(run, commandId, reply);
-        var state = payload?.Transaction.State;
-        var versions = payload is null ? null : ToMaintenanceVersions(payload.InstalledVersions);
-        return new MaintenanceAdapterResult(run.OperationId, disposition, detail, evidence,
-            versions, versions is null ? null : state,
-            versions is null ? null : reply.Response.CollectedUtc);
-    }
-
-    private static MaintenanceEvidence CreateMaintenanceTransactionEvidence(MaintenanceRun run,
-        Guid commandId,
-        MaintenanceServiceTeacherReply<MaintenanceServiceTransactionReadbackPayload> reply) =>
-        new("signed-maintenance-update-transaction-status", run.Device.PinnedIdentityFingerprint,
-            reply.SignedResponseSha256, commandId, reply.Response.CollectedUtc);
-
-    private static MaintenanceComponentVersions ToMaintenanceVersions(
-        MaintenanceServiceInstalledVersionsPayload versions) =>
-        new(versions.StudentSetupVersion, versions.AgentRuntimeVersion,
-            versions.AgentAssemblyVersion, versions.MaintenanceServiceVersion);
-
-    private static TeacherChannelIdentity ReadTeacherChannelIdentity(string campusId,
-        CancellationToken cancellationToken)
-    {
-        cancellationToken.ThrowIfCancellationRequested();
-        var provider = TeacherMobileControlIdentityProviderFactory.CreateForCurrentPlatform();
-        using var identity = provider.CreateIdentity();
-        var preferredAddress = provider.SelectPreferredLanAddress(identity.Addresses);
-        var endpoints = new[] { preferredAddress }
-            .Concat(identity.Addresses.Where(address => !address.Equals(preferredAddress)))
-            .Select(ClassroomEventCryptography.CreateTeacherEndpoint)
-            .Distinct(StringComparer.Ordinal).ToArray();
-        var rootCertificateBase64 = Convert.ToBase64String(identity.RootCertificateBytes);
-        StudentAgentChannelProtocol.ValidateBootstrapConfiguration(campusId, endpoints, rootCertificateBase64);
-        var fingerprint = StudentAgentChannelProtocol.GetBootstrapConfigurationFingerprint(campusId, endpoints,
-            rootCertificateBase64) ?? throw new InvalidDataException("æ•™å¸ˆè¿æ¥èº«ä»½æ²¡æœ‰å¯éªŒè¯çš„æŒ‡çº¹ã€‚");
-        return new TeacherChannelIdentity(Array.AsReadOnly(endpoints), rootCertificateBase64, fingerprint);
-    }
-
-    private async Task<LegacyStatusReadback> ReadStatusAsync(MaintenancePlan plan, Guid? commandId,
-        RSA? providedSigningKey, CancellationToken cancellationToken)
-    {
-        using var ownedKey = providedSigningKey is null
-            ? WebsitePolicySigningKeyStore.Open(plan.Device.CampusId)
-            : null;
-        var signingKey = providedSigningKey ?? ownedKey!.PrivateKey;
-        var results = await WebsitePolicyStatusTransport.ReadAsync([plan.Device.RouteAddress],
-            plan.Device.CampusId, signingKey, cancellationToken, includeHealthSnapshot: true,
-            updateCommandId: commandId, allowLegacyDirectFallback: true,
-            allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
-        var result = results.Single();
-        if (!result.Succeeded || result.Status is null || result.VerifiedResponseSha256 is null)
-            return new LegacyStatusReadback(null, null, result.Detail);
-        var pinned = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(plan.Device.CampusId,
-            plan.Device.RouteAddress);
-        if (pinned is null || !string.Equals(StudentAgentResponseCryptography.GetFingerprint(pinned),
-                plan.Device.PinnedIdentityFingerprint, StringComparison.Ordinal))
-            return new LegacyStatusReadback(null, null, "ç­¾åçŠ¶æ€èº«ä»½ä¸ç»´æŠ¤è®¡åˆ’å›ºå®šèº«ä»½ä¸ä¸€è‡´ã€‚");
-
-        string? agentAssemblyVersion = null;
-        try
-        {
-            var capability = await StudentApplicationUpdateTransport.ReadVerifiedDownloadCapabilityAsync(
-                plan.Device.RouteAddress, plan.Device.CampusId, signingKey, cancellationToken).ConfigureAwait(false);
-            if (capability is not null)
-            {
-                var reported = capability.Capability;
-                if (reported.AgentRuntimeVersion is { } agentVersion &&
-                    !string.Equals(agentVersion, result.Status.AgentVersion, StringComparison.Ordinal) ||
-                    reported.StudentSetupVersion is { } setupVersion &&
-                    !string.Equals(setupVersion, result.Status.StudentSetupVersion, StringComparison.Ordinal) ||
-                    reported.ConfigurationFingerprint is { } configFingerprint &&
-                    !string.Equals(configFingerprint, result.Status.ConfigFingerprint,
-                        StringComparison.OrdinalIgnoreCase))
-                    return new LegacyStatusReadback(null, null,
-                        "ç­¾åçŠ¶æ€å’Œèƒ½åŠ›æ¥å£çš„è¿è¡Œç‰ˆæœ¬ã€Setup æˆ–é…ç½®æŒ‡çº¹ä¸ä¸€è‡´ï¼›æš‚ä¸è£å®šäº‹åŠ¡ç»ˆæ€ã€‚");
-                agentAssemblyVersion = reported.AgentProductVersion;
-            }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
-                                          InvalidDataException or CryptographicException or IOException)
-        {
-            // Runtime/Setup/transaction status remain signed evidence; assembly product version stays unknown.
-        }
-        return new LegacyStatusReadback(result.Status, result.VerifiedResponseSha256, result.Detail,
-            agentAssemblyVersion);
-    }
-
-    private static MaintenanceAdapterResult ClassifyMaintenanceUpdateOffer(MaintenancePlan plan, Guid commandId,
-        MaintenanceServiceTeacherReply<MaintenanceServiceTransactionReadbackPayload> reply)
-    {
-        var evidence = new MaintenanceEvidence("signed-maintenance-update-transaction-status",
-            plan.Device.PinnedIdentityFingerprint, reply.SignedResponseSha256, commandId,
-            reply.Response.CollectedUtc);
-        if (reply.Response.ResultCode == "needsReview")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                reply.Response.Detail, evidence);
-        if (reply.Response.ResultCode == "notSupported")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.ManualRequired,
-                reply.Response.Detail, evidence);
-        if (reply.Response.ResultCode == "failed")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.Failed,
-                reply.Response.Detail, evidence);
-        if (reply.Payload is not { } payload || payload.InstalledVersions is null ||
-            payload.Transaction is null || payload.Transaction.CommandId != commandId)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "Maintenance å·²è¿”å›ç­¾åå›æ‰§ï¼Œä½†äº‹åŠ¡æ­£æ–‡ç¼ºå¤±æˆ–æœªç»‘å®šåŸ commandIdã€‚", evidence);
-
-        var transaction = payload.Transaction;
-        var installed = payload.InstalledVersions;
-        var versions = ToMaintenanceVersions(installed);
-        if (transaction.State is "pending" or "inProgress")
-            return new MaintenanceAdapterResult(plan.OperationId,
-                MaintenanceAdapterDisposition.UpdatePendingVerification,
-                "Maintenance å·²éªŒç­¾å¹¶æ¥ç®¡ StudentSetup åŒ…ï¼›ç­‰å¾… UpdateHelper å®Œæˆå’ŒæœåŠ¡é‡è¿ã€‚",
-                evidence, versions, transaction.State, reply.Response.CollectedUtc);
-        if (transaction.State == "needsReview" || reply.Response.ResultCode == "needsReview")
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "Maintenance æ›´æ–°äº‹åŠ¡è¦æ±‚äººå·¥æ ¸å¯¹ï¼›ä¿ç•™åŸå®‰è£…ä¸äº‹åŠ¡ææ–™ã€‚", evidence,
-                versions, transaction.State, reply.Response.CollectedUtc);
-        if (!installed.RunningAsSystem || installed.ManagedAgentTaskTrusted != true ||
-            installed.TransactionState != transaction.State || versions.StudentSetupVersion is null ||
-            versions.AgentRuntimeVersion is null ||
-            versions.AgentAssemblyVersion is { } assemblyVersion &&
-            !string.Equals(assemblyVersion, versions.AgentRuntimeVersion, StringComparison.Ordinal))
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "Maintenance äº‹åŠ¡ç»ˆæ€ã€SYSTEM èº«ä»½ã€Agent ä»»åŠ¡æˆ–ç‰ˆæœ¬è¯»å›ä¸ä¸€è‡´ã€‚", evidence,
-                versions, transaction.State, reply.Response.CollectedUtc);
-
-        if (transaction.State == "committed")
-        {
-            var setupMatches = plan.TargetSetupVersion is { } targetSetup &&
-                               string.Equals(versions.StudentSetupVersion, targetSetup, StringComparison.Ordinal) &&
-                               string.Equals(transaction.TargetSetupVersion, targetSetup, StringComparison.Ordinal);
-            var agentMatches = plan.TargetAgentVersion is { } targetAgent
-                ? string.Equals(versions.AgentRuntimeVersion, targetAgent, StringComparison.Ordinal) &&
-                  string.Equals(transaction.TargetAgentVersion, targetAgent, StringComparison.Ordinal)
-                : transaction.TargetAgentVersion is { } transactionAgent
-                    ? string.Equals(versions.AgentRuntimeVersion, transactionAgent, StringComparison.Ordinal) &&
-                      plan.CurrentVersions.AgentRuntimeVersion is { } sourceAgent &&
-                      ApplicationReleaseClient.CompareVersions(transactionAgent, sourceAgent) >= 0
-                    : plan.CurrentVersions.AgentRuntimeVersion is { } sourceRuntime &&
-                      ApplicationReleaseClient.CompareVersions(versions.AgentRuntimeVersion, sourceRuntime) >= 0;
-            return new MaintenanceAdapterResult(plan.OperationId,
-                setupMatches && agentMatches
-                    ? MaintenanceAdapterDisposition.UpdateCommittedAndHealthy
-                    : MaintenanceAdapterDisposition.RecoveryRequired,
-                setupMatches && agentMatches
-                    ? "Maintenance ç­¾åäº‹åŠ¡ã€StudentSetup/Agent ç‰ˆæœ¬å’Œ SYSTEM å¯åŠ¨ä»»åŠ¡å‡å·²æ ¸éªŒã€‚"
-                    : "Maintenance æŠ¥å‘Š committedï¼Œä½†ç»„ä»¶ç‰ˆæœ¬ä¸ç»´æŠ¤è®¡åˆ’ä¸ä¸€è‡´ã€‚",
-                evidence, versions, transaction.State, reply.Response.CollectedUtc);
-        }
-
-        if (transaction.State == "rolledBack")
-        {
-            var setupRestored = string.Equals(versions.StudentSetupVersion,
-                                   plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal) &&
-                               string.Equals(transaction.PreviousSetupVersion,
-                                   plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal);
-            var agentRestored = string.Equals(versions.AgentRuntimeVersion,
-                                   plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal) &&
-                               string.Equals(transaction.PreviousAgentVersion,
-                                   plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal);
-            return new MaintenanceAdapterResult(plan.OperationId,
-                setupRestored && agentRestored
-                    ? MaintenanceAdapterDisposition.UpdateRolledBack
-                    : MaintenanceAdapterDisposition.RecoveryRequired,
-                setupRestored && agentRestored
-                    ? "ç­¾åäº‹åŠ¡ç¡®è®¤ StudentSetup ä¸ Agent å·²æ¢å¤è‡³æ›´æ–°å‰ç‰ˆæœ¬ã€‚"
-                    : "äº‹åŠ¡æŠ¥å‘Š rolledBackï¼Œä½†æ›´æ–°å‰ç‰ˆæœ¬è¯»å›ä¸ä¸€è‡´ã€‚",
-                evidence, versions, transaction.State, reply.Response.CollectedUtc);
-        }
-
-        return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-            "Maintenance äº‹åŠ¡çŠ¶æ€ä¸åœ¨å¯è£å®šçš„ç»ˆæ€é›†åˆä¸­ã€‚", evidence,
-            versions, transaction.State, reply.Response.CollectedUtc);
-    }
-
-    private static MaintenanceAdapterResult ClassifyUpdateResult(MaintenancePlan plan,
-        StudentApplicationUpdatePushResult delivery, LegacyStatusReadback readback, Guid commandId)
-    {
-        if (readback.Status is null || readback.ResponseSha256 is null)
-            return new MaintenanceAdapterResult(plan.OperationId,
-                MaintenanceAdapterDisposition.PendingVerification,
-                delivery.Detail + "ï¼›" + readback.Detail, null);
-        var evidence = new MaintenanceEvidence("signed-update-transaction-status",
-            plan.Device.PinnedIdentityFingerprint, readback.ResponseSha256, commandId,
-            readback.Status.CollectedUtc);
-        return ClassifyStatus(plan, commandId, readback.Status, evidence, delivery.Detail, delivery,
-            readback.AgentAssemblyVersion);
-    }
-
-    private static MaintenanceAdapterResult ClassifyStatus(MaintenancePlan plan, Guid commandId,
-        StudentAgentStatusResponse status, MaintenanceEvidence evidence, string detail,
-        StudentApplicationUpdatePushResult? delivery = null, string? agentAssemblyVersion = null)
-    {
-        var transaction = status.UpdateTransaction;
-        if (transaction?.CommandId != commandId)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "ç­¾åçŠ¶æ€æœªç»‘å®šæœ¬ operation çš„ Agent commandIdã€‚", null);
-        var state = transaction.State;
-        MaintenanceAdapterResult Observed(MaintenanceAdapterDisposition disposition, string summary) =>
-            new(plan.OperationId, disposition, summary, evidence,
-                new MaintenanceComponentVersions(status.StudentSetupVersion, status.AgentVersion,
-                    agentAssemblyVersion, null),
-                state, status.CollectedUtc);
-        if (state == "committed")
-        {
-            var setupMatches = plan.TargetSetupVersion is { } targetSetup &&
-                               string.Equals(status.StudentSetupVersion, targetSetup, StringComparison.Ordinal) &&
-                               string.Equals(transaction.TargetSetupVersion, targetSetup, StringComparison.Ordinal);
-            var agentMatches = status.AgentVersion is { } actualAgent &&
-                               (plan.TargetAgentVersion is { } targetAgent
-                                   ? string.Equals(actualAgent, targetAgent, StringComparison.Ordinal) &&
-                                     string.Equals(transaction.TargetAgentVersion, targetAgent, StringComparison.Ordinal)
-                                   : plan.CurrentVersions.AgentRuntimeVersion is { } sourceAgent &&
-                                     string.Equals(transaction.TargetAgentVersion, actualAgent, StringComparison.Ordinal) &&
-                                     ApplicationReleaseClient.CompareVersions(actualAgent, sourceAgent) >= 0);
-            var healthMatches = status.Health is
-                { RunningAsSystem: true, ManagedTaskMatchesAgent: true, ManagedTaskAclRestricted: true };
-            if (setupMatches && agentMatches && healthMatches)
-                return Observed(MaintenanceAdapterDisposition.UpdateCommittedAndHealthy, detail);
-            return Observed(MaintenanceAdapterDisposition.RecoveryRequired,
-                "äº‹åŠ¡æŠ¥å‘Š committedï¼Œä½†ç­¾åçŠ¶æ€çš„ç›®æ ‡ç‰ˆæœ¬æˆ–å¥åº·è¯»å›ä¸åŒ¹é…ã€‚" );
-        }
-        if (state == "rolledBack")
-        {
-            var setupRestored = string.Equals(status.StudentSetupVersion, plan.CurrentVersions.StudentSetupVersion,
-                                   StringComparison.Ordinal) &&
-                               string.Equals(transaction.PreviousSetupVersion,
-                                   plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal);
-            var agentRestored = string.Equals(status.AgentVersion, plan.CurrentVersions.AgentRuntimeVersion,
-                                    StringComparison.Ordinal) &&
-                                string.Equals(transaction.PreviousAgentVersion,
-                                    plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal);
-            var healthRestored = status.Health is
-                { RunningAsSystem: true, ManagedTaskMatchesAgent: true, ManagedTaskAclRestricted: true };
-            return Observed(setupRestored && agentRestored && healthRestored
-                    ? MaintenanceAdapterDisposition.UpdateRolledBack
-                    : MaintenanceAdapterDisposition.RecoveryRequired,
-                setupRestored && agentRestored && healthRestored
-                    ? detail
-                    : "å›æ»šçŠ¶æ€å·²ç­¾åï¼Œä½†æ—§ç‰ˆæœ¬æˆ– SYSTEM å¥åº·çŠ¶æ€æ²¡æœ‰å®Œæ•´æ¢å¤ã€‚" );
-        }
-        if (state == "recoveryRequired" || state == "needsReview")
-            return Observed(MaintenanceAdapterDisposition.RecoveryRequired, detail);
-        return Observed(MaintenanceAdapterDisposition.PendingVerification, detail);
-    }
-
-    private static async Task<MaintenanceAdapterResult> VerifyConfigurationReadbackAsync(
-        MaintenancePlan plan, Guid commandId, string summary, RSA signingKey,
-        CancellationToken cancellationToken)
-    {
-        var operationId = plan.OperationId;
-        var pending = "é…ç½®å‘½ä»¤å·²æŒä¹…åŒ–ï¼›" + summary + "ï¼›æœªé‡å¤å‘é€é…ç½®ã€‚";
-        var capability = await StudentApplicationUpdateTransport.ReadVerifiedDownloadCapabilityAsync(
-            plan.Device.RouteAddress, plan.Device.CampusId, signingKey, cancellationToken).ConfigureAwait(false);
-        if (capability is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "å­¦ç”Ÿç«¯æ²¡æœ‰æä¾›å…¼å®¹çš„ç­¾åèƒ½åŠ›è¯»å›ã€‚", null,
-                Stage: "å­¦ç”Ÿç«¯ç­¾åèƒ½åŠ›è¯»å›");
-        if (string.IsNullOrWhiteSpace(capability.Capability.ConfigurationFingerprint) ||
-            capability.Capability.TeacherChannelConfigurationReady != true)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "ç­¾åèƒ½åŠ›å›æ‰§ç¼ºå°‘å®Œæ•´æ´»åŠ¨é…ç½®æŒ‡çº¹ã€‚", null,
-                Stage: "æ•™å¸ˆè¿æ¥é…ç½®æŒ‡çº¹è¯»å›");
-        if (!string.Equals(capability.Capability.TeacherChannelConfigurationFingerprint,
-                plan.ConfigurationSha256, StringComparison.OrdinalIgnoreCase))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "æ•™å¸ˆè¿æ¥é…ç½®æŒ‡çº¹å°šæœªè¾¾åˆ°è®¡åˆ’ç›®æ ‡ã€‚", null,
-                Stage: "æ•™å¸ˆè¿æ¥é…ç½®æŒ‡çº¹æ ¸éªŒ");
-
-        var statusResults = await WebsitePolicyStatusTransport.ReadAsync([plan.Device.RouteAddress],
-            plan.Device.CampusId, signingKey, cancellationToken, includeHealthSnapshot: true,
-            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
-        var statusResult = statusResults.Single();
-        if (!statusResult.Succeeded || statusResult.Status is null || statusResult.VerifiedResponseSha256 is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "ç­¾åçŠ¶æ€/å¥åº·è¯»å›æš‚ä¸å¯ç”¨ã€‚ " + Sanitize(statusResult.Detail), null,
-                Stage: "å­¦ç”Ÿç«¯ç­¾åçŠ¶æ€ä¸å¥åº·è¯»å›");
-
-        var status = statusResult.Status;
-        var health = status.Health;
-        if (health is null)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "å­¦ç”Ÿç«¯æ²¡æœ‰è¿”å›å¸¦æ—¶é—´æˆ³çš„å¥åº·å¿«ç…§ã€‚", null,
-                Stage: "å­¦ç”Ÿç«¯å¥åº·å¿«ç…§æ ¸éªŒ");
-        if (health.UpdateTransactionState is "inProgress" or "needsReview")
-            return new MaintenanceAdapterResult(operationId,
-                health.UpdateTransactionState == "needsReview"
-                    ? MaintenanceAdapterDisposition.RecoveryRequired
-                    : MaintenanceAdapterDisposition.PendingVerification,
-                pending + "å­¦ç”Ÿç«¯ä»æœ‰æœªå®Œæˆæˆ–éœ€æ¢å¤æ ¸å¯¹çš„åŸå­æ›´æ–°äº‹åŠ¡ã€‚", null,
-                Stage: "åŸå­æ›´æ–°äº‹åŠ¡æ ¸éªŒ");
-        if (health.RunningAsSystem == false || health.ManagedTaskMatchesAgent == false ||
-            health.ManagedTaskAclRestricted == false)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "è¿æ¥é…ç½®å·²è¯»å›ï¼Œä½† SYSTEM Agent å¥åº·ã€ä»»åŠ¡æŒ‡å‘æˆ– ACL æ ¸éªŒå¤±è´¥ï¼›éœ€ç°åœºæ¢å¤ã€‚", null,
-                Stage: "SYSTEM èº«ä»½ä¸ Agent ä»»åŠ¡ ACL æ ¡éªŒ");
-        if (health.RunningAsSystem != true || health.ManagedTaskMatchesAgent != true ||
-            health.ManagedTaskAclRestricted != true)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "SYSTEM Agent å¥åº·äº‹å®ä¸å®Œæ•´ã€‚", null,
-                Stage: "SYSTEM Agent å¥åº·äº‹å®æ ¸éªŒ");
-
-        var reported = capability.Capability;
-        if (!string.Equals(status.ConfigFingerprint, reported.ConfigurationFingerprint,
-                StringComparison.OrdinalIgnoreCase) ||
-            !string.Equals(status.AgentVersion, reported.AgentRuntimeVersion, StringComparison.Ordinal) ||
-            !string.Equals(status.StudentSetupVersion, reported.StudentSetupVersion, StringComparison.Ordinal))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "ç­¾åçŠ¶æ€ä¸ç­¾åèƒ½åŠ›çš„ç‰ˆæœ¬/é…ç½®å¿«ç…§ä¸ä¸€è‡´ã€‚", null,
-                Stage: "ç­¾åçŠ¶æ€ä¸èƒ½åŠ›å¿«ç…§ä¸€è‡´æ€§æ ¡éªŒ");
-
-        var expectedSetup = MaximumVersion(plan.CurrentVersions.StudentSetupVersion, plan.TargetSetupVersion);
-        var expectedAgent = MaximumVersion(plan.CurrentVersions.AgentRuntimeVersion, plan.TargetAgentVersion);
-        if (status.StudentSetupVersion is null || status.AgentVersion is null ||
-            expectedSetup is null || expectedAgent is null ||
-            ApplicationReleaseClient.CompareVersions(status.StudentSetupVersion, expectedSetup) < 0 ||
-            ApplicationReleaseClient.CompareVersions(status.AgentVersion, expectedAgent) < 0)
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.RecoveryRequired,
-                "è¿æ¥é…ç½®å·²è¯»å›ï¼Œä½†å®é™… Setup/Agent ç‰ˆæœ¬ä½äºæœ¬ç»´æŠ¤è®¡åˆ’è¦æ±‚ã€‚", null,
-                Stage: "Setup/Agent ç‰ˆæœ¬æ ¡éªŒ");
-
-        if (statusResult.VerifiedResponseSha256 is not { Length: 64 } responseSha256 ||
-            responseSha256.Any(character => !Uri.IsHexDigit(character)))
-            return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.PendingVerification,
-                pending + "ç­¾åçŠ¶æ€å“åº”æ‘˜è¦æ ¼å¼æ— æ•ˆã€‚", null,
-                Stage: "å­¦ç”Ÿç«¯ç­¾åçŠ¶æ€å“åº”æ‘˜è¦æ ¡éªŒ");
-        var evidence = new MaintenanceEvidence("signed-configuration-final-status",
-            plan.Device.PinnedIdentityFingerprint, responseSha256, commandId, status.CollectedUtc);
-        return new MaintenanceAdapterResult(operationId, MaintenanceAdapterDisposition.ConfigurationSynchronized,
-            summary + "ï¼›æ•™å¸ˆè¿æ¥æŒ‡çº¹ã€è¿è¡Œç‰ˆæœ¬ã€é…ç½®æ‘˜è¦ä¸ SYSTEM å¥åº·çŠ¶æ€å‡å·²ç­¾åè¯»å›ã€‚", evidence,
-            new MaintenanceComponentVersions(status.StudentSetupVersion, status.AgentVersion,
-                reported.AgentProductVersion, null), health.UpdateTransactionState, status.CollectedUtc);
-    }
-
-    private static string? MaximumVersion(string? first, string? second)
-    {
-        if (first is null) return second;
-        if (second is null) return first;
-        return ApplicationReleaseClient.CompareVersions(first, second) >= 0 ? first : second;
-    }
-
-    private static string? ValidateBeforeUpdateSend(MaintenancePlan plan,
-        MaintenanceAdapterInspection inspection)
-    {
-        var expectedVersions = plan.TargetMaintenanceServiceVersion is { } targetMaintenanceVersion
-            ? new MaintenanceComponentVersions(plan.CurrentVersions.StudentSetupVersion,
-                plan.CurrentVersions.AgentRuntimeVersion, plan.CurrentVersions.AgentAssemblyVersion,
-                targetMaintenanceVersion)
-            : plan.CurrentVersions;
-        if (!inspection.IdentityVerified || inspection.Capabilities is null ||
-            inspection.CurrentVersions != expectedVersions)
-            return "ç”Ÿæˆæ›´æ–°è®¡åˆ’åï¼Œå­¦ç”Ÿèº«ä»½æˆ–ç»„ä»¶ç‰ˆæœ¬å‘ç”Ÿå˜åŒ–ï¼›æœªå‘é€å®‰è£…å‘½ä»¤ï¼Œè¯·é‡æ–°æ£€æŸ¥ã€‚";
-        if (!MatchesTrustSnapshot(plan, inspection.Capabilities))
-            return "ç”Ÿæˆæ›´æ–°è®¡åˆ’åï¼Œå­¦ç”Ÿé…ç½®/èƒ½åŠ›ä¿¡ä»»å¿«ç…§å‘ç”Ÿå˜åŒ–ï¼›æœªå‘é€å®‰è£…å‘½ä»¤ï¼Œè¯·é‡æ–°æ£€æŸ¥ã€‚";
-        if (plan.Capabilities.ProtocolVersion != inspection.Capabilities.ProtocolVersion ||
-            plan.Capabilities.StudentUpdateProtocolVersion != inspection.Capabilities.StudentUpdateProtocolVersion ||
-            !string.Equals(plan.Capabilities.AgentRuntimeVersion, inspection.Capabilities.AgentRuntimeVersion,
-                StringComparison.Ordinal))
-            return "ç”Ÿæˆæ›´æ–°è®¡åˆ’åï¼Œå­¦ç”Ÿ Agent èƒ½åŠ›å‘ç”Ÿå˜åŒ–ï¼›æœªå‘é€å®‰è£…å‘½ä»¤ï¼Œè¯·é‡æ–°æ£€æŸ¥ã€‚";
-        if (!string.Equals(plan.Capabilities.TeacherChannelFingerprint,
-                inspection.Capabilities.TeacherChannelFingerprint, StringComparison.OrdinalIgnoreCase))
-            return "ç”Ÿæˆæ›´æ–°è®¡åˆ’åï¼Œå­¦ç”Ÿæ•™å¸ˆè¿æ¥é…ç½®å‘ç”Ÿå˜åŒ–ï¼›æœªå‘é€å®‰è£…å‘½ä»¤ï¼Œè¯·é‡æ–°æ£€æŸ¥ã€‚";
-        if (inspection.UpdateTransactionState is not ("notFound" or "committed" or "rolledBack" or "superseded"))
-            return "å­¦ç”Ÿç«¯äº‹åŠ¡çŠ¶æ€æœªçŸ¥æˆ–å°šæœªç»“æŸï¼›æœªå‘é€ç¬¬äºŒä¸ªæ›´æ–°å‘½ä»¤ã€‚";
-        return null;
-    }
-
-    private static string? ValidateBeforeConfigurationSync(MaintenancePlan plan,
-        MaintenanceAdapterInspection inspection)
-    {
-        if (!inspection.IdentityVerified || inspection.Capabilities is null ||
-            inspection.CurrentVersions.StudentSetupVersion is not { } actualSetup ||
-            inspection.CurrentVersions.AgentRuntimeVersion is not { } actualAgent)
-            return "é…ç½®åŒæ­¥å‰æœªèƒ½é‡æ–°æ ¸éªŒå­¦ç”Ÿèº«ä»½æˆ–å®é™…ç»„ä»¶ç‰ˆæœ¬ï¼›æœªå‘é€é…ç½®ã€‚";
-        if (!MatchesTrustSnapshot(plan, inspection.Capabilities))
-            return "é…ç½®åŒæ­¥å‰å‘ç°æ ¡åŒº/è®¾å¤‡ä¿¡ä»»é…ç½®å‘ç”Ÿå˜åŒ–ï¼›æœªå‘é€é…ç½®ï¼Œè¯·é‡æ–°æ£€æŸ¥ã€‚";
-        if (inspection.UpdateTransactionState is not ("notFound" or "committed" or "rolledBack" or "superseded"))
-            return "é…ç½®åŒæ­¥å‰å‘ç°å­¦ç”Ÿç«¯äº‹åŠ¡çŠ¶æ€æœªçŸ¥æˆ–å°šæœªç»“æŸï¼›æœªå‘é€é…ç½®ã€‚";
-
-        var currentSetup = plan.CurrentVersions.StudentSetupVersion;
-        var currentAgent = plan.CurrentVersions.AgentRuntimeVersion;
-        if (currentSetup is null || currentAgent is null)
-            return "é…ç½®åŒæ­¥è®¡åˆ’æ²¡æœ‰å¯é çš„èµ·å§‹ Setup/Agent ç‰ˆæœ¬ï¼›æœªå‘é€é…ç½®ã€‚";
-        var requiredSetup = plan.TargetSetupVersion is { } setupTarget &&
-                            ApplicationReleaseClient.CompareVersions(setupTarget, currentSetup) > 0
-            ? setupTarget
-            : currentSetup;
-        var requiredAgent = plan.TargetAgentVersion is { } agentTarget &&
-                            ApplicationReleaseClient.CompareVersions(agentTarget, currentAgent) > 0
-            ? agentTarget
-            : currentAgent;
-        if (ApplicationReleaseClient.CompareVersions(actualSetup, requiredSetup) < 0 ||
-            ApplicationReleaseClient.CompareVersions(actualAgent, requiredAgent) < 0)
-            return "é…ç½®åŒæ­¥å‰çš„å·²ç­¾åç‰ˆæœ¬æœªè¾¾åˆ°æœ¬ç»´æŠ¤è®¡åˆ’è¦æ±‚ï¼›æ‹’ç»è·¨è¿‡æœªå®Œæˆçš„è½¯ä»¶æ›´æ–°é˜¶æ®µã€‚";
-
-        var before = plan.Capabilities.TeacherChannelFingerprint;
-        var now = inspection.Capabilities.TeacherChannelFingerprint;
-        if (now is not null && before is not null &&
-            !string.Equals(now, before, StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(now, plan.ConfigurationSha256, StringComparison.OrdinalIgnoreCase))
-            return "é…ç½®åŒæ­¥è®¡åˆ’ç”Ÿæˆåï¼Œå­¦ç”Ÿç«¯å·²å‡ºç°ç¬¬ä¸‰ç§æ•™å¸ˆè¿æ¥é…ç½®ï¼›åœæ­¢è¦†ç›–å¹¶è¦æ±‚é‡æ–°æ£€æŸ¥ã€‚";
-        return null;
-    }
-
-    private static bool MatchesTrustSnapshot(MaintenancePlan plan, MaintenanceCapabilities current) =>
-        string.Equals(plan.Device.PinnedIdentityFingerprint, current.AgentIdentityFingerprint,
-            StringComparison.Ordinal) &&
-        string.Equals(plan.Capabilities.ConfigurationFingerprint, current.ConfigurationFingerprint,
-            StringComparison.OrdinalIgnoreCase);
-
-    private static MaintenanceAdapterInspection Unverified(string detail) => new(false,
-        new MaintenanceComponentVersions(null, null, null, null), null, null, null, detail);
-
-    private static bool IsConfigurationReconciliation(MaintenanceRun run)
-    {
-        if (run.State == MaintenanceRunState.ConfigurationSyncing) return true;
-        if (run.State != MaintenanceRunState.PendingVerification || run.Plan?.SynchronizeConfiguration != true)
-            return false;
-        var configurationIndex = run.Transitions.ToList().FindLastIndex(item =>
-            item.To == MaintenanceRunState.ConfigurationSyncing);
-        var agentHealthIndex = run.Transitions.ToList().FindLastIndex(item =>
-            item.To == MaintenanceRunState.AgentHealthVerified);
-        return configurationIndex >= 0 && configurationIndex > agentHealthIndex;
-    }
-
-    private sealed record TeacherChannelIdentity(IReadOnlyList<string> Endpoints, string RootCertificateBase64,
-        string BootstrapFingerprint);
-    private sealed record LegacyStatusReadback(StudentAgentStatusResponse? Status, string? ResponseSha256,
-        string Detail, string? AgentAssemblyVersion = null);
-}
+YªçŠx-®éÜj×¢ëiºÚ+Š§j[h‘éÜ¢éíß®ıá:-jZ.¶›­–)Ş³WW6–ær7—7FVÒä6öÆÆV7F–öç2ä6öæ7W'&VçC°§W6–ær7—7FVÒå6V7W&—G’ä7'—Föw&‡“°§W6–ær7—7FVÒåFW‡C°§W6–ær7—7FVÒåFW‡Bä§6öã°§W6–ærfW–öä6×W2ä6÷&S°§W6–ærfW–öä6×W2ä6÷&RäÖ–çFVææ6S° ¦æÖW76RfW–öä6×W2ääÖ–çFVææ6S° §V&Æ–26VÆVB&V6÷&BÆVv7•7GVFVçE6WGW'F–f7B‡7G&–ær–ç7FÆÆW%F‚ÂW&’”&6TFG&W72À¢7G&–ærFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÒÂ7G&–æsòfW&–f–VDvVçEF&vWEfW'6–öâÒçVÆÂ“° §V&Æ–26VÆVB&V6÷&BÖ–çFVææ6U6W'f–6U&VÆV6T'F–f7B‡7G&–ær–ç7FÆÆW%F‚ÂÆ–6F–öå&VÆV6TVçfVÆ÷R&VÆV6RÀ¢W&’”&6TFG&W72Â7G&–ærFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÒ“° §V&Æ–26VÆVB&V6÷&BFV6†W$6öææV7F—f—G”6öæf–wW&F–öâ„•&VDöæÇ”Æ—7CÇ7G&–æsâVæGö–çG2À¢7G&–ær&ö÷D6W'F–f–6FT&6ScBÂ7G&–ærf–ævW'&–çB“° §V&Æ–2–çFW&f6R”ÆVv7•7GVFVçE6WGW'F–f7E&÷f–FW §°¢F6³ÄÆVv7•7GVFVçE6WGW'F–f7CâvWEfW&–f–VD'F–f7D7–æ2„Ö–çFVææ6UÆâÆâÀ¢6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ“°§Ğ §V&Æ–2–çFW&f6R”Ö–çFVææ6U6W'f–6U&VÆV6T'F–f7E&÷f–FW §°¢F6³ÄÖ–çFVææ6U6W'f–6U&VÆV6T'F–f7CóâvWDæWvW$Ö–çFVææ6U6W'f–6U&VÆV6T7–æ2‡7G&–ær7W'&VçEfW'6–öâÀ¢Ö–çFVææ6U&VÆV6T6†ææVÂ6†ææVÂÂ6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ“°§Ğ ¢òòòÇ7VÖÖ'“à¢òòòFG2ÆVv7’7GVFVçG2FòF†RW†—7F–ærWF†VçF–6FVB3“sB7FGW2÷WFFRö6öæf–wW&F–öâF‡2æB3“sR'F–f7@¢òòò6W'fW"â6¶vR6VÆV7F–öâ7F—2–æ¦V7F&ÆR6òF†Rf–WtÖöFVÂÖ–w&F–öâ6âÖ÷fR—G27W'&VçB7F&ÆRöÆö6Â×FW7@¢òòò&W&F–öâ6öFRv—F†÷WB6†æv–ærF†RÆVv7’v—&R&÷Fö6öÂà¢òòòÂ÷7VÖÖ'“à§V&Æ–26VÆVB6Æ72ÆVv7”vVçDÖ–çFVææ6TFFW"¢•FV6†W$Ö–çFVææ6TFFW §°¢&—fFR&VFöæÇ’”ÆVv7•7GVFVçE6WGW'F–f7E&÷f–FW"ö'F–f7E&÷f–FW#°¢&—fFR&VFöæÇ’”Ö–çFVææ6U6W'f–6U&VÆV6T'F–f7E&÷f–FW#òöÖ–çFVææ6U6W'f–6T'F–f7E&÷f–FW#°¢&—fFR&VFöæÇ’Ö–çFVææ6U6W'f–6UFV6†W$6Æ–VçBöÖ–çFVææ6U6W'f–6T6Æ–VçBÒæWr‚“° ¢V&Æ–2ÆVv7”vVçDÖ–çFVææ6TFFW"„”ÆVv7•7GVFVçE6WGW'F–f7E&÷f–FW"'F–f7E&÷f–FW"¢°¢ö'F–f7E&÷f–FW"Ò'F–f7E&÷f–FW"óòF‡&÷ræWr&wVÖVçDçVÆÄW†6WF–öâ†æÖVöb†'F–f7E&÷f–FW"’“°¢öÖ–çFVææ6U6W'f–6T'F–f7E&÷f–FW"Ò'F–f7E&÷f–FW"2”Ö–çFVææ6U6W'f–6U&VÆV6T'F–f7E&÷f–FW#°¢Ğ ¢V&Æ–27–æ2F6³ÄÖ–çFVææ6TFFW$–ç7V7F–öãâ–ç7V7D7–æ2„Ö–çFVææ6TFWf–6T–FVçF—G’FWf–6RÀ¢6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ¢°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ†FWf–6R“°¢–b…öÖ–çFVææ6U6W'f–6T6Æ–VçBä—4f–Æ&ÆR†FWf–6R’¢&WGW&âv—B–ç7V7Ef–Ö–çFVææ6U6W'f–6T7–æ2†FWf–6RÂ6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢–b…öÖ–çFVææ6U6W'f–6T6Æ–VçBä†5–ææVD–FVçF—G’†FWf–6R’¢&WGW&âVçfW&–f–VB‚.ŠëîZH~[{.Y»®Zé¢Ö–çFVææ6R‹ª¾K»ŞûÈÎKØnxºÎz¸¾˜	®˜>[Ù>X˜ŞKˆŞXúşyJûÉ¾h¹.{¹Ş™Ù›¹Y¹î˜X‹ÆVv7ûÈÎ˜şXXŞ[›nŠÎi»Nikh‰n‹ª¾K»Ş™˜Ş{ª~8""“°¢–b…öÖ–çFVææ6U6W'f–6T6Æ–VçBä†46öææV7FVD6†ææVÂ†FWf–6R’¢&WGW&âVçfW&–f–VB‚.j8kX¾X‹iÊ®Y»®Zé®h‰nKˆŞXË˜XŞy¨BÖ–çFVææ6R˜	®˜>‹ª¾K»ŞûÉ¾h¹.{¹ŞY¹î˜X‹ÆVv7ûÈÎ™ÈŠh˜xŞikjZûŠëîZH~‹ª¾K»Ş8""“°¢W6–ærf"6–væ–æt¶W’ÒvV'6—FUöÆ–7•6–væ–æt¶W•7F÷&Rä÷Vâ†FWf–6Rä6×W4–B“°¢f"–ææVEV&Æ–4¶W’ÒæWr7GVFVçDvVçD–FVçF—G•G'W7E7F÷&R‚’äf–æEG'W7FVEV&Æ–4¶W’†FWf–6Rä6×W4–BÀ¢FWf–6Rå&÷WFTFG&W72“°¢–b‡–ææVEV&Æ–4¶W’—2çVÆÂ¢&WGW&âVçfW&–f–VB‚.ZÚnyIòvVçB‹ª¾K»Ş[	®iÊ®yKiY[ˆjZûY»®Zé®ûÉ¾iÊ®X‰¾[»®{»NhªNŠêX‰.8""“°¢f"–ææVDf–ævW'&–çBÒ7GVFVçDvVçE&W7öç6T7'—Föw&‡’ävWDf–ævW'&–çB‡–ææVEV&Æ–4¶W’“°¢–b‚7G&–æräWVÇ2‡–ææVDf–ævW'&–çBÂFWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÂ7G&–æt6ö×&—6öâä÷&F–æÂ’¢&WGW&âVçfW&–f–VB‚.[Ù>X˜ŞiY[ˆ‹ª¾K»ŞY»®Zé®XÎKˆî{»NhªNŠëîZH~‹ª¾K»ŞKˆŞKˆˆ{NûÉ¾™ÈŠh˜xŞikjZû8""“° ¢f"&W7VÇG2Òv—BvV'6—FUöÆ–7•7FGW5G&ç7÷'Bå&VD7–æ2…¶FWf–6Rå&÷WFTFG&W75ÒÂFWf–6Rä6×W4–BÀ¢6–væ–æt¶W’å&—fFT¶W’Â6æ6VÆÆF–öåFö¶VâÂ–æ6ÇVFT†VÇF…6æ6†÷C¢G'VRÀ¢ÆÆ÷tÆVv7”F—&V7DfÆÆ&6³¢G'VRÂÆÆ÷tF—&V7DfÆÆ&6µv†Vä6†ææVÄöffÆ–æS¢G'VRÀ¢–æ6ÇVFUFV6†W$6†ææVÄF–væ÷7F–73¢G'VR’ä6öæf–wW&Tv—B†fÇ6R“°¢f"&W7VÇBÒ&W7VÇG2å6–ævÆR‚“°¢–b‚&W7VÇBå7V66VVFVBÇÂ&W7VÇBå7FGW2—2çVÆÂÇÂ&W7VÇBåfW&–f–VE&W7öç6U6†#Sb—2çVÆÂ¢&WGW&âVçfW&–f–VB‡&W7VÇBäFWF–Â“° ¢f"7FGW2Ò&W7VÇBå7FGW3°¢f"Wf–FVæ6RÒæWrÖ–çFVææ6TWf–FVæ6R‚'6–væVB×7GVFVçB×7FGW2"Â–ææVDf–ævW'&–çBÀ¢&W7VÇBåfW&–f–VE&W7öç6U6†#SbÂçVÆÂÂ7FGW2ä6öÆÆV7FVEWF2“°¢f"æÖW2ÒæWrÆ—7CÇ7G&–æsâ²B'6–væVB×7FGW2çg·7FGW2å66†VÖfW'6–öçÒ"Ó°¢7G&–æsòFV6†W$6†ææVÄf–ævW'&–çBÒçVÆÃ°¢7G&–æsòFV6†W$6†ææVÅ&W7öç6U6†#SbÒçVÆÃ°¢7G&–æsò6&–Æ—G•6WGWfW'6–öâÒçVÆÃ°¢7G&–æsò6&–Æ—G”vVçD76VÖ&Ç•fW'6–öâÒçVÆÃ°¢–çCò6&–Æ—G•WFFU&÷Fö6öÅfW'6–öâÒçVÆÃ°¢7G&–æsò6&–Æ—G•&W7öç6U6†#SbÒçVÆÃ°¢G'¢°¢f"6†ææVÅ&VF&6²Òv—B7GVFVçDÆ–6F–öåWFFUG&ç7÷'Bå&VEfW&–f–VDF÷væÆöD6&–Æ—G”7–æ2€¢FWf–6Rå&÷WFTFG&W72ÂFWf–6Rä6×W4–BÂ6–væ–æt¶W’å&—fFT¶W’Â6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢–b†6†ææVÅ&VF&6²—2æ÷BçVÆÂ¢°¢f"&W÷'FVBÒ6†ææVÅ&VF&6²ä6&–Æ—G“°¢–b‡&W÷'FVBävVçE'VçF–ÖUfW'6–öâ—2²Ò&W÷'FVDvVçBb`¢7G&–æräWVÇ2‡&W÷'FVDvVçBÂ7FGW2ävVçEfW'6–öâÂ7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢&W÷'FVBå7GVFVçE6WGWfW'6–öâ—2²Ò&W÷'FVE6WGWbb7FGW2å7GVFVçE6WGWfW'6–öâ—2²Ò7FGW56WGWb`¢7G&–æräWVÇ2‡&W÷'FVE6WGWÂ7FGW56WGWÂ7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢&W÷'FVBä6öæf–wW&F–öäf–ævW'&–çB—2²Ò&W÷'FVD6öæf–rb`¢7G&–æräWVÇ2‡&W÷'FVD6öæf–rÂ7FGW2ä6öæf–tf–ævW'&–çBÂ7G&–æt6ö×&—6öâä÷&F–æÄ–væ÷&T66R’ÇÀ¢&W÷'FVBå7GVFVçEWFFU&÷Fö6öÅfW'6–öâ—2²Ò&W÷'FVE&÷Fö6öÂb`¢7FGW2å7GVFVçEWFFU&÷Fö6öÅfW'6–öâ—2²Ò7FGW5&÷Fö6öÂbb&W÷'FVE&÷Fö6öÂÒ7FGW5&÷Fö6öÂ¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.zÛîYŞx«nhY(Îˆ;ŞX©¾hê^Xú>Šû¾Y¹îy¨BvVçN86WGW8˜XŞ{Úîh‰ni»NikXØşŠêîx˜iÊÎKˆŞKˆˆ{N8""“°¢6&–Æ—G•6WGWfW'6–öâÒ&W÷'FVBå7GVFVçE6WGWfW'6–öã°¢6&–Æ—G”vVçD76VÖ&Ç•fW'6–öâÒ&W÷'FVBävVçE&öGV7EfW'6–öã°¢6&–Æ—G•WFFU&÷Fö6öÅfW'6–öâÒ&W÷'FVBå7GVFVçEWFFU&÷Fö6öÅfW'6–öã°¢6&–Æ—G•&W7öç6U6†#SbÒ6†ææVÅ&VF&6²å6–væVE&W7öç6U6†#Sc°¢FV6†W$6†ææVÄf–ævW'&–çBÒ&W÷'FVBåFV6†W$6†ææVÄ6öæf–wW&F–öäf–ævW'&–çC°¢FV6†W$6†ææVÅ&W7öç6U6†#SbÒFV6†W$6†ææVÄf–ævW'&–çB—2çVÆÀ¢òçVÆÀ¢¢6†ææVÅ&VF&6²å6–væVE&W7öç6U6†#Sc°¢Ğ¢–b‡FV6†W$6†ææVÄf–ævW'&–çB—2æ÷BçVÆÂ’æÖW2äFB‚'FV6†W"Ö6†ææVÂæ&ö÷G7G&Öf–ævW'&–çB"“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2‡GG&WVW7DW†6WF–öâ÷"F6´6æ6VÆVDW†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"”ôW†6WF–öâ¢°¢òò¶VW6–væVBfW'6–öâ÷7FGW2f7G3²6†ææVÂ6&–Æ—G’&VÖ–ç2Væ¶æ÷vâæB×W7Bæ÷B&R77VÖVB7W'&VçBà¢Ğ¢–b‡7FGW2å7GVFVçEWFFU&÷Fö6öÅfW'6–öâ—2²ÒWFFU&÷Fö6öÂ¢æÖW2äFB‚B'7GVFVçB×WFFRçg·WFFU&÷Fö6öÇÒ"“°¢VÇ6R–b†6&–Æ—G•WFFU&÷Fö6öÅfW'6–öâ—2²Ò6&–Æ—G•WFFU&÷Fö6öÂ¢æÖW2äFB‚B'7GVFVçB×WFFRçg¶6&–Æ—G•WFFU&÷Fö6öÇÒ"“°¢–b†6&–Æ—G”vVçD76VÖ&Ç•fW'6–öâ—2æ÷BçVÆÂ’æÖW2äFB‚'7GVFVçBÖvVçBæ76VÖ&Ç’×fW'6–öâ"“°¢–b‡7FGW2åWFFUG&ç67F–öâ—2æ÷BçVÆÂ’æÖW2äFB‚'7GVFVçB×WFFRçG&ç67F–öâ×7FGW2"“°¢–b‡7FGW2ä†VÇF‚—2æ÷BçVÆÂ’æÖW2äFB‚'7GVFVçBÖvVçBæ†VÇF‚×6æ6†÷B"“°¢f"6&–Æ—F–W2ÒæWrÖ–çFVææ6T6&–Æ—F–W2‡–ææVDf–ævW'&–çBÂ7FGW2å66†VÖfW'6–öâÀ¢7FGW2å7GVFVçEWFFU&÷Fö6öÅfW'6–öâóò6&–Æ—G•WFFU&÷Fö6öÅfW'6–öâÂ7FGW2ävVçEfW'6–öâÀ¢7FGW2ä6öæf–tf–ævW'&–çBÂçVÆÂÂæÖW2À¢&W7VÇBåfW&–f–VE&W7öç6U6†#SbÂ%%4Õ52Õ4„#Sb"Â7FGW2ä6öÆÆV7FVEWF2ÂFV6†W$6†ææVÄf–ævW'&–çBÀ¢FV6†W$6†ææVÅ&W7öç6U6†#SbÂ6&–Æ—G•&W7öç6U6†#Sb“°¢f"fW'6–öç2ÒæWrÖ–çFVææ6T6ö×öæVçEfW'6–öç2‡7FGW2å7GVFVçE6WGWfW'6–öâóò6&–Æ—G•6WGWfW'6–öâÀ¢7FGW2ävVçEfW'6–öâÂ6&–Æ—G”vVçD76VÖ&Ç•fW'6–öâÂÖ–çFVææ6UfW'6–öã¢çVÆÂ“°¢&WGW&âæWrÖ–çFVææ6TFFW$–ç7V7F–öâ‡G'VRÂfW'6–öç2Â6&–Æ—F–W2ÂWf–FVæ6RÂWf–FVæ6RÀ¢.[{.˜	®‹ø~zÛîYŞx«nh8Y»®Zé¢vVçB‹ª¾K»Ş8x˜iÊÎKˆî˜XŞ{ÚîhÈ~{«jš¨ÎûÉ¾X[ÎZëizrvVçBy¨Nx«nhşi»Nik…EE˜	®˜>8""À¢7FGW2ä†VÇFƒòåWFFUG&ç67F–öå7FFRóò7FGW2åWFFUG&ç67F–öãòå7FFRÀ¢7GVFVçDvVçD6†ææVÄ‡V"ä—46öææV7FVB†FWf–6Rä6×W4–BÂFWf–6Rå&÷WFTFG&W72’ÂFFUF–ÖTöfg6WBåWF4æ÷rÀ¢7FGW2åFV6†W$6†ææVÄF–væ÷7F–72“° ¢Ö–çFVææ6TFFW$–ç7V7F–öâVçfW&–f–VB‡7G&–ærFWF–Â’ÓâæWr†fÇ6RÀ¢æWrÖ–çFVææ6T6ö×öæVçEfW'6–öç2†çVÆÂÂçVÆÂÂçVÆÂÂçVÆÂ’ÂçVÆÂÂçVÆÂÂçVÆÂÂFWF–Â“°¢Ğ ¢&—fFR7–æ2F6³ÄÖ–çFVææ6TFFW$–ç7V7F–öãâ–ç7V7Ef–Ö–çFVææ6U6W'f–6T7–æ2€¢Ö–çFVææ6TFWf–6T–FVçF—G’FWf–6RÂ6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ¢°¢W6–ærf"6–væ–æt¶W’ÒvV'6—FUöÆ–7•6–væ–æt¶W•7F÷&Rä÷Vâ†FWf–6Rä6×W4–B“°¢G'¢°¢f"†VÇF‚Òv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6T†VÇF…–ÆöCâ†FWf–6RÀ¢wV–BäæWtwV–B‚’ÂçVÆÂÂÖ–çFVææ6U&÷Fö6öÅc6öÖÖæBävWD†VÇF‚Â6–væ–æt¶W’å&—fFT¶W’À¢6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"6&–Æ—F–W2Òv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6T6&–Æ—F–W5–ÆöCâ€¢FWf–6RÂ†VÇF‚å&WVW7Bä÷W&F–öä–BÂçVÆÂÂÖ–çFVææ6U&÷Fö6öÅc6öÖÖæBävWD6&–Æ—F–W2À¢6–væ–æt¶W’å&—fFT¶W’Â6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"–ç7FÆÆVBÒv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6T–ç7FÆÆVEfW'6–öç5–ÆöCâ€¢FWf–6RÂ†VÇF‚å&WVW7Bä÷W&F–öä–BÂçVÆÂÂÖ–çFVææ6U&÷Fö6öÅc6öÖÖæBävWD–ç7FÆÆVEfW'6–öç2À¢6–væ–æt¶W’å&—fFT¶W’Â6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“° ¢–b††VÇF‚å&W7öç6Rå&W7VÇD6öFRÒ'7V66VVFVB"ÇÂ†VÇF‚å–ÆöB—2çVÆÂÇÀ¢†VÇF‚å–ÆöBå7FFRÒ'&VG’"ÇÂ†VÇF‚å–ÆöBå'Vææ–æt57—7FVÒÇÀ¢†VÇF‚å–ÆöBäÖævVDvVçEF6µG'W7FVBÒG'VR¢&WGW&âVçfW&–f–VDÖ–çFVææ6R‚$Ö–çFVææ6RiÈŞXª‹ª¾K»Ş[{.ŠêNŠøûÈÎKØniÈŞXª˜XŞ{Úîh‰nXù~KùŞhªB5•5DTÒvVçBK»¾Xª[	®iÊ®‹ëîX‹Xúş{»NhªNx«nh8""“°¢–b†6&–Æ—F–W2å&W7öç6Rå&W7VÇD6öFRÒ'7V66VVFVB"ÇÂ6&–Æ—F–W2å–ÆöB—2çVÆÂÇÀ¢–ç7FÆÆVBå&W7öç6Rå&W7VÇD6öFRÒ'7V66VVFVB"ÇÂ–ç7FÆÆVBå–ÆöB—2çVÆÂ¢&WGW&âVçfW&–f–VDÖ–çFVææ6R‚$Ö–çFVææ6RiÈŞXªiÊ®‹ùNY¹îZèÎi[Ny¨NzÛîYŞˆ;ŞX©¾h‰nx˜iÊÎ[ú¾xZ~8""“°¢–b†6&–Æ—F–W2å–ÆöBå&÷Fö6öÅfW'6–öâÒÖ–çFVææ6U&÷Fö6öÅcä7W'&VçEfW'6–öâÇÀ¢†VÇF‚å–ÆöBå&÷Fö6öÅfW'6–öâÒ6&–Æ—F–W2å–ÆöBå&÷Fö6öÅfW'6–öâÇÀ¢7G&–æräWVÇ2††VÇF‚å–ÆöBävVçD6öæf–wW&F–öäf–ævW'&–çBÀ¢6&–Æ—F–W2å–ÆöBävVçD6öæf–wW&F–öäf–ævW'&–çBÂ7G&–æt6ö×&—6öâä÷&F–æÄ–væ÷&T66R’ÇÀ¢7G&–æräWVÇ2††VÇF‚å–ÆöBåFV6†W$6öæf–wW&F–öäf–ævW'&–çBÀ¢6&–Æ—F–W2å–ÆöBåFV6†W$6öæf–wW&F–öäf–ævW'&–çBÂ7G&–æt6ö×&—6öâä÷&F–æÄ–væ÷&T66R’¢&WGW&âVçfW&–f–VDÖ–çFVææ6R‚$Ö–çFVææ6RX^[«~Kˆîˆ;ŞX©¾Y¹îhš~y¨NXØşŠêîh‰nXù~KùŞhªN˜XŞ{ÚîhÈ~{«KˆŞKˆˆ{N8""“° ¢f"fW'6–öç2ÒFôÖ–çFVææ6UfW'6–öç2†–ç7FÆÆVBå–ÆöB“°¢–b‡fW'6–öç2å7GVFVçE6WGWfW'6–öâ—2çVÆÂÇÂfW'6–öç2ävVçE'VçF–ÖUfW'6–öâ—2çVÆÂÇÀ¢7G&–ærä—4çVÆÄ÷%v†—FU76R†6&–Æ—F–W2å–ÆöBävVçD6öæf–wW&F–öäf–ævW'&–çB’¢&WGW&âVçfW&–f–VDÖ–çFVææ6R‚$Ö–çFVææ6RzÛîYŞx˜iÊÎh‰bvVçB˜XŞ{ÚîhÈ~{«KˆŞZèÎi[NûÉ¾KˆŞˆ;Ş[»®z¸¾{»NhªNŠêX‰.8""“° ¢f"–FVçF—G”Wf–FVæ6RÒæWrÖ–çFVææ6TWf–FVæ6R‚'6–væVBÖÖ–çFVææ6R×6W'f–6RÖ†VÇF‚"À¢FWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÂ†VÇF‚å6–væVE&W7öç6U6†#SbÂçVÆÂÀ¢†VÇF‚å&W7öç6Rä6öÆÆV7FVEWF2“°¢f"6&–Æ—F–W4Wf–FVæ6RÒæWrÖ–çFVææ6TWf–FVæ6R‚'6–væVBÖÖ–çFVææ6R×6W'f–6RÖ6&–Æ—F–W2"À¢FWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÂ6&–Æ—F–W2å6–væVE&W7öç6U6†#SbÂçVÆÂÀ¢6&–Æ—F–W2å&W7öç6Rä6öÆÆV7FVEWF2“°¢f"æÖW2Ò6&–Æ—F–W2å–ÆöBå7W÷'FVD6öÖÖæG0¢äVæB‚&Ö–çFVææ6R×6W'f–6Rçc"’äF—7F–æ7B…7G&–æt6ö×&W"ä÷&F–æÂ’åFô'&’‚“°¢f"Ö–çFVææ6T6&–Æ—F–W2ÒæWrÖ–çFVææ6T6&–Æ—F–W2†FWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÀ¢6&–Æ—F–W2å–ÆöBå&÷Fö6öÅfW'6–öâÂçVÆÂÀ¢fW'6–öç2ävVçE'VçF–ÖUfW'6–öâÂ6&–Æ—F–W2å–ÆöBävVçD6öæf–wW&F–öäf–ævW'&–çBÀ¢fW'6–öç2äÖ–çFVææ6UfW'6–öâÂæÖW2Â6&–Æ—F–W2å6–væVE&W7öç6U6†#SbÀ¢%%4Õ52Õ4„#Sb"Â6&–Æ—F–W2å&W7öç6Rä6öÆÆV7FVEWF2À¢6&–Æ—F–W2å–ÆöBåFV6†W$6öæf–wW&F–öäf–ævW'&–çBÀ¢6&–Æ—F–W2å–ÆöBåFV6†W$6öæf–wW&F–öäf–ævW'&–çB—2çVÆÀ¢òçVÆÀ¢¢6&–Æ—F–W2å6–væVE&W7öç6U6†#SbÀ¢6&–Æ—F–W2å6–væVE&W7öç6U6†#Sb“°¢&WGW&âæWrÖ–çFVææ6TFFW$–ç7V7F–öâ‡G'VRÂfW'6–öç2ÂÖ–çFVææ6T6&–Æ—F–W2Â–FVçF—G”Wf–FVæ6RÀ¢6&–Æ—F–W4Wf–FVæ6RÀ¢.[{.˜	®‹ø~xºÎz¸²Ö–çFVææ6RiÈŞXªzÛîYŞ‹ª¾K»Ş8Xù~KùŞhªN˜XŞ{Úî85•5DTÒK»¾Xª8x˜iÊÎY(ÎY»®Zé®YŞKºNˆ;ŞX©¾jš¨ÎûÉ¾iY[ˆzºşXúş{¸şŠú^˜	®˜>hùKªN[{.zÛîYŞy¨B7GVFVçE6WGWh‰bÖ–çFVææ6U6W'f–6Ri»Nik8""À¢–ç7FÆÆVBå–ÆöBåG&ç67F–öå7FFRÂ7GVFVçDvVçD6†ææVÄ‡V"ä—46öææV7FVB†FWf–6Rä6×W4–BÀ¢FWf–6Rå&÷WFTFG&W72’Â†VÇF‚å&W7öç6Rä6öÆÆV7FVEWF2“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2”ôW†6WF–öâ÷"VæWF†÷&—¦VD66W74W†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"F–ÖV÷WDW†6WF–öâ÷ ¢–çfÆ–D÷W&F–öäW†6WF–öâ÷"&wVÖVçDW†6WF–öâ¢°¢&WGW&âVçfW&–f–VDÖ–çFVææ6R‚$Ö–çFVææ6RxºÎz¸¾iÈŞXªzÛîYŞjš¨ÎZK‹J^ûÉ¢"²6æ—F—¦R†W†6WF–öâäÖW76vR’“°¢Ğ ¢7FF–2Ö–çFVææ6TFFW$–ç7V7F–öâVçfW&–f–VDÖ–çFVææ6R‡7G&–ærFWF–Â’ÓâæWr†fÇ6RÀ¢æWrÖ–çFVææ6T6ö×öæVçEfW'6–öç2†çVÆÂÂçVÆÂÂçVÆÂÂçVÆÂ’ÂçVÆÂÂçVÆÂÂçVÆÂÂFWF–Â“°¢Ğ ¢V&Æ–27–æ2F6³Ä•&VDöæÇ”Æ—7CÄÖ–çFVææ6TFFW%&W7VÇCãâöffW%WFFW47–æ2€¢•&VDöæÇ”Æ—7CÄÖ–çFVææ6UWFFU&WVW7Câ&WVW7G2À¢gVæ3ÄÖ–çFVææ6UWFFT6öÖÖæE&W&VBÂ6æ6VÆÆF–öåFö¶VâÂF6³â&Vf÷&T6öÖÖæE6VæBÀ¢•&öw&W73ÄÖ–çFVææ6T6ö÷&F–æF÷%&öw&W73ãò&öw&W72Â6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ¢°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ‡&WVW7G2“°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ†&Vf÷&T6öÖÖæE6VæB“°¢–b‡&WVW7G2ä6÷VçBÓÒ’&WGW&â'&’äV×G“ÄÖ–çFVææ6TFFW%&W7VÇCâ‚“°¢f"Æç2Ò&WVW7G2å6VÆV7B‡&WVW7BÓâ&WVW7BåÆâ’åFô'&’‚“°¢f"f—'7BÒÆç5³Ó°¢–b‡Æç2äç’‡ÆâÓâÆâäFWf–6Rä6×W4–BÒf—'7BäFWf–6Rä6×W4–BÇÀ¢7G&–æräWVÇ2‡ÆâåF&vWE6WGWfW'6–öâÂf—'7BåF&vWE6WGWfW'6–öâÀ¢7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢7G&–æräWVÇ2‡ÆâåF&vWDvVçEfW'6–öâÂf—'7BåF&vWDvVçEfW'6–öâÀ¢7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢7G&–æräWVÇ2‡ÆâåF&vWE&VÆV6U6†#SbÂf—'7BåF&vWE&VÆV6U6†#SbÀ¢7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÂÆâä6†ææVÂÒf—'7Bä6†ææVÂ’¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.YÎKˆizrvVçBi»Nikh›jÊ[ø^š¾KÛşyJYÎj
+XË®8YÎyºîjr7GVFVçE6WGW8YÎXùŠÎiŠhY(ÎYÎ˜	®˜>8""“°¢–b†f—'7BåF&vWE6WGWfW'6–öâ—2çVÆÂÇÂf—'7BåF&vWE&VÆV6U6†#Sb—2çVÆÂ¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.izrvVçBi»NikŠêX‰.{Ë®[	7GVFVçE6WGWyºîj~x˜iÊÎh‰nXùŠÂ4„Ó#Sn8""“° ¢f"'F–f7BÒv—Bö'F–f7E&÷f–FW"ävWEfW&–f–VD'F–f7D7–æ2†f—'7BÂ6æ6VÆÆF–öåFö¶Vâ¢ä6öæf–wW&Tv—B†fÇ6R“°¢f"&VÆV6RÒv—BF6²å'Vâ‚‚’ÓâÆ–6F–öå&VÆV6T6Æ–VçBå&VEfW&–f–VE7FvVE&VÆV6R€¢'F–f7Bä–ç7FÆÆW%F‚ÂÆ–6F–öå&VÆV6U&öÆRå7GVFVçE6WGWÂ'F–f7Bä”&6TFG&W72À¢'F–f7BäFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÒ’Â6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢Æ–6F–öå&VÆV6T6Æ–VçBåfW&–g’‡&VÆV6RÂÆ–6F–öå&VÆV6U&öÆRå7GVFVçE6WGWÂ'F–f7Bä”&6TFG&W72À¢'F–f7BäFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÒ“°¢f"7FvVDvVçEfW'6–öâÒ'F–f7BåfW&–f–VDvVçEF&vWEfW'6–öâóò&VÆV6RäÖæ–fW7Bå7GVFVçDvVçEfW'6–öã°¢–b‚7G&–æräWVÇ2‡&VÆV6RäÖæ–fW7BåfW'6–öâÂf—'7BåF&vWE6WGWfW'6–öâÂ7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢7G&–æräWVÇ2‡&VÆV6RäÖæ–fW7Bå6†#SbÂf—'7BåF&vWE&VÆV6U6†#SbÂ7G&–æt6ö×&—6öâä÷&F–æÄ–væ÷&T66R’ÇÀ¢f—'7BåF&vWDvVçEfW'6–öâ—2æ÷BçVÆÂbb7G&–æräWVÇ2†f—'7BåF&vWDvVçEfW'6–öâÂ7FvVDvVçEfW'6–öâÀ¢7G&–æt6ö×&—6öâä÷&F–æÂ’¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.[{.š¨ÎzÛâ7GVFVçE6WGWXÈ^y¨Nx˜iÊÎh‰niŠhKˆî{»NhªNŠêX‰.KˆŞKˆˆ{N8""“°¢–b†f—'7Bä6†ææVÂÓÒÖ–çFVææ6U&VÆV6T6†ææVÂå7F&ÆRb`¢&VÆV6RäÖæ–fW7Bå&VÆV6T6†ææVÂÓÒ&Æö6Â×FW7B"¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚%7F&ÆR{»NhªNŠêX‰.KˆŞˆ;ŞKÛşyJ‚Æö6Â×FW7BXùŠÎXÈ^8""“° ¢f"Æä'•F&vWBÒÆç2åFôF–7F–öæ'’‡ÆâÓâÆâäFWf–6Rå&÷WFTFG&W72À¢7G&–æt6ö×&W"ä÷&F–æÄ–væ÷&T66R“°¢f"6÷W&6UfW'6–öç2ÒæWrF–7F–öæ'“Ç7G&–ærÂ7GVFVçDÆ–6F–öåWFFU6÷W&6UfW'6–öç3â€¢7G&–æt6ö×&W"ä÷&F–æÄ–væ÷&T66R“°¢f÷&V6‚‡f"Æâ–âÆç2¢°¢f"7W'&VçE6WGWÒÆâä7W'&VçEfW'6–öç2å7GVFVçE6WGWfW'6–öà¢óòF‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.izrvVçBi»Nik{Ë®[	[{.zÛîYÒ7GVFVçE6WGW[Ù>X˜Şx˜iÊÎ8""“°¢f"7W'&VçDvVçBÒÆâä7W'&VçEfW'6–öç2ävVçE'VçF–ÖUfW'6–öà¢óòF‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.izrvVçBi»Nik{Ë®[	[{.zÛîYÒvVçB[Ù>X˜Şx˜iÊÎ8""“°¢6÷W&6UfW'6–öç2äFB‡ÆâäFWf–6Rå&÷WFTFG&W72ÂæWr7GVFVçDÆ–6F–öåWFFU6÷W&6UfW'6–öç2†7W'&VçE6WGWÀ¢7W'&VçDvVçBÂÆâä6&–Æ—F–W2å7GVFVçEWFFU&÷Fö6öÅfW'6–öâÀ¢Æâä6&–Æ—F–W2ä6öæf–wW&F–öäf–ævW'&–çBÂÆâåF&vWE6WGWfW'6–öâÂÆâåF&vWDvVçEfW'6–öâÀ¢&VÆV6RäÖæ–fW7Bå&VÆV6T6†ææVÂóò'7F&ÆR"’“°¢Ğ ¢f"6öÖÖæD–G2ÒæWr6öæ7W'&VçDF–7F–öæ'“ÄwV–BÂwV–Câ‚“°¢W6–ærf"6–væ–æt¶W’ÒvV'6—FUöÆ–7•6–væ–æt¶W•7F÷&Rä÷Vâ†f—'7BäFWf–6Rä6×W4–B“°¢v—BW6–ærf"Æå6W'fW"Ò7GVFVçDÆ–6F–öåWFFTÆå6W'fW"å7F'B†'F–f7Bä–ç7FÆÆW%F‚À¢&VÆV6RäÖæ–fW7Bå6†#SbÂ&VÆV6RäÖæ–fW7Bå6—¦T'—FW2“°¢f"FWfVÆ÷W%V&Æ–4¶W’Ò'F–f7BäFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÓ°¢f"WFFU&öw&W72Ò&öw&W72—2çVÆÂòçVÆÂ¢æWr&öw&W73Å7GVFVçDÆ–6F–öåWFFU&öw&W73â‡fÇVRÓà¢°¢–b‚Æä'•F&vWBåG'”vWEfÇVR‡fÇVRåF&vWBÂ÷WBf"Æâ’’&WGW&ã°¢&öw&W72å&W÷'B†æWrÖ–çFVææ6T6ö÷&F–æF÷%&öw&W72‡Æâä÷W&F–öä–BÀ¢fÇVRä6öÖÖæD–B—2çVÆÂòÖ–çFVææ6U'Vå7FFRåWFFTöffW&VB¢Ö–çFVææ6U'Vå7FFRåWFF–ærÀ¢fÇVRå7FvRÂfÇVRä6ö×ÆWFVEF&vWG2ÂfÇVRåF÷FÅF&vWG2ÂfÇVRä6öÖÖæD–BÀ¢ÆâäFWf–6Rå&÷WFTFG&W72ÂfÇVRå†6UF–Ö–æw2ÂfÇVRäVçf—&öæÖVçB’“°¢Ò“°¢f"÷WGWBÒæWrÆ—7CÄÖ–çFVææ6TFFW%&W7VÇCâ‡Æç2äÆVæwF‚“°¢f"Ö–çFVææ6UÆäÆ—7BÒæWrÆ—7CÄÖ–çFVææ6UÆãâ‚“°¢f"&Æö6¶VEÆç2ÒæWrÆ—7CÂ„Ö–çFVææ6UÆâÆâÂ&ööÂ†5–ææVD–FVçF—G’“â‚“°¢f"ÆVv7•ÆäÆ—7BÒæWrÆ—7CÄÖ–çFVææ6UÆãâ‚“°¢f÷&V6‚‡f"Æâ–âÆç2¢°¢f"†46öææV7FVD6†ææVÂÒöÖ–çFVææ6U6W'f–6T6Æ–VçBä†46öææV7FVD6†ææVÂ‡ÆâäFWf–6R“°¢f"†5–ææVD–FVçF—G’ÒöÖ–çFVææ6U6W'f–6T6Æ–VçBä†5–ææVD–FVçF—G’‡ÆâäFWf–6R“°¢–b††46öææV7FVD6†ææVÂbb†5–ææVD–FVçF—G’’Ö–çFVææ6UÆäÆ—7BäFB‡Æâ“°¢VÇ6R–b††46öææV7FVD6†ææVÂÇÂ†5–ææVD–FVçF—G’’&Æö6¶VEÆç2äFB‚‡ÆâÂ†5–ææVD–FVçF—G’’“°¢VÇ6RÆVv7•ÆäÆ—7BäFB‡Æâ“°¢Ğ¢f"Ö–çFVææ6UÆç2ÒÖ–çFVææ6UÆäÆ—7BåFô'&’‚“°¢f÷&V6‚‡f"‡ÆâÂ†5–ææVD–FVçF—G’’–â&Æö6¶VEÆç2¢÷WGWBäFB†æWrÖ–çFVææ6TFFW%&W7VÇB‡Æâä÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢†5–ææVD–FVçF—G¢ò.ŠëîZH~[{.Y»®Zé¢Ö–çFVææ6R‹ª¾K»ŞûÈÎKØnxºÎz¸¾˜	®˜>KˆŞXúşyJûÉ¾h¹.{¹Ş™Ù›¹Y¹î˜X‹ÆVv78" ¢¢.j8kX¾X‹iÊ®Y»®Zé®h‰nKˆŞXË˜XŞy¨BÖ–çFVææ6R˜	®˜>‹ª¾K»ŞûÉ¾™ÈŠh˜xŞikjZûŠëîZH~‹ª¾K»Ş8""ÂçVÆÂ’“°¢f"ÆVv7•Æç2ÒÆVv7•ÆäÆ—7BåFô'&’‚“°¢f"6–væVE&VÆV6TVçfVÆ÷T§6öâÒ§6öå6W&–Æ—¦W"å6W&–Æ—¦R‡&VÆV6R“°¢f÷&V6‚‡f"Æâ–âÖ–çFVææ6UÆç2¢°¢6æ6VÆÆF–öåFö¶VâåF‡&÷t–d6æ6VÆÆF–öå&WVW7FVB‚“°¢f"6öÖÖæD–BÒwV–BäæWtwV–B‚“°¢G'¢°¢f"g&W6„–ç7V7F–öâÒv—B–ç7V7D7–æ2‡ÆâäFWf–6RÂ6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"7FÆUÆå&V6öâÒfÆ–FFT&Vf÷&UWFFU6VæB‡ÆâÂg&W6„–ç7V7F–öâ“°¢–b‡7FÆUÆå&V6öâ—2æ÷BçVÆÂ¢°¢÷WGWBäFB†æWrÖ–çFVææ6TFFW%&W7VÇB‡Æâä÷W&F–öä–BÀ¢Ö–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÂ7FÆUÆå&V6öâÂçVÆÂ’“°¢6öçF–çVS°¢Ğ¢f"—77VVEWF2ÒFFUF–ÖTöfg6WBåWF4æ÷s°¢f"W‡—&W5WF2Ò—77VVEWF2²F–ÖU7âäg&öÔÖ–çWFW2ƒ’“°¢f"F÷væÆöEW&’Òv—BÆå6W'fW"ävWDF÷væÆöEW&”7–æ2‡ÆâäFWf–6Rå&÷WFTFG&W72À¢ÆâäFWf–6Rä6×W4–BÂ6öÖÖæD–BÂW‡—&W5WF2ÂF&vWDvVçEV&Æ–4¶W•VÓ¢çVÆÂÀ¢6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"&WÇ’Òv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6UG&ç67F–öå&VF&6µ–ÆöCâ€¢ÆâäFWf–6RÂÆâä÷W&F–öä–BÂ6öÖÖæD–BÀ¢Ö–çFVææ6U&÷Fö6öÅc6öÖÖæBäöffW%6–væVE7GVFVçE6WGWWFFRÂ6–væ–æt¶W’å&—fFT¶W’À¢&Vf÷&U6VæC¢7–æ2‡&W&VD6öÖÖæD–BÂ6–væVE&WVW7E6†#SbÂFö¶Vâ’Óà¢°¢–b‡&W&VD6öÖÖæD–BÒ6öÖÖæD–B¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚$Ö–çFVææ6Ri»Nik6öÖÖæD–BYÊzÛîYŞX˜ŞYîXùyIşXùXÉn8""“°¢6öÖÖæD–G5·Æâä÷W&F–öä–EÒÒ&W&VD6öÖÖæD–C°¢v—B&Vf÷&T6öÖÖæE6VæB†æWrÖ–çFVææ6UWFFT6öÖÖæE&W&VB‡Æâä÷W&F–öä–BÀ¢&W&VD6öÖÖæD–BÂ6–væVE&WVW7E6†#Sb’ÂFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢ÒÂ6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶VâÀ¢F&vWE6WGWfW'6–öã¢&VÆV6RäÖæ–fW7BåfW'6–öâÀ¢&VÆV6U6†#Sc¢&VÆV6RäÖæ–fW7Bå6†#SbÀ¢6–væVE&VÆV6TVçfVÆ÷T§6öã¢6–væVE&VÆV6TVçfVÆ÷T§6öâÀ¢'F–f7EG&ç6fW%W&Ã¢F÷væÆöEW&’ä'6öÇWFUW&’’ä6öæf–wW&Tv—B†fÇ6R“°¢÷WGWBäFB„6Æ76–g”Ö–çFVææ6UWFFTöffW"‡ÆâÂ6öÖÖæD–BÂ&WÇ’’“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2”ôW†6WF–öâ÷"VæWF†÷&—¦VD66W74W†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"F–ÖV÷WDW†6WF–öâ÷ ¢–çfÆ–D÷W&F–öäW†6WF–öâ÷"&wVÖVçDW†6WF–öâ÷"‡GG&WVW7DW†6WF–öâ¢°¢f"6öÖÖæEv5&W&VBÒ6öÖÖæD–G2ä6öçF–ç4¶W’‡Æâä÷W&F–öä–B“°¢÷WGWBäFB†æWrÖ–çFVææ6TFFW%&W7VÇB‡Æâä÷W&F–öä–BÀ¢6öÖÖæEv5&W&VBòÖ–çFVææ6TFFW$F—7÷6—F–öâåVæF–æufW&–f–6F–öâ ¢W†6WF–öâ—2–çfÆ–DFFW†6WF–öâòÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VB ¢Ö–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÀ¢6öÖÖæEv5&W&V@¢ò$Ö–çFVææ6Ri»NikYŞKºN[{.hÈK˜^XÉnûÈÎKØniÈŞXªY¹îhš~iÊ®ZèÎh‰ûÉ¾Šû~hÈXéò6öÖÖæD–Biú^Šú.K¨¾Xª8" ¢¢6æ—F—¦R†W†6WF–öâäÖW76vR’ÂçVÆÂ’“°¢Ğ¢Ğ ¢f"ÆVv7•F&vWG2ÒÆVv7•Æç2å6VÆV7B‡ÆâÓâÆâäFWf–6Rå&÷WFTFG&W72’åFô'&’‚“°¢f"ÆVv7•6÷W&6UfW'6–öç2Ò6÷W&6UfW'6–öç2åv†W&R‡—"ÓâÆVv7•F&vWG2ä6öçF–ç2‡—"ä¶W’À¢7G&–æt6ö×&W"ä÷&F–æÄ–væ÷&T66R’¢åFôF–7F–öæ'’‡—"Óâ—"ä¶W’Â—"Óâ—"åfÇVRÂ7G&–æt6ö×&W"ä÷&F–æÄ–væ÷&T66R“°¢•&VDöæÇ”Æ—7CÅ7GVFVçDÆ–6F–öåWFFUW6…&W7VÇCâFVÆ—fW'•&W7VÇG2Ğ¢'&’äV×G“Å7GVFVçDÆ–6F–öåWFFUW6…&W7VÇCâ‚“°¢–b†ÆVv7•F&vWG2äÆVæwF‚â¢°¢FVÆ—fW'•&W7VÇG2Òv—B7GVFVçDÆ–6F–öåWFFUG&ç7÷'BåW6„7–æ2†ÆVv7•F&vWG2À¢f—'7BäFWf–6Rä6×W4–BÂf—'7BåF&vWE6WGWfW'6–öâÂ6–væ–æt¶W’å&—fFT¶W’À¢7–æ2‡F&vWBÂ–ææVDvVçEV&Æ–4¶W’ÂF÷væÆöE&WVW7E&÷Fö6öÅfW'6–öâÂFö¶Vâ’Óà¢°¢–b‚Æä'•F&vWBåG'”vWEfÇVR‡F&vWBÂ÷WBf"Æâ’¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚.izrvVçBi»NikKÊ‹é>‹ùNY¹îK¨niÊ®ŠêX‰.y¨Nyºîj~YËYØ8""“°¢f"g&W6„–ç7V7F–öâÒv—B–ç7V7D7–æ2‡ÆâäFWf–6RÂFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"7FÆUÆå&V6öâÒfÆ–FFT&Vf÷&UWFFU6VæB‡ÆâÂg&W6„–ç7V7F–öâ“°¢–b‡7FÆUÆå&V6öâ—2æ÷BçVÆÂ¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‡7FÆUÆå&V6öâ“°¢f"—77VVEWF2ÒFFUF–ÖTöfg6WBåWF4æ÷s°¢f"6öÖÖæD–BÒwV–BäæWtwV–B‚“°¢f"W‡—&W5WF2Ò—77VVEWF2²7GVFVçDÆ–6F–öåWFFT7'—Föw&‡’äÖ†–×VÔ6öÖÖæDÆ–fWF–ÖS°¢f"F÷væÆöE&WVW7D¶W’ÒF÷væÆöE&WVW7E&÷Fö6öÅfW'6–öâÓĞ¢7GVFVçDÆ–6F–öåWFFT7'—Föw&‡’äF÷væÆöE&WVW7E&÷Fö6öÅfW'6–öà¢ò–ææVDvVçEV&Æ–4¶W¢¢çVÆÃ°¢f"F÷væÆöEW&’Òv—BÆå6W'fW"ävWDF÷væÆöEW&”7–æ2‡F&vWBÂÆâäFWf–6Rä6×W4–BÀ¢6öÖÖæD–BÂW‡—&W5WF2ÂF÷væÆöE&WVW7D¶W’ÂFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"6öÖÖæBÒæWr7GVFVçDÆ–6F–öåWFFT6öÖÖæBƒÂÆâäFWf–6Rä6×W4–BÂ6öÖÖæD–BÀ¢—77VVEWF2ÂW‡—&W5WF2Â&VÆV6RÂF÷væÆöEW&’ä'6öÇWFUW&’“°¢7G&–ær6–væVD6öÖÖæC°¢Æö6²‡6–væ–æt¶W’å&—fFT¶W’¢6–væVD6öÖÖæBÒ7GVFVçDÆ–6F–öåWFFT7'—Föw&‡’å6–vâ†6öÖÖæBÂ6–væ–æt¶W’å&—fFT¶W’À¢'F–f7Bä”&6TFG&W72ÂFWfVÆ÷W%V&Æ–4¶W’“°¢f"6–væVD6öÖÖæE6†#SbÒ6öçfW'BåFô†W…7G&–ær…4„#Sbä†6„FF„Væ6öF–æråUDc‚ävWD'—FW2‡6–væVD6öÖÖæB’’“°¢v—B&Vf÷&T6öÖÖæE6VæB†æWrÖ–çFVææ6UWFFT6öÖÖæE&W&VB‡Æâä÷W&F–öä–BÂ6öÖÖæD–BÀ¢6–væVD6öÖÖæE6†#Sb’ÂFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢6öÖÖæD–G5·Æâä÷W&F–öä–EÒÒ6öÖÖæD–C°¢&WGW&â†6öÖÖæD–BÂ6–væVD6öÖÖæB“°¢ÒÂ6æ6VÆÆF–öåFö¶VâÂ&öw&W73¢WFFU&öw&W72Â6÷W&6UfW'6–öç3¢ÆVv7•6÷W&6UfW'6–öç2¢ä6öæf–wW&Tv—B†fÇ6R“°¢Ğ ¢f÷&V6‚‡f"FVÆ—fW'’–âFVÆ—fW'•&W7VÇG2¢°¢6æ6VÆÆF–öåFö¶VâåF‡&÷t–d6æ6VÆÆF–öå&WVW7FVB‚“°¢–b‚Æä'•F&vWBåG'”vWEfÇVR†FVÆ—fW'’åF&vWBÂ÷WBf"Æâ’’6öçF–çVS°¢–b‚6öÖÖæD–G2åG'”vWEfÇVR‡Æâä÷W&F–öä–BÂ÷WBf"6öÖÖæD–B’¢°¢÷WGWBäFB†æWrÖ–çFVææ6TFFW%&W7VÇB‡Æâä÷W&F–öä–BÀ¢FVÆ—fW'’äæVVG5&Wf–WròÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VB ¢Ö–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÂFVÆ—fW'’äFWF–ÂÂçVÆÂ’“°¢6öçF–çVS°¢Ğ¢f"7FGW5&W7VÇBÒv—B&VE7FGW47–æ2‡ÆâÂ6öÖÖæD–BÂ6–væ–æt¶W’å&—fFT¶W’Â6æ6VÆÆF–öåFö¶Vâ¢ä6öæf–wW&Tv—B†fÇ6R“°¢÷WGWBäFB„6Æ76–g•WFFU&W7VÇB‡ÆâÂFVÆ—fW'’Â7FGW5&W7VÇBÂ6öÖÖæD–B’“°¢Ğ¢&WGW&â'&’ä5&VDöæÇ’†÷WGWBåFô'&’‚’“°¢Ğ ¢òòòÇ7VÖÖ'“å'Vç2F†R–æFWVæFVçBÖ–çFVææ6U6W'f–6R&VÆV6RG&ç67F–öâf÷"öæRWF†VçF–6FVB6W'f–6RãÂ÷7VÖÖ'“à¢V&Æ–27–æ2F6³ÄÖ–çFVææ6TFFW%&W7VÇCâöffW$Ö–çFVææ6U6W'f–6UWFFT7–æ2„Ö–çFVææ6UÆâÆâÀ¢gVæ3ÄÖ–çFVææ6UWFFT6öÖÖæE&W&VBÂ6æ6VÆÆF–öåFö¶VâÂF6³â&Vf÷&T6öÖÖæE6VæBÀ¢•&öw&W73ÄÖ–çFVææ6T6ö÷&F–æF÷%&öw&W73ãò&öw&W72ÒçVÆÂÀ¢6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶VâÒFVfVÇB¢°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ‡Æâ“°¢f"÷W&F–öä–BÒÆâä÷W&F–öä–C°¢f"FWf–6RÒÆâäFWf–6S°¢–b‡Æâä÷W&F–öä¶–æB—2æ÷B„Ö–çFVææ6T÷W&F–öä¶–æBäÖ–çFVææ6U6W'f–6UWFFR÷ ¢Ö–çFVææ6T÷W&F–öä¶–æBägVÆÄÖ–çFVææ6R’ÇÀ¢‡ÆâåF&vWDÖ–çFVææ6U6W'f–6UfW'6–öâ—2çVÆÂ’Ğ¢‡ÆâåF&vWDÖ–çFVææ6U6W'f–6U&VÆV6U6†#Sb—2çVÆÂ’¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚$Ö–çFVææ6U6W'f–6Rj8iú^ŠêX‰.y¨Nyºîj~x˜iÊÎY(ÎXùŠÂ4„Ó#SbKˆŞXË˜XŞ8""“°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ†&Vf÷&T6öÖÖæE6VæB“°¢–b‚öÖ–çFVææ6U6W'f–6T6Æ–VçBä—4f–Æ&ÆR†FWf–6R’¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢$Ö–çFVææ6RxºÎz¸¾‹ª¾K»Şh‰nŠêNŠø˜	®˜>KˆŞXúşyJûÉ¾h¹.{¹Ş{¸òÆVv7’vVçBi»NikiÈŞXªˆz®‹ª¾8""ÂçVÆÂ“°¢–b…öÖ–çFVææ6U6W'f–6T'F–f7E&÷f–FW"—2çVÆÂ¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢.[Ù>X˜ŞXùŠÎhùKé¾YšiÊ®ZéîxëxºÎz¸²Ö–çFVææ6U6W'f–6RXÈ^ˆë~Xùn8""ÂçVÆÂ“° ¢W6–ærf"6–væ–æt¶W’ÒvV'6—FUöÆ–7•6–væ–æt¶W•7F÷&Rä÷Vâ†FWf–6Rä6×W4–B“°¢f"–ç7V7F–öâÒv—B–ç7V7D7–æ2†FWf–6RÂ6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢–b‚–ç7V7F–öâä–FVçF—G•fW&–f–VBÇÂ–ç7V7F–öâä7W'&VçEfW'6–öç2äÖ–çFVææ6UfW'6–öâ—2æ÷B²Ò7W'&VçEfW'6–öâÇÀ¢7G&–æräWVÇ2†7W'&VçEfW'6–öâÂÆâä7W'&VçEfW'6–öç2äÖ–çFVææ6UfW'6–öâÂ7G&–æt6ö×&—6öâä÷&F–æÂ’¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢.izk9^K¸îzÛîYÒÖ–çFVææ6RX^[«~Šû¾Y¹îzîŠêN[Ù>X˜ŞiÈŞXªx˜iÊÎ8""Â–ç7V7F–öâä–FVçF—G”Wf–FVæ6RÀ¢–ç7V7F–öâä7W'&VçEfW'6–öç2Â–ç7V7F–öâåWFFUG&ç67F–öå7FFR“°¢f"7W÷'FVD6öÖÖæG2Ò–ç7V7F–öâä6&–Æ—F–W3òå7W÷'FVD6öÖÖæG3°¢–b‡7W÷'FVD6öÖÖæG2—2çVÆÂÇÀ¢7W÷'FVD6öÖÖæG2ä6öçF–ç2‚&öffW%6–væVDÖ–çFVææ6U6W'f–6UWFFR"Â7G&–æt6ö×&W"ä÷&F–æÂ’ÇÀ¢7W÷'FVD6öÖÖæG2ä6öçF–ç2‚&vWDÖ–çFVææ6U6W'f–6UWFFU7FGW2"Â7G&–æt6ö×&W"ä÷&F–æÂ’¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢.[Ù>X˜ÒÖ–çFVææ6RiÈŞXªy¨NzÛîYŞˆ;ŞX©¾X‰~ŠiÊ®Z;iˆîˆz®i»NikYŞKºNY(ÎK¨¾Xªiú^Šú.ûÉ¾KˆŞKÉ®Xù˜Zè>KˆŞŠêNŠøny¨Ni»NikXØşŠêî8.Šû~XX˜	®‹ø~Xù~KúK»²7GVFVçE6WGWş[É^ZûÎXØ~{ª~ZèŠ8^iJşhÈˆz®i»Niky¨BÖ–çFVææ6^8""À¢–ç7V7F–öâä–FVçF—G”Wf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2Â–ç7V7F–öâåWFFUG&ç67F–öå7FFR“°¢–b‡ÆâåF&vWDÖ–çFVææ6U6W'f–6UfW'6–öâ—2çVÆÂ¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäæô6†ævW2À¢$Ö–çFVææ6U6W'f–6R[{.iŠş[Ù>X˜ŞXúşyJXùŠÎx˜iÊÎ8""Â–ç7V7F–öâä–FVçF—G”Wf–FVæ6RÀ¢–ç7V7F–öâä7W'&VçEfW'6–öç2Â–ç7V7F–öâåWFFUG&ç67F–öå7FFR“° ¢Ö–çFVææ6U6W'f–6U&VÆV6T'F–f7Cò'F–f7C°¢G'¢°¢'F–f7BÒv—BöÖ–çFVææ6U6W'f–6T'F–f7E&÷f–FW"ävWDæWvW$Ö–çFVææ6U6W'f–6U&VÆV6T7–æ2€¢7W'&VçEfW'6–öâÂÆâä6†ææVÂÂ6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2”ôW†6WF–öâ÷"VæWF†÷&—¦VD66W74W†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"F–ÖV÷WDW†6WF–öâ÷ ¢–çfÆ–D÷W&F–öäW†6WF–öâ÷"&wVÖVçDW†6WF–öâ÷"‡GG&WVW7DW†6WF–öâ¢°¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÀ¢.izk9^XxnZH~{¸ş‹ø~zÛîYŞjš¨Îy¨BÖ–çFVææ6U6W'f–6Ri»NikûÉ¢"²6æ—F—¦R†W†6WF–öâäÖW76vR’À¢–ç7V7F–öâä–FVçF—G”Wf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2Â–ç7V7F–öâåWFFUG&ç67F–öå7FFR“°¢Ğ¢–b†'F–f7B—2çVÆÂ¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VBÀ¢.{»NhªNŠêX‰.KŠŞy¨BÖ–çFVææ6U6W'f–6Ryºîj~[{.KˆŞXhŞiŠşXúşyJy¨N‹è>ikXùŠÎûÉ¾Šû~˜xŞikj8iú^[›nyIşh‰ŠêX‰.8""À¢–ç7V7F–öâä–FVçF—G”Wf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2Â–ç7V7F–öâåWFFUG&ç67F–öå7FFR“° ¢f"&VÆV6RÒ'F–f7Bå&VÆV6S°¢f"6öÖÖæD–BÒwV–BäæWtwV–B‚“°¢f"Wf–FVæ6RÒæWrÖ–çFVææ6TWf–FVæ6R‚'6–væVBÖÖ–çFVææ6R×6W'f–6R×&VÆV6R"À¢FWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÂ&VÆV6RäÖæ–fW7Bå6†#SbÂ6öÖÖæD–BÂFFUF–ÖTöfg6WBåWF4æ÷r“°¢f"6öÖÖæEv5&W&VBÒfÇ6S°¢G'¢°¢Æ–6F–öå&VÆV6T6Æ–VçBåfW&–g’‡&VÆV6RÂÆ–6F–öå&VÆV6U&öÆRäÖ–çFVææ6U6W'f–6RÀ¢'F–f7Bä”&6TFG&W72Â'F–f7BäFWfVÆ÷W%&VÆV6UV&Æ–4¶W•VÒ“°¢–b‡&VÆV6RäÖæ–fW7BäÖ–çFVææ6U&÷Fö6öÅfW'6–öâÒÖ–çFVææ6U&÷Fö6öÅcä7W'&VçEfW'6–öâÇÀ¢Æ–6F–öå&VÆV6T6Æ–VçBä6ö×&UfW'6–öç2‡&VÆV6RäÖæ–fW7BåfW'6–öâÂ7W'&VçEfW'6–öâ’ÃÒÇÀ¢7G&–æräWVÇ2‡&VÆV6RäÖæ–fW7BåfW'6–öâÂÆâåF&vWDÖ–çFVææ6U6W'f–6UfW'6–öâÀ¢7G&–æt6ö×&—6öâä÷&F–æÂ’ÇÀ¢7G&–æräWVÇ2‡&VÆV6RäÖæ–fW7Bå6†#SbÂÆâåF&vWDÖ–çFVææ6U6W'f–6U&VÆV6U6†#SbÀ¢7G&–æt6ö×&—6öâä÷&F–æÄ–væ÷&T66R’¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚$Ö–çFVææ6U6W'f–6RXùŠÎx˜iÊÎ8iŠhh‰nXØşŠêî™zjy¾Kˆî{»NhªNŠêX‰.KˆŞXË˜XŞ8""“°¢v—BW6–ærf"Æå6W'fW"Ò7GVFVçDÆ–6F–öåWFFTÆå6W'fW"å7F'B†'F–f7Bä–ç7FÆÆW%F‚À¢&VÆV6RäÖæ–fW7Bå6†#SbÂ&VÆV6RäÖæ–fW7Bå6—¦T'—FW2“°¢f"W‡—&W5WF2ÒFFUF–ÖTöfg6WBåWF4æ÷räFDÖ–çWFW2ƒB“°¢f"F÷væÆöEW&’Òv—BÆå6W'fW"ävWDF÷væÆöEW&”7–æ2†FWf–6Rå&÷WFTFG&W72ÂFWf–6Rä6×W4–BÀ¢6öÖÖæD–BÂW‡—&W5WF2ÂF&vWDvVçEV&Æ–4¶W•VÓ¢çVÆÂÂ6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ¢ä6öæf–wW&Tv—B†fÇ6R“°¢f"6–væVDVçfVÆ÷T§6öâÒ§6öå6W&–Æ—¦W"å6W&–Æ—¦R‡&VÆV6R“°¢f"öffW"Òv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6U&VÆV6UWFFU&VF&6µ–ÆöCâ€¢FWf–6RÂ÷W&F–öä–BÂ6öÖÖæD–BÂÖ–çFVææ6U&÷Fö6öÅc6öÖÖæBäöffW%6–væVDÖ–çFVææ6U6W'f–6UWFFRÀ¢6–væ–æt¶W’å&—fFT¶W’À¢&Vf÷&U6VæC¢7–æ2‡&W&VD6öÖÖæD–BÂ6–væVD6öÖÖæE6†#SbÂFö¶Vâ’Óà¢°¢–b‡&W&VD6öÖÖæD–BÒ6öÖÖæD–B¢F‡&÷ræWr–çfÆ–DFFW†6WF–öâ‚$Ö–çFVææ6U6W'f–6R6öÖÖæD–BYÊzÛîYŞX˜ŞYîXùyIşXùXÉn8""“°¢v—B&Vf÷&T6öÖÖæE6VæB†æWrÖ–çFVææ6UWFFT6öÖÖæE&W&VB†÷W&F–öä–BÂ6öÖÖæD–BÀ¢6–væVD6öÖÖæE6†#SbÂÖ–çFVææ6U6W'f–6UWFFS¢G'VR’ÂFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢6öÖÖæEv5&W&VBÒG'VS°¢ÒÂ6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶VâÀ¢&VÆV6U6†#Sc¢&VÆV6RäÖæ–fW7Bå6†#SbÀ¢6–væVE&VÆV6TVçfVÆ÷T§6öã¢6–væVDVçfVÆ÷T§6öâÀ¢'F–f7EG&ç6fW%W&Ã¢F÷væÆöEW&’ä'6öÇWFUW&’À¢F&vWDÖ–çFVææ6U6W'f–6UfW'6–öã¢&VÆV6RäÖæ–fW7BåfW'6–öâ’ä6öæf–wW&Tv—B†fÇ6R“°¢–b†öffW"å&W7öç6Rå&W7VÇD6öFRÓÒ&æVVG5&Wf–Wr"¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâå&V6÷fW'•&WV—&VBÀ¢öffW"å&W7öç6RäFWF–ÂÂWf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2Â&æVVG5&Wf–Wr"À¢öffW"å&W7öç6Rä6öÆÆV7FVEWF2“°¢–b†öffW"å&W7öç6Rå&W7VÇD6öFRÓÒ&f–ÆVB"ÇÂöffW"å&W7öç6Rå&W7VÇD6öFRÓÒ&æ÷E7W÷'FVB"¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÀ¢öffW"å&W7öç6Rå&W7VÇD6öFRÓÒ&æ÷E7W÷'FVB"òÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VB ¢Ö–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÂöffW"å&W7öç6RäFWF–ÂÂWf–FVæ6RÀ¢–ç7V7F–öâä7W'&VçEfW'6–öç2ÂçVÆÂÂöffW"å&W7öç6Rä6öÆÆV7FVEWF2“°¢&öw&W73òå&W÷'B†æWrÖ–çFVææ6T6ö÷&F–æF÷%&öw&W72†÷W&F–öä–BÂÖ–çFVææ6U'Vå7FFRåWFF–ærÀ¢$Ö–çFVææ6R6W'f–6R[{.hê^Xù~xºÎz¸¾zÛîYŞi»NikûÉ¾zØ[è^x˜iÊÎXˆ~hÚ.Y(ÎX^[«~jš¨Î8""ÂÂÂ6öÖÖæD–BÀ¢FWf–6Rå&÷WFTFG&W72’“°¢&WGW&âv—Bv—Df÷$Ö–çFVææ6U6W'f–6U&VÆV6T7–æ2†÷W&F–öä–BÂFWf–6RÂ6öÖÖæD–BÂ&VÆV6RÀ¢7W'&VçEfW'6–öâÂWf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2Â&öw&W72Â6æ6VÆÆF–öåFö¶Vâ¢ä6öæf–wW&Tv—B†fÇ6R“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2”ôW†6WF–öâ÷"VæWF†÷&—¦VD66W74W†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"F–ÖV÷WDW†6WF–öâ÷ ¢–çfÆ–D÷W&F–öäW†6WF–öâ÷"&wVÖVçDW†6WF–öâ÷"‡GG&WVW7DW†6WF–öâ¢°¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÀ¢6öÖÖæEv5&W&VBòÖ–çFVææ6TFFW$F—7÷6—F–öâåVæF–æufW&–f–6F–öâ ¢W†6WF–öâ—2–çfÆ–DFFW†6WF–öâòÖ–çFVææ6TFFW$F—7÷6—F–öâäÖçVÅ&WV—&VB ¢Ö–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÀ¢6öÖÖæEv5&W&V@¢ò$Ö–çFVææ6U6W'f–6Ri»NikYŞKºN[{.hÈK˜^XÉnûÉ¾KÛşyJXéò6öÖÖæD–Biú^Šú.X[nxºÎz¸¾x˜iÊÎK¨¾Xª8" ¢¢6æ—F—¦R†W†6WF–öâäÖW76vR’ÂWf–FVæ6RÂ–ç7V7F–öâä7W'&VçEfW'6–öç2À¢6öÖÖæEv5&W&VBò&–å&öw&W72"¢çVÆÂÂFFUF–ÖTöfg6WBåWF4æ÷r“°¢Ğ¢Ğ ¢&—fFR7–æ2F6³ÄÖ–çFVææ6TFFW%&W7VÇCâv—Df÷$Ö–çFVææ6U6W'f–6U&VÆV6T7–æ2„wV–B÷W&F–öä–BÀ¢Ö–çFVææ6TFWf–6T–FVçF—G’FWf–6RÂwV–B6öÖÖæD–BÂÆ–6F–öå&VÆV6TVçfVÆ÷R&VÆV6RÀ¢7G&–ær&Wf–÷W5fW'6–öâÂÖ–çFVææ6TWf–FVæ6RWf–FVæ6RÂÖ–çFVææ6T6ö×öæVçEfW'6–öç2&Wf–÷W5fW'6–öç2À¢•&öw&W73ÄÖ–çFVææ6T6ö÷&F–æF÷%&öw&W73ãò&öw&W72Â6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ¢°¢f"FVFÆ–æRÒFFUF–ÖTöfg6WBåWF4æ÷räFDÖ–çWFW2ƒ“°¢v†–ÆR„FFUF–ÖTöfg6WBåWF4æ÷rÂFVFÆ–æR¢°¢6æ6VÆÆF–öåFö¶VâåF‡&÷t–d6æ6VÆÆF–öå&WVW7FVB‚“°¢G'¢°¢W6–ærf"6–væ–æt¶W’ÒvV'6—FUöÆ–7•6–væ–æt¶W•7F÷&Rä÷Vâ†FWf–6Rä6×W4–B“°¢f"7FGW2Òv—BöÖ–çFVææ6U6W'f–6T6Æ–VçBå6VæD7–æ3ÄÖ–çFVææ6U6W'f–6U&VÆV6UWFFU&VF&6µ–ÆöCâ€¢FWf–6RÂ÷W&F–öä–BÂ6öÖÖæD–BÂÖ–çFVææ6U&÷Fö6öÅc6öÖÖæBävWDÖ–çFVææ6U6W'f–6UWFFU7FGW2À¢6–væ–æt¶W’å&—fFT¶W’À¢6æ6VÆÆF–öåFö¶Vã¢6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢f"G&ç67F–öâÒ7FGW2å–ÆöCòåG&ç67F–öã°¢f"–ç7FÆÆVBÒ7FGW2å–ÆöCòä–ç7FÆÆVEfW'6–öç3°¢–b‡G&ç67F–öâ—2æ÷BçVÆÂbb‡G&ç67F–öâä6öÖÖæD–BÒ6öÖÖæD–BÇÀ¢G&ç67F–öâä÷W&F–öä–BÒ÷W&F–öä–B’¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÀ¢Ö–çFVææ6TFFW$F—7÷6—F–öâå&V6÷fW'•&WV—&VBÀ¢$Ö–çFVææ6U6W'f–6RK¨¾XªŠû¾Y¹îk*iÈ{¹Zé®Xéò÷W&F–öä–Bö6öÖÖæD–N8""ÂWf–FVæ6RÀ¢&Wf–÷W5fW'6–öç2Â&æVVG5&Wf–Wr"Â7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢–b‡G&ç67F–öâ—2²7FFS¢&6öÖÖ—GFVB"Ò¢°¢f"g&W6‚Òv—B–ç7V7D7–æ2†FWf–6RÂ6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢–b†g&W6‚ä–FVçF—G•fW&–f–VBbbg&W6‚ä7W'&VçEfW'6–öç2äÖ–çFVææ6UfW'6–öâ—2²Ò6W'f–6UfW'6–öâb`¢7G&–æräWVÇ2‡6W'f–6UfW'6–öâÂ&VÆV6RäÖæ–fW7BåfW'6–öâÂ7G&–æt6ö×&—6öâä÷&F–æÂ’b`¢g&W6‚ä6&–Æ—F–W3òå&÷Fö6öÅfW'6–öâÓÒ&VÆV6RäÖæ–fW7BäÖ–çFVææ6U&÷Fö6öÅfW'6–öâb`¢–ç7FÆÆVCòå'Vææ–æt57—7FVÒÓÒG'VR¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÀ¢Ö–çFVææ6TFFW$F—7÷6—F–öâåWFFT6öÖÖ—GFVDæD†VÇF‡’À¢$Ö–çFVææ6U6W'f–6RzÛîYŞXÈ^[{.Xˆ~hÚ.ûÉµ44Ò‹zş[èN8x˜iÊÎ85•5DTÒ˜XŞ{ÚîY(ÎŠêNŠøX^[«~˜	®˜>YØ~[{.Šû¾Y¹î8""À¢æWrÖ–çFVææ6TWf–FVæ6R‚'6–væVBÖÖ–çFVææ6R×6W'f–6RÖ6öÖÖ—GFVB"À¢FWf–6Rå–ææVD–FVçF—G”f–ævW'&–çBÂ&VÆV6RäÖæ–fW7Bå6†#SbÂ6öÖÖæD–BÀ¢7FGW2å&W7öç6Rä6öÆÆV7FVEWF2’Âg&W6‚ä7W'&VçEfW'6–öç2ÂG&ç67F–öâå7FFRÀ¢7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâå&V6÷fW'•&WV—&VBÀ¢$Ö–çFVææ6U6W'f–6RK¨¾Xªhª^Y®ZèÎh‰ûÈÎKØnikx˜iÊÎX^[«~Šû¾Y¹îKˆŞKˆˆ{NûÉ¾XÎjÚ.Yî{ºÒ6WGWi»Nik8""À¢Wf–FVæ6RÂg&W6‚ä7W'&VçEfW'6–öç2ÂG&ç67F–öâå7FFRÂ7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢Ğ¢–b‡G&ç67F–öâ—2²7FFS¢'&öÆÆVD&6²"Ò¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâåWFFU&öÆÆVD&6²À¢$Ö–çFVææ6U6W'f–6Ri»NikZK‹J^ûÉ¾[{.zîŠêNiz~x˜iÊÎK¸ŞyK44Ò‹ùŠÎ8""ÂWf–FVæ6RÀ¢æWrÖ–çFVææ6T6ö×öæVçEfW'6–öç2‡&Wf–÷W5fW'6–öç2å7GVFVçE6WGWfW'6–öâÀ¢&Wf–÷W5fW'6–öç2ävVçE'VçF–ÖUfW'6–öâÂ&Wf–÷W5fW'6–öç2ävVçD76VÖ&Ç•fW'6–öâÀ¢&Wf–÷W5fW'6–öâ’ÂG&ç67F–öâå7FFRÀ¢7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢–b‡G&ç67F–öâ—2²7FFS¢&æVVG5&Wf–Wr"ÒÇÂ7FGW2å&W7öç6Rå&W7VÇD6öFRÓÒ&æVVG5&Wf–Wr"¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâå&V6÷fW'•&WV—&VBÀ¢7FGW2å&W7öç6RäFWF–ÂÂWf–FVæ6RÂ&Wf–÷W5fW'6–öç2Â&æVVG5&Wf–Wr"Â7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢–b‡7FGW2å&W7öç6Rå&W7VÇD6öFRÓÒ&f–ÆVB"¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâäf–ÆVBÀ¢7FGW2å&W7öç6RäFWF–ÂÂWf–FVæ6RÂ&Wf–÷W5fW'6–öç2ÂçVÆÂÂ7FGW2å&W7öç6Rä6öÆÆV7FVEWF2“°¢Ğ¢6F6‚„÷W&F–öä6æ6VÆVDW†6WF–öâ’v†Vâ†6æ6VÆÆF–öåFö¶Vâä—46æ6VÆÆF–öå&WVW7FVB’²F‡&÷s²Ğ¢6F6‚„W†6WF–öâW†6WF–öâ’v†Vâ†W†6WF–öâ—2”ôW†6WF–öâ÷"VæWF†÷&—¦VD66W74W†6WF–öâ÷ ¢–çfÆ–DFFW†6WF–öâ÷"7'—Föw&†–4W†6WF–öâ÷"F–ÖV÷WDW†6WF–öâ÷ ¢–çfÆ–D÷W&F–öäW†6WF–öâ÷"&wVÖVçDW†6WF–öâ÷"‡GG&WVW7DW†6WF–öâ¢°¢òò6W'f–6R&W7F'BG&÷2F†RWF†VçF–6FVB6ö6¶WC²&V6öææV7BæBVW'’F†R6ÖR6öÖÖæD–Bà¢Ğ¢&öw&W73òå&W÷'B†æWrÖ–çFVææ6T6ö÷&F–æF÷%&öw&W72†÷W&F–öä–BÂÖ–çFVææ6U'Vå7FFRåv—F–ætf÷$6öÖÖ—BÀ¢.zØ[èRÖ–çFVææ6R6W'f–6R˜xŞ‹ùî[›nŠû¾Y¹îy»YÂ6öÖÖæD–By¨Nx˜iÊÎK¨¾Xª8""ÂÂÂ6öÖÖæD–BÀ¢FWf–6Rå&÷WFTFG&W72’“°¢v—BF6²äFVÆ’…F–ÖU7âäg&öÕ6V6öæG2ƒ"’Â6æ6VÆÆF–öåFö¶Vâ’ä6öæf–wW&Tv—B†fÇ6R“°¢Ğ¢&WGW&âæWrÖ–çFVææ6TFFW%&W7VÇB†÷W&F–öä–BÂÖ–çFVææ6TFFW$F—7÷6—F–öâåWFFUVæF–æufW&–f–6F–öâÀ¢$Ö–çFVææ6U6W'f–6RjÚ>YÊXˆ~hÚ.h‰ni¨.i{nzk¾{«şûÉ³Xˆn™)şXh^iÊ®Xùn[é~zÛîYŞ{¸hûÈÎKùŞyY’6öÖÖæD–B[è^˜xŞikiú^Šú.8""À¢Wf–FVæ6RÂ&Wf–÷W5fW'6–öç2Â&–å&öw&W72"ÂFFUF–ÖTöfg6WBåWF4æ÷r“°¢Ğ ¢V&Æ–27–æ2F6³ÄÖ–çFVææ6TFFW%&W7VÇCâ7–æ6‡&öæ—¦T6öæf–wW&F–öä7–æ2„Ö–çFVææ6UÆâÆâÀ¢gVæ3ÄÖ–çFVææ6UWFFT6öÖÖæE&W&VBÂ6æ6VÆÆF–öåFö¶VâÂF6³â&Vf÷&T6öÖÖæE6VæBÀ¢6æ6VÆÆF–öåFö¶Vâ6æ6VÆÆF–öåFö¶Vâ¢°¢&wVÖVçDçVÆÄW†6WF–öâåF‡&÷t–dçVÆÂ‡Æâ“°¢&wVÖVçDçVÆÄW†6WF–öâî»÷‹h‘éì¶»§q«^u™\œÚ[ÛœÔ™\K”™\ÜÛœÙKÛÛXİY]ËˆİYÙNˆYÙ[9¦í9¥¬9.¢ùb¨yëbyo¡yk£9¢$ŠNÂˆ˜\ˆ^XİYÙ]\HX^[][U™\œÚ[ÛŠ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹[‹•\™Ù]Ù]\™\œÚ[ÛŠNÂˆ˜\ˆ^XİYYÙ[HX^[][U™\œÚ[ÛŠ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹[‹•\™Ù]YÙ[™\œÚ[ÛŠNÂˆYˆ
+XZ[[˜[˜ÙU™\œÚ[ÛœË”İY[Ù]\™\œÚ[Ûˆ\È[XZ[[˜[˜ÙU™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\È[ˆ^XİYÙ]\\È[^XİYYÙ[\È[ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊXZ[[˜[˜ÙU™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹^XİYÙ]\
+Hˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊXZ[[˜[˜ÙU™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹^XİYYÙ[
+H
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ¹æë¹¨!ù¥fyn":/ç¹£©zacyïk¹mìº+îùfç»ï#9/a¹k§ºfaHÙ]\ĞYÙ[9âb9§+9/c¹.£¹c§ùîí9¢©:+¨yb$¸à ˆ‹ÛÛ™šYİ\˜][Û‘]šY[˜ÙKˆXZ[[˜[˜ÙU™\œÚ[ÛœËXZ[[˜[˜ÙTÛ˜\Úİ•˜[œØXİ[Û”İ]K™\œÚ[ÛœÔ™\K”™\ÜÛœÙKÛÛXİY]ËˆİYÙNˆ”Ù]\ĞYÙ[9âb9§+9¨(zj£ŠNÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹ÛÛ™šYİ\˜][Û”Ş[˜Ú›Ûš^™Yˆ“XZ[[˜[˜ÙH9§#yb¨ymì¹ëo¹d#z+îùfç¹c§ù¥fyn":/ç¹£©y£!ùî®xà yîá9.í¹âb9§+9d£9cåù/çy¢©ÖTÕSHYÙ[9d+ùbª9.îùb¨xà ˆ‹ˆÛÛ™šYİ\˜][Û‘]šY[˜ÙKXZ[[˜[˜ÙU™\œÚ[ÛœËXZ[[˜[˜ÙTÛ˜\Úİ•˜[œØXİ[Û”İ]K™\K”™\ÜÛœÙKÛÛXİY]Ëˆ™\K”^[ØY•XXÚ\ÛÛ™šYİ\˜][Û”™]š\Ú[ÛŠNÂˆB‚ˆYˆ
+[‹YÙ[ÛÛ[X[™Y\È›İÈHYÙ[ÛÛ[X[™Y
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ¹l&¹¥èYÙ[9¦í9¥¬ÛÛ[X[™Y;ï&ùcêº+îùâ­¹  y.#z-¬ù.éyb)9¥«yk¢z(áy.¢ùb¨xà ˆ‹[
+NÂˆ˜\ˆİ]\Ô™\HH]ØZ]™XYXZ[[˜[˜ÙU˜[œØXİ[Û\Ş[˜Ê[‹[‹“Ü\˜][Û’YYÙ[ÛÛ[X[™YˆÚYÛš[™ÒÙ^K”š]˜]RÙ^KØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆ˜\ˆİ]\Ô^[ØYHİ]\Ô™\K”^[ØYˆÏÈ›İÈ™]È[˜[Y]Q^Ù\[ÛŠ“XZ[[˜[˜ÙH9.¢ùb¨ydãyn¥9«hù¥¡ù..¹ên¸à ˆˆ
+NÂˆYˆ
+İ]\Ô^[ØY•˜[œØXİ[Û‹”İ]HOHš[”›ÙÜ™\ÜÈŠBˆÂˆ˜\ˆ™XÛİ™\HH]ØZ]ÛXZ[[˜[˜ÙTÙ\šXÙPÛY[”Ù[™\Ş[˜ÏXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYŠˆ[‹‘]šXÙK[‹“Ü\˜][Û’YYÙ[ÛÛ[X[™YˆXZ[[˜[˜ÙT›İØÛÛŒPÛÛ[X[™”™XÛİ™\”[™[™Õ˜[œØXİ[Û‹ÚYÛš[™ÒÙ^K”š]˜]RÙ^KˆØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆYˆ
+™XÛİ™\K”™\ÜÛœÙK”™\İ[ÛÙHOH›™YYÔ™]šY]Èˆ™XÛİ™\K”^[ØYË•˜[œØXİ[Û‹”İ]HOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Y™XÛİ™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙH9/çyåfyc§ùkd9.¢ùb¨y§d9¥¦{ï#9/a¹ h¹i#z/áùê"úg :) yã¬9g.¹¨.9kîxà ˆ‹™XÛİ™\K”^[ØY
+NÂˆİ]\Ô™\HH]ØZ]™XYXZ[[˜[˜ÙU˜[œØXİ[Û\Ş[˜Ê[‹[‹“Ü\˜][Û’YYÙ[ÛÛ[X[™YˆÚYÛš[™ÒÙ^K”š]˜]RÙ^KØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆİ]\Ô^[ØYHİ]\Ô™\K”^[ØYˆÏÈ›İÈ™]È[˜[Y]Q^Ù\[ÛŠ“XZ[[˜[˜ÙH9.¢ùb¨ydãyn¥9«hù¥¡ù..¹ên¸à ˆˆ
+NÂˆB‚ˆ˜\ˆ˜[œØXİ[ÛˆHİ]\Ô^[ØY•˜[œØXİ[ÛÂˆYˆ
+˜[œØXİ[Û‹”İ]HOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ¹ëo¹d#y.¢ùb¨yâ­¹  z) y¬`¹/çyåfy h¹i#y§d9¥¦ynmº/æú(c9ã¬9g.¹¨.9kîxà ˆ‹İ]\Ô^[ØY
+NÂˆYˆ
+˜[œØXİ[Û‹”İ]HOHœİ\\œÙYYŠBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ¹c§ù¦í9¥¬9.¢ùb¨ymìº(ªùam¹.åˆÛÛ[X[™Y9¦ïù.èûï&ù/çyåfyâ­¹  ynmº) y¬`¹¨.9kîyd#¹îëy.¢ùb¨xà ˆ‹İ]\Ô^[ØY
+NÂˆYˆ
+˜[œØXİ[Û‹”İ]H\È›İ
+˜ÛÛ[Z]YˆÜˆœ›ÛY˜XÚÈŠJBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ“XZ[[˜[˜ÙH9§#yb¨ymìº+îùcå¹c§ÈÛÛ[X[™Y9æ¡9.¢ùb¨{ï&ù.¢ùb¨yl&¹§*º/¯¹b,9cëú(àyk¦¹æ¡9îâ9  xà ˆ‹İ]\Ô^[ØY
+NÂ‚ˆ˜\ˆ[œİ[YHİ]\Ô^[ØY’[œİ[Y™\œÚ[ÛœÎÂˆ˜\ˆ™\œÚ[ÛœÈHÓXZ[[˜[˜ÙU™\œÚ[ÛœÊ[œİ[Y
+NÂˆYˆ
+[œİ[Y•˜[œØXİ[Û”İ]HOH˜[œØXİ[Û‹”İ]JBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ¹.¢ùb¨y¥éyoåùd£9îá9.í¹oêùáiùg*:+îùcå¹§'úeí9cäyå'ùcæ9c%»ï&ù¦ ¹.#z(àyk¦¹¦í9¥¬9îäù§§8à ˆ‹İ]\Ô^[ØY
+NÂˆYˆ
+Z[œİ[Y”[›š[™Ğ\ÔŞ\İ[H[œİ[Y“X[˜YÙYYÙ[\ÚÕ\İYOH˜[ÙJBˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ¹.¢ùb¨ymìº/¯¹b,9îâ9  {ï#9/aˆÖTÕSH:.ªù.ïy¢%ˆYÙ[9d+ùbª9.îùb¨y/èy.îù¨.:j£9i,z-)xà ˆ‹İ]\Ô^[ØY
+NÂˆYˆ
+[œİ[Y“X[˜YÙYYÙ[\ÚÕ\İY\È[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Ûˆ\È[ˆ™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\È[
+Bˆ™]\›ˆÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+[‹YÙ[ÛÛ[X[™Yİ]\Ô™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ¹.¢ùb¨ymìº/¯¹b,9îâ9  {ï#9/a¹ëo¹d#yâb9§+9¢%ˆYÙ[9d+ùbª9.îùb¨z+îùfç¹.#yk£9¥m8à ˆ‹İ]\Ô^[ØY
+NÂ‚ˆ˜\ˆ]šY[˜ÙHHÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û‘]šY[˜ÙJ[‹YÙ[ÛÛ[X[™Yİ]\Ô™\JNÂˆYˆ
+˜[œØXİ[Û‹”İ]HOH˜ÛÛ[Z]YŠBˆÂˆ˜\ˆÙ]\X]Ú\ÈH[‹•\™Ù]Ù]\™\œÚ[Ûˆ\ÈÈH\™Ù]Ù]\	‰‚ˆİš[™Ë‘\]X[Ê™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[X]Ú\ÈH[‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈH\™Ù]YÙ[ˆÈİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Û‹\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Bˆˆ˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈH˜[œØXİ[ÛYÙ[ˆÈİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹˜[œØXİ[ÛYÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆ
+[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\È›İÈHÛİ\˜ÙPYÙ[ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊ˜[œØXİ[ÛYÙ[Ûİ\˜ÙPYÙ[
+HH
+Bˆˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\ÈÈHÛİ\˜ÙT[[YH	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊ™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹Ûİ\˜ÙT[[YJHHÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆÙ]\X]Ú\È	‰ˆYÙ[X]Ú\ÂˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]PÛÛ[Z]Y[™X[BˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆÙ]\X]Ú\È	‰ˆYÙ[X]Ú\ÂˆÈ“XZ[[˜[˜ÙH9ëo¹d#y.¢ùb¨xà TÙ]\ĞYÙ[9âb9§+9d£9cåù/çy¢©ÖTÕSH9d+ùbª9.îùb¨ygaùmì¹¨.:j£8à ˆ‚ˆˆ¹.¢ùb¨y¢©ydbˆÛÛ[Z]Y;ï#9/a¹ëo¹d#yîá9.í¹âb9§+9.#º+¨yb$¹æë¹¨!ù.#y. :!í8à ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË˜[œØXİ[Û‹”İ]Kİ]\Ô™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆ˜\ˆÙ]\™\İÜ™YHİš[™Ë‘\]X[Ê™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ÔÙ]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[™\İÜ™YHİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ĞYÙ[™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆÙ]\™\İÜ™Y	‰ˆYÙ[™\İÜ™YˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]T›ÛY˜XÚÂˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆÙ]\™\İÜ™Y	‰ˆYÙ[™\İÜ™YˆÈ“XZ[[˜[˜ÙH9ëo¹d#z+îùfç¹èkº+©9c§ùâb9§+9mì¹ h¹i#{ï#ÖTÕSHYÙ[9d+ùbª9.îùb¨y.ãycåù/çy¢©8à ˆ‚ˆˆ¹.¢ùb¨y¢©ydbˆ›ÛY˜XÚûï#9/a¹ëo¹d#yâb9§+9.#¹c§ùâb9§+9oêùáiù.#y. :!í8à ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË˜[œØXİ[Û‹”İ]Kİ]\Ô™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆš]˜]H\Ş[˜È\ÚÏXZ[[˜[˜ÙPY\\”™\İ[ˆ™XÛÛ˜Ú[SXZ[[˜[˜ÙTÙ\šXÙT™[X\ÙP\Ş[˜ÊXZ[[˜[˜ÙT[ˆ[‹ˆXZ[[˜[˜ÙT[ˆ[‹”ĞHXXÚ\”ÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠBˆÂˆYˆ
+[‹YÙ[ÛÛ[X[™Y\È›İÈHÛÛ[X[™Y
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ“XZ[[˜[˜ÙTÙ\šXÙH9¦í9¥¬9 h¹i#yï.¹l$ymì¹£ y.ayc%ˆÛÛ[X[™Y;ï&ù.#zaãy¥¬9cäz` ycäz(c9c!xà ˆ‹[
+NÂˆ˜\ˆ™\HH]ØZ]ÛXZ[[˜[˜ÙTÙ\šXÙPÛY[”Ù[™\Ş[˜ÏXZ[[˜[˜ÙTÙ\šXÙT™[X\ÙU\]T™XY˜XÚÔ^[ØYŠˆ[‹‘]šXÙK[‹“Ü\˜][Û’YÛÛ[X[™YˆXZ[[˜[˜ÙT›İØÛÛŒPÛÛ[X[™‘Ù]XZ[[˜[˜ÙTÙ\šXÙU\]Tİ]\ËXXÚ\”ÚYÛš[™ÒÙ^KˆØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆ˜\ˆ^[ØYH™\K”^[ØYÂˆ˜\ˆ˜[œØXİ[ÛˆH^[ØYË•˜[œØXİ[ÛÂˆ˜\ˆ[œİ[YH^[ØYË’[œİ[Y™\œÚ[ÛœÎÂˆ˜\ˆ]šY[˜ÙHH™]ÈXZ[[˜[˜ÙQ]šY[˜ÙJˆ˜[œØXİ[ÛË”İ]HOH˜ÛÛ[Z]Y‚ˆÈœÚYÛ™Y[XZ[[˜[˜ÙK\Ù\šXÙKXÛÛ[Z]YˆˆœÚYÛ™Y[XZ[[˜[˜ÙK\Ù\šXÙK]˜[œØXİ[Û‹\İ]\È‹ˆ[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[™\K”ÚYÛ™Y™\ÜÛœÙTÚLM‹ÛÛ[X[™Yˆ™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆ˜\ˆ™\œÚ[ÛœÈH[œİ[Y\È[È[ˆÓXZ[[˜[˜ÙU™\œÚ[ÛœÊ[œİ[Y
+NÂˆ˜\ˆ™\šYšYY˜[œØXİ[Û”İ]HH™\œÚ[ÛœÈ\È[È[ˆ˜[œØXİ[ÛË”İ]HÏÈ››İ›İ[™ÂˆYˆ
+˜[œØXİ[Ûˆ\È›İ[	‰ˆ
+˜[œØXİ[Û‹“Ü\˜][Û’YOH[‹“Ü\˜][Û’Yˆ˜[œØXİ[Û‹ÛÛ[X[™YOHÛÛ[X[™Y
+JBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙTÙ\šXÙH9ëo¹d#y.¢ùb¨y.#¹c§ÈÜ\˜][Û’YØÛÛ[X[™Y9.#y. :!í;ï&ù/çyåfyã¬9g.¹/¦ù¨.9kîxà ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË™\œÚ[ÛœÈ\È[È[ˆ›™YYÔ™]šY]È‹™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆYˆ
+˜[œØXİ[ÛË”İ]HOH˜ÛÛ[Z]YŠBˆÂˆ˜\ˆX[H]ØZ][œÜXİ\Ş[˜Ê[‹‘]šXÙKØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆYˆ
+X[’Y[]U™\šYšYY	‰ˆX[İ\œ™[™\œÚ[ÛœË“XZ[[˜[˜ÙU™\œÚ[Ûˆ\ÈÈHİ\œ™[	‰‚ˆİš[™Ë‘\]X[Êİ\œ™[[‹•\™Ù]XZ[[˜[˜ÙTÙ\šXÙU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆX[Ø\Xš[]Y\ÏË”›İØÛÛ™\œÚ[ÛˆOHXZ[[˜[˜ÙT›İØÛÛŒKİ\œ™[™\œÚ[Ûˆ	‰‚ˆ[œİ[YË”[›š[™Ğ\ÔŞ\İ[HOHYJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]PÛÛ[Z]Y[™X[Kˆ¹ h¹i#z+îùfç¹èkº+©XZ[[˜[˜ÙTÙ\šXÙH9.¢ùb¨ymì¹£ä9.©;ï#9.%9¥¬9§#yb¨yâb9§+8à yccú+«¹.#¹ëo¹d#y`iyn­ú`&º`dù«hùn.8à ˆ‹ˆ]šY[˜ÙKX[İ\œ™[™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙTÙ\šXÙH9.¢ùb¨ymì¹£ä9.©;ï#9/a¹æë¹¨!ù§#yb¨y`iyn­ú+îùfç¹.#y. :!í;ï&ù`g9«h¹d#¹îëHİY[Ù]\:f-¹«­xà ˆ‹ˆ]šY[˜ÙKX[İ\œ™[™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆBˆYˆ
+˜[œØXİ[ÛË”İ]HOHœ›ÛY˜XÚÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]T›ÛY˜XÚËˆ¹ëo¹d#z+îùfç¹èkº+©XZ[[˜[˜ÙTÙ\šXÙH9¦í9¥¬9mì¹fç¹®æ¸à ˆ‹]šY[˜ÙK™\œÚ[ÛœËˆ™\œÚ[ÛœÈ\È[È[ˆ˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆYˆ
+˜[œØXİ[ÛË”İ]HOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙTÙ\šXÙH9¦í9¥¬9.¢ùb¨zg :) yã¬9g.¹¨.9kî{ï&ùd#¹îëyki¹å'ù¦í9¥¬9/çy£ y`g9«h¸à ˆ‹]šY[˜ÙK™\œÚ[ÛœËˆ™\œÚ[ÛœÈ\È[È[ˆ˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ˜[œØXİ[Ûˆ\È[ˆÈ“XZ[[˜[˜ÙTÙ\šXÙH9¦í9¥¬9.¢ùb¨yl&¹§*¹aî¹ã¬9g*9ëo¹d#z+îùfç»ï&ù/çyåfyc§ÈÛÛ[X[™Y9nm¹îéùîëy¨.9kîxà ˆ‚ˆˆ“XZ[[˜[˜ÙTÙ\šXÙH9¦í9¥¬9.¢ùb¨y.ãy§*¹b,:/¯¹cëùèkº+©9îâ9  {ï&ù/çyåfyc§ÈÛÛ[X[™Y9nm¹îéùîëy¨.9kîxà ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË™\šYšYY˜[œØXİ[Û”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆš]˜]H\Ş[˜È\ÚÏXZ[[˜[˜ÙTÙ\šXÙUXXÚ\”™\OXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØY‚ˆ™XYXZ[[˜[˜ÙU˜[œØXİ[Û\Ş[˜ÊXZ[[˜[˜ÙT[ˆ[‹İZYÜ\˜][Û’YİZYÛÛ[X[™Yˆ”ĞHÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠBˆÂˆ˜\ˆ™\HH]ØZ]ÛXZ[[˜[˜ÙTÙ\šXÙPÛY[”Ù[™\Ş[˜ÏXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYŠˆ[‹‘]šXÙKÜ\˜][Û’YÛÛ[X[™YXZ[[˜[˜ÙT›İØÛÛŒPÛÛ[X[™‘Ù]˜[œØXİ[Û”İ]\ËˆÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆYˆ
+™\K”^[ØY\È[™\K”^[ØY•˜[œØXİ[Û‹ÛÛ[X[™YOHÛÛ[X[™Y
+Bˆ›İÈ™]È[˜[Y]Q^Ù\[ÛŠ“XZ[[˜[˜ÙH9.¢ùb¨ydãyn¥9¬¨y§"yîäyk¦¹c§ÈÛÛ[X[™Y8à ˆˆ
+NÂˆ™]\›ˆ™\NÂˆB‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPY\\”™\İ[Ü™X]SXZ[[˜[˜ÙU˜[œØXİ[Û”™\İ[
+XZ[[˜[˜ÙT[ˆ[‹ˆİZYÛÛ[X[™YˆXZ[[˜[˜ÙTÙ\šXÙUXXÚ\”™\OXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYˆ™\KˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Ûˆ\ÜÜÚ][Û‹İš[™È]Z[ˆXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYÈ^[ØY
+BˆÂˆ˜\ˆ]šY[˜ÙHHÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û‘]šY[˜ÙJ[‹ÛÛ[X[™Y™\JNÂˆ˜\ˆİ]HH^[ØYË•˜[œØXİ[Û‹”İ]NÂˆ˜\ˆ™\œÚ[ÛœÈH^[ØY\È[È[ˆÓXZ[[˜[˜ÙU™\œÚ[ÛœÊ^[ØY’[œİ[Y™\œÚ[ÛœÊNÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’Y\ÜÜÚ][Û‹]Z[]šY[˜ÙKˆ™\œÚ[ÛœË™\œÚ[ÛœÈ\È[È[ˆİ]Kˆ™\œÚ[ÛœÈ\È[È[ˆ™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙQ]šY[˜ÙHÜ™X]SXZ[[˜[˜ÙU˜[œØXİ[Û‘]šY[˜ÙJXZ[[˜[˜ÙT[ˆ[‹ˆİZYÛÛ[X[™YˆXZ[[˜[˜ÙTÙ\šXÙUXXÚ\”™\OXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYˆ™\JHO‚ˆ™]ÊœÚYÛ™Y[XZ[[˜[˜ÙK]\]K]˜[œØXİ[Û‹\İ]\È‹[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[ˆ™\K”ÚYÛ™Y™\ÜÛœÙTÚLM‹ÛÛ[X[™Y™\K”™\ÜÛœÙKÛÛXİY]ÊNÂ‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPÛÛ\Û™[™\œÚ[ÛœÈÓXZ[[˜[˜ÙU™\œÚ[ÛœÊˆXZ[[˜[˜ÙTÙ\šXÙR[œİ[Y™\œÚ[ÛœÔ^[ØY™\œÚ[ÛœÊHO‚ˆ™]Ê™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹ˆ™\œÚ[ÛœËYÙ[\ÜÙ[X›U™\œÚ[Û‹™\œÚ[ÛœË“XZ[[˜[˜ÙTÙ\šXÙU™\œÚ[ÛŠNÂ‚ˆš]˜]Hİ]XÈXXÚ\Ú[›™[Y[]H™XYXXÚ\Ú[›™[Y[]Jİš[™ÈØ[\\ÒYˆØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠBˆÂˆØ[˜Ù[][Û•ÚÙ[‹•›İÒYØ[˜Ù[][Û”™\]Y\İY
+
+NÂˆ˜\ˆ›İšY\ˆHXXÚ\“[Øš[PÛÛ›ÛY[]T›İšY\‘˜XİÜKÜ™X]Q›Üİ\œ™[]›Ü›J
+NÂˆ\Ú[™È˜\ˆY[]HH›İšY\‹Ü™X]RY[]J
+NÂˆ˜\ˆ™Y™\œ™YY™\ÜÈH›İšY\‹”Ù[Xİ™Y™\œ™Y[Y™\ÜÊY[]KY™\ÜÙ\ÊNÂˆ˜\ˆ[™Ú[ÈH™]Ö×HÈ™Y™\œ™YY™\ÜÈBˆÛÛ˜Ø]
+Y[]KY™\ÜÙ\Ë•Ú\™JY™\ÜÈOˆXY™\ÜË‘\]X[Ê™Y™\œ™YY™\ÜÊJJBˆ”Ù[Xİ
+Û\ÜÜ›ÛÛQ]™[Ü\ÙÜ˜\KÜ™X]UXXÚ\‘[™Ú[
+Bˆ‘\İ[˜İ
+İš[™ĞÛÛ\\™\‹“Ü™[˜[
+K•Ğ\œ˜^J
+NÂˆ˜\ˆ›ÛİÙ\YšXØ]P˜\ÙMHÛÛ™\•Ğ˜\ÙMİš[™ÊY[]K”›ÛİÙ\YšXØ]P]\ÊNÂˆİY[YÙ[Ú[›™[›İØÛÛ•˜[Y]P›Ûİİ˜\ÛÛ™šYİ\˜][ÛŠØ[\\ÒY[™Ú[Ë›ÛİÙ\YšXØ]P˜\ÙM
+NÂˆ˜\ˆš[™Ù\œš[HİY[YÙ[Ú[›™[›İØÛÛ‘Ù]›Ûİİ˜\ÛÛ™šYİ\˜][Û‘š[™Ù\œš[
+Ø[\\ÒY[™Ú[Ëˆ›ÛİÙ\YšXØ]P˜\ÙM
+HÏÈ›İÈ™]È[˜[Y]Q^Ù\[ÛŠ¹¥fyn":/ç¹£©z.ªù.ïy¬¨y§"ycëúj£:+àyæ¡9£!ùî®xà ˆŠNÂˆ™]\›ˆ™]ÈXXÚ\Ú[›™[Y[]J\œ˜^K\Ô™XYÛ›J[™Ú[ÊK›ÛİÙ\YšXØ]P˜\ÙMš[™Ù\œš[
+NÂˆB‚ˆš]˜]H\Ş[˜È\ÚÏYØXŞTİ]\Ô™XY˜XÚÏˆ™XYİ]\Ğ\Ş[˜ÊXZ[[˜[˜ÙT[ˆ[‹İZYÈÛÛ[X[™Yˆ”ĞOÈ›İšYYÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠBˆÂˆ\Ú[™È˜\ˆİÛ™YÙ^HH›İšYYÚYÛš[™ÒÙ^H\È[ˆÈÙXœÚ]TÛXŞTÚYÛš[™ÒÙ^TİÜ™K“Ü[Š[‹‘]šXÙKØ[\\ÒY
+Bˆˆ[Âˆ˜\ˆÚYÛš[™ÒÙ^HH›İšYYÚYÛš[™ÒÙ^HÏÈİÛ™YÙ^HK”š]˜]RÙ^NÂˆ˜\ˆ™\İ[ÈH]ØZ]ÙXœÚ]TÛXŞTİ]\Õ˜[œÜÜ”™XY\Ş[˜ÊÜ[‹‘]šXÙK”›İ]PY™\Ü×Kˆ[‹‘]šXÙKØ[\\ÒYÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[‹[˜ÛYRX[Û˜\ÚİˆYKˆ\]PÛÛ[X[™YˆÛÛ[X[™Y[İÓYØXŞQ\™Xİ˜[˜XÚÎˆYKˆ[İÑ\™Xİ˜[˜XÚÕÚ[Ú[›™[Ù™›[™NˆYJKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆ˜\ˆ™\İ[H™\İ[Ë”Ú[™ÛJ
+NÂˆYˆ
+\™\İ[”İXØÙYYY™\İ[”İ]\È\È[™\İ[•™\šYšYY™\ÜÛœÙTÚLMˆ\È[
+Bˆ™]\›ˆ™]ÈYØXŞTİ]\Ô™XY˜XÚÊ[[™\İ[‘]Z[
+NÂˆ˜\ˆ[›™YH™]ÈİY[YÙ[Y[]U\İİÜ™J
+K‘š[™\İYX›XÒÙ^J[‹‘]šXÙKØ[\\ÒYˆ[‹‘]šXÙK”›İ]PY™\ÜÊNÂˆYˆ
+[›™Y\È[\İš[™Ë‘\]X[ÊİY[YÙ[™\ÜÛœÙPÜ\ÙÜ˜\K‘Ù]š[™Ù\œš[
+[›™Y
+Kˆ[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+JBˆ™]\›ˆ™]ÈYØXŞTİ]\Ô™XY˜XÚÊ[[¹ëo¹d#yâ­¹  z.ªù.ïy.#¹îí9¢©:+¨yb$¹fî¹k¦º.ªù.ïy.#y. :!í8à ˆŠNÂ‚ˆİš[™ÏÈYÙ[\ÜÙ[X›U™\œÚ[ÛˆH[ÂˆBˆÂˆ˜\ˆØ\Xš[]HH]ØZ]İY[\XØ][Û•\]U˜[œÜÜ”™XY™\šYšYYİÛ›ØYØ\Xš[]P\Ş[˜Êˆ[‹‘]šXÙK”›İ]PY™\ÜË[‹‘]šXÙKØ[\\ÒYÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆYˆ
+Ø\Xš[]H\È›İ[
+BˆÂˆ˜\ˆ™\ÜYHØ\Xš[]KØ\Xš[]NÂˆYˆ
+™\ÜYYÙ[[[YU™\œÚ[Ûˆ\ÈÈHYÙ[™\œÚ[Ûˆ	‰‚ˆ\İš[™Ë‘\]X[ÊYÙ[™\œÚ[Û‹™\İ[”İ]\ËYÙ[™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Hˆ™\ÜY”İY[Ù]\™\œÚ[Ûˆ\ÈÈHÙ]\™\œÚ[Ûˆ	‰‚ˆ\İš[™Ë‘\]X[ÊÙ]\™\œÚ[Û‹™\İ[”İ]\Ë”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Hˆ™\ÜYÛÛ™šYİ\˜][Û‘š[™Ù\œš[\ÈÈHÛÛ™šYÑš[™Ù\œš[	‰‚ˆ\İš[™Ë‘\]X[ÊÛÛ™šYÑš[™Ù\œš[™\İ[”İ]\ËÛÛ™šYÑš[™Ù\œš[ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJJBˆ™]\›ˆ™]ÈYØXŞTİ]\Ô™XY˜XÚÊ[[ˆ¹ëo¹d#yâ­¹  yd£: ïyb¦ù£©ycèùæ¡:/ä:(c9âb9§+8à TÙ]\9¢%ºacyïk¹£!ùî®y.#y. :!í;ï&ù¦ ¹.#z(àyk¦¹.¢ùb¨yîâ9  xà ˆŠNÂˆYÙ[\ÜÙ[X›U™\œÚ[ÛˆH™\ÜYYÙ[›ÙXİ™\œÚ[ÛÂˆBˆBˆØ]Ú
+Ü\˜][ÛØ[˜Ù[Y^Ù\[ÛŠHÚ[ˆ
+Ø[˜Ù[][Û•ÚÙ[‹’\ĞØ[˜Ù[][Û”™\]Y\İY
+HÈ›İÎÈBˆØ]Ú
+^Ù\[Ûˆ^Ù\[ÛŠHÚ[ˆ
+^Ù\[Ûˆ\È™\]Y\İ^Ù\[ÛˆÜˆ\ÚĞØ[˜Ù[Y^Ù\[ÛˆÜ‚ˆ[˜[Y]Q^Ù\[ÛˆÜˆÜ\ÙÜ˜\XÑ^Ù\[ÛˆÜˆSÑ^Ù\[ÛŠBˆÂˆËÈ[[YKÔÙ]\İ˜[œØXİ[Ûˆİ]\È™[XZ[ˆÚYÛ™Y]šY[˜ÙNÈ\ÜÙ[X›H›ÙXİ™\œÚ[Ûˆİ^\È[šÛ›İÛ‹‚ˆBˆ™]\›ˆ™]ÈYØXŞTİ]\Ô™XY˜XÚÊ™\İ[”İ]\Ë™\İ[•™\šYšYY™\ÜÛœÙTÚLM‹™\İ[‘]Z[ˆYÙ[\ÜÙ[X›U™\œÚ[ÛŠNÂˆB‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPY\\”™\İ[Û\ÜÚYSXZ[[˜[˜ÙU\]SÙ™™\ŠXZ[[˜[˜ÙT[ˆ[‹İZYÛÛ[X[™YˆXZ[[˜[˜ÙTÙ\šXÙUXXÚ\”™\OXZ[[˜[˜ÙTÙ\šXÙU˜[œØXİ[Û”™XY˜XÚÔ^[ØYˆ™\JBˆÂˆ˜\ˆ]šY[˜ÙHH™]ÈXZ[[˜[˜ÙQ]šY[˜ÙJœÚYÛ™Y[XZ[[˜[˜ÙK]\]K]˜[œØXİ[Û‹\İ]\È‹ˆ[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[™\K”ÚYÛ™Y™\ÜÛœÙTÚLM‹ÛÛ[X[™Yˆ™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆYˆ
+™\K”™\ÜÛœÙK”™\İ[ÛÙHOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ™\K”™\ÜÛœÙK‘]Z[]šY[˜ÙJNÂˆYˆ
+™\K”™\ÜÛœÙK”™\İ[ÛÙHOH››İİ\ÜYŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹“X[X[™\]Z\™Yˆ™\K”™\ÜÛœÙK‘]Z[]šY[˜ÙJNÂˆYˆ
+™\K”™\ÜÛœÙK”™\İ[ÛÙHOH™˜Z[YŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹‘˜Z[Yˆ™\K”™\ÜÛœÙK‘]Z[]šY[˜ÙJNÂˆYˆ
+™\K”^[ØY\È›İÈH^[ØY^[ØY’[œİ[Y™\œÚ[ÛœÈ\È[ˆ^[ØY•˜[œØXİ[Ûˆ\È[^[ØY•˜[œØXİ[Û‹ÛÛ[X[™YOHÛÛ[X[™Y
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ“XZ[[˜[˜ÙH9mìº/å9fç¹ëo¹d#yfç¹¢iûï#9/a¹.¢ùb¨y«hù¥¡ùï.¹i,y¢%¹§*¹îäyk¦¹c§ÈÛÛ[X[™Y8à ˆ‹]šY[˜ÙJNÂ‚ˆ˜\ˆ˜[œØXİ[ÛˆH^[ØY•˜[œØXİ[ÛÂˆ˜\ˆ[œİ[YH^[ØY’[œİ[Y™\œÚ[ÛœÎÂˆ˜\ˆ™\œÚ[ÛœÈHÓXZ[[˜[˜ÙU™\œÚ[ÛœÊ[œİ[Y
+NÂˆYˆ
+˜[œØXİ[Û‹”İ]H\Èœ[™[™ÈˆÜˆš[”›ÙÜ™\ÜÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]T[™[™Õ™\šYšXØ][Û‹ˆ“XZ[[˜[˜ÙH9mìºj£9ëo¹nm¹£©yë¨HİY[Ù]\9c!{ï&ùëbyo¡H\]R[\ˆ9k£9¢$9d£9§#yb¨zaãz/ç¸à ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆYˆ
+˜[œØXİ[Û‹”İ]HOH›™YYÔ™]šY]Èˆ™\K”™\ÜÛœÙK”™\İ[ÛÙHOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙH9¦í9¥¬9.¢ùb¨z) y¬`¹.®¹méy¨.9kî{ï&ù/çyåfyc§ùk¢z(áy.#¹.¢ùb¨y§d9¥¦xà ˆ‹]šY[˜ÙKˆ™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆYˆ
+Z[œİ[Y”[›š[™Ğ\ÔŞ\İ[H[œİ[Y“X[˜YÙYYÙ[\ÚÕ\İYOHYHˆ[œİ[Y•˜[œØXİ[Û”İ]HOH˜[œØXİ[Û‹”İ]H™\œÚ[ÛœË”İY[Ù]\™\œÚ[Ûˆ\È[ˆ™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\È[ˆ™\œÚ[ÛœËYÙ[\ÜÙ[X›U™\œÚ[Ûˆ\ÈÈH\ÜÙ[X›U™\œÚ[Ûˆ	‰‚ˆ\İš[™Ë‘\]X[Ê\ÜÙ[X›U™\œÚ[Û‹™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+JBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ“XZ[[˜[˜ÙH9.¢ùb¨yîâ9  xà TÖTÕSH:.ªù.ïxà PYÙ[9.îùb¨y¢%¹âb9§+:+îùfç¹.#y. :!í8à ˆ‹]šY[˜ÙKˆ™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂ‚ˆYˆ
+˜[œØXİ[Û‹”İ]HOH˜ÛÛ[Z]YŠBˆÂˆ˜\ˆÙ]\X]Ú\ÈH[‹•\™Ù]Ù]\™\œÚ[Ûˆ\ÈÈH\™Ù]Ù]\	‰‚ˆİš[™Ë‘\]X[Ê™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[X]Ú\ÈH[‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈH\™Ù]YÙ[ˆÈİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Û‹\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Bˆˆ˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈH˜[œØXİ[ÛYÙ[ˆÈİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹˜[œØXİ[ÛYÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\ÈÈHÛİ\˜ÙPYÙ[	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊ˜[œØXİ[ÛYÙ[Ûİ\˜ÙPYÙ[
+HHˆˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\ÈÈHÛİ\˜ÙT[[YH	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊ™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹Ûİ\˜ÙT[[YJHHÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆÙ]\X]Ú\È	‰ˆYÙ[X]Ú\ÂˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]PÛÛ[Z]Y[™X[BˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆÙ]\X]Ú\È	‰ˆYÙ[X]Ú\ÂˆÈ“XZ[[˜[˜ÙH9ëo¹d#y.¢ùb¨xà TİY[Ù]\ĞYÙ[9âb9§+9d£ÖTÕSH9d+ùbª9.îùb¨ygaùmì¹¨.:j£8à ˆ‚ˆˆ“XZ[[˜[˜ÙH9¢©ydbˆÛÛ[Z]Y;ï#9/a¹îá9.í¹âb9§+9.#¹îí9¢©:+¨yb$¹.#y. :!í8à ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆYˆ
+˜[œØXİ[Û‹”İ]HOHœ›ÛY˜XÚÈŠBˆÂˆ˜\ˆÙ]\™\İÜ™YHİš[™Ë‘\]X[Ê™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ÔÙ]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[™\İÜ™YHİš[™Ë‘\]X[Ê™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ĞYÙ[™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆÙ]\™\İÜ™Y	‰ˆYÙ[™\İÜ™YˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]T›ÛY˜XÚÂˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆÙ]\™\İÜ™Y	‰ˆYÙ[™\İÜ™YˆÈ¹ëo¹d#y.¢ùb¨yèkº+©İY[Ù]\9.#ˆYÙ[9mì¹ h¹i#z!ìù¦í9¥¬9bcyâb9§+8à ˆ‚ˆˆ¹.¢ùb¨y¢©ydbˆ›ÛY˜XÚûï#9/a¹¦í9¥¬9bcyâb9§+:+îùfç¹.#y. :!í8à ˆ‹ˆ]šY[˜ÙK™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ“XZ[[˜[˜ÙH9.¢ùb¨yâ­¹  y.#yg*9cëú(àyk¦¹æ¡9îâ9  zfá¹d"9.+xà ˆ‹]šY[˜ÙKˆ™\œÚ[ÛœË˜[œØXİ[Û‹”İ]K™\K”™\ÜÛœÙKÛÛXİY]ÊNÂˆB‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPY\\”™\İ[Û\ÜÚYU\]T™\İ[
+XZ[[˜[˜ÙT[ˆ[‹ˆİY[\XØ][Û•\]T\Ú™\İ[[]™\KYØXŞTİ]\Ô™XY˜XÚÈ™XY˜XÚËİZYÛÛ[X[™Y
+BˆÂˆYˆ
+™XY˜XÚË”İ]\È\È[™XY˜XÚË”™\ÜÛœÙTÚLMˆ\È[
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[]™\K‘]Z[
+È»ï&Èˆ
+È™XY˜XÚË‘]Z[[
+NÂˆ˜\ˆ]šY[˜ÙHH™]ÈXZ[[˜[˜ÙQ]šY[˜ÙJœÚYÛ™Y]\]K]˜[œØXİ[Û‹\İ]\È‹ˆ[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[™XY˜XÚË”™\ÜÛœÙTÚLM‹ÛÛ[X[™Yˆ™XY˜XÚË”İ]\ËÛÛXİY]ÊNÂˆ™]\›ˆÛ\ÜÚYTİ]\Ê[‹ÛÛ[X[™Y™XY˜XÚË”İ]\Ë]šY[˜ÙK[]™\K‘]Z[[]™\Kˆ™XY˜XÚËYÙ[\ÜÙ[X›U™\œÚ[ÛŠNÂˆB‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPY\\”™\İ[Û\ÜÚYTİ]\ÊXZ[[˜[˜ÙT[ˆ[‹İZYÛÛ[X[™YˆİY[YÙ[İ]\Ô™\ÜÛœÙHİ]\ËXZ[[˜[˜ÙQ]šY[˜ÙH]šY[˜ÙKİš[™È]Z[ˆİY[\XØ][Û•\]T\Ú™\İ[È[]™\HH[İš[™ÏÈYÙ[\ÜÙ[X›U™\œÚ[ÛˆH[
+BˆÂˆ˜\ˆ˜[œØXİ[ÛˆHİ]\Ë•\]U˜[œØXİ[ÛÂˆYˆ
+˜[œØXİ[ÛËÛÛ[X[™YOHÛÛ[X[™Y
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+[‹“Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ¹ëo¹d#yâ­¹  y§*¹îäyk¦¹§+Ü\˜][Ûˆ9æ¡YÙ[ÛÛ[X[™Y8à ˆ‹[
+NÂˆ˜\ˆİ]HH˜[œØXİ[Û‹”İ]NÂˆXZ[[˜[˜ÙPY\\”™\İ[ØœÙ\™Y
+XZ[[˜[˜ÙPY\\‘\ÜÜÚ][Ûˆ\ÜÜÚ][Û‹İš[™Èİ[[X\JHO‚ˆ™]Ê[‹“Ü\˜][Û’Y\ÜÜÚ][Û‹İ[[X\K]šY[˜ÙKˆ™]ÈXZ[[˜[˜ÙPÛÛ\Û™[™\œÚ[ÛœÊİ]\Ë”İY[Ù]\™\œÚ[Û‹İ]\ËYÙ[™\œÚ[Û‹ˆYÙ[\ÜÙ[X›U™\œÚ[Û‹[
+Kˆİ]Kİ]\ËÛÛXİY]ÊNÂˆYˆ
+İ]HOH˜ÛÛ[Z]YŠBˆÂˆ˜\ˆÙ]\X]Ú\ÈH[‹•\™Ù]Ù]\™\œÚ[Ûˆ\ÈÈH\™Ù]Ù]\	‰‚ˆİš[™Ë‘\]X[Êİ]\Ë”İY[Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]Ù]\™\œÚ[Û‹\™Ù]Ù]\İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[X]Ú\ÈHİ]\ËYÙ[™\œÚ[Ûˆ\ÈÈHXİX[YÙ[	‰‚ˆ
+[‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈH\™Ù]YÙ[ˆÈİš[™Ë‘\]X[ÊXİX[YÙ[\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Û‹\™Ù]YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Bˆˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\ÈÈHÛİ\˜ÙPYÙ[	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹•\™Ù]YÙ[™\œÚ[Û‹XİX[YÙ[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊXİX[YÙ[Ûİ\˜ÙPYÙ[
+HH
+NÂˆ˜\ˆX[X]Ú\ÈHİ]\Ë’X[\ÂˆÈ[›š[™Ğ\ÔŞ\İ[NˆYKX[˜YÙY\ÚÓX]Ú\ĞYÙ[ˆYKX[˜YÙY\ÚĞXÛ™\İšXİYˆYHNÂˆYˆ
+Ù]\X]Ú\È	‰ˆYÙ[X]Ú\È	‰ˆX[X]Ú\ÊBˆ™]\›ˆØœÙ\™Y
+XZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]PÛÛ[Z]Y[™X[K]Z[
+NÂˆ™]\›ˆØœÙ\™Y
+XZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆ¹.¢ùb¨y¢©ydbˆÛÛ[Z]Y;ï#9/a¹ëo¹d#yâ­¹  yæ¡9æë¹¨!ùâb9§+9¢%¹`iyn­ú+îùfç¹.#yc.zacxà ˆˆ
+NÂˆBˆYˆ
+İ]HOHœ›ÛY˜XÚÈŠBˆÂˆ˜\ˆÙ]\™\İÜ™YHİš[™Ë‘\]X[Êİ]\Ë”İY[Ù]\™\œÚ[Û‹[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ÔÙ]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆYÙ[™\İÜ™YHİš[™Ë‘\]X[Êİ]\ËYÙ[™\œÚ[Û‹[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê˜[œØXİ[Û‹”™]š[İ\ĞYÙ[™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+NÂˆ˜\ˆX[™\İÜ™YHİ]\Ë’X[\ÂˆÈ[›š[™Ğ\ÔŞ\İ[NˆYKX[˜YÙY\ÚÓX]Ú\ĞYÙ[ˆYKX[˜YÙY\ÚĞXÛ™\İšXİYˆYHNÂˆ™]\›ˆØœÙ\™Y
+Ù]\™\İÜ™Y	‰ˆYÙ[™\İÜ™Y	‰ˆX[™\İÜ™YˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹•\]T›ÛY˜XÚÂˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆÙ]\™\İÜ™Y	‰ˆYÙ[™\İÜ™Y	‰ˆX[™\İÜ™YˆÈ]Z[ˆˆ¹fç¹®æ¹â­¹  ymì¹ëo¹d#{ï#9/a¹¥éùâb9§+9¢%ˆÖTÕSH9`iyn­ùâ­¹  y¬¨y§"yk£9¥m9 h¹i#xà ˆˆ
+NÂˆBˆYˆ
+İ]HOHœ™XÛİ™\T™\]Z\™Yˆİ]HOH›™YYÔ™]šY]ÈŠBˆ™]\›ˆØœÙ\™Y
+XZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Y]Z[
+NÂˆ™]\›ˆØœÙ\™Y
+XZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹]Z[
+NÂˆB‚ˆš]˜]Hİ]XÈ\Ş[˜È\ÚÏXZ[[˜[˜ÙPY\\”™\İ[ˆ™\šYPÛÛ™šYİ\˜][Û”™XY˜XÚĞ\Ş[˜ÊˆXZ[[˜[˜ÙT[ˆ[‹İZYÛÛ[X[™Yİš[™Èİ[[X\K”ĞHÚYÛš[™ÒÙ^KˆØ[˜Ù[][Û•ÚÙ[ˆØ[˜Ù[][Û•ÚÙ[ŠBˆÂˆ˜\ˆÜ\˜][Û’YH[‹“Ü\˜][Û’YÂˆ˜\ˆ[™[™ÈHºacyïk¹doy.é9mì¹£ y.ayc%»ï&Èˆ
+Èİ[[X\H
+È»ï&ù§*ºaãyi#ycäz` zacyïk¸à ˆÂˆ˜\ˆØ\Xš[]HH]ØZ]İY[\XØ][Û•\]U˜[œÜÜ”™XY™\šYšYYİÛ›ØYØ\Xš[]P\Ş[˜Êˆ[‹‘]šXÙK”›İ]PY™\ÜË[‹‘]šXÙKØ[\\ÒYÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[ŠKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆYˆ
+Ø\Xš[]H\È[
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ki¹å'ùêëù¬¨y§"y£ä9/¦ùao9k®yæ¡9ëo¹d#z ïyb¦ú+îùfç¸à ˆ‹[ˆİYÙNˆ¹ki¹å'ùêëùëo¹d#z ïyb¦ú+îùfçˆŠNÂˆYˆ
+İš[™Ë’\Ó[Ü•Ú]TÜXÙJØ\Xš[]KØ\Xš[]KÛÛ™šYİ\˜][Û‘š[™Ù\œš[
+HˆØ\Xš[]KØ\Xš[]K•XXÚ\Ú[›™[ÛÛ™šYİ\˜][Û”™XYHOHYJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ëo¹d#z ïyb¦ùfç¹¢iùï.¹l$yk£9¥m9­.ùbª:acyïk¹£!ùî®xà ˆ‹[ˆİYÙNˆ¹¥fyn":/ç¹£©zacyïk¹£!ùî®z+îùfçˆŠNÂˆYˆ
+\İš[™Ë‘\]X[ÊØ\Xš[]KØ\Xš[]K•XXÚ\Ú[›™[ÛÛ™šYİ\˜][Û‘š[™Ù\œš[ˆ[‹ÛÛ™šYİ\˜][Û”ÚLM‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹¥fyn":/ç¹£©zacyïk¹£!ùî®yl&¹§*º/¯¹b,:+¨yb$¹æë¹¨!øà ˆ‹[ˆİYÙNˆ¹¥fyn":/ç¹£©zacyïk¹£!ùî®y¨.:j£ŠNÂ‚ˆ˜\ˆİ]\Ô™\İ[ÈH]ØZ]ÙXœÚ]TÛXŞTİ]\Õ˜[œÜÜ”™XY\Ş[˜ÊÜ[‹‘]šXÙK”›İ]PY™\Ü×Kˆ[‹‘]šXÙKØ[\\ÒYÚYÛš[™ÒÙ^KØ[˜Ù[][Û•ÚÙ[‹[˜ÛYRX[Û˜\ÚİˆYKˆ[İÓYØXŞQ\™Xİ˜[˜XÚÎˆYK[İÑ\™Xİ˜[˜XÚÕÚ[Ú[›™[Ù™›[™NˆYJKÛÛ™šYİ\™P]ØZ]
+˜[ÙJNÂˆ˜\ˆİ]\Ô™\İ[Hİ]\Ô™\İ[Ë”Ú[™ÛJ
+NÂˆYˆ
+\İ]\Ô™\İ[”İXØÙYYYİ]\Ô™\İ[”İ]\È\È[İ]\Ô™\İ[•™\šYšYY™\ÜÛœÙTÚLMˆ\È[
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ëo¹d#yâ­¹  Kù`iyn­ú+îùfç¹¦ ¹.#ycëùå*8à ˆˆ
+ÈØ[š]^™Jİ]\Ô™\İ[‘]Z[
+K[ˆİYÙNˆ¹ki¹å'ùêëùëo¹d#yâ­¹  y.#¹`iyn­ú+îùfçˆŠNÂ‚ˆ˜\ˆİ]\ÈHİ]\Ô™\İ[”İ]\ÎÂˆ˜\ˆX[Hİ]\Ë’X[ÂˆYˆ
+X[\È[
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ki¹å'ùêëù¬¨y§"z/å9fç¹n)¹¥íºeí9¢,ùæ¡9`iyn­ùoêùáiøà ˆ‹[ˆİYÙNˆ¹ki¹å'ùêëù`iyn­ùoêùáiù¨.:j£ŠNÂˆYˆ
+X[•\]U˜[œØXİ[Û”İ]H\Èš[”›ÙÜ™\ÜÈˆÜˆ›™YYÔ™]šY]ÈŠBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YˆX[•\]U˜[œØXİ[Û”İ]HOH›™YYÔ™]šY]È‚ˆÈXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™YˆˆXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ki¹å'ùêëù.ãy§"y§*¹k£9¢$9¢%ºg 9 h¹i#y¨.9kîyæ¡9c§ùkd9¦í9¥¬9.¢ùb¨xà ˆ‹[ˆİYÙNˆ¹c§ùkd9¦í9¥¬9.¢ùb¨y¨.:j£ŠNÂˆYˆ
+X[”[›š[™Ğ\ÔŞ\İ[HOH˜[ÙHX[“X[˜YÙY\ÚÓX]Ú\ĞYÙ[OH˜[ÙHˆX[“X[˜YÙY\ÚĞXÛ™\İšXİYOH˜[ÙJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆº/ç¹£©zacyïk¹mìº+îùfç»ï#9/aˆÖTÕSHYÙ[9`iyn­øà y.îùb¨y£!ùd$y¢%ˆPÓ9¨.:j£9i,z-){ï&úg 9ã¬9g.¹ h¹i#xà ˆ‹[ˆİYÙNˆ”ÖTÕSH:.ªù.ïy.#ˆYÙ[9.îùb¨HPÓ9¨(zj£ŠNÂˆYˆ
+X[”[›š[™Ğ\ÔŞ\İ[HOHYHX[“X[˜YÙY\ÚÓX]Ú\ĞYÙ[OHYHˆX[“X[˜YÙY\ÚĞXÛ™\İšXİYOHYJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È”ÖTÕSHYÙ[9`iyn­ù.¢ùk§¹.#yk£9¥m8à ˆ‹[ˆİYÙNˆ”ÖTÕSHYÙ[9`iyn­ù.¢ùk§¹¨.:j£ŠNÂ‚ˆ˜\ˆ™\ÜYHØ\Xš[]KØ\Xš[]NÂˆYˆ
+\İš[™Ë‘\]X[Êİ]\ËÛÛ™šYÑš[™Ù\œš[™\ÜYÛÛ™šYİ\˜][Û‘š[™Ù\œš[ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJHˆ\İš[™Ë‘\]X[Êİ]\ËYÙ[™\œÚ[Û‹™\ÜYYÙ[[[YU™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+Hˆ\İš[™Ë‘\]X[Êİ]\Ë”İY[Ù]\™\œÚ[Û‹™\ÜY”İY[Ù]\™\œÚ[Û‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+JBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ëo¹d#yâ­¹  y.#¹ëo¹d#z ïyb¦ùæ¡9âb9§+úacyïk¹oêùáiù.#y. :!í8à ˆ‹[ˆİYÙNˆ¹ëo¹d#yâ­¹  y.#º ïyb¦ùoêùáiù. :!í9 )ù¨(zj£ŠNÂ‚ˆ˜\ˆ^XİYÙ]\HX^[][U™\œÚ[ÛŠ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹[‹•\™Ù]Ù]\™\œÚ[ÛŠNÂˆ˜\ˆ^XİYYÙ[HX^[][U™\œÚ[ÛŠ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹[‹•\™Ù]YÙ[™\œÚ[ÛŠNÂˆYˆ
+İ]\Ë”İY[Ù]\™\œÚ[Ûˆ\È[İ]\ËYÙ[™\œÚ[Ûˆ\È[ˆ^XİYÙ]\\È[^XİYYÙ[\È[ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊİ]\Ë”İY[Ù]\™\œÚ[Û‹^XİYÙ]\
+Hˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊİ]\ËYÙ[™\œÚ[Û‹^XİYYÙ[
+H
+Bˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”™XÛİ™\T™\]Z\™Yˆº/ç¹£©zacyïk¹mìº+îùfç»ï#9/a¹k§ºfaHÙ]\ĞYÙ[9âb9§+9/c¹.£¹§+9îí9¢©:+¨yb$º) y¬`¸à ˆ‹[ˆİYÙNˆ”Ù]\ĞYÙ[9âb9§+9¨(zj£ŠNÂ‚ˆYˆ
+İ]\Ô™\İ[•™\šYšYY™\ÜÛœÙTÚLMˆ\È›İÈ[™İˆH™\ÜÛœÙTÚLMˆˆ™\ÜÛœÙTÚLM‹[JÚ\˜Xİ\ˆOˆU\šK’\Ò^YÚ]
+Ú\˜Xİ\ŠJJBˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹”[™[™Õ™\šYšXØ][Û‹ˆ[™[™È
+È¹ëo¹d#yâ­¹  ydãyn¥9¤f:) y¨/9o#ù¥è9¥b8à ˆ‹[ˆİYÙNˆ¹ki¹å'ùêëùëo¹d#yâ­¹  ydãyn¥9¤f:) y¨(zj£ŠNÂˆ˜\ˆ]šY[˜ÙHH™]ÈXZ[[˜[˜ÙQ]šY[˜ÙJœÚYÛ™YXÛÛ™šYİ\˜][Û‹Yš[˜[\İ]\È‹ˆ[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[™\ÜÛœÙTÚLM‹ÛÛ[X[™Yİ]\ËÛÛXİY]ÊNÂˆ™]\›ˆ™]ÈXZ[[˜[˜ÙPY\\”™\İ[
+Ü\˜][Û’YXZ[[˜[˜ÙPY\\‘\ÜÜÚ][Û‹ÛÛ™šYİ\˜][Û”Ş[˜Ú›Ûš^™Yˆİ[[X\H
+È»ï&ù¥fyn":/ç¹£©y£!ùî®xà z/ä:(c9âb9§+8à zacyïk¹¤f:) y.#ˆÖTÕSH9`iyn­ùâ­¹  ygaùmì¹ëo¹d#z+îùfç¸à ˆ‹]šY[˜ÙKˆ™]ÈXZ[[˜[˜ÙPÛÛ\Û™[™\œÚ[ÛœÊİ]\Ë”İY[Ù]\™\œÚ[Û‹İ]\ËYÙ[™\œÚ[Û‹ˆ™\ÜYYÙ[›ÙXİ™\œÚ[Û‹[
+KX[•\]U˜[œØXİ[Û”İ]Kİ]\ËÛÛXİY]ÊNÂˆB‚ˆš]˜]Hİ]XÈİš[™ÏÈX^[][U™\œÚ[ÛŠİš[™ÏÈš\œİİš[™ÏÈÙXÛÛ™
+BˆÂˆYˆ
+š\œİ\È[
+H™]\›ˆÙXÛÛ™ÂˆYˆ
+ÙXÛÛ™\È[
+H™]\›ˆš\œİÂˆ™]\›ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊš\œİÙXÛÛ™
+HHÈš\œİˆÙXÛÛ™ÂˆB‚ˆš]˜]Hİ]XÈİš[™ÏÈ˜[Y]P™Y›Ü™U\]TÙ[™
+XZ[[˜[˜ÙT[ˆ[‹ˆXZ[[˜[˜ÙPY\\’[œÜXİ[Ûˆ[œÜXİ[ÛŠBˆÂˆ˜\ˆ^XİY™\œÚ[ÛœÈH[‹•\™Ù]XZ[[˜[˜ÙTÙ\šXÙU™\œÚ[Ûˆ\ÈÈH\™Ù]XZ[[˜[˜ÙU™\œÚ[Û‚ˆÈ™]ÈXZ[[˜[˜ÙPÛÛ\Û™[™\œÚ[ÛœÊ[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Û‹ˆ[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Û‹[‹İ\œ™[™\œÚ[ÛœËYÙ[\ÜÙ[X›U™\œÚ[Û‹ˆ\™Ù]XZ[[˜[˜ÙU™\œÚ[ÛŠBˆˆ[‹İ\œ™[™\œÚ[ÛœÎÂˆYˆ
+Z[œÜXİ[Û‹’Y[]U™\šYšYY[œÜXİ[Û‹Ø\Xš[]Y\È\È[ˆ[œÜXİ[Û‹İ\œ™[™\œÚ[ÛœÈOH^XİY™\œÚ[ÛœÊBˆ™]\›ˆ¹å'ù¢$9¦í9¥¬:+¨yb$¹d#»ï#9ki¹å'ú.ªù.ïy¢%¹îá9.í¹âb9§+9cäyå'ùcæ9c%»ï&ù§*¹cäz` yk¢z(áydoy.é;ï#:+íúaãy¥¬9¨à9§éxà ˆÂˆYˆ
+SX]Ú\Õ\İÛ˜\Úİ
+[‹[œÜXİ[Û‹Ø\Xš[]Y\ÊJBˆ™]\›ˆ¹å'ù¢$9¦í9¥¬:+¨yb$¹d#»ï#9ki¹å'úacyïk‹ú ïyb¦ù/èy.îùoêùáiùcäyå'ùcæ9c%»ï&ù§*¹cäz` yk¢z(áydoy.é;ï#:+íúaãy¥¬9¨à9§éxà ˆÂˆYˆ
+[‹Ø\Xš[]Y\Ë”›İØÛÛ™\œÚ[ÛˆOH[œÜXİ[Û‹Ø\Xš[]Y\Ë”›İØÛÛ™\œÚ[Ûˆˆ[‹Ø\Xš[]Y\Ë”İY[\]T›İØÛÛ™\œÚ[ÛˆOH[œÜXİ[Û‹Ø\Xš[]Y\Ë”İY[\]T›İØÛÛ™\œÚ[Ûˆˆ\İš[™Ë‘\]X[Ê[‹Ø\Xš[]Y\ËYÙ[[[YU™\œÚ[Û‹[œÜXİ[Û‹Ø\Xš[]Y\ËYÙ[[[YU™\œÚ[Û‹ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+JBˆ™]\›ˆ¹å'ù¢$9¦í9¥¬:+¨yb$¹d#»ï#9ki¹å'ÈYÙ[: ïyb¦ùcäyå'ùcæ9c%»ï&ù§*¹cäz` yk¢z(áydoy.é;ï#:+íúaãy¥¬9¨à9§éxà ˆÂˆYˆ
+\İš[™Ë‘\]X[Ê[‹Ø\Xš[]Y\Ë•XXÚ\Ú[›™[š[™Ù\œš[ˆ[œÜXİ[Û‹Ø\Xš[]Y\Ë•XXÚ\Ú[›™[š[™Ù\œš[İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJJBˆ™]\›ˆ¹å'ù¢$9¦í9¥¬:+¨yb$¹d#»ï#9ki¹å'ù¥fyn":/ç¹£©zacyïk¹cäyå'ùcæ9c%»ï&ù§*¹cäz` yk¢z(áydoy.é;ï#:+íúaãy¥¬9¨à9§éxà ˆÂˆYˆ
+[œÜXİ[Û‹•\]U˜[œØXİ[Û”İ]H\È›İ
+››İ›İ[™ˆÜˆ˜ÛÛ[Z]YˆÜˆœ›ÛY˜XÚÈˆÜˆœİ\\œÙYYŠJBˆ™]\›ˆ¹ki¹å'ùêëù.¢ùb¨yâ­¹  y§*¹çéy¢%¹l&¹§*¹îäù§gûï&ù§*¹cäz` yë+9.£9.*¹¦í9¥¬9doy.é8à ˆÂˆ™]\›ˆ[ÂˆB‚ˆš]˜]Hİ]XÈİš[™ÏÈ˜[Y]P™Y›Ü™PÛÛ™šYİ\˜][Û”Ş[˜ÊXZ[[˜[˜ÙT[ˆ[‹ˆXZ[[˜[˜ÙPY\\’[œÜXİ[Ûˆ[œÜXİ[ÛŠBˆÂˆYˆ
+Z[œÜXİ[Û‹’Y[]U™\šYšYY[œÜXİ[Û‹Ø\Xš[]Y\È\È[ˆ[œÜXİ[Û‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[Ûˆ\È›İÈHXİX[Ù]\ˆ[œÜXİ[Û‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[Ûˆ\È›İÈHXİX[YÙ[
+Bˆ™]\›ˆºacyïk¹d#9«iybcy§*º ïzaãy¥¬9¨.:j£9ki¹å'ú.ªù.ïy¢%¹k§ºfayîá9.í¹âb9§+;ï&ù§*¹cäz` zacyïk¸à ˆÂˆYˆ
+SX]Ú\Õ\İÛ˜\Úİ
+[‹[œÜXİ[Û‹Ø\Xš[]Y\ÊJBˆ™]\›ˆºacyïk¹d#9«iybcycäyã¬9¨(yc.‹ú+¯¹i!ù/èy.îúacyïk¹cäyå'ùcæ9c%»ï&ù§*¹cäz` zacyïk»ï#:+íúaãy¥¬9¨à9§éxà ˆÂˆYˆ
+[œÜXİ[Û‹•\]U˜[œØXİ[Û”İ]H\È›İ
+››İ›İ[™ˆÜˆ˜ÛÛ[Z]YˆÜˆœ›ÛY˜XÚÈˆÜˆœİ\\œÙYYŠJBˆ™]\›ˆºacyïk¹d#9«iybcycäyã¬9ki¹å'ùêëù.¢ùb¨yâ­¹  y§*¹çéy¢%¹l&¹§*¹îäù§gûï&ù§*¹cäz` zacyïk¸à ˆÂ‚ˆ˜\ˆİ\œ™[Ù]\H[‹İ\œ™[™\œÚ[ÛœË”İY[Ù]\™\œÚ[ÛÂˆ˜\ˆİ\œ™[YÙ[H[‹İ\œ™[™\œÚ[ÛœËYÙ[[[YU™\œÚ[ÛÂˆYˆ
+İ\œ™[Ù]\\È[İ\œ™[YÙ[\È[
+Bˆ™]\›ˆºacyïk¹d#9«iz+¨yb$¹¬¨y§"ycëúgh9æ¡:-mùiâÈÙ]\ĞYÙ[9âb9§+;ï&ù§*¹cäz` zacyïk¸à ˆÂˆ˜\ˆ™\]Z\™YÙ]\H[‹•\™Ù]Ù]\™\œÚ[Ûˆ\ÈÈHÙ]\\™Ù]	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊÙ]\\™Ù]İ\œ™[Ù]\
+HˆˆÈÙ]\\™Ù]ˆˆİ\œ™[Ù]\Âˆ˜\ˆ™\]Z\™YYÙ[H[‹•\™Ù]YÙ[™\œÚ[Ûˆ\ÈÈHYÙ[\™Ù]	‰‚ˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊYÙ[\™Ù]İ\œ™[YÙ[
+HˆˆÈYÙ[\™Ù]ˆˆİ\œ™[YÙ[ÂˆYˆ
+\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊXİX[Ù]\™\]Z\™YÙ]\
+Hˆ\XØ][Û”™[X\ÙPÛY[ÛÛ\\™U™\œÚ[ÛœÊXİX[YÙ[™\]Z\™YYÙ[
+H
+Bˆ™]\›ˆºacyïk¹d#9«iybcyæ¡9mì¹ëo¹d#yâb9§+9§*º/¯¹b,9§+9îí9¢©:+¨yb$º) y¬`»ï&ù¢ä¹îçz-ê:/áù§*¹k£9¢$9æ¡:/kù.í¹¦í9¥¬:f-¹«­xà ˆÂ‚ˆ˜\ˆ™Y›Ü™HH[‹Ø\Xš[]Y\Ë•XXÚ\Ú[›™[š[™Ù\œš[Âˆ˜\ˆ›İÈH[œÜXİ[Û‹Ø\Xš[]Y\Ë•XXÚ\Ú[›™[š[™Ù\œš[ÂˆYˆ
+›İÈ\È›İ[	‰ˆ™Y›Ü™H\È›İ[	‰‚ˆ\İš[™Ë‘\]X[Ê›İË™Y›Ü™Kİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJH	‰‚ˆ\İš[™Ë‘\]X[Ê›İË[‹ÛÛ™šYİ\˜][Û”ÚLM‹İš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJJBˆ™]\›ˆºacyïk¹d#9«iz+¨yb$¹å'ù¢$9d#»ï#9ki¹å'ùêëùmì¹aî¹ã¬9ë+9."yéãy¥fyn":/ç¹£©zacyïk»ï&ù`g9«hº)¡¹æå¹nmº) y¬`ºaãy¥¬9¨à9§éxà ˆÂˆ™]\›ˆ[ÂˆB‚ˆš]˜]Hİ]XÈ›ÛÛX]Ú\Õ\İÛ˜\Úİ
+XZ[[˜[˜ÙT[ˆ[‹XZ[[˜[˜ÙPØ\Xš[]Y\Èİ\œ™[
+HO‚ˆİš[™Ë‘\]X[Ê[‹‘]šXÙK”[›™YY[]Qš[™Ù\œš[İ\œ™[YÙ[Y[]Qš[™Ù\œš[ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[
+H	‰‚ˆİš[™Ë‘\]X[Ê[‹Ø\Xš[]Y\ËÛÛ™šYİ\˜][Û‘š[™Ù\œš[İ\œ™[ÛÛ™šYİ\˜][Û‘š[™Ù\œš[ˆİš[™ĞÛÛ\\š\ÛÛ‹“Ü™[˜[YÛ›Ü™PØ\ÙJNÂ‚ˆš]˜]Hİ]XÈXZ[[˜[˜ÙPY\\’[œÜXİ[Ûˆ[™\šYšYY
+İš[™È]Z[
+HOˆ™]Ê˜[ÙKˆ™]ÈXZ[[˜[˜ÙPÛÛ\Û™[™\œÚ[ÛœÊ[[[[
+K[[[]Z[
+NÂ‚ˆš]˜]Hİ]XÈİš[™ÈØ[š]^™Jİš[™È˜[YJBˆÂˆ˜\ˆ›Ü›X[^™YHİš[™ËÛÛ˜Ø]
+˜[YK•Ú\™JÚ\˜Xİ\ˆOˆXÚ\‹’\ĞÛÛ›Û
+Ú\˜Xİ\ŠJJK•š[J
+NÂˆ™]\›ˆ›Ü›X[^™Y“[™İˆLLˆÈ›Ü›X[^™YË‹LL—Hˆ›Ü›X[^™YÂˆB‚ˆš]˜]Hİ]XÈ›ÛÛ\ĞÛÛ™šYİ\˜][Û”™XÛÛ˜Ú[X][ÛŠXZ[[˜[˜ÙT[ˆ[ŠBˆÂˆYˆ
+[‹”İ]HOHXZ[[˜[˜ÙT[”İ]KÛÛ™šYİ\˜][Û”Ş[˜Ú[™ÊH™]\›ˆYNÂˆYˆ
+[‹”İ]HOHXZ[[˜[˜ÙT[”İ]K”[™[™Õ™\šYšXØ][Ûˆ[‹”[Ë”Ş[˜Ú›Ûš^™PÛÛ™šYİ\˜][ÛˆOHYJBˆ™]\›ˆ˜[ÙNÂˆ˜\ˆÛÛ™šYİ\˜][Û’[™^H[‹•˜[œÚ][ÛœË•Ó\İ
+
+K‘š[™\İ[™^
+][HO‚ˆ][K•ÈOHXZ[[˜[˜ÙT[”İ]KÛÛ™šYİ\˜][Û”Ş[˜Ú[™ÊNÂˆ˜\ˆYÙ[X[[™^H[‹•˜[œÚ][ÛœË•Ó\İ
+
+K‘š[™\İ[™^
+][HO‚ˆ][K•ÈOHXZ[[˜[˜ÙT[”İ]KYÙ[X[™\šYšYY
+NÂˆ™]\›ˆÛÛ™šYİ\˜][Û’[™^H	‰ˆÛÛ™šYİ\˜][Û’[™^ˆYÙ[X[[™^ÂˆB‚ˆš]˜]HÙX[Y™XÛÜ™XXÚ\Ú[›™[Y[]JT™XYÛ›S\İİš[™Ïˆ[™Ú[Ëİš[™È›ÛİÙ\YšXØ]P˜\ÙMˆİš[™È›Ûİİ˜\š[™Ù\œš[
+NÂˆš]˜]HÙX[Y™XÛÜ™YØXŞTİ]\Ô™XY˜XÚÊİY[YÙ[İ]\Ô™\ÜÛœÙOÈİ]\Ëİš[™ÏÈ™\ÜÛœÙTÚLM‹ˆİš[™È]Z[İš[™ÏÈYÙ[\ÜÙ[X›U™\œÚ[ÛˆH[
+NÂŸB

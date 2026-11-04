@@ -17,15 +17,15 @@
           PrintSeatChartRequested="PrintSeatChart"
           OpenVeyonConfiguratorRequested="OpenVeyonConfigurator"
           DeleteRoomProfileRequested="DeleteRoomProfile"
-          ApplySeatGridDimensionsRequested="ApplySeatGridDimensions"
-          SwapSelectedSeatsRequested="SwapSelectedSeats"
-          ToggleSeatAddRemoveModeRequested="ToggleSeatAddRemoveMode"
-          AssignMissingSeatComputerNumbersRequested="AssignMissingSeatComputerNumbers"
-          AddRoomToVeyonRequested="AddRoomToVeyon"
-          ReadSeatVeyonTargetsRequested="ReadSeatVeyonTargets"
-          SyncVeyonNamesToCampusRequested="SyncVeyonNamesToCampus"
-          BindSelectedSeatVeyonTargetRequested="BindSelectedSeatVeyonTarget"
-          ClearSelectedSeatVeyonTargetRequested="ClearSelectedSeatVeyonTarget"
+          DeleteSeatGridRowRequested="DeleteSeatGridRow"
+          DeleteSeatGridColumnRequested="DeleteSeatGridColumn"
+          DeleteSeatRequested="DeleteSeat"
+          ClearSeatVeyonTargetRequested="ClearSeatVeyonTarget"
+          OpenInitialSeatGridConflictLocationRequested="OpenInitialSeatGridConflictLocation"
+          AddSeatGridRowRequested="AddSeatGridRow"
+          AddSeatGridColumnRequested="AddSeatGridColumn"
+          RetrySeatMapSyncRequested="RetrySeatMapSync"
+          RetryInitialSeatGridImportRequested="RetryInitialSeatGridImport"
           SeatCellClickedRequested="SeatCellClicked" />
     </DataTemplate>
     <DataTemplate x:Key="SetupPageTemplate" x:DataType="vm:TeacherViewModel">
@@ -71,6 +71,8 @@
             SelectAllDeviceTargetsRequested="SelectAllWebsitePolicyTargets"
             ClearDeviceTargetsRequested="ClearWebsitePolicyTargets"
             RetryMaintenanceIssueRequested="RetryMaintenanceIssue"
+            ApproveMaintenanceIdentityRotationRequested="ApproveMaintenanceIdentityRotation"
+            RejectMaintenanceIdentityRotationRequested="RejectMaintenanceIdentityRotation"
             RefreshMaintenanceOverviewRequested="RefreshMaintenanceOverview" />
         <views:TeacherUpdatesView
             CheckTeacherUpdateRequested="CheckTeacherUpdate"
@@ -126,7 +128,6 @@
           DisableWebsitePolicyRequested="DisableWebsitePolicy"
           FillFailedWebsiteTargetsRequested="FillFailedWebsiteTargets"
           FillSelectedWebsiteLocationRequested="FillSelectedWebsiteLocation"
-          FillWebsiteTargetsRequested="FillWebsiteTargets"
           GenerateApplicationCandidatesRequested="GenerateApplicationCandidates"
           ImportCommonWebsiteAllowlistRequested="ImportCommonWebsiteAllowlist"
           ImportCommonWebsiteBlacklistRequested="ImportCommonWebsiteBlacklist"

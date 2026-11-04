@@ -54,7 +54,7 @@ public static class VeyonNetworkObjectDirectory
     /// <summary>Last successful read-only directory read in this process, used to show stale data honestly.</summary>
     internal static DateTimeOffset LastSuccessfulReadUtc { get; private set; }
     public static VeyonDirectoryReadDiagnostic? LastReadDiagnostic { get; private set; }
-    internal static string? LastTrustedDirectoryFingerprint { get; private set; }
+    public static string? LastTrustedDirectoryFingerprint { get; private set; }
     // Veyon's 4.11.2 format importer is a placeholder-to-regex parser, not an RFC CSV decoder.
     // Unit Separator cannot occur in accepted fields (control characters are rejected), so
     // semicolons, quotes and Chinese text remain unambiguous without CSV quote escaping.
@@ -62,6 +62,12 @@ public static class VeyonNetworkObjectDirectory
     private const string ExportFormat = "%name%\u001f%host%\u001f%location%";
     private const string FullExportFormat = "%type%\u001f%name%\u001f%host%\u001f%mac%\u001f%location%";
     private const string ImportFormat = "%name%\u001f%host%\u001f%mac%";
+    private const int VeyonObjectTypeNone = 0;
+    private const int VeyonObjectTypeRoot = 1;
+    private const int VeyonObjectTypeLocation = 2;
+    private const int VeyonObjectTypeHost = 3;
+    private const int VeyonObjectTypeLabel = 4;
+    private const int VeyonObjectTypeDesktopGroup = 5;
 
     /// <summary>Formats one safe custom-delimited computer row for Veyon's placeholder importer.</summary>
     public static string FormatComputerImportRecord(VeyonNetworkComputer computer)
@@ -822,7 +828,7 @@ public static class VeyonNetworkObjectDirectory
                     .Where(value => !string.IsNullOrWhiteSpace(value)));
                 if (detail.Length > 2000) detail = detail[..2000];
                 return (null, VeyonDirectoryReadDiagnostic.For(stage,
-                    "Veyon 电脑目录读取失败，且配置快照回退不可用：" + exception.Message,
+                    $"Veyon 电脑目录读取失败（{dumpDiagnostic.Message}），且配置快照回退不可用：{exception.Message}",
                     cliPath, null, detail, "networkobjects dump → config export",
                     exception is TimeoutException), false);
             }
@@ -1067,14 +1073,31 @@ public static class VeyonNetworkObjectDirectory
         if (objects.ValueKind != JsonValueKind.Array || objects.GetArrayLength() > 10000)
             throw new InvalidDataException("Veyon 目录对象格式或数量无法识别。");
         var entries = new List<(Guid Id, Guid Parent, int Type, string Name, string Host, string Mac)>();
-        var ids = new HashSet<Guid>();
+        var identities = new Dictionary<Guid, (int Type, Guid Parent, string Name, string Host, string Mac)>();
+        var entryIndex = 0;
         foreach (var entry in objects.EnumerateArray())
         {
+            entryIndex++;
             if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("Type", out var type) ||
-                !type.TryGetInt32(out var numericType) || !entry.TryGetProperty("Uid", out var uid) ||
-                uid.ValueKind != JsonValueKind.String || !Guid.TryParse(uid.GetString(), out var id) ||
-                id == Guid.Empty || !ids.Add(id))
-                throw new InvalidDataException("Veyon 目录对象标识或类型无效。");
+                !type.TryGetInt32(out var numericType))
+                throw new InvalidDataException($"Veyon 目录第 {entryIndex} 个对象的类型字段无效。");
+            if (numericType is < VeyonObjectTypeNone or > VeyonObjectTypeDesktopGroup)
+                throw new InvalidDataException($"Veyon 目录第 {entryIndex} 个对象使用了不受支持的类型 {numericType}。");
+
+            var isLocationOrComputer = numericType is VeyonObjectTypeLocation or VeyonObjectTypeHost;
+            var id = Guid.Empty;
+            var hasUid = entry.TryGetProperty("Uid", out var uid) && uid.ValueKind == JsonValueKind.String &&
+                         Guid.TryParse(uid.GetString(), out id) && id != Guid.Empty;
+            if (!hasUid)
+            {
+                if (isLocationOrComputer)
+                    throw new InvalidDataException($"Veyon 目录第 {entryIndex} 个机房或电脑对象缺少有效 UUID。");
+                continue;
+            }
+            // Root, labels, and desktop groups are not exposed as identity targets by
+            // this reader. Only location/computer UUID collisions make seat binding ambiguous.
+            if (!isLocationOrComputer) continue;
+
             string Text(string field) => entry.TryGetProperty(field, out var value)
                 ? value.ValueKind == JsonValueKind.String ? value.GetString()! :
                     throw new InvalidDataException("Veyon 目录字段类型无效。") : "";
@@ -1082,11 +1105,25 @@ public static class VeyonNetworkObjectDirectory
             var parent = Guid.Empty;
             if (parentText.Length > 0 && !Guid.TryParse(parentText, out parent))
                 throw new InvalidDataException("Veyon 地点关联标识无效。");
-            entries.Add((id, parent, numericType, Text("Name"), Text("HostAddress"), Text("MacAddress")));
+            var name = Text("Name");
+            var host = Text("HostAddress");
+            var mac = Text("MacAddress");
+            var identity = (numericType, parent, name, host, mac);
+            if (identities.TryGetValue(id, out var existing))
+            {
+                if (existing != identity)
+                    throw new InvalidDataException(
+                        $"Veyon 目录第 {entryIndex} 个机房或电脑对象与 UUID 相同的对象内容不一致；为避免误绑定，已停止读取。");
+                continue;
+            }
+            identities.Add(id, identity);
+            entries.Add((id, parent, numericType, name, host, mac));
         }
-        var locations = entries.Where(entry => entry.Type == 2).ToDictionary(entry => entry.Id, entry => entry.Name);
-        return entries.Where(entry => entry.Type is 2 or 3).Select(entry => new VeyonNetworkObject(
-            entry.Type == 2 ? "location" : "computer", entry.Name, entry.Host, entry.Mac,
+        var locations = entries.Where(entry => entry.Type == VeyonObjectTypeLocation)
+            .ToDictionary(entry => entry.Id, entry => entry.Name);
+        return entries.Where(entry => entry.Type is VeyonObjectTypeLocation or VeyonObjectTypeHost)
+            .Select(entry => new VeyonNetworkObject(
+            entry.Type == VeyonObjectTypeLocation ? "location" : "computer", entry.Name, entry.Host, entry.Mac,
             locations.GetValueOrDefault(entry.Parent, ""), entry.Id, entry.Parent)).ToArray();
     }
 
