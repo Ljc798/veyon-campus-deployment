@@ -35,6 +35,8 @@ public sealed class MaintenanceServiceTrustStore
     private const int MaximumPins = 5000;
     private const int MaximumPendingRotations = 1000;
     private const int MaximumPendingEnrollmentBytes = 64 * 1024;
+    private static readonly TimeSpan PendingRotationLifetime =
+        TimeSpan.FromMinutes(MaintenanceServiceIdentityStore.MaximumEnrollmentAgeMinutes);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = false,
@@ -63,13 +65,16 @@ public sealed class MaintenanceServiceTrustStore
         lock (_gate) return Array.AsReadOnly(ReadPins().ToArray());
     }
 
-    public IReadOnlyList<PendingMaintenanceServiceIdentityRotation> ListPendingRotations(string campusId)
+    public IReadOnlyList<PendingMaintenanceServiceIdentityRotation> ListPendingRotations(string campusId,
+        DateTimeOffset? nowUtc = null)
     {
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
         lock (_gate)
         {
             var pins = ReadPins();
-            return Array.AsReadOnly(ReadPendingRotations().Where(item => item.CampusId == campusId &&
+            var rotations = PruneExpiredPendingRotations(now);
+            return Array.AsReadOnly(rotations.Where(item => item.CampusId == campusId &&
                 pins.Any(pin => pin.CampusId == item.CampusId && pin.Target == item.Target &&
                     pin.AgentIdentityFingerprint == item.AgentIdentityFingerprint &&
                     pin.MaintenanceIdentityFingerprint == item.PreviousMaintenanceIdentityFingerprint))
@@ -127,7 +132,7 @@ public sealed class MaintenanceServiceTrustStore
                 ?? throw new InvalidDataException("Maintenance 密钥轮换缺少现有固定服务密钥。");
             if (pin.MaintenanceIdentityFingerprint != previousFingerprint)
                 throw new InvalidDataException("Maintenance 服务密钥在排队期间已变化；拒绝覆盖当前信任记录。");
-            var rotations = ReadPendingRotations().ToList();
+            var rotations = PruneExpiredPendingRotations(now).ToList();
             var existingIndex = rotations.FindIndex(item => item.CampusId == campusId &&
                 item.Target == normalizedTarget && item.AgentIdentityFingerprint == agentFingerprint);
             var candidate = new PendingMaintenanceServiceIdentityRotation(normalizedTarget, campusId,
@@ -154,8 +159,20 @@ public sealed class MaintenanceServiceTrustStore
         var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
         lock (_gate)
         {
-            var pending = ReadPendingRotations().SingleOrDefault(item => item.CampusId == request.CampusId &&
+            var allRotations = ReadPendingRotations().ToList();
+            var requested = allRotations.SingleOrDefault(item => item.CampusId == request.CampusId &&
                 item.Target == request.Target && item.AgentIdentityFingerprint == request.AgentIdentityFingerprint &&
+                item.PreviousMaintenanceIdentityFingerprint == previousFingerprint &&
+                item.CandidateMaintenanceIdentityFingerprint == candidateFingerprint);
+            if (requested is not null && !IsPendingRotationFresh(requested, now))
+            {
+                allRotations.Remove(requested);
+                WritePendingRotations(allRotations);
+                throw new InvalidDataException("Maintenance 密钥轮换证明已过期；请让设备重新连接以生成新的授权证明。");
+            }
+            var pending = PruneExpiredPendingRotations(now).SingleOrDefault(item =>
+                item.CampusId == request.CampusId && item.Target == request.Target &&
+                item.AgentIdentityFingerprint == request.AgentIdentityFingerprint &&
                 item.PreviousMaintenanceIdentityFingerprint == previousFingerprint &&
                 item.CandidateMaintenanceIdentityFingerprint == candidateFingerprint)
                 ?? throw new InvalidDataException("待审批密钥轮换请求已不存在或与确认内容不匹配。");
@@ -354,6 +371,19 @@ public sealed class MaintenanceServiceTrustStore
         return document.Requests;
     }
 
+    private IReadOnlyList<PendingMaintenanceServiceIdentityRotation> PruneExpiredPendingRotations(
+        DateTimeOffset nowUtc)
+    {
+        var rotations = ReadPendingRotations();
+        var fresh = rotations.Where(item => IsPendingRotationFresh(item, nowUtc)).ToArray();
+        if (fresh.Length != rotations.Count) WritePendingRotations(fresh);
+        return fresh;
+    }
+
+    private static bool IsPendingRotationFresh(PendingMaintenanceServiceIdentityRotation request,
+        DateTimeOffset nowUtc) => request.RequestedUtc >= nowUtc - PendingRotationLifetime &&
+                                  request.RequestedUtc <= nowUtc.AddMinutes(2);
+
     private void WritePins(IReadOnlyCollection<MaintenanceServiceIdentityTrustPin> pins)
     {
         var fullPath = Path.GetFullPath(_path);
@@ -427,3 +457,4 @@ public sealed class MaintenanceServiceTrustStore
     private sealed record PendingRotationDocument(int SchemaVersion,
         IReadOnlyList<PendingMaintenanceServiceIdentityRotation> Requests);
 }
+
