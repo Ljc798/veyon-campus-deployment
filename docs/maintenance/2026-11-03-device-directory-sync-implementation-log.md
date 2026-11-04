@@ -1,7 +1,7 @@
 # 统一设备目录双向同步 · 实施记录
 
 > 对应计划：[VeyonCampus_Device_Directory_Sync_Plan.md](../VeyonCampus_Device_Directory_Sync_Plan.md)（UD-01～UD-12）
-> 执行基线：本地 HEAD 2c5a952。开始时工作区已有未提交代码与文档；本轮在原状态上继续修改，没有重置或覆盖。
+> 执行基线：本地 HEAD e691b62。开始时工作区已有未提交代码与文档；本轮在原状态上继续修改，没有重置或覆盖。
 > 执行边界：用户明确要求暂不测试、教师机尚未开机。本轮只做代码审阅和编辑，不运行测试、构建、安装、打包，不连接 Windows/生产环境。
 > 手工验收清单：[2026-11-04-device-directory-sync-manual-checklist.md](2026-11-04-device-directory-sync-manual-checklist.md)
 
@@ -33,7 +33,7 @@ TeacherRoomView → TeacherWindow.AddRoomToVeyon
 ## UD-02/03/05：新增座位自动补齐与名单刷新（代码已改；待用户手测）
 
 - Windows 教师端保存未关联且有姓名的座位后，自动调用受控 Veyon 写入流程；继续编辑时每次成功后更新撤销基线，避免“取消本地改动却保留已提交 Veyon 对象”。
-- 写入清单使用固定电脑编号生成的 Windows Hostname（如 PC-19），并将其同时作为 Veyon Name 和 Host；学生姓名留在 Campus 座位档案中，不写入 Veyon 名称。
+- 写入清单使用固定电脑编号生成的 Windows Hostname（如 PC-19），并将其作为 Windows Hostname 与 Veyon Host；Veyon Name 使用学生姓名，空姓名时回退 PC 编号。
 - 写入后仍需读回 Veyon 对象 UUID、Host 与所属地点，再绑定座位。遇到唯一 Host 的本地点已有电脑时保留原对象并关联；跨地点重复、同名异 Host、同 Host 多对象或父地点 UUID 不匹配均阻止操作。
 - Veyon 写入成功后重新读取地点；若策略目标原本完整来自同一地点，则更新电脑名单、保留现有勾选状态，并将新增电脑设为未勾选。手工编辑过的目标文本不会被覆盖。
 - 进入「课堂」或「更新」页面时会重新读取地点名单；当页停留期间的外部目录变化仍需手动刷新或重新进入页面才会读取。
@@ -62,23 +62,24 @@ TeacherRoomView → TeacherWindow.AddRoomToVeyon
 - 当前教师端将该投影用于冲突摘要及策略目标拦截；只读回退不会覆盖可信投影。
 - 该投影尚未合并 SeatId、学生姓名、Agent 信任状态，也未作为策略、监控、移动端共同消费的不可变快照；UD-06 仍属部分完成。
 
-## UD-07：受控修改 Veyon 显示名（代码已接入；待 Windows 手测）
+## UD-07：Veyon Name 与学生姓名双向同步（代码已接入；待 Windows 手测）
 
-- 座位编辑区允许选择现有 Veyon 电脑并输入新显示名；教师端读取完整配置后检查 UUID、父地点、Name、Host 和名称冲突，再生成明确预览。
-- 确认后通过已有提升 worker 与 `VeyonComputerRenameService` 执行受控修改；服务负责加密备份、并发指纹预检、窄字段修改、读回及失败恢复。
-- 教师端再次独立读回 UUID、Name、Host、父地点；确认后才更新本机对应座位里的 Veyon 显示名。学生姓名、Host、Windows 主机名和 Agent 信任不随之改变。
-- worker 返回的恢复材料位置通过结果详情呈现。此改动尚未在 Windows 验证。
+- 新增电脑以固定编号生成 Windows Hostname 并写入 Veyon `Host`；Veyon `Name` 使用学生姓名，空姓名回退 Host。设备 UUID 为身份键。
+- 座位交换按各自 UUID 同步对应 Veyon Name，包括一个座位为空的情况；Host、Windows 主机名、电脑编号、UUID 与设备座位绑定保持不变。
+- 本轮补充：Campus 座位改名按绑定 UUID 写回 Veyon Name，写入前核对 UUID/Host/地点，外部 Name 已变化时要求教师确认，完成后读回核验；读取目录也可列出 Name 差异，教师确认后以一次本地原子写入把 Veyon Name 同步回 Campus。
+- 改名仍只允许使用 Veyon 的受控改名事务；目标由 UUID、父 UUID、Host 和目录指纹共同约束。
+- Hostname 不一致的目录项应保持冲突并阻止策略操作；Windows 实测未执行。
 
 ## 当前未完成范围
 
-- Veyon 原生目录变化的自动发现/持续对账、全应用统一不可变快照及缓存版本尚未完成；当前只在既有完整目录读取入口执行本机投影对账。
-- Host/所属地点编辑不再是目标；按新目标 Hostname 必须固定且等于电脑名，不一致时应标记冲突。持久 operation journal、LDAP/AD 后端探测尚未完成。新增地点和改名使用本机 named mutex，但不同教师机之间没有共享写锁。
+- Veyon 原生目录变化的自动发现/持续对账、全应用统一不可变快照及缓存版本尚未完成；名称双向同步目前从座位图的“读取当前地点 Veyon 电脑”入口执行。
+- Host/所属地点编辑不再是目标；按新目标 Hostname 必须固定且等于电脑名，不一致时应标记冲突。旧 Veyon rename worker/service 尚未退役。持久 operation journal、LDAP/AD 后端探测尚未完成。新增地点和改名使用本机 named mutex，但不同教师机之间没有共享写锁。
 - 移动端、监控等页面尚未切换到统一快照；设备投影也未与 SeatId/学生名/Agent 身份合并。
 - 本轮没有编译或运行自动化检查；静态代码审阅无法证明 Windows veyon-cli、提升流程和真实 UI 行为通过。
 
 ## 当前估算（2026-11-04）
 
-- 按 2026-11-04 修订后的范围（固定 Windows Hostname 即 Veyon Host，不实现 IP 扫描/固定 IP/地址映射），完整“座位图与 Veyon 目录协同”代码范围约 **55%**。已有地点新增写入、读回绑定、策略名单刷新这条主链路约 **75%**；均为代码审阅估算，不代表验收。
+- 按 2026-11-04 修订后的范围（固定 Windows Hostname 即 Veyon Host，不实现 IP 扫描/固定 IP/地址映射），完整“座位图与 Veyon 目录协同”代码范围约 **65%**。已有地点新增写入、读回绑定、策略名单刷新这条主链路约 **75%**；均为代码审阅估算，不代表验收。
 - Windows 10/11、自动化测试、构建及现场验收均未执行；用户手动验收进度为 **0%**。
 
 ## 后续顺序
@@ -88,7 +89,7 @@ TeacherRoomView → TeacherWindow.AddRoomToVeyon
 - [~] UD-03/05 代码：人工确认关联及名单刷新首版已接入；跨页面一致快照和手测待做
 - [x] UD-04 代码：结构化诊断和只读回退
 - [~] UD-06 代码：UUID 投影与基本冲突识别已接入；统一快照/持久绑定整合待做
-- [~] UD-07 代码：名称修改预览与受控 worker 写回已接入；待 Windows 手测
+- [~] UD-07 代码：按 UUID 双向同步 Campus 姓名与 Veyon Name 已接入；座位交换同步姓名且保留设备绑定；待 Windows 手测
 - [~] UD-08：新增 Hostname 一致性已按新范围实现首版；仍需清理历史覆盖兼容引用和手测
 - [ ] UD-09～UD-12：完整 UI、操作日志、LDAP/AD 边界和用户验收
 - [ ] 用户手动完成 Windows 10/11 验收

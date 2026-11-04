@@ -86,6 +86,13 @@ public static class VeyonNetworkObjectDirectory
         return ComputeLocationFingerprint(locations);
     }
 
+    /// <summary>Returns the target-membership fingerprint represented by a complete UUID object snapshot.</summary>
+    public static string FingerprintObjects(IEnumerable<VeyonNetworkObject> objects)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        return ComputeLocationFingerprint(objects);
+    }
+
     public static IReadOnlyList<VeyonNetworkLocation> ReadLocations(TimeSpan timeout)
     {
         if (!OperatingSystem.IsWindows())
@@ -313,6 +320,16 @@ public static class VeyonNetworkObjectDirectory
         return "";
     }
 
+    /// <summary>Builds the UI location projection from the same complete UUID object snapshot.</summary>
+    public static IReadOnlyList<VeyonNetworkLocation> ParseLocationsFromObjects(
+        IReadOnlyList<VeyonNetworkObject> objects)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        ParseLocationsFromSnapshot(objects, out var locations, out var error);
+        if (error is not null) throw new InvalidDataException(error);
+        return locations;
+    }
+
     /// <summary>Reads stable object IDs through Veyon's directory command, without exporting full configuration.</summary>
     public static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects()
     {
@@ -513,42 +530,32 @@ public static class VeyonNetworkObjectDirectory
         var locationComputers = existingComputers.Where(entry =>
             entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
         var plannedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var plannedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var plannedComputerNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var existingMatches = new List<VeyonExistingComputerMatch>();
         var toAdd = new List<VeyonNetworkComputer>();
         var skipped = new List<string>();
         foreach (var computer in computers)
         {
-            if (!plannedNames.Add(computer.ComputerName))
+            if (!plannedComputerNames.Add(computer.ComputerName))
                 conflicts.Add($"电脑编号“{computer.ComputerName}”在本次清单中重复。");
-            if (!string.Equals(computer.DisplayName, computer.ComputerName, StringComparison.OrdinalIgnoreCase) &&
-                !plannedNames.Add(computer.DisplayName))
-                conflicts.Add($"显示名称“{computer.DisplayName}”在本次清单中重复。");
             if (!plannedHosts.Add(computer.Host))
                 conflicts.Add($"主机名/IP“{computer.Host}”在本次清单中重复。");
             // A unique Host match inside this exact Veyon location can preserve an existing
-            // object even when its Veyon name differs; the reader binds its UUID without
-            // renaming it. Name-only matches remain conflicts because they can be reassigned.
+            // object even when its Veyon display name differs; the reader binds its UUID
+            // without treating the display label as device identity.
             var hostMatches = locationComputers.Where(entry => string.Equals(
                 entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
                 StringComparison.OrdinalIgnoreCase)).ToArray();
-            var nameMatches = locationComputers.Where(entry => string.Equals(
-                entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
-            var exactMatches = locationComputers.Where(entry =>
-                string.Equals(entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
-                    StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
             if (existingComputers.Any(entry =>
                     !entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase) &&
-                    (string.Equals(entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
-                         StringComparison.OrdinalIgnoreCase) ||
-                     string.Equals(entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase))))
+                    string.Equals(entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
+                        StringComparison.OrdinalIgnoreCase)))
             {
-                conflicts.Add($"电脑“{computer.ComputerName}”的主机/IP或显示名已存在于其他或未确认地点；" +
+                conflicts.Add($"电脑“{computer.ComputerName}”的 Host 已存在于其他或未确认地点；" +
                     "为避免跨地点误绑定，请先核对目录再写入。");
                 continue;
             }
-            if (hostMatches.Length == 1 && nameMatches.Length == 0)
+            if (hostMatches.Length == 1)
             {
                 var match = hostMatches[0];
                 if (existingLocations.Length != 1 || match.ObjectId == Guid.Empty ||
@@ -558,38 +565,15 @@ public static class VeyonNetworkObjectDirectory
                     conflicts.Add($"主机“{computer.Host}”已有同地点对象，但 Veyon UUID/父地点关系无法核对；拒绝自动关联。");
                     continue;
                 }
-                skipped.Add($"{computer.ComputerName} → {computer.Host}：保留本地点已有电脑名“{match.Name}”，按唯一 Host/UUID 关联。");
+                skipped.Add($"{computer.ComputerName} → {computer.Host}：保留本地点现有 Veyon Name“{match.Name}”，按唯一 Host/UUID 关联。");
                 existingMatches.Add(new VeyonExistingComputerMatch(match.Name,
                     match.Host.Length > 0 ? match.Host : match.Name, match.ObjectId,
                     match.ParentObjectId, match.Location));
                 continue;
             }
-            if (exactMatches.Length == 1)
+            if (hostMatches.Length > 0)
             {
-                var match = exactMatches[0];
-                if (hostMatches.Length != 1 || nameMatches.Length != 1 || match.ObjectId == Guid.Empty ||
-                    match.ParentObjectId == Guid.Empty || existingLocations.Length != 1 ||
-                    match.ParentObjectId != existingLocations[0].ObjectId)
-                {
-                    conflicts.Add($"电脑“{computer.ComputerName}”虽有同名同地址对象，但 UUID 或唯一性核验失败。" +
-                        "请刷新 Veyon 目录后再试。");
-                    continue;
-                }
-                skipped.Add($"{computer.ComputerName} → {computer.Host}：同名同地址电脑已在本地点存在，保留并可按 UUID 关联。");
-                existingMatches.Add(new VeyonExistingComputerMatch(match.Name,
-                    match.Host.Length > 0 ? match.Host : match.Name, match.ObjectId,
-                    match.ParentObjectId, match.Location));
-                continue;
-            }
-            if (hostMatches.Length > 0 || nameMatches.Length > 0)
-            {
-                var reason = hostMatches.Length > 0 && nameMatches.Length > 0
-                    ? "本地点已有同地址或同名对象，但两者不是同一台设备"
-                    : hostMatches.Length > 0
-                        ? "本地点已有同地址但名称不同的电脑"
-                        : "本地点已有同名但地址不同的电脑";
-                conflicts.Add($"电脑“{computer.ComputerName}”存在潜在身份冲突：{reason}；不会自动跳过、绑定或覆盖。" +
-                    "请人工核对 Veyon UUID 后再操作。");
+                conflicts.Add($"电脑“{computer.ComputerName}”的 Host 在当前地点重复或 UUID/父地点无法唯一核对；不会自动绑定或覆盖。");
                 continue;
             }
             toAdd.Add(computer);
@@ -756,7 +740,10 @@ public static class VeyonNetworkObjectDirectory
         {
             if (computer is null) throw new InvalidDataException("电脑清单不能包含空项目。");
             ValidateDirectoryName(computer.ComputerName, "电脑编号");
-            _ = VeyonHostAddress.NormalizeOverride(computer.Host);
+            var host = VeyonHostAddress.NormalizeOverride(computer.Host);
+            if (!string.Equals(host, computer.ComputerName, StringComparison.OrdinalIgnoreCase) ||
+                Uri.CheckHostName(host) != UriHostNameType.Dns)
+                throw new InvalidDataException("Veyon Host 必须直接使用固定 Windows 电脑名；不支持 IP 或 Host 映射。");
             ValidateDirectoryName(computer.DisplayName, "电脑显示名");
             if (!string.IsNullOrWhiteSpace(computer.StudentName))
                 ValidateDirectoryName(computer.StudentName.Trim(), "学生姓名");

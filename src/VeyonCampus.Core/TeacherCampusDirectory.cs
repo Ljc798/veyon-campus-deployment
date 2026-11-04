@@ -12,7 +12,9 @@ public sealed record TeacherCampusProfile(Guid ProfileId, string DisplayName, Li
 
 /// <summary>A local room profile. Student names are intentionally not part of the saved profile.</summary>
 public sealed record TeacherRoomProfile(Guid RoomId, string DisplayName, string Prefix,
-    int StartNumber, int ComputerCount, List<string>? HostOverrides = null, List<int>? ComputerNumbers = null)
+    int StartNumber, int ComputerCount,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    List<string>? HostOverrides = null, List<int>? ComputerNumbers = null)
 {
     public string StableIdLabel => RoomId.ToString("N")[..8];
     public IReadOnlyList<int> GetComputerNumbers() => ComputerNumbers is { } numbers
@@ -71,54 +73,26 @@ public static class TeacherCampusProfileFromVeyon
             string.Equals(room.DisplayName, displayName, StringComparison.OrdinalIgnoreCase));
         var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
         var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
-        var minimumNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
         var usedNumbers = rooms.Where((_, index) => index != existingIndex)
             .SelectMany(room => room.GetComputerNumbers()).ToHashSet();
-        if (existing is { ComputerCount: > 0 })
-        {
-            var savedNumbers = existing.GetComputerNumbers();
-            usedNumbers.UnionWith(savedNumbers);
-        }
-
         var targetNumbers = new int[targets.Length];
         var knownNumberTargets = new HashSet<int>();
         for (var index = 0; index < targets.Length; index++)
         {
             var target = targets[index];
-            var targetHasNumber = MachineNaming.TryParseNumber(prefix, target, out var targetNumber);
-            string? computerDisplayName = null;
-            var displayNumber = 0;
-            if (location.TargetDisplayNames is not null &&
-                location.TargetDisplayNames.TryGetValue(location.Targets[index], out var mappedDisplayName))
-                computerDisplayName = mappedDisplayName;
-            var displayNameHasNumber = computerDisplayName is not null &&
-                MachineNaming.TryParseNumber(prefix, computerDisplayName, out displayNumber);
-            if (targetHasNumber && displayNameHasNumber && targetNumber != displayNumber)
-                throw new InvalidDataException($"Veyon 电脑“{computerDisplayName}”与主机名“{target}”的编号不一致；请先核对地点清单。");
-
-            var parsedNumber = targetHasNumber ? targetNumber : displayNameHasNumber ? displayNumber : 0;
-            var knownNumber = parsedNumber;
-            if (knownNumber == 0) continue;
-            if (!knownNumberTargets.Add(knownNumber))
-                throw new InvalidDataException($"Veyon 地点中存在重复电脑编号 {knownNumber}；请先核对电脑名和主机地址。");
-            targetNumbers[index] = knownNumber;
-        }
-
-        usedNumbers.UnionWith(knownNumberTargets);
-        var nextNumber = Math.Max(minimumNumber, usedNumbers.DefaultIfEmpty(minimumNumber - 1).Max() + 1);
-        for (var index = 0; index < targetNumbers.Length; index++)
-        {
-            if (targetNumbers[index] != 0) continue;
-            while (nextNumber <= MachineNaming.MaximumNumber && usedNumbers.Contains(nextNumber)) nextNumber++;
-            if (nextNumber > MachineNaming.MaximumNumber)
-                throw new InvalidDataException($"没有可分配的新电脑编号；最大编号为 {MachineNaming.MaximumNumber}。");
-            targetNumbers[index] = nextNumber;
-            usedNumbers.Add(nextNumber++);
+            if (Uri.CheckHostName(target) != UriHostNameType.Dns ||
+                !MachineNaming.TryParseNumber(prefix, target, out var number))
+                throw new InvalidDataException($"Veyon Host“{target}”不是该地点固定 Windows 电脑名（{prefix}编号）；不支持 IP 或 Host 映射。");
+            if (!knownNumberTargets.Add(number))
+                throw new InvalidDataException($"Veyon 地点中存在重复固定电脑编号 {number}；请先核对名单。");
+            if (usedNumbers.Contains(number))
+                throw new InvalidDataException($"固定电脑编号 {number} 已分配给本校区其他地点；请先核对名单。");
+            targetNumbers[index] = number;
         }
 
         var numbers = targetNumbers.ToList();
         var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
-            prefix, numbers.Min(), targets.Length, targets.ToList(), numbers);
+            prefix, numbers.Min(), targets.Length, HostOverrides: null, ComputerNumbers: numbers);
         if (existingIndex >= 0) rooms[existingIndex] = mergedRoom;
         else rooms.Add(mergedRoom);
 
@@ -188,7 +162,8 @@ public sealed class TeacherCampusDirectoryStore
                 throw new InvalidDataException("本机校区档案格式无效；未覆盖原文件。", exception);
             }
 
-            // Schema 2 adds optional per-computer host/IP overrides; existing schema 1 profiles remain usable.
+            // Schema 2 added legacy HostOverrides. They are accepted during deserialization only;
+            // the fixed Windows computer name is now the sole Veyon Host value.
             if (document.SchemaVersion == 1)
                 document = document with { SchemaVersion = CurrentSchemaVersion };
 
@@ -255,13 +230,6 @@ public sealed class TeacherCampusDirectoryStore
                 if (room is null || room.RoomId == Guid.Empty || !roomIds.Add(room.RoomId))
                     throw new InvalidDataException("机房档案 ID 缺失或重复。");
                 ValidateName(room.DisplayName, "机房显示名");
-                if (room.HostOverrides is { } hostOverrides)
-                {
-                    if (hostOverrides.Count > room.ComputerCount)
-                        throw new InvalidDataException("机房主机/IP 覆盖行数不能超过电脑数量。");
-                    foreach (var host in hostOverrides)
-                        if (!string.IsNullOrEmpty(host)) _ = VeyonHostAddress.NormalizeOverride(host);
-                }
                 try
                 {
                     if (room.StartNumber is < 1 or > MachineNaming.MaximumNumber)
@@ -305,7 +273,7 @@ public sealed class TeacherCampusDirectoryStore
         {
             Rooms = campus.Rooms?.Select(room => room with
             {
-                HostOverrides = room.HostOverrides?.ToList(),
+                HostOverrides = null,
                 ComputerNumbers = room.ComputerNumbers?.ToList()
             }).ToList()!
         };

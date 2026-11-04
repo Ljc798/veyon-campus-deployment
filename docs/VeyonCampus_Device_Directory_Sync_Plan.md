@@ -3,9 +3,9 @@
 **日期：** 2026-11-03（根据现场操作顺序修订）  
 **用途：** 方案基线和实施追踪；Windows 教师端由用户在隔离环境手动验收  
 **执行基线：** 以本机当前工作树为准；本轮基线和代码状态见[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)  
-**范围：** 所有学生电脑都有固定且唯一的 Windows 计算机名（如 `PC-01`、`PC-02`），Campus 直接将此名称作为 Veyon `Name` 与 `Host`；不扫描 IP、不配置固定 IP、不维护 IP 映射。首要目标是修复 Campus「地点」新增电脑后自动写入 Veyon，通过真实 UUID 稳定关联座位，并让「策略与预设」等页面自动同步最新名单；学生姓名、电脑编号和座位保持独立管理。另排查 `networkobjects export` 退出码 255。**本轮已实现首批自动写入、UUID 读回关联和策略名单刷新代码；统一目录全量方案尚未完成。未操作 GitHub、生产云端或真实校区，也未运行测试或构建。**
+**范围：** 所有学生电脑都有固定且唯一的 Windows 计算机名（如 `PC-01`、`PC-02`），Campus 直接将此名称作为 Windows Hostname 与 Veyon `Host`；Veyon `Name` 与 Campus 学生姓名双向同步，无姓名时使用固定 Hostname（PC-xx）作为默认显示名；不扫描 IP、不配置固定 IP、不维护 IP 映射。首要目标是修复 Campus「地点」新增电脑后自动写入 Veyon，通过真实 UUID 稳定关联座位，并让「策略与预设」等页面自动同步最新名单；学生姓名、电脑编号和座位字段独立管理；Name 同步只通过 Veyon UUID 定位设备，绝不改变 Host、Windows Hostname、电脑编号或座位关联。另排查 `networkobjects export` 退出码 255。**本轮已实现首批自动写入、UUID 读回关联和策略名单刷新代码；统一目录全量方案尚未完成。未操作 GitHub、生产云端或真实校区，也未运行测试或构建。**
 
-**代码进度估算（2026-11-04）：** 完整协同范围约 **45%**；已有地点新增→Veyon 写入→读回 UUID→座位绑定→策略名单刷新的主链路约 **75%**。Windows 10/11 用户验收 **0%**；估算不代表代码通过构建或实机验证。实施细项见[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)。
+**代码进度估算（2026-11-04）：** 完整协同范围约 **65%**；已有地点新增→Veyon 写入→读回 UUID→座位绑定→策略名单刷新的主链路约 **75%**。Windows 10/11 用户验收 **0%**；本轮未运行测试或构建，估算不代表代码通过编译或实机验证。实施细项见[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)。
 
 ## 1. 问题与目标
 
@@ -50,7 +50,7 @@ Campus 预检 Veyon 中的地点、对象 UUID、电脑名/Hostname 冲突
 2. **策略页自动可见**：Veyon 新增成功后，策略与预设的学生名单使用同一份已验证目录快照，立即显示该电脑，不用重启应用或重复添加。
 3. **写入不假成功**：若 Veyon 因权限、CLI、导入或读回故障未成功，新电脑在 Campus 标为 `PendingWrite/WriteFailed/NeedsReview`，不得显示“已同步”。允许本地草稿保留，但必须清晰标明未进入 Veyon、不可作为已验证策略目标。
 4. **名单双向发现**：Veyon 原生目录新增、改名或移动电脑后，Campus 刷新时按 UUID 对账；Campus 侧只在明确新增电脑时写入，不维护 IP 或地址映射。
-5. **稳定关联**：通过 Veyon UUID 保持设备身份；学生姓名与座位编号独立保存，不因电脑名、座位调整或策略名单刷新而覆盖。
+5. **稳定关联**：通过 Veyon UUID 保持设备身份；学生姓名与座位编号独立管理；姓名按 UUID 与 Veyon Name 双向同步，座位调整不得改变设备绑定。
 6. **错误可诊断**：`ExitCode=255` 不再只有数字，而是能查出具体失败命令与信息；读取失败保留可信旧快照并提示过期。
 
 ### 1.4 工程判断：不是“单纯刷新 UI”
@@ -59,16 +59,16 @@ Campus 预检 Veyon 中的地点、对象 UUID、电脑名/Hostname 冲突
 
 ## 2. 必须复用的现有实现
 
-| 现有文件 / 类型                                                                                           | 已有功能                                                                                                                            | 本次应做什么                                                          |
-| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| `src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs`                                                     | `ReadLocations()`、`ReadNetworkObjects()`、`ReadDirectorySnapshot()`、`networkobjects dump/export/import/add`、UUID、指纹及冲突检查 | 统一读取源、增强诊断、稳定快照和增量识别                              |
-| `src/VeyonCampus.Core/VeyonComputerRenameService.cs`                                                      | Veyon `Name` 的受控修改事务                                                                                                         | 固定 Hostname 方案下不把学生姓名写进 Name；后续应限制或移除该改名入口 |
-| `src/VeyonCampus.App/TeacherNetworkDirectory.cs`                                                          | Windows 读取 Veyon；macOS 使用校园档案生成模拟目录                                                                                  | 明确数据来源与可写能力，防止跨平台混淆                                |
-| `src/VeyonCampus.Core/ClassroomSeatGridStore.cs`                                                          | 稳定 SeatId、电脑编号、学生姓名、VeyonObjectId、VeyonLocationObjectId 关联                                                          | 保持原座位布局和设备绑定，补一致性对账                                |
-| `src/VeyonCampus.App/Presentation/Views/TeacherRoomView.axaml`、`TeacherViewModel.cs` 及地点/座位新增命令 | 教师端「地点」和已有教室编辑入口；需要核对调用链                                                                                    | **首查已有地点新增电脑是否只保存本地布局，未调用 Veyon 写回与读回**   |
-| `TeacherViewModel.cs` / `TeacherPolicyView.axaml`                                                         | 策略目标和学生名单 UI                                                                                                               | 使用新增后统一快照，消除“地点有、策略无”的分裂数据                    |
-| `src/VeyonCampus.App/MobileWeb/`                                                                          | 手机查看电脑并按地点操作                                                                                                            | 共享同一目录版本，不出现不同步目标                                    |
-| `specs/classroom-seat-layout/design.md`                                                                   | 换座只改允许的 Veyon Name、保留 Host 和 ID                                                                                          | 严格兼容，不能用新同步逻辑破坏已有换座事务                            |
+| 现有文件 / 类型                                                                                           | 已有功能                                                                                                                            | 本次应做什么                                                             |
+| --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| `src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs`                                                     | `ReadLocations()`、`ReadNetworkObjects()`、`ReadDirectorySnapshot()`、`networkobjects dump/export/import/add`、UUID、指纹及冲突检查 | 统一读取源、增强诊断、稳定快照和增量识别                                 |
+| `src/VeyonCampus.Core/VeyonComputerRenameService.cs`                                                      | 历史 Veyon `Name` 修改事务                                                                                                          | 固定 Hostname 方案下不得调用；按 UUID 安全同步学生姓名与 Name，Host 不变 |
+| `src/VeyonCampus.App/TeacherNetworkDirectory.cs`                                                          | Windows 读取 Veyon；macOS 使用校园档案生成模拟目录                                                                                  | 明确数据来源与可写能力，防止跨平台混淆                                   |
+| `src/VeyonCampus.Core/ClassroomSeatGridStore.cs`                                                          | 稳定 SeatId、电脑编号、学生姓名、VeyonObjectId、VeyonLocationObjectId 关联                                                          | 保持原座位布局和设备绑定，补一致性对账                                   |
+| `src/VeyonCampus.App/Presentation/Views/TeacherRoomView.axaml`、`TeacherViewModel.cs` 及地点/座位新增命令 | 教师端「地点」和已有教室编辑入口；需要核对调用链                                                                                    | **首查已有地点新增电脑是否只保存本地布局，未调用 Veyon 写回与读回**      |
+| `TeacherViewModel.cs` / `TeacherPolicyView.axaml`                                                         | 策略目标和学生名单 UI                                                                                                               | 使用新增后统一快照，消除“地点有、策略无”的分裂数据                       |
+| `src/VeyonCampus.App/MobileWeb/`                                                                          | 手机查看电脑并按地点操作                                                                                                            | 共享同一目录版本，不出现不同步目标                                       |
+| `specs/classroom-seat-layout/design.md`                                                                   | 换座只改允许的 Veyon Name、保留 Host 和 ID                                                                                          | 严格兼容，不能用新同步逻辑破坏已有换座事务                               |
 
 **强调：** 仓库已有 Veyon 导入和换座事务，但这不代表“已有地点新增电脑”入口已调用它们。**先对照两个入口：①新建地点并添加电脑；②进入既有地点新增电脑。** 若只有①会写 Veyon，就把②统一接入同一套安全写入服务，不要另造导入器。
 
@@ -81,10 +81,10 @@ Campus 预检 Veyon 中的地点、对象 UUID、电脑名/Hostname 冲突
 | `DeviceId`                   | Campus 稳定本地 UUID                                        | 首次绑定后不因电脑显示名、座位变更而变化                                        |
 | `VeyonObjectId`              | Veyon Computer UID                                          | 只读关联；对象被重建后不可仅凭旧名称自动继承身份                                |
 | `VeyonLocationObjectId`      | Veyon Location UID                                          | 对象跨地点移动时更新父关系，保留稳定设备身份                                    |
-| `VeyonComputerName`          | Veyon `Name`                                                | Veyon → Campus 自动读取；Campus → Veyon 显式编辑并写回                          |
+| `VeyonComputerName`          | Veyon 显示名称                                              | 按 UUID 与 Campus StudentName 双向同步；空姓名使用 Hostname 作为默认值          |
 | `HostAddress` / `MacAddress` | Hostname 以固定 Windows 计算机名为准；其他字段从 Veyon 读取 | Campus 新增电脑时 `Host = Windows Hostname = 电脑名`；不扫描 IP、不维护 IP 映射 |
 | `SeatId`、行/列/编号         | Campus 座位布局                                             | 可以调整，不自动删除或重建 Veyon 对象                                           |
-| `StudentName`                | Campus 学生/座位绑定                                        | 单独编辑；**默认不改 Veyon Name**                                               |
+| `StudentName`                | Campus 学生/座位绑定                                        | 修改后按绑定 UUID 更新 Veyon Name；Veyon 外部改名经确认后回写此字段             |
 | Agent 认证身份、公钥 Pin     | 既有 Student Agent trust store                              | 不能因为电脑名或 Hostname 相同就自动信任新机器                                  |
 | 策略勾选状态                 | Campus 本地用户选择                                         | 新发现设备默认不勾选高影响策略                                                  |
 
@@ -111,7 +111,7 @@ public enum DeviceDirectorySyncState {
 }
 ```
 
-**重要约束：** 固定 Windows 计算机名（如 `PC-01`）是 Veyon Name 和 Host 的权威值；学生姓名、座位编号只保存在 Campus，可单独修改，不能自动改写 Veyon Name 或 Windows Hostname。名称改变应视为需核对的目录变更，不提供将学生姓名写入 Veyon Name 的选项。
+**重要约束：** 固定 Windows 计算机名（如 `PC-01`）只作为 Windows Hostname 和 Veyon HostAddress；Veyon `Name` 与 Campus 学生姓名双向同步。Campus 改名和 Veyon 改名都必须先以 UUID 确认设备身份，更新后读回 UUID、Name、Host 与父地点；Name 变化不得改变 Host、Windows Hostname、电脑编号或座位绑定。外部 Veyon Name 与 Campus 姓名不一致时先提示确认，避免同步回写互相覆盖。学生姓名为空时，以 Hostname（PC-xx）作为 Veyon Name 默认值。
 
 ## 4. P0-A：修复 Campus「地点」新增电脑不写入 Veyon（第一优先级）
 
@@ -158,12 +158,12 @@ TeacherRoomView → TeacherWindow.AddRoomToVeyon
 ```text
 TeacherAddComputer(location, computerNumber, optionalSeat/student)
   → ReadCanonicalVeyonDirectory / RejectUnknownBackend
-  → WindowsHostname = VeyonName = VeyonHost = PC-{computerNumber}
+  → WindowsHostname = VeyonHost = PC-{computerNumber}; VeyonName = StudentName ?? PC-{computerNumber}
   → EnsureLocationUid / DetectComputerNameUuidCollisions
   → PreviewAdd (仅新增该电脑，不清空、不重建现有对象)
   → SaveLocalPendingIntent (不可标“已同步”)
   → ExecuteExistingVeyonAddOrImport
-  → ReReadNetworkObjects + Check New Veyon UID/ParentUid/Name/Host all match PC-xx
+  → ReReadNetworkObjects + Check New Veyon UID/ParentUid/Host match PC-xx and Name matches StudentName or PC-xx fallback
   → BindSeatAndStudentToVerifiedVeyonObjectId
   → PublishUnifiedSnapshot + NotifyPolicyAndPresetViews
   → Committed
@@ -255,11 +255,11 @@ Read current Veyon objects
 ```
 
 - **Added**：创建待绑定对象；新发现电脑立即显示，但默认不勾选锁屏、应用/系统限制等高影响策略。
-- **Renamed**：Veyon UID 不变、Name 变化，只更新 Veyon Name；`StudentName` 保留。
-- **HostnameMismatch**：UID 不变但 Veyon Name/Host 与固定 Windows 计算机名不一致时标记冲突并阻止策略操作；不尝试扫描或猜测新地址。
+- **Renamed**：Veyon UUID 不变、Name 变化时标为待确认差异；教师确认后将 Name 同步为对应 StudentName，或在座位编辑中确认以 Campus StudentName 覆盖 Veyon Name。
+- **HostnameMismatch**：UID 不变但 Veyon Host 与固定 Windows 计算机名不一致时标记冲突并阻止策略操作；Name 可为学生姓名，不用于连接或身份识别。
 - **Moved**：同 UID 换父地点，保留 DeviceId；座位/教室归属有歧义时需要人工确认。
 - **Missing**：UID 消失，标记 `MissingInVeyon`，保留本地绑定用于恢复，不自动删。
-- **Conflict**：同一 Host 出现在多个地点、同名冲突、重复 UID、父地点缺失等，阻止不明确的策略发送和写回。
+- **Conflict**：同一 Host 出现在多个地点、重复 UUID、父地点缺失或 Host 无效等，阻止不明确的策略发送和写回；重复 Veyon Name 本身不视为设备身份冲突。
 
 **Campus「地点」新增电脑并读回成功后应立即发布快照变更，通知策略与预设的学生名单刷新**，不应要求教师离开页面、重新登录或重启应用。页面刷新、返回策略页、原生 Veyon 修改后手动刷新、应用重新启动也应触发只读检查；连续刷新需去重、限制频率。
 
@@ -267,14 +267,14 @@ Read current Veyon objects
 
 ## 7. Campus → Veyon 安全双向写回
 
-**在 Campus「地点」中点击“新增电脑并保存”本身就是明确的教师操作，应该自动执行 Veyon 写回**，不得再要求教师额外打开 Veyon 或寻找另一个隐藏的“同步”按钮。修改现有记录则通过显式编辑确认。
+**在 Campus「地点」中点击“新增电脑并保存”本身就是明确的教师操作，应该自动执行 Veyon 写回**，不得再要求教师额外打开 Veyon 或寻找另一个隐藏的“同步”按钮。Host 和固定电脑名不开放编辑；Campus 姓名修改经 UUID 同步到 Veyon Name。目录读取发现同一 UUID 的 Veyon Name 与 Campus 姓名不同，先提示确认同步方向，再更新学生姓名或 Veyon Name。
 
 允许的教师操作包括：
 
 - 新增地点 / 新增电脑：优先复用 `ReadImportPreview`、现有地点导入/新增实现，并读回 Veyon UID。
-- 电脑编号固定对应 Windows Hostname；新增时 Veyon `Name` 与 `Host` 都使用此 Hostname。不要提供 IP、固定 IP 或自定义 Host 映射入口。
-- 学生姓名、座位编号是 Campus 字段；修改它们不能改写 Veyon `Name`、Host 或 Windows Hostname。
-- 原生 Veyon 的改名/移动通过 UUID 对账并提示状态；Campus 不自动把显示名同步成学生姓名，也不通过批量配置覆盖原生目录。
+- 电脑编号固定对应 Windows Hostname；新增时 Veyon `Host` 使用此 Hostname，`Name` 使用学生姓名或 PC 编号默认值。不要提供 IP、固定 IP 或自定义 Host 映射入口。
+- Campus 学生姓名修改后，按已绑定 UUID 更新 Veyon `Name`，并读回确认；Host、Windows Hostname、编号、座位和 UUID 不变。
+- 读取 Veyon 时，如 Name 与已绑定座位学生姓名不一致，列出冲突并等待教师确认是否把 Veyon Name 同步到 Campus 姓名；应用后只修改 StudentName 和 Name 缓存，不回写 Veyon，避免循环覆盖。
 - 删除绑定：默认仅解绑 Campus 座位；物理删除 Veyon 对象要独立危险操作确认。绝不误删含电脑的地点。
 
 所有写操作必须具有下列事务：
@@ -287,10 +287,10 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 ```
 
 1. 从当前 Veyon 导出读取真实 UUID、父对象、Host，保存原始配置指纹。
-2. 展示新增前后差异（例如 `Computer[Uid].Name = PC-19`、`HostAddress = PC-19`），用户确认。
+2. 展示新增前后差异（例如 `Computer[Uid].Name = 张三`、`HostAddress = PC-19`；空姓名时 Name 为 `PC-19`），用户确认。
 3. 生成可恢复的本地加密备份（沿用当前用户 DPAPI），写入操作 journal。
 4. 写入前再次比较完整目录/配置指纹；别人改了目录就中止，并要求刷新预览。
-5. 导入之后读回目标 UUID、Name、Host、ParentUid；新增对象必须满足 `Name == Host == Windows Hostname == PC-xx`，并核对原有对象无改动。
+5. 导入之后读回目标 UUID、Name、Host、ParentUid；新增对象必须满足 `Host == Windows Hostname == PC-xx` 且 `Name == StudentName`（空姓名使用 `PC-xx`），并核对原有对象除获批 Name 同步外无改动。
 6. 导入返回非零但读回已符合目标时可标记“读回确认成功”；结果不确定时只允许 **NeedsReview**，不要自动重复发送写入。
 7. 修改失败可尝试受控恢复；回滚失败保留备份并提示现场修复。
 
@@ -304,15 +304,15 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 
 地点概览：`掌学前程柴桑校区 · Veyon 18 台 · 已绑定 N 台 · 新发现 M 台 · 冲突 K 台`。设备行展示 `Veyon Name / Host / 地点 / 座位号 / StudentName / Agent 认证 / 同步状态`。
 
-可执行动作：`刷新目录`、`添加电脑`、`编辑 Veyon 属性`、`绑定学生/座位`、`重新核对 Veyon 写入`、`查看诊断`。**“添加电脑”完成后主动写 Veyon，不要把后续手动“同步到 Veyon”设计成完成新增所必需的第二步。**
+可执行动作：`刷新目录`、`添加电脑`、`绑定学生/座位`、`重新核对 Veyon 写入`、`查看诊断`。电脑名、Hostname 和 UUID 只读。**“添加电脑”完成后主动写 Veyon，不要把后续手动“同步到 Veyon”设计成完成新增所必需的第二步。**
 
 在「地点」新增后展示分步骤结果：`Campus 已保存 → Veyon 已写入 → 已读回确认 → 策略与预设已更新`。任一步失败保留明确原因、恢复/关联按钮和最后成功读取时间。
 
 ### 8.2 双分组编辑
 
-- **Veyon 属性**：显示电脑名、Hostname、所属地点与 UUID；Hostname 直接显示为固定电脑名，不提供 IP/Host 映射编辑。
-- **Campus 属性**：学生姓名、座位编号、备注（只更新 Campus）。
-- 可选复选框：`将学生姓名也作为 Veyon 显示名`，默认关闭，必须展示预览和确认。
+- **Veyon 属性**：显示 Veyon Name、固定 Hostname、所属地点与 UUID；Host 和 UUID 只读。
+- **Campus 属性**：学生姓名、座位编号、备注；修改学生姓名会按 UUID 同步 Veyon Name。
+- 换座只交换 Campus 学生姓名和对应 UUID 的 Veyon Name；Host、电脑编号、Windows Hostname、UUID 与设备座位绑定保持不变。
 
 ### 8.3 页面一致性
 
@@ -324,22 +324,22 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 
 ## 9. Codex 连续实施任务表（以 Campus 新增写回为中心）
 
-| 顺序      | 任务                                                        | 完成条件                                                     |
-| --------- | ----------------------------------------------------------- | ------------------------------------------------------------ |
-| **UD-01** | **P0** 审计「已有地点新增电脑」全链路，并与「新建地点」对照 | 找到真实缺失/失败调用点；列出文件、调用顺序、失败处理        |
-| **UD-02** | **P0** 在 Campus 地点新增时自动写入 Veyon                   | 只录入一次，Veyon 新电脑被读回并拥有真实 UID；失败不假成功   |
-| **UD-03** | **P0** 已经手工补录到 Veyon 的电脑安全关联恢复              | 不重复创建 Veyon 对象；教师明确确认匹配 UID/Host 后补齐绑定  |
-| **UD-04** | **P0** 诊断 `networkobjects export` 255 并修复只读目录加载  | 能定位实际失败；必要时从 `dump` / 已验证配置快照回退         |
-| **UD-05** | **P0** 统一地点与策略学生名单数据源、刷新事件               | Campus 新增后“策略与预设”立即出现同一电脑；旧选中状态不丢    |
-| **UD-06** | **P0** 规范化 UUID 设备投影、稳定持久绑定与自动发现         | 改名/地址/地点变化不丢 DeviceId、StudentName、SeatId         |
-| **UD-07** | **P1** 固定电脑名一致性保护                                 | 学生姓名/座位编辑不修改 Veyon Name、Host 或 Windows Hostname |
-| **UD-08** | **P1** 固定 Hostname 规则与目录一致性核对                   | 新增时 Host 与固定电脑名一致；不提供 IP/Host 覆盖映射        |
-| **UD-09** | **P1** 学生姓名、电脑显示名、编号、座位 UI                  | 字段分离，可显式选择同步名称；不改 Windows 主机名            |
-| **UD-10** | **P1** 重复/缺失/迁移/多教师并发冲突与缓存治理              | 无误删、无静默重复创建、过期快照不能作为真实同步状态         |
-| **UD-11** | **P1** 自动化回归与 Windows VM 用户验收脚本                 | 覆盖“Campus 新增→Veyon→策略列表”的主链路及失败恢复           |
-| **UD-12** | **P2** 多教师机共享目录/权限来源策略                        | 明确 Builtin 与外部目录边界，禁止多人无锁覆盖                |
+| 顺序      | 任务                                                        | 完成条件                                                                                           |
+| --------- | ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **UD-01** | **P0** 审计「已有地点新增电脑」全链路，并与「新建地点」对照 | 找到真实缺失/失败调用点；列出文件、调用顺序、失败处理                                              |
+| **UD-02** | **P0** 在 Campus 地点新增时自动写入 Veyon                   | 只录入一次；Host=Windows Hostname=PC-xx，Name=学生姓名或 PC-xx 默认值，读回真实 UUID；失败不假成功 |
+| **UD-03** | **P0** 已经手工补录到 Veyon 的电脑安全关联恢复              | 不重复创建 Veyon 对象；教师明确确认匹配 UID/Host 后补齐绑定                                        |
+| **UD-04** | **P0** 诊断 `networkobjects export` 255 并修复只读目录加载  | 能定位实际失败；必要时从 `dump` / 已验证配置快照回退                                               |
+| **UD-05** | **P0** 统一地点与策略学生名单数据源、刷新事件               | Campus 新增后“策略与预设”立即出现同一电脑；旧选中状态不丢                                          |
+| **UD-06** | **P0** 规范化 UUID 设备投影、稳定持久绑定与自动发现         | 改名/地址/地点变化不丢 DeviceId、StudentName、SeatId                                               |
+| **UD-07** | **P1** Veyon Name 与学生姓名 UUID 双向同步                  | Name 双向同步；Host、Hostname、编号和绑定不变                                                      |
+| **UD-08** | **P1** 固定 Hostname 规则与目录一致性核对                   | 新增时 Host 与固定电脑名一致；不提供 IP/Host 覆盖映射                                              |
+| **UD-09** | **P1** 学生姓名、固定电脑名、编号、座位 UI                  | 字段分离；电脑编号只读且对应固定 Windows Hostname；Veyon Name 与学生姓名同步                       |
+| **UD-10** | **P1** 重复/缺失/迁移/多教师并发冲突与缓存治理              | 无误删、无静默重复创建、过期快照不能作为真实同步状态                                               |
+| **UD-11** | **P1** 自动化回归与 Windows VM 用户验收脚本                 | 覆盖“Campus 新增→Veyon→策略列表”的主链路及失败恢复                                                 |
+| **UD-12** | **P2** 多教师机共享目录/权限来源策略                        | 明确 Builtin 与外部目录边界，禁止多人无锁覆盖                                                      |
 
-**当前代码状态：** UD-01、UD-02、UD-04 为首批代码已完成（仍待用户验收）；UD-03、UD-05、UD-06、UD-07 为部分完成；UD-08 改为固定 Hostname 一致性约束。新增写入已使用 `PC-xx` 同时作为 Veyon Name/Host；旧配置中的 Host 覆盖字段及课堂连接使用路径仍需逐步退役并手测。UD-09～UD-12 尚未完成。具体边界和手测项目以[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)及[手动验收清单](maintenance/2026-11-04-device-directory-sync-manual-checklist.md)为准。
+**当前代码状态：** UD-01、UD-02、UD-04 为首批代码已完成（仍待用户验收）；UD-03、UD-05、UD-06 为部分完成。UD-08 的固定 Hostname → Veyon Host 已实现。现已接入按 UUID 的双向 Name/学生姓名同步：Campus 修改后受控写入 Veyon，读取目录发现差异后可经教师确认原子更新 Campus；换座也覆盖空座位与单侧绑定。统一目录自动对账与 UD-09～UD-12 尚未完成。Name 不再要求等于 Host，Host/UUID/电脑编号/座位绑定保持独立。旧 HostOverrides 仍仅用于旧档案兼容。具体边界和手测项目以[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)及[手动验收清单](maintenance/2026-11-04-device-directory-sync-manual-checklist.md)为准。
 要求每个 UD 都有最小可审查提交、自动化测试、变更说明。**源代码改动不等于 Windows 实测通过。** 与当前 Maintenance 更新协议和权限体系集成，而不是更换密钥或改造学生端安装器。
 
 ## 10. 测试验收矩阵
@@ -354,8 +354,9 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 - [ ] **失败路径：Campus 地点新增成功但 Veyon 写入失败 → 明确 PendingWrite / WriteFailed，不显示“已同步”；修复后能重试和读回。**
 - [ ] **历史修复：Campus 本地已有电脑，后来人工在 Veyon 添加同名/同 Host → 显示可关联候选且人工确认，不再重复新建对象。**
 - [ ] 原生 Veyon 手动新增第 20 台 → Campus 和策略页刷新为新发现（反向同步）；已有学生座位不变。
-- [ ] 同一 Veyon UID 改 Name、Host、父地点，设备与座位绑定稳定。
-- [ ] UUID 重建、重复 Host、重复名称、缺少父地点、LDAP 后端均安全拒绝危险动作。
+- [ ] 同一 Veyon UUID 外部改 Name 后，Campus 显示冲突并让教师确认；确认后 StudentName 更新，Host、电脑编号和绑定不变。
+- [ ] 同一 Veyon UID 改 Host 或父地点时，仅 Host 不符才标记连接冲突；设备 UUID 与座位绑定稳定。
+- [ ] UUID 重建、重复 Host、缺少父地点、LDAP 后端均安全拒绝危险动作；重复 Veyon Name 允许存在，因为设备身份按 UUID 确认。
 - [ ] 写回前配置指纹变化、导入成功读回失败、导入失败但实际生效、回滚失败有准确状态。
 - [ ] 中文姓名、空学生名、非连续电脑编号及 10/18/70/150 台大批量读取。
 - [ ] 策略、预设、座位、移动端的目标 UUID/Host 一致；原网站黑白名单及到期解除无回归。
@@ -369,8 +370,8 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 5. 模拟 Veyon 导入失败/退出码 255：Campus 地点新增不能宣称全部成功，策略页不误将本地草稿视为已验证电脑。
 6. 模拟“Campus 本地已有一台，但教师后来又手动在 Veyon 中补录”：执行对账/关联修复，不产生第 2 个 Veyon 电脑对象。
 7. 原生 Veyon 修改现有电脑名并刷新 Campus，`StudentName`、SeatId、DeviceId 保留。
-8. Campus 编辑电脑 Veyon Name，原生 Veyon 读回一致；只改 StudentName 时不自动改 Veyon 或 Windows 主机名。
-9. 将 Veyon Host 改为非固定电脑名的值，确认 Campus 标为冲突并阻止策略；再检查移动地点、模拟删除、并发修改和关闭软件中断时的 UUID 保留与恢复行为。
+8. 交换两名学生的座位，确认 Campus 姓名与对应 UUID 的 Veyon Name 同步交换；电脑编号、Host、Windows Hostname、UUID 和设备座位绑定不变。
+9. 将 Veyon Name 外部改动为与学生姓名不同的值，确认目录读取显示待同步差异；按提示确认同步方向后再同步；将 Host 改成非固定 Windows Hostname，确认设备标为冲突并阻止策略。再检查移动地点、模拟删除、并发修改和中断恢复。
 10. 在现有 18 台（以及 10/70 台模拟场景）验证策略、网站黑白名单/到期解除、Veyon 监控、手机端单机操作无回归。
 11. VM 通过后只在非关键机房灰度；禁止未验证就面向全部校区写入。
 **通过门槛：** 0 次误删其他电脑或地点；0 次对不确定 Host/Agent 身份实施策略；0 次把失败或陈旧缓存显示成“同步成功”。

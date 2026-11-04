@@ -515,7 +515,7 @@ public partial class TeacherWindow : Window
             campus.ProfileId.ToString("N"), campus.DisplayName, room.RoomId.ToString("N"), room.DisplayName,
             room.Prefix, room.StartNumber.ToString(CultureInfo.InvariantCulture),
             room.ComputerCount.ToString(CultureInfo.InvariantCulture),
-            string.Join(",", room.ComputerNumbers ?? []), string.Join(",", room.HostOverrides ?? [])
+            string.Join(",", room.ComputerNumbers ?? [])
         });
     }
 
@@ -1195,6 +1195,17 @@ public partial class TeacherWindow : Window
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
     private async void ReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
         await _model.ReadSeatVeyonTargetsAsync();
+    private async void SyncVeyonNamesToCampus(object? sender, RoutedEventArgs e)
+    {
+        var conflicts = _model.SeatVeyonNameSyncConflicts.ToArray();
+        if (conflicts.Length == 0) return;
+        var preview = string.Join("\n", conflicts.Select(item => item.DisplayLabel));
+        if (!await ConfirmProfileActionAsync("确认按 Veyon Name 更新学生姓名",
+                "将按每台电脑的 UUID，把 Veyon Name 同步到对应 Campus 学生姓名：\n" + preview +
+                "\n\n若 Veyon Name 等于固定 HostAddress，将清空该座位学生姓名。Host、电脑编号、UUID 和座位设备绑定不变。",
+                "同步学生姓名")) return;
+        _model.SetSeatNameSyncStatus(await _model.ApplyVeyonNameConflictsToCampusAsync());
+    }
     private async void BindSelectedSeatVeyonTarget(object? sender, RoutedEventArgs e) =>
         await _model.BindSelectedSeatVeyonTargetAsync();
     private void ClearSelectedSeatVeyonTarget(object? sender, RoutedEventArgs e) =>
@@ -1347,8 +1358,24 @@ public partial class TeacherWindow : Window
         if (edit is null) return;
         var shouldProvisionVeyonComputer = OperatingSystem.IsWindows() &&
                                            !cell.HasVeyonTarget &&
-                                           !string.IsNullOrWhiteSpace(edit.StudentName);
+                                           (!string.IsNullOrWhiteSpace(edit.StudentName) ||
+                                            !string.IsNullOrWhiteSpace(edit.ComputerNumber));
         if (!_model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber)) return;
+        if (cell.HasVeyonTarget)
+        {
+            var syncResult = await _model.SyncSeatStudentNameToVeyonAsync(cell.Row, cell.Column);
+            if (syncResult?.StartsWith("CONFIRM_NAME:", StringComparison.Ordinal) == true)
+            {
+                var separator = syncResult.IndexOf('|');
+                var confirmedName = separator >= 0 ? syncResult[13..separator] : "";
+                var prompt = separator >= 0 ? syncResult[(separator + 1)..] : syncResult;
+                if (await ConfirmProfileActionAsync("确认同步 Veyon Name", prompt, "同步名称"))
+                    syncResult = await _model.SyncSeatStudentNameToVeyonAsync(cell.Row, cell.Column,
+                        confirmedExternalName: confirmedName);
+                else syncResult = "已取消同步；Campus 学生姓名已保存，Veyon Name 保持原值。";
+            }
+            if (!string.IsNullOrWhiteSpace(syncResult)) _model.SetSeatNameSyncStatus(syncResult);
+        }
         if (shouldProvisionVeyonComputer)
             await _model.AddRoomToVeyonAsync(keepSeatMapEditing: true);
     }
@@ -1456,7 +1483,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.CanEditComputerNumber
                 ? "编号固定跟随这个座位，不受插入或移动座位影响。填写姓名且编号留空时，会从本机已登记地点的最大编号后续排；空姓名不编号。"
-                : "此座位已绑定 Veyon 电脑。为避免电脑身份错位，编号已锁定；更改电脑名需单独操作。",
+                : "此座位已绑定 Veyon 电脑。电脑编号对应固定 Windows Hostname，绑定后编号锁定；修改学生姓名会按 UUID 同步 Veyon Name，HostAddress 不变。",
             Classes = { "muted" },
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
@@ -1468,7 +1495,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。无姓名座位可手动填写编号并生成电脑；无编号座位只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。无姓名座位可手动填写编号并生成电脑；无编号座位只保留桌位。Veyon Name 默认使用学生姓名；姓名为空时使用 PC 编号。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,

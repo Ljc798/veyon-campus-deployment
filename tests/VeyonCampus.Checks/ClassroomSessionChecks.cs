@@ -82,7 +82,7 @@ internal static class ClassroomSessionChecks
                    updated.Targets[0].TargetId == original.Targets[0].TargetId &&
                    updated.Targets[1].TargetId != original.Targets[1].TargetId &&
                    updated.Targets[2].TargetId != Guid.Empty &&
-                   updated.Room.HostOverrides?.SequenceEqual(editedRoom.HostOverrides!) == true);
+                   updated.Room.HostOverrides is null);
 
             var otherRoom = new TeacherRoomProfile(Guid.NewGuid(), "机房 B", "PC-", 1, 3,
                 ["10.0.1.1", "10.0.1.2", "10.0.1.3"]);

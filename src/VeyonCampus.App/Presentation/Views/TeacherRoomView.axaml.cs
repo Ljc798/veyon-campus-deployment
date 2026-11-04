@@ -20,6 +20,7 @@ public partial class TeacherRoomView : UserControl
     public event EventHandler<RoutedEventArgs>? AssignMissingSeatComputerNumbersRequested;
     public event EventHandler<RoutedEventArgs>? AddRoomToVeyonRequested;
     public event EventHandler<RoutedEventArgs>? ReadSeatVeyonTargetsRequested;
+    public event EventHandler<RoutedEventArgs>? SyncVeyonNamesToCampusRequested;
     public event EventHandler<RoutedEventArgs>? BindSelectedSeatVeyonTargetRequested;
     public event EventHandler<RoutedEventArgs>? ClearSelectedSeatVeyonTargetRequested;
     public event EventHandler<RoutedEventArgs>? SeatCellClickedRequested;
@@ -62,6 +63,9 @@ public partial class TeacherRoomView : UserControl
 
     private void RequestReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
         ReadSeatVeyonTargetsRequested?.Invoke(sender, e);
+
+    private void RequestSyncVeyonNamesToCampus(object? sender, RoutedEventArgs e) =>
+        SyncVeyonNamesToCampusRequested?.Invoke(sender, e);
 
     private void RequestBindSelectedSeatVeyonTarget(object? sender, RoutedEventArgs e) =>
         BindSelectedSeatVeyonTargetRequested?.Invoke(sender, e);

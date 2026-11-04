@@ -17,6 +17,7 @@ public static class PrivilegedWorkerDispatcher
         bool? teacherKeyCreated = null;
         string? veyonRenameBackupPath = null;
         IReadOnlyList<VeyonComputerRenameTargetResult>? veyonRenameResults = null;
+        IReadOnlyList<VeyonAddedComputerTarget>? veyonAddedComputerTargets = null;
         try
         {
             PrivilegedWorkerProtocol.ValidateRequest(request);
@@ -139,6 +140,7 @@ public static class PrivilegedWorkerDispatcher
                     operationStarted = true;
                     var import = VeyonNetworkObjectDirectory.AddLocation(
                         request.LocationName!, request.Computers!);
+                    veyonAddedComputerTargets = import.AddedComputerTargets;
                     var locationAction = import.LocationCreated ? "新建地点" :
                         import.AddedComputerCount > 0 ? "复用地点" : "无需更改地点";
                     result = new StepResult("room-directory", ExecutionPlan.Succeeded,
@@ -164,7 +166,8 @@ public static class PrivilegedWorkerDispatcher
                     "Worker 适配器返回了不匹配的步骤标识；请核对本机状态。");
             return new PrivilegedWorkerResponse(PrivilegedWorkerProtocol.CurrentVersion, requestId,
                 result, publicKeyPem, teacherKeyCreated, VeyonRenameBackupPath: veyonRenameBackupPath,
-                VeyonRenameResults: veyonRenameResults);
+                VeyonRenameResults: veyonRenameResults,
+                VeyonAddedComputerTargets: veyonAddedComputerTargets);
         }
         catch (Exception exception)
         {

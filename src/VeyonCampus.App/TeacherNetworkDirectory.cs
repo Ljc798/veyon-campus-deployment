@@ -36,8 +36,8 @@ internal sealed class MacTeacherNetworkDirectory(
     internal static VeyonNetworkLocation CreateLocation(TeacherCampusProfile campus, TeacherRoomProfile room)
     {
         var computerNames = room.GetComputerNames();
-        // Windows computer names are the connection addresses. Legacy HostOverrides
-        // remain in saved profiles for compatibility but are intentionally ignored.
+        // Windows computer names are the only connection addresses. Legacy HostOverrides
+        // are discarded by profile loading/saving and never participate in routing.
         var targets = computerNames.ToArray();
         var displayNames = targets.Select((target, index) => (Target: target, Name: computerNames[index]))
             .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)

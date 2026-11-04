@@ -68,7 +68,8 @@ public sealed record PrivilegedWorkerResponse(
     string? WorkerUserSid = null,
     int? WorkerSessionId = null,
     string? VeyonRenameBackupPath = null,
-    IReadOnlyList<VeyonComputerRenameTargetResult>? VeyonRenameResults = null);
+    IReadOnlyList<VeyonComputerRenameTargetResult>? VeyonRenameResults = null,
+    IReadOnlyList<VeyonAddedComputerTarget>? VeyonAddedComputerTargets = null);
 
 public static class PrivilegedWorkerProtocol
 {
@@ -310,6 +311,28 @@ public static class PrivilegedWorkerProtocol
                     throw new InvalidDataException("Worker Veyon rename result is invalid.");
                 if (VeyonHostAddress.NormalizeOverride(target.HostAddress).Length == 0)
                     throw new InvalidDataException("Worker Veyon rename result host is invalid.");
+            }
+        }
+        if (response.VeyonAddedComputerTargets is { Count: > 150 })
+            throw new InvalidDataException("Worker Veyon added computer target count exceeds the size limit.");
+        if (response.VeyonAddedComputerTargets is { } addedTargets)
+        {
+            var objectIds = new HashSet<Guid>();
+            var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var target in addedTargets)
+            {
+                if (target is null || target.ObjectId == Guid.Empty || target.ParentObjectId == Guid.Empty ||
+                    !objectIds.Add(target.ObjectId) || target.ComputerName is null ||
+                    target.ComputerName.Length is 0 or > 100 || target.Location is null ||
+                    target.Location.Length is 0 or > 100 || target.ComputerName.Any(char.IsControl) ||
+                    target.Location.Any(char.IsControl))
+                    throw new InvalidDataException("Worker Veyon added computer target is invalid.");
+                ValidateDisplayName(target.ComputerName, "Added Veyon computer name");
+                ValidateDisplayName(target.Location, "Added Veyon location name");
+                ValidateText(target.Host, "Added Veyon computer host", maximum: 253);
+                var host = VeyonHostAddress.NormalizeOverride(target.Host);
+                if (host.Length == 0 || !hosts.Add(host))
+                    throw new InvalidDataException("Worker Veyon added computer target host is empty or duplicated.");
             }
         }
         if (response.WorkerUserSid is not null && !IsValidLocalSid(response.WorkerUserSid) ||

@@ -196,6 +196,9 @@
             <StackPanel Spacing="8" Margin="0,0,0,10" IsVisible="{Binding IsSeatMapEditing}">
               <Button Content="读取当前地点 Veyon 电脑" Click="RequestReadSeatVeyonTargets"
                       IsEnabled="{Binding CanReadSeatVeyonTargets}" HorizontalAlignment="Left" />
+              <Button Content="按 Veyon Name 同步学生姓名" Click="RequestSyncVeyonNamesToCampus"
+                      IsEnabled="{Binding HasSeatVeyonNameSyncConflicts}"
+                      IsVisible="{Binding HasSeatVeyonNameSyncConflicts}" HorizontalAlignment="Left" />
               <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
                 <StackPanel Spacing="4">
                   <TextBlock Text="明确选择姓名座位" />

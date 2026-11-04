@@ -23,6 +23,7 @@
           AssignMissingSeatComputerNumbersRequested="AssignMissingSeatComputerNumbers"
           AddRoomToVeyonRequested="AddRoomToVeyon"
           ReadSeatVeyonTargetsRequested="ReadSeatVeyonTargets"
+          SyncVeyonNamesToCampusRequested="SyncVeyonNamesToCampus"
           BindSelectedSeatVeyonTargetRequested="BindSelectedSeatVeyonTarget"
           ClearSelectedSeatVeyonTargetRequested="ClearSelectedSeatVeyonTarget"
           SeatCellClickedRequested="SeatCellClicked" />

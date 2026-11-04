@@ -69,7 +69,6 @@ public static class VeyonComputerRenameService
             var originalRoot = ParseRoot(originalJson);
             var objects = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(originalJson);
             var selected = ValidateCurrentObjects(objects, targets);
-            ValidateNameAvailability(objects, targets);
 
             var updatedRoot = originalRoot.DeepClone();
             var updatedEntries = GetNetworkObjects(updatedRoot);
@@ -301,23 +300,6 @@ public static class VeyonComputerRenameService
         }
         return selected;
     }
-
-    private static void ValidateNameAvailability(IReadOnlyList<VeyonNetworkObject> objects,
-        IReadOnlyList<VeyonComputerRenameTargetPlan> targets)
-    {
-        var selectedIds = targets.Select(target => target.ObjectId).ToHashSet();
-        var desiredNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var target in targets)
-        {
-            if (!desiredNames.Add(target.NewName))
-                throw new InvalidDataException("换座计划包含重复的新电脑显示名；没有写入目录。");
-            if (objects.Any(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                    !selectedIds.Contains(item.ObjectId) &&
-                    string.Equals(item.Name, target.NewName, StringComparison.OrdinalIgnoreCase)))
-                throw new InvalidDataException($"新名称“{target.NewName}”已被其他 Veyon 电脑使用；没有写入目录。");
-        }
-    }
-
 
     private static void ValidatePlan(string fingerprint, IReadOnlyList<VeyonComputerRenameTargetPlan> targets)
     {

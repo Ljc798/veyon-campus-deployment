@@ -827,29 +827,31 @@ Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲�
 {
     var computers = new[]
     {
-        new VeyonNetworkComputer("PC-01", "192.168.1.10", "张三"),
-        new VeyonNetworkComputer("PC-02", "192.168.1.11", "李四")
+        new VeyonNetworkComputer("PC-01", "PC-01", "张三"),
+        new VeyonNetworkComputer("PC-02", "PC-02", "李四")
     };
     var emptyPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers, []);
     Expect(emptyPreview.Conflicts.Count == 0 && !emptyPreview.LocationExists &&
            emptyPreview.ComputersToAdd.Count == 2 && emptyPreview.SkippedComputers.Count == 0);
-    var existingComputer = new VeyonNetworkObject("computer", "已有电脑", "192.168.1.10", "", "旧机房");
-    var existingLocation = new VeyonNetworkObject("location", "三楼机房", "", "", "");
+    var existingComputer = new VeyonNetworkObject("computer", "已有电脑", "PC-01", "", "旧机房");
+    var existingLocation = new VeyonNetworkObject("location", "三楼机房", "", "", "",
+        Guid.Parse("11111111-1111-1111-1111-111111111111"));
     var existingPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers,
         [existingComputer, existingLocation]);
-    Expect(existingPreview.Conflicts.Count == 0 && existingPreview.LocationExists &&
+    Expect(existingPreview.Conflicts.Count == 1 && existingPreview.LocationExists &&
            existingPreview.ComputersToAdd.SequenceEqual([computers[1]]) &&
-           existingPreview.SkippedComputers.Count == 1 &&
-           existingPreview.SkippedComputers[0].Contains("192.168.1.10", StringComparison.Ordinal));
-    var sameDisplayName = new VeyonNetworkObject("computer", "张三", "192.168.1.99", "", "旧机房");
+           existingPreview.SkippedComputers.Count == 0 &&
+           existingPreview.Conflicts[0].Contains("其他或未确认地点", StringComparison.Ordinal));
+    var sameDisplayName = new VeyonNetworkObject("computer", "张三", "PC-99", "", "旧机房");
     var preservedName = VeyonNetworkObjectDirectory.BuildImportPreview("三楼机房", computers,
         [sameDisplayName]);
-    Expect(preservedName.SkippedComputers.Count == 1 && preservedName.ComputersToAdd.Count == 1);
-    var specialName = new VeyonNetworkComputer("PC-03", "pc-03.school.local", "七年级; \"一班\"");
+    Expect(preservedName.Conflicts.Count == 0 && preservedName.SkippedComputers.Count == 0 &&
+           preservedName.ComputersToAdd.Count == 2);
+    var specialName = new VeyonNetworkComputer("PC-03", "PC-03", "七年级; \"一班\"");
     var specialPreview = VeyonNetworkObjectDirectory.BuildImportPreview("三楼;\"机房\"", [specialName], []);
     Expect(specialPreview.Conflicts.Count == 0 && specialPreview.ComputersToAdd.Single().DisplayName == specialName.DisplayName);
     var renamedDisplay = specialName with { StudentName = "新显示名" };
-    Expect(renamedDisplay.ComputerName == "PC-03" && renamedDisplay.Host == "pc-03.school.local" &&
+    Expect(renamedDisplay.ComputerName == "PC-03" && renamedDisplay.Host == "PC-03" &&
            renamedDisplay.DisplayName == "新显示名");
     var encoded = VeyonNetworkObjectDirectory.FormatComputerImportRecord(specialName);
     Expect(VeyonNetworkObjectDirectory.ParseExportRecord(encoded).SequenceEqual(
@@ -859,7 +861,7 @@ Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲�
         ["computer", specialName.DisplayName, specialName.Host, "", "三楼;\"机房\""]));
     var duplicateDisplay = computers[1] with { StudentName = "张三" };
     Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateDisplay], []).
-        Any(message => message.Contains("显示名称", StringComparison.Ordinal)));
+        All(message => !message.Contains("显示名称", StringComparison.Ordinal)));
     var duplicateHost = computers[1] with { Host = computers[0].Host };
     Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateHost], []).
         Any(message => message.Contains("主机名/IP", StringComparison.Ordinal)));

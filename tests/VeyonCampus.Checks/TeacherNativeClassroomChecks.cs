@@ -49,20 +49,20 @@ internal static class TeacherNativeClassroomChecks
         var locations = new MacTeacherNetworkDirectory(() => [otherCampus, campus]).ReadLocations();
         var location = locations.Single(item => item.CampusProfileId == campus.ProfileId);
         Expect(location.RoomId == room.RoomId && location.Name == "示范校区 / 同名机房" &&
-            location.Targets.SequenceEqual(["10.40.0.31", "LAB-04"]), "Native directory identity and hosts");
+            location.Targets.SequenceEqual(["LAB-03", "LAB-04"]), "Native directory identity and hosts");
         Expect(MacTeacherNetworkDirectory.MatchesCurrentRoom(location, campus, room) &&
             MacTeacherNetworkDirectory.HasSameIdentity(location with { Name = "地点改名" }, campus, room),
             "Native classroom selection must use stable IDs instead of display labels");
         Expect(!MacTeacherNetworkDirectory.MatchesCurrentRoom(location, otherCampus,
                 otherCampus.Rooms.Single()) &&
-            !MacTeacherNetworkDirectory.MatchesCurrentRoom(location with { Targets = ["10.40.0.99"] }, campus, room) &&
+            !MacTeacherNetworkDirectory.MatchesCurrentRoom(location with { Targets = ["LAB-99"] }, campus, room) &&
             !MacTeacherNetworkDirectory.HasSameIdentity(location with { RoomId = null }, campus, room),
             "Native classroom selection must reject the wrong campus, stale targets, and missing IDs");
         var now = DateTimeOffset.UtcNow;
         var session = ClassroomSession.Start(campus, room.RoomId, now.AddHours(-1)).End(now);
         var restored = ClassroomRestoreLedger.MatchCurrentTargets(session, campus, room, locations);
         Expect(restored.Count == 2 && restored[0].TargetId == session.Targets[0].TargetId &&
-            restored.Select(item => item.Target).SequenceEqual(["10.40.0.31", "LAB-04"]),
+            restored.Select(item => item.Target).SequenceEqual(["LAB-03", "LAB-04"]),
             "Restoration must select the original campus even when room IDs and names repeat");
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(session, campus, room,
             [location with { Name = "显示名称已变化" }]).Count == 2, "Stable scope must survive display labels");
@@ -77,7 +77,7 @@ internal static class TeacherNativeClassroomChecks
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(session, campus, room, [location, location]).Count == 0,
             "Ambiguous native locations must remain pending");
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(session, campus,
-            room with { HostOverrides = ["10.50.0.31", ""] }, locations).Count == 0,
+            room with { ComputerNumbers = [5, 6] }, locations).Count == 0,
             "A changed host binding must not redirect an old restoration");
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(session, campus, room,
             [new VeyonNetworkLocation(room.DisplayName, location.Targets)]).Count == 2,

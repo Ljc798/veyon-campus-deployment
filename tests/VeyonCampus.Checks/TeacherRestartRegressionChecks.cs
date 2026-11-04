@@ -31,7 +31,7 @@ internal static class TeacherRestartRegressionChecks
                 classroomTaskProgressStore: new ClassroomTaskProgressStore(Path.Combine(root, "tasks.json")),
                 roomSelectionStore: new TeacherRoomSelectionStore(Path.Combine(root, "selection.json")),
                 websitePolicyDraftDirectory: Path.Combine(root, "drafts"));
-            Expect(model.WebsitePolicyTargetChoices.Select(item => item.Target).SequenceEqual(room.HostOverrides!),
+            Expect(model.WebsitePolicyTargetChoices.Select(item => item.Target).SequenceEqual(room.GetComputerNames()),
                 "Restoring the selected room must populate the shared policy roster without visiting another page.");
             Expect(model.WebsitePolicyTargetChoices.Select(item => item.StudentName)
                     .SequenceEqual(["学生甲", "学生乙"]) && model.DeviceHealthRows.Count == 2,
@@ -40,8 +40,8 @@ internal static class TeacherRestartRegressionChecks
             Expect(model.HasDeviceHealthTargets && model.DeviceHealthRows.Count == 2,
                 "Opening devices first must retain its roster.");
             model.SelectedRoomProfile = other;
-            Expect(model.WebsitePolicyTargetChoices.Single().Target == "192.0.2.53" &&
-                   model.DeviceHealthRows.Single().Target == "192.0.2.53",
+            Expect(model.WebsitePolicyTargetChoices.Single().Target == other.GetComputerNames().Single() &&
+                   model.DeviceHealthRows.Single().Target == other.GetComputerNames().Single(),
                 "Switching rooms must replace the policy and health scopes together.");
             model.SelectedRoomProfile = room;
 

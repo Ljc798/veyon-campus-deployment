@@ -14,7 +14,7 @@ public enum ClassroomSessionStatus
 /// <summary>A name and numbering snapshot of a room in the local teacher directory.</summary>
 public sealed record ClassroomRoomSnapshot(Guid CampusProfileId, string CampusName, Guid RoomId,
     string RoomName, string ComputerPrefix, int StartNumber, int ComputerCount, int[]? ComputerNumbers = null,
-    string[]? HostOverrides = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string[]? HostOverrides = null);
 
 /// <summary>A randomly addressed computer that exists only for one classroom session.</summary>
 public sealed record ClassroomSessionTarget(Guid TargetId, string DeviceLabel);

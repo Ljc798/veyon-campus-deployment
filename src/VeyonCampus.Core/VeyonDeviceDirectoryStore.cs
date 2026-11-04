@@ -110,17 +110,11 @@ public sealed class VeyonDeviceDirectoryStore
                     var normalizedHost = VeyonHostAddress.NormalizeOverride(computer.Host);
                     if (normalizedHost.Length == 0)
                         AddConflict(computer.ObjectId, "Host 为空，不能作为已验证学生目标");
-                    else if (!string.Equals(normalizedHost, computer.Name.Trim(),
-                                 StringComparison.OrdinalIgnoreCase))
-                        AddConflict(computer.ObjectId, "Veyon Host 与固定 Windows 计算机名不一致");
+                    else if (Uri.CheckHostName(normalizedHost) != UriHostNameType.Dns)
+                        AddConflict(computer.ObjectId, "Veyon Host 不是固定 Windows 电脑名；IP 地址不能作为设备目录连接地址");
                 }
                 catch (InvalidDataException) { AddConflict(computer.ObjectId, "Host 格式无效"); }
             }
-
-            foreach (var group in computers.Where(item => !string.IsNullOrWhiteSpace(item.Name))
-                         .GroupBy(item => item.Name.Trim(), StringComparer.OrdinalIgnoreCase)
-                         .Where(group => group.Count() > 1))
-                foreach (var item in group) AddConflict(item.ObjectId, "Veyon 电脑名重复");
 
             var hostGroups = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
             foreach (var computer in computers)

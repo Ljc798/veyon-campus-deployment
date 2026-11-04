@@ -65,23 +65,26 @@ internal static class TeacherMobileControlChecks
         ]);
         Expect(repeatedTarget.SetEquals(["PC-01"]));
 
-        var location = new VeyonNetworkLocation("三楼机房", ["192.168.20.21", "student-02.school.test"]);
+        var location = new VeyonNetworkLocation("三楼机房", ["PC-01", "PC-02"]);
         var campus = TeacherCampusProfileFromVeyon.MergeLocation(null, "示范校区", location);
         var room = campus.Rooms.Single();
         Expect(campus.DisplayName == "示范校区" && room.DisplayName == "三楼机房" &&
-               room.ComputerCount == 2 && room.HostOverrides!.SequenceEqual(location.Targets));
+               room.ComputerCount == 2 && room.HostOverrides is null && room.GetComputerNames().SequenceEqual(location.Targets));
         var session = ClassroomSession.Start(campus, room.RoomId, DateTimeOffset.UtcNow);
         Expect(session.Targets.Select(item => item.DeviceLabel).SequenceEqual(["PC-01", "PC-02"]));
 
         var refreshed = TeacherCampusProfileFromVeyon.MergeLocation(campus, "ignored",
-            new VeyonNetworkLocation("三楼机房", ["192.168.20.31", "192.168.20.32", "192.168.20.33"]));
+            new VeyonNetworkLocation("三楼机房", ["PC-01", "PC-02", "PC-03"]));
         Expect(refreshed.ProfileId == campus.ProfileId && refreshed.Rooms.Single().RoomId == room.RoomId &&
                refreshed.Rooms.Single().ComputerCount == 3 &&
-               refreshed.Rooms.Single().HostOverrides!.SequenceEqual(["192.168.20.31", "192.168.20.32", "192.168.20.33"]));
+               refreshed.Rooms.Single().HostOverrides is null &&
+               refreshed.Rooms.Single().GetComputerNames().SequenceEqual(["PC-01", "PC-02", "PC-03"]));
         Reject(() => TeacherCampusProfileFromVeyon.MergeLocation(null, "校区",
-            new VeyonNetworkLocation("重复名单", ["192.168.20.21", "192.168.20.21"])));
+            new VeyonNetworkLocation("重复名单", ["PC-01", "PC-01"])));
         Reject(() => TeacherCampusProfileFromVeyon.MergeLocation(null, "校区",
             new VeyonNetworkLocation("空机房", [])));
+        Reject(() => TeacherCampusProfileFromVeyon.MergeLocation(null, "校区",
+            new VeyonNetworkLocation("旧 IP 机房", ["192.168.20.21"])));
     }
 
     private static void CheckProfilesAndStores()
