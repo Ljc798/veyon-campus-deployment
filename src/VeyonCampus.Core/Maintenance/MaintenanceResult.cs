@@ -19,6 +19,7 @@ public sealed record MaintenanceResult
     public DateTimeOffset RecordedUtc { get; }
     public string Summary { get; }
     public MaintenanceEvidence? Evidence { get; }
+    public bool StudentSetupUpdateAttempted { get; }
     public bool IsComplete => State == MaintenanceRunState.Completed;
 
     public MaintenanceResult(Guid operationId, MaintenanceDeviceKey device, MaintenanceRunState state,
@@ -28,7 +29,8 @@ public sealed record MaintenanceResult
         MaintenanceReleaseChannel? channel = null, string? currentConfigurationFingerprint = null,
         string? currentTeacherChannelFingerprint = null, string? targetTeacherChannelFingerprint = null,
         MaintenanceComponentVersions? verifiedCurrentVersions = null,
-        string? verifiedUpdateTransactionState = null, DateTimeOffset? verifiedStatusUtc = null)
+        string? verifiedUpdateTransactionState = null, DateTimeOffset? verifiedStatusUtc = null,
+        bool studentSetupUpdateAttempted = false)
     {
         if (operationId == Guid.Empty) throw new ArgumentException("维护 operationId 不能为空。", nameof(operationId));
         OperationId = operationId;
@@ -72,6 +74,7 @@ public sealed record MaintenanceResult
         RecordedUtc = MaintenanceValidation.Utc(recordedUtc);
         Summary = MaintenanceValidation.RequiredText(summary, nameof(summary));
         Evidence = evidence;
+        StudentSetupUpdateAttempted = studentSetupUpdateAttempted;
         if (state == MaintenanceRunState.Completed &&
             !string.Equals(evidence?.DeviceIdentityFingerprint, device.PinnedIdentityFingerprint,
                 StringComparison.Ordinal))
@@ -89,6 +92,9 @@ public sealed record MaintenanceResult
                 run.Plan.TargetAgentVersion, null, run.Plan.TargetMaintenanceServiceVersion),
             run.Plan?.OperationKind, run.Plan?.Channel, run.Capabilities?.ConfigurationFingerprint,
             run.Capabilities?.TeacherChannelFingerprint, run.Plan?.ConfigurationSha256,
-            run.VerifiedCurrentVersions, run.VerifiedUpdateTransactionState, run.VerifiedStatusUtc);
+            run.VerifiedCurrentVersions, run.VerifiedUpdateTransactionState, run.VerifiedStatusUtc,
+            run.AgentCommandId is not null && !run.LastUpdateCommandIsMaintenanceService &&
+            run.Plan?.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
+                MaintenanceOperationKind.FullMaintenance);
     }
 }

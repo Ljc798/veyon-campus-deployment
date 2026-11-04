@@ -10,7 +10,8 @@ public sealed record TeacherMaintenanceTargetResult(string Target, Guid? Operati
     MaintenanceComponentVersions? TargetVersions = null, MaintenanceOperationKind? OperationKind = null,
     MaintenanceReleaseChannel? Channel = null, string? UpdateTransactionState = null,
     bool? AuthenticatedChannelConnected = null, DateTimeOffset? AuthenticatedChannelCheckedUtc = null,
-    StudentAgentTeacherChannelDiagnosticsSnapshot? TeacherChannelDiagnostics = null);
+    StudentAgentTeacherChannelDiagnosticsSnapshot? TeacherChannelDiagnostics = null,
+    Guid? RolloutId = null);
 
 /// <summary>Plans, executes, and resumes device maintenance while keeping the ViewModel out of wire details.</summary>
 public sealed class TeacherMaintenanceWorkflow
@@ -452,7 +453,7 @@ public sealed class TeacherMaintenanceWorkflow
                 cancellationToken).ConfigureAwait(false);
             outcomes[index] = outcome with { Summary = AppendConfigurationStatus(outcome.Summary, configStatus) };
         }
-        return Array.AsReadOnly(outcomes.ToArray());
+        return Array.AsReadOnly(outcomes.Select(outcome => outcome with { RolloutId = rolloutId }).ToArray());
     }
 
     public async Task<bool> HasPendingTeacherConnectivityAsync(string campusId, string target,

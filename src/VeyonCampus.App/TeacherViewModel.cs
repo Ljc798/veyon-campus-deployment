@@ -5609,6 +5609,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 : CanMaintainStudentDevices
         };
         if (!canStart || !TryBeginExclusiveTask()) return;
+        var performanceStartedUtc = DateTimeOffset.UtcNow;
+        var performanceStopwatch = Stopwatch.StartNew();
+        _lastStudentUpdatePerformanceReport = null;
+        StudentUpdatePerformanceReportExportStatus = "";
+        Changed(nameof(HasStudentUpdatePerformanceReport));
+        Changed(nameof(StudentUpdatePerformanceReportExportStatus));
         IReadOnlyList<string> selectedTargets = Array.Empty<string>();
         var workflow = _maintenanceWorkflow;
         StudentMaintenanceStatus = "正在读取已固定身份、签名版本和未完成事务……";
@@ -5669,6 +5675,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 var row = FindStudentUpdateTargetRow(value.Target ?? string.Empty);
                 row?.SetMaintenanceOperation(value.OperationId);
                 row?.SetTransportProgress(value.Detail, value.CommandId);
+                row?.SetEnvironment(value.Environment);
                 if (value.PhaseTimings is { Count: > 0 } phaseTimings)
                     row?.SetPhaseTimings(phaseTimings);
                 if (requestedOperation == MaintenanceOperationKind.ConfigurationSync)
@@ -5745,6 +5752,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     configurationRow?.SetMaintenanceResult(outcome.State, detail);
                 }
             }
+            if (requestedOperation == MaintenanceOperationKind.SoftwareUpdate || requestedOperation is null &&
+                results.Any(item => item.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
+                    MaintenanceOperationKind.FullMaintenance))
+                CaptureStudentUpdatePerformanceReport(performanceStartedUtc, performanceStopwatch.ElapsedMilliseconds,
+                    selectedTargets, results);
             SortStudentUpdateTargetRows();
             var completed = results.Count(item => item.State == MaintenanceRunState.Completed);
             var pending = results.Count(item => item.State is MaintenanceRunState.PendingVerification or
@@ -5818,6 +5830,68 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanMaintainStudentDevices));
             await RefreshMaintenanceOverviewAsync();
         }
+    }
+
+    private void CaptureStudentUpdatePerformanceReport(DateTimeOffset startedUtc,
+        long rolloutDurationMilliseconds, IReadOnlyCollection<string> selectedTargets,
+        IReadOnlyList<TeacherMaintenanceTargetResult> results)
+    {
+        try
+        {
+            var distinctResults = results.GroupBy(item => NormalizeTargetKey(item.Target),
+                    StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.Last()).ToArray();
+            var samples = distinctResults.Select(outcome =>
+            {
+                var row = FindStudentUpdateTargetRow(outcome.Target);
+                var attempted = outcome.Result?.StudentSetupUpdateAttempted == true;
+                var sampleOutcome = outcome.State switch
+                {
+                    MaintenanceRunState.Completed => "succeeded",
+                    MaintenanceRunState.RolledBack => "rolledBack",
+                    MaintenanceRunState.Failed when attempted => "failed",
+                    _ => "needsReview"
+                };
+                return new StudentUpdatePerformanceSample(sampleOutcome, attempted,
+                    outcome.Result?.VerifiedCurrentVersions?.StudentSetupVersion ??
+                    outcome.CurrentVersions?.StudentSetupVersion,
+                    outcome.Result?.VerifiedCurrentVersions?.AgentRuntimeVersion ??
+                    outcome.CurrentVersions?.AgentRuntimeVersion,
+                    row?.Environment ?? StudentUpdateEnvironmentCategories.Unknown,
+                    row?.RawPhaseTimings ?? Array.Empty<StudentUpdatePhaseTiming>());
+            }).ToArray();
+            var targetVersion = distinctResults.Select(item => item.TargetVersions?.StudentSetupVersion)
+                .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version));
+            var alreadyCurrent = distinctResults.Count(item => item.State == MaintenanceRunState.Completed &&
+                item.Result?.StudentSetupUpdateAttempted != true);
+            var preflightFailure = distinctResults.Count(item => item.State is MaintenanceRunState.Failed or
+                MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired &&
+                item.Result?.StudentSetupUpdateAttempted != true);
+            var unresolved = distinctResults.Count(item => item.State is MaintenanceRunState.PendingVerification or
+                MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
+                MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing or
+                MaintenanceRunState.MaintenanceServiceHealthVerified);
+            var reportedTargets = distinctResults.Select(item => NormalizeTargetKey(item.Target))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var notStarted = selectedTargets.Select(NormalizeTargetKey).Distinct(StringComparer.OrdinalIgnoreCase)
+                .Count(target => !reportedTargets.Contains(target));
+            var completedUtc = DateTimeOffset.UtcNow;
+            if (completedUtc < startedUtc) completedUtc = startedUtc;
+            var rolloutId = distinctResults.Select(item => item.RolloutId).FirstOrDefault(id => id is not null)
+                            ?? Guid.NewGuid();
+            _lastStudentUpdatePerformanceReport = StudentUpdatePerformanceReportBuilder.Create(rolloutId,
+                startedUtc, completedUtc, Math.Max(0, rolloutDurationMilliseconds), targetVersion,
+                selectedTargets.Count, alreadyCurrent, preflightFailure, notStarted, unresolved,
+                teacherCachePreparationRequired: true,
+                new StudentUpdatePerformancePreparation(null, null, null, null, null, null), samples);
+        }
+        catch (Exception)
+        {
+            _lastStudentUpdatePerformanceReport = null;
+            StudentUpdatePerformanceReportExportStatus = "本次结果没有生成匿名性能汇总。";
+        }
+        Changed(nameof(HasStudentUpdatePerformanceReport));
+        Changed(nameof(StudentUpdatePerformanceReportExportStatus));
     }
 
     private void SetStudentConfigurationSyncProgress(bool visible, double percent, string text)
@@ -9815,6 +9889,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     private int _phase;
     private int _priority = 2;
     private Guid? _commandId;
+    private StudentUpdateEnvironmentCategories? _environment;
     private bool _isRechecking;
     private bool _canReviewIdentity;
     private bool _identityReviewActive;
@@ -9829,6 +9904,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     public ObservableCollection<StudentUpdatePhaseTimingDisplayItem> PhaseTimings { get; } = [];
     public IReadOnlyList<StudentUpdatePhaseTiming> RawPhaseTimings { get; private set; } =
         Array.Empty<StudentUpdatePhaseTiming>();
+    public StudentUpdateEnvironmentCategories? Environment => _environment;
     public string Target { get; } = target;
     public string DisplayName { get; } = displayName;
     public Guid? CommandId => _commandId;
@@ -10140,6 +10216,13 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
                 StudentUpdatePhaseDisplayNames.Get(timing.Phase), elapsed, outcome));
         }
         Raise(nameof(HasPhaseTimings));
+    }
+
+    public void SetEnvironment(StudentUpdateEnvironmentCategories? environment)
+    {
+        _environment = StudentUpdateEnvironmentCategories.IsValid(environment)
+            ? environment
+            : StudentUpdateEnvironmentCategories.Unknown;
     }
 
     public void SetResult(bool succeeded, bool needsReview, string detail, bool rolledBack = false)
