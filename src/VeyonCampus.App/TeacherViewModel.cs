@@ -5727,7 +5727,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         row.SetRecoveryRequired(detail);
                         break;
                     case MaintenanceRunState.ManualRequired:
-                        row.SetResult(false, true, detail);
+                        row.SetManualRequired(detail);
                         break;
                     case MaintenanceRunState.Failed:
                         row.SetResult(false, false, detail);
@@ -5965,8 +5965,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         row.SetRecoveryRequired(detail);
                         break;
                     case MaintenanceRunState.ManualRequired:
+                        row.SetManualRequired(detail);
+                        break;
                     case MaintenanceRunState.Failed:
-                        row.SetResult(false, outcome.State == MaintenanceRunState.ManualRequired, detail);
+                        row.SetResult(false, false, detail);
                         break;
                     default:
                         row.SetCheckingVersions(detail);
@@ -9940,7 +9942,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     {
         "成功" or "已是最新" or "已核对版本" => SuccessForeground,
         "失败" => DangerForeground,
-        "待核对" or "待验证" or "需要恢复" or "已回滚" => WarningForeground,
+        "待核对" or "待验证" or "需要恢复" or "需现场维护" or "已回滚" => WarningForeground,
         "等待发送" => NeutralForeground,
         _ => InfoForeground
     };
@@ -9948,7 +9950,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     {
         "成功" or "已是最新" or "已核对版本" => SuccessBackground,
         "失败" => DangerBackground,
-        "待核对" or "待验证" or "需要恢复" or "已回滚" => WarningBackground,
+        "待核对" or "待验证" or "需要恢复" or "需现场维护" or "已回滚" => WarningBackground,
         "等待发送" => NeutralBackground,
         _ => InfoBackground
     };
@@ -10198,6 +10200,19 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
         Raise(nameof(Priority));
         IsIndeterminate = false;
         StatusText = "需要恢复";
+        Detail = detail;
+        Raise(nameof(CanRequery));
+        SetCanReviewIdentity(IsIdentityReviewDetail(detail));
+    }
+
+    public void SetManualRequired(string detail)
+    {
+        _isRechecking = false;
+        _phase = 5;
+        _priority = 1;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        StatusText = "需现场维护";
         Detail = detail;
         Raise(nameof(CanRequery));
         SetCanReviewIdentity(IsIdentityReviewDetail(detail));
