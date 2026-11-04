@@ -97,6 +97,7 @@ internal sealed partial class TeacherMobileControlService
                 _ = _maintenanceTrustStore.QueueKeyRotation(agentPin.Target, campusId, agentPin.Fingerprint,
                     existingMaintenancePin.MaintenanceIdentityFingerprint, hello.SignedEnrollmentJson,
                     DateTimeOffset.UtcNow);
+                _ = MaintenanceServiceChannelHub.InvalidateConnection(campusId, agentPin.Target);
                 await CloseRejectedMaintenanceChannelAsync(socket, "maintenance identity rotation awaits teacher approval",
                     handshakeTimeout.Token).ConfigureAwait(false);
                 return;
@@ -280,4 +281,5 @@ internal sealed class TeacherMaintenanceServiceConnection(WebSocket socket) : IA
         catch (WebSocketException) { }
     }
 }
+
 

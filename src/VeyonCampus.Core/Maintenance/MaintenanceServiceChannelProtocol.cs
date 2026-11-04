@@ -243,6 +243,17 @@ public static class MaintenanceServiceChannelHub
     public static bool IsConnected(string campusId, string target) =>
         Connections.ContainsKey(Key(campusId, target));
 
+    public static bool InvalidateConnection(string campusId, string target)
+    {
+        var key = Key(campusId, target);
+        Registration? revoked;
+        lock (RegistrationGate)
+            Connections.TryRemove(key, out revoked);
+        if (revoked is null) return false;
+        revoked.Invalidate();
+        return true;
+    }
+
     public static IDisposable Register(string campusId, string target, string maintenanceIdentityFingerprint,
         Func<string, CancellationToken, Task<string>> sendAsync, Action invalidate)
     {
@@ -326,4 +337,5 @@ public static class MaintenanceServiceChannelHub
         }
     }
 }
+
 
