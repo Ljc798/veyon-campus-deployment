@@ -993,7 +993,8 @@ public bool IsClassroomCountdownRunning => _activeClassroomCountdown is { } coun
         countdown.Remaining(DateTimeOffset.UtcNow) > TimeSpan.Zero;
 
 public bool CanStartClassroomCountdown => HasActiveClassroomSession && !HasClassroomCountdown &&
-                                             !HasClassroomCountdownError;
+                                             !HasClassroomCountdownError &&
+                                             IsClassroomDirectoryScopeVerified;
 
 public bool CanEndClassroomCountdown => HasActiveClassroomSession && HasClassroomCountdown;
 
@@ -1185,6 +1186,7 @@ public string ClassroomNoticeDraft
     }
 
 public bool CanSendClassroomNotice => HasActiveClassroomSession && !_isClassroomTransitioning &&
+        IsClassroomDirectoryScopeVerified &&
         !string.IsNullOrWhiteSpace(_classroomNoticeDraft) && _classroomNoticeDraft.Trim().Length <=
         ClassroomEventCryptography.MaximumMessageCharacters &&
         !_classroomNoticeDraft.Any(character => char.IsControl(character) &&
@@ -1327,6 +1329,7 @@ public string ClassroomChatStatus
     }
 
 public bool CanSendClassroomChat => HasActiveClassroomSession && !_isClassroomTransitioning &&
+        IsClassroomDirectoryScopeVerified &&
         SelectedClassroomChatThread?.IsSupported == true && !string.IsNullOrWhiteSpace(ClassroomChatDraft) &&
         ClassroomEventCryptography.IsValidChatMessage(ClassroomChatDraft);
 
@@ -1694,6 +1697,7 @@ private void RefreshClassroomSessionProperties()
         Changed(nameof(CanCheckRoomConflicts));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanSendClassroomNotice));
+        Changed(nameof(CanSendClassroomChat));
         Changed(nameof(CanRetryClassroomRestores));
         Changed(nameof(HasClassroomCountdown));
         Changed(nameof(ClassroomCountdownText));

@@ -43,7 +43,14 @@ public sealed record MaintenanceProtocolV1Request(
     MaintenanceTeacherBootstrapConfiguration? TeacherConfiguration = null,
     long? TargetTeacherConfigurationRevision = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    string? TargetMaintenanceServiceVersion = null);
+    string? TargetMaintenanceServiceVersion = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? CriticalExtensionIds = null)
+{
+    /// <summary>Optional future v1 fields use the x- namespace and remain covered by the message signature.</summary>
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extensions { get; init; }
+}
 
 public sealed record MaintenanceProtocolV1Response(
     int ProtocolVersion,
@@ -56,7 +63,13 @@ public sealed record MaintenanceProtocolV1Response(
     DateTimeOffset CollectedUtc,
     string ResultCode,
     string Detail,
-    string? PayloadJson = null);
+    string? PayloadJson = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? CriticalExtensionIds = null)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? Extensions { get; init; }
+}
 
 /// <summary>
 /// Versioned, signed message contract for the independent SYSTEM Maintenance Service.
@@ -70,6 +83,9 @@ public static class MaintenanceProtocolV1
     public const int MaximumPayloadBytes = 256 * 1024;
     public const int MaximumEnvelopeBytes = 512 * 1024;
     public static readonly TimeSpan MaximumCommandLifetime = TimeSpan.FromMinutes(5);
+    private const int MaximumOptionalExtensions = 32;
+    private const int MaximumExtensionValueBytes = 16 * 1024;
+    private static readonly HashSet<string> SupportedCriticalExtensionIds = new(StringComparer.Ordinal);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -136,6 +152,7 @@ public static class MaintenanceProtocolV1
     public static void ValidateRequest(MaintenanceProtocolV1Request request, DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(request);
+        ValidateExtensions(request.Extensions, request.CriticalExtensionIds);
         WebsitePolicySigningKeyStore.ValidateCampusId(request.CampusId);
         _ = MaintenanceValidation.Fingerprint(request.DeviceIdentityFingerprint,
             nameof(request.DeviceIdentityFingerprint));
@@ -214,6 +231,7 @@ public static class MaintenanceProtocolV1
     private static void ValidateResponse(MaintenanceProtocolV1Response response)
     {
         ArgumentNullException.ThrowIfNull(response);
+        ValidateExtensions(response.Extensions, response.CriticalExtensionIds);
         WebsitePolicySigningKeyStore.ValidateCampusId(response.CampusId);
         _ = MaintenanceValidation.Fingerprint(response.DeviceIdentityFingerprint,
             nameof(response.DeviceIdentityFingerprint));
@@ -225,6 +243,39 @@ public static class MaintenanceProtocolV1
             response.Detail.Any(char.IsControl) || response.PayloadJson is { } payload &&
                 (Encoding.UTF8.GetByteCount(payload) > MaximumPayloadBytes || !IsJsonObject(payload)))
             throw new InvalidDataException("Maintenance 签名响应字段或大小无效。");
+    }
+
+    private static void ValidateExtensions(IReadOnlyDictionary<string, JsonElement>? extensions,
+        IReadOnlyList<string>? criticalExtensionIds)
+    {
+        if (extensions is { Count: > MaximumOptionalExtensions })
+            throw new InvalidDataException("Maintenance 可选扩展数量超过限制。");
+        if (extensions is not null)
+        {
+            foreach (var (name, value) in extensions)
+            {
+                if (name is null || name.Length is < 3 or > 64 || !name.StartsWith("x-", StringComparison.Ordinal) ||
+                    name.Any(character => !(character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '.' or '_')) ||
+                    value.ValueKind is JsonValueKind.Undefined ||
+                    Encoding.UTF8.GetByteCount(value.GetRawText()) > MaximumExtensionValueBytes)
+                    throw new InvalidDataException("Maintenance 扩展必须是受限大小的 x- 可选字段。");
+            }
+        }
+
+        if (criticalExtensionIds is null) return;
+        if (criticalExtensionIds.Count > MaximumOptionalExtensions ||
+            criticalExtensionIds.Distinct(StringComparer.Ordinal).Count() != criticalExtensionIds.Count)
+            throw new InvalidDataException("Maintenance 关键扩展清单无效。");
+        foreach (var extensionId in criticalExtensionIds)
+        {
+            if (extensionId is null || extensionId.Length is < 1 or > 62 ||
+                extensionId.Any(character => !(character is >= 'a' and <= 'z' or >= '0' and <= '9' or '-' or '.' or '_')))
+                throw new InvalidDataException("Maintenance 关键扩展标识无效。");
+            if (extensions?.ContainsKey("x-" + extensionId) != true)
+                throw new InvalidDataException("Maintenance 关键扩展缺少对应签名字段。");
+            if (!SupportedCriticalExtensionIds.Contains(extensionId))
+                throw new InvalidDataException("Maintenance 协议包含当前版本不支持的关键扩展。");
+        }
     }
 
     private static bool IsJsonObject(string json)

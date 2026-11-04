@@ -36,6 +36,10 @@ public sealed partial class TeacherViewModel
                 Changed(nameof(HasSelectedRoomProfile));
                 Changed(nameof(SeatGridTitle));
                 Changed(nameof(ClassroomSessionSummary));
+                Changed(nameof(CanStartClassroomQuickControl));
+                Changed(nameof(CanSendClassroomNotice));
+                Changed(nameof(CanSendClassroomChat));
+                Changed(nameof(CanStartClassroomCountdown));
                 Changed(nameof(CanDeleteRoomProfile));
                 Changed(nameof(CanSaveRoomProfile));
                 Changed(nameof(CanEditRoomProfileNumbering));
@@ -50,21 +54,35 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
         }
     }
     public bool HasRoomProfiles => RoomProfiles.Count > 0;
     public bool HasNoRoomProfiles => RoomProfiles.Count == 0;
     public bool HasSingleRoomProfile => RoomProfiles.Count == 1;
     public bool HasMultipleRoomProfiles => RoomProfiles.Count > 1;
-    public string ClassroomRoomContextSummary => _activeClassroomSession is { } active
-        ? $"课堂范围：{active.Room.RoomName} · {active.Targets.Length} 台学生电脑"
-        : SelectedRoomProfile is { } directoryRoom && CurrentClassroomDirectoryTargetCount is { } targetCount
-            ? $"课堂范围：{directoryRoom.DisplayName} · {targetCount} 台学生电脑"
-            : SelectedRoomProfile is { } pendingRoom && OperatingSystem.IsWindows()
-                ? $"课堂范围：{pendingRoom.DisplayName} · 尚未读取 Veyon 设备名单"
-                : SelectedRoomProfile is { } fallbackRoom
-            ? $"课堂范围：{fallbackRoom.DisplayName} · {fallbackRoom.ComputerCount} 台学生电脑"
-            : "尚未配置教室";
+    private bool IsClassroomDirectoryScopeVerified => !OperatingSystem.IsWindows() ||
+        (IsVeyonDeviceDirectoryCurrent && !_classroomDirectorySelectionPending &&
+         !HasClassroomDirectoryError && !HasPendingClassroomScopeChange);
+
+    public string ClassroomRoomContextSummary => !IsClassroomDirectoryScopeVerified
+        ? _activeClassroomSession is not null
+            ? "课堂范围：Veyon 当前名单待核对；旧会话已保留，课堂操作暂不可用。"
+            : SelectedRoomProfile is { } unverifiedRoom
+                ? $"课堂范围：{unverifiedRoom.DisplayName} · Veyon 当前名单待核对"
+                : "Veyon 当前名单待核对。"
+        : _activeClassroomSession is { } active
+            ? $"课堂范围：{active.Room.RoomName} · {active.Targets.Length} 台学生电脑"
+            : SelectedRoomProfile is { } directoryRoom && CurrentClassroomDirectoryTargetCount is { } targetCount
+                ? $"课堂范围：{directoryRoom.DisplayName} · {targetCount} 台学生电脑"
+                : SelectedRoomProfile is { } pendingRoom && OperatingSystem.IsWindows()
+                    ? $"课堂范围：{pendingRoom.DisplayName} · 尚未读取 Veyon 设备名单"
+                    : SelectedRoomProfile is { } fallbackRoom
+                        ? $"课堂范围：{fallbackRoom.DisplayName} · {fallbackRoom.ComputerCount} 台学生电脑"
+                        : "尚未配置教室";
 
     private int? CurrentClassroomDirectoryTargetCount => ClassroomLocationIndex >= 0 &&
         ClassroomLocationIndex < WebsiteLocations.Count
@@ -1184,6 +1202,10 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
             Changed(nameof(SeatGridContext));
             if (_seatGrid?.CampusProfileId != value?.ProfileId ||
                 _seatGrid?.RoomId != SelectedRoomProfile?.RoomId)
@@ -1220,6 +1242,10 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
             Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanDeleteRoomProfile));
             if (value is null)
@@ -4598,6 +4624,11 @@ public sealed partial class TeacherViewModel
         if (_activeClassroomSession is null)
         {
             await EnsureClassroomSessionAsync();
+            return;
+        }
+        if (!IsClassroomDirectoryScopeVerified)
+        {
+            ClassroomDeliveryStatus = "Veyon 当前名单尚未通过完整核对；保留原课堂范围，暂不更新或向设备发送命令。";
             return;
         }
         var selectedCampusId = SelectedCampusProfile?.ProfileId;

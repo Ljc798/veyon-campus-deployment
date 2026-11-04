@@ -722,9 +722,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         (OperatingSystem.IsWindows() ? CurrentClassroomDirectoryTargetCount is > 0 :
             SelectedRoomProfile is { ComputerCount: > 0 }) &&
         WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal);
-    public string ClassroomOverviewDeviceCount => (_activeClassroomSession?.Targets.Length ??
-        (OperatingSystem.IsWindows() ? CurrentClassroomDirectoryTargetCount ?? 0 :
-            SelectedRoomProfile?.ComputerCount ?? 0)).ToString(CultureInfo.CurrentCulture);
+    public string ClassroomOverviewDeviceCount => !IsClassroomDirectoryScopeVerified
+        ? "待核对"
+        : (_activeClassroomSession?.Targets.Length ??
+            (OperatingSystem.IsWindows() ? CurrentClassroomDirectoryTargetCount ?? 0 :
+                SelectedRoomProfile?.ComputerCount ?? 0)).ToString(CultureInfo.CurrentCulture);
     public int ActiveClassroomTargetCount => _activeClassroomSession?.Targets.Length ?? 0;
     public string ClassroomOverviewReceiptCount => (_classroomQuickControlSnapshot?.Devices.Count(item =>
         item.Phase is ClassroomQuickControlPhase.WebsiteReported or ClassroomQuickControlPhase.WebsiteApplied or
@@ -736,6 +738,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
             ClassroomQuickControlPhase.Unsupported) ?? 0).ToString(CultureInfo.CurrentCulture);
     public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
+        IsClassroomDirectoryScopeVerified &&
         (HasActiveClassroomSession || CanToggleClassroomSession) && !_isClassroomQuickControlBusy &&
         HasValidClassroomQuickControlDeadline;
     public bool IsClassroomQuickControlPilotDisabled => HasActiveClassroomSession &&
@@ -1149,9 +1152,15 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             return "管控已启用";
         return "当前未启用";
     }
-    public string ClassroomSessionSummary => _activeClassroomSession is { } active
-        ? $"课堂范围：{active.Room.RoomName} · {active.Targets.Length} 台学生电脑"
-        : SelectedRoomProfile is { } room
+    public string ClassroomSessionSummary => !IsClassroomDirectoryScopeVerified
+        ? _activeClassroomSession is not null
+            ? "课堂范围：Veyon 当前名单待核对；旧会话已保留，课堂操作暂不可用。"
+            : SelectedRoomProfile is { } unverifiedRoom
+                ? $"课堂范围：{unverifiedRoom.DisplayName} · Veyon 当前名单待核对"
+                : "Veyon 当前名单待核对。"
+        : _activeClassroomSession is { } active
+            ? $"课堂范围：{active.Room.RoomName} · {active.Targets.Length} 台学生电脑"
+            : SelectedRoomProfile is { } room
             ? OperatingSystem.IsWindows()
                 ? CurrentClassroomDirectoryTargetCount is { } count
                     ? count > 0
@@ -2693,6 +2702,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(ClassroomRoomContextSummary));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
             RebuildWebsitePolicyTargetChoices();
@@ -2737,6 +2750,13 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ShowClassroomLocationPicker));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
+            Changed(nameof(ClassroomOverviewDeviceCount));
+            Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomRoomContextSummary));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
         }
     }
     public bool HasClassroomDirectoryError => ClassroomDirectoryError.Length > 0;
@@ -3840,6 +3860,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
 
     private async Task<bool> RefreshDirectoryViewsAfterVeyonWriteAsync(string locationName)
     {
+        if (OperatingSystem.IsWindows()) SetVeyonDeviceDirectoryReadValid(false);
         var oldLocations = WebsiteLocations;
         var oldTargets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(target => NormalizeTargetKey(target.Trim()))
@@ -3871,6 +3892,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             var locations = await Task.Run(_networkDirectory.ReadLocations);
             await RefreshVeyonDeviceDirectorySummaryAsync(locations);
+            if (RejectUnverifiedWindowsDirectoryRoster()) return false;
             WebsiteLocations = locations;
             WebsiteLocationIndex = FindLocationIndex(locations, selectedWebsiteLocation);
             ClassroomLocationIndex = FindLocationIndex(locations, selectedClassroomLocation);
@@ -4099,6 +4121,30 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         return "目录只读回退提示：" + diagnostic.Message + lastRead;
     }
 
+    private bool RejectUnverifiedWindowsDirectoryRoster()
+    {
+        if (!OperatingSystem.IsWindows() || IsVeyonDeviceDirectoryCurrent) return false;
+
+        var detail = GetVeyonDirectoryReadNotice();
+        if (detail.Length == 0)
+            detail = "地点名单与完整 UUID 目录未能通过一致性核对。";
+        var message = "Veyon 当前名单尚未通过完整核对；已隐藏未验证的电脑，不会把它们当作当前设备。" +
+                      detail + " 请修复目录或读取权限后重新进入本页重试。";
+        WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
+        WebsiteLocationIndex = -1;
+        ClassroomLocationIndex = -1;
+        WebsiteTargets = "";
+        WebsiteDirectoryStatus = "";
+        ClassroomDirectoryStatus = "";
+        WebsiteDirectoryError = message;
+        ClassroomDirectoryError = message;
+        _websiteLocationSelectionPending = false;
+        _classroomDirectorySelectionPending = false;
+        Changed(nameof(CanUseSelectedClassroomLocation));
+        Changed(nameof(CanApplyWebsiteLocation));
+        return true;
+    }
+
     private async Task RefreshVeyonDeviceDirectorySummaryAsync(
         IReadOnlyList<VeyonNetworkLocation> locations)
     {
@@ -4206,11 +4252,21 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanDeployStudentUpdate));
         Changed(nameof(CanToggleClassroomSession));
         Changed(nameof(CanSwitchClassroomScope));
+        Changed(nameof(ClassroomOverviewDeviceCount));
+        Changed(nameof(ClassroomRoomContextSummary));
+        Changed(nameof(ClassroomSessionSummary));
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(CanStartClassroomWebsiteControl));
+        Changed(nameof(CanStartClassroomInputLock));
+        Changed(nameof(CanSendClassroomNotice));
+        Changed(nameof(CanSendClassroomChat));
+        Changed(nameof(CanStartClassroomCountdown));
     }
 
     public async Task ReadWebsiteLocationsAsync()
     {
         if (IsReadingWebsiteLocations || IsExecuting) return;
+        if (OperatingSystem.IsWindows()) SetVeyonDeviceDirectoryReadValid(false);
         IsReadingWebsiteLocations = true;
         WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
         WebsiteLocationIndex = -1;
@@ -4225,6 +4281,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ReadWebsiteSigningCampuses();
             var locations = await Task.Run(_networkDirectory.ReadLocations);
             await RefreshVeyonDeviceDirectorySummaryAsync(locations);
+            if (RejectUnverifiedWindowsDirectoryRoster()) return;
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -4289,6 +4346,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     public async Task ReadClassroomLocationsAsync(bool forceSelection = false)
     {
         if (IsReadingWebsiteLocations || IsExecuting) return;
+        if (OperatingSystem.IsWindows()) SetVeyonDeviceDirectoryReadValid(false);
         IsReadingWebsiteLocations = true;
             ClassroomDirectoryStatus = OperatingSystem.IsMacOS()
                 ? "正在读取教师端保存的地点……"
@@ -4309,6 +4367,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ReadWebsiteSigningCampuses();
             var locations = await Task.Run(_networkDirectory.ReadLocations);
             await RefreshVeyonDeviceDirectorySummaryAsync(locations);
+            if (RejectUnverifiedWindowsDirectoryRoster()) return;
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -4349,6 +4408,13 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ClassroomDirectoryStatus = OperatingSystem.IsMacOS()
                 ? $"本机保存了 {locations.Count} 个地点，暂时无法自动确认课堂范围。请先选择对应地点。"
                 : $"Veyon 中有 {locations.Count} 个地点，暂时无法自动确认课堂范围。请先到“地点与学生名单”页选择对应地点。";
+            Changed(nameof(ClassroomOverviewDeviceCount));
+            Changed(nameof(ClassroomSessionSummary));
+            Changed(nameof(ClassroomRoomContextSummary));
+            Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(CanSendClassroomNotice));
+            Changed(nameof(CanSendClassroomChat));
+            Changed(nameof(CanStartClassroomCountdown));
             Changed(nameof(HasMultipleClassroomLocations));
             Changed(nameof(CanUseSelectedClassroomLocation));
             Changed(nameof(CanSyncSeatGridWithVeyon));
