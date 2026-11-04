@@ -1238,19 +1238,23 @@ public partial class TeacherWindow : Window
     private void SaveCampusProfile(object? sender, RoutedEventArgs e) => _model.SaveCampusProfile();
     private async void DeleteCampusProfile(object? sender, RoutedEventArgs e)
     {
-        if (await ConfirmProfileActionAsync("删除校区档案",
-                "将从本机删除所选校区档案及其机房档案。此操作不会修改 Veyon；删除后不能从本机恢复。", "确认删除"))
+        var selected = _model.SelectedCampusProfile;
+        if (selected is null) return;
+        IReadOnlyList<TeacherRoomProfile> rooms = selected.Rooms ?? new List<TeacherRoomProfile>();
+        var preview = new string[Math.Min(rooms.Count, 10)];
+        for (var index = 0; index < preview.Length; index++)
+            preview[index] = rooms[index].DisplayName;
+        var roomList = rooms.Count == 0
+            ? "该档案下没有地点。"
+            : "将同时删除其下 " + rooms.Count + " 个地点：" + string.Join("、", preview) +
+              (rooms.Count > preview.Length ? " 等" : "") + "。";
+        var message = "将从本机删除校区档案“" + selected.DisplayName + "”。" + roomList +
+                      "\n此操作只删除教师电脑上的档案、学生姓名与座位图，不会修改或删除 Veyon 中的地点与电脑；删除后不能从本机恢复。" +
+                      "\n如需保留，请先导出座位表或备份本机校区档案。";
+        if (await ConfirmProfileActionAsync("删除校区档案", message, "确认删除"))
             _model.DeleteSelectedCampusProfile();
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
-    private async void SaveRoomProfile(object? sender, RoutedEventArgs e)
-    {
-        if (_model.HasActiveClassroomSession &&
-            !await ConfirmProfileActionAsync("确认应用地点修改",
-                "课堂会继续进行。保存后教师端将重新核对并同步电脑范围；请确认地点名称、编号或主机地址已核对无误。",
-                "保存并同步")) return;
-        _model.SaveRoomProfile();
-    }
     private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private async void ToggleSeatMapEditing(object? sender, RoutedEventArgs e)
@@ -1293,6 +1297,26 @@ public partial class TeacherWindow : Window
                 "此列为空。删除只会缩小本机座位布局，不会删除 Veyon 电脑。保存前可用 Ctrl+Z 撤销。", "删除此列"))
             _model.DeleteEmptySeatGridColumn(e.Index);
     }
+    private async void DeleteSeatComputer(object? sender, SeatGridSeatEventArgs e)
+    {
+        var seat = e.Seat;
+        var objectId = seat.VeyonObjectId ?? Guid.Empty;
+        var label = string.IsNullOrWhiteSpace(seat.StudentName)
+            ? (string.IsNullOrWhiteSpace(seat.ComputerLabel) ? "未命名座位" : seat.ComputerLabel)
+            : seat.StudentName;
+        var hasVeyonComputer = objectId != Guid.Empty;
+        var message = hasVeyonComputer
+            ? $"将从 Veyon 目录删除电脑“{label}”（按 UUID {objectId:D}），并移除本机对应座位。" +
+              "此操作会修改 Veyon，不能自动撤销；删除前请确认已导出配置备份。"
+            : $"座位“{label}”没有绑定 Veyon 电脑 UUID，将只从本机座位图移除该座位，Veyon 不会改动。\n" +
+              "如果 Veyon 里确实有这台电脑，请先点「重试 Veyon 同步」按 Host 重新建立 UUID 关联。";
+        if (!await ConfirmProfileActionAsync(hasVeyonComputer ? "删除学生电脑" : "删除本机座位",
+                message, "确认删除")) return;
+        // Always show the outcome: a discarded result used to make right-click look broken.
+        var result = await _model.DeleteSeatComputerFromVeyonAsync(seat.Row, seat.Column);
+        await ShowSeatActionNoticeAsync("删除学生电脑", result);
+    }
+
     private async void DeleteSeat(object? sender, SeatGridSeatEventArgs e)
     {
         if (!_model.IsSeatMapEditing) return;
@@ -1781,11 +1805,14 @@ public partial class TeacherWindow : Window
         return await dialog.ShowDialog<bool>(this);
     }
 
-    private async Task ShowSeatGridAxisRemovalNoticeAsync(string message)
+    private Task ShowSeatGridAxisRemovalNoticeAsync(string message) =>
+        ShowSeatActionNoticeAsync("此行列暂时不能删除", message);
+
+    private async Task ShowSeatActionNoticeAsync(string title, string message)
     {
         var dialog = new Window
         {
-            Title = "此行列暂时不能删除",
+            Title = title,
             Width = 500,
             SizeToContent = SizeToContent.Height,
             CanResize = false,
@@ -2391,6 +2418,28 @@ public partial class TeacherWindow : Window
     {
         if (_model.InstallOfflineTeacherUpdate()) ExitForUpdate();
     }
+    private void RefreshPolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        _model.RefreshPolicyTrustRotationStatus();
+
+    private void CreatePolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        _model.CreatePolicyTrustRotationDraft();
+
+    private async void ActivatePolicyTrustRotationDraft(object? sender, RoutedEventArgs e)
+    {
+        if (await ConfirmProfileActionAsync("激活策略信任候选根",
+                "将把草稿中的候选根固定为当前签名根。请确认学生端已全部收到含轮换授权的配置包并确认新根；旧根保持活动，草稿会被清理。此操作会影响策略签名，不能自动撤销。",
+                "确认激活"))
+            _model.ActivatePolicyTrustRotationDraft();
+    }
+
+    private async void ClearPolicyTrustRotationDraft(object? sender, RoutedEventArgs e)
+    {
+        if (await ConfirmProfileActionAsync("清理策略根轮换草稿",
+                "只删除本机草稿记录，不会更改当前固定信任根或已生成的配置包；候选证书仍保留在证书库中，可重新创建草稿。",
+                "确认清理"))
+            _model.ClearPolicyTrustRotationDraft();
+    }
+
     private async void TrustStudentAgentIdentities(object? sender, RoutedEventArgs e) =>
         await TrustStudentAgentIdentitiesAsync();
 

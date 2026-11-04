@@ -440,6 +440,30 @@ public sealed partial class TeacherViewModel
     public string SeatGridContext => SelectedCampusProfile is { } campus && SelectedRoomProfile is { } room
         ? $"{campus.DisplayName} · {room.DisplayName}"
         : "尚未选择地点";
+
+    /// <summary>
+    /// Makes the local-room ↔ Veyon-location correspondence explicit. A room that merely has
+    /// the same display name is NOT bound; only seat bindings carrying both UUIDs count.
+    /// </summary>
+    public string VeyonRoomBindingStatus
+    {
+        get
+        {
+            if (_seatGrid is null || SelectedRoomProfile is null) return "";
+            var bound = _seatGrid.Seats.Where(seat =>
+                seat.VeyonObjectId is { } objectId && objectId != Guid.Empty &&
+                seat.VeyonLocationObjectId is { } locationId && locationId != Guid.Empty).ToArray();
+            if (bound.Length == 0)
+                return "本机地点尚未绑定 Veyon 地点 UUID；点「重试 Veyon 同步」后按 Host 建立对应。";
+            var locationIds = bound.Select(seat => seat.VeyonLocationObjectId!.Value).Distinct().ToArray();
+            if (locationIds.Length != 1)
+                return $"本机座位绑定了 {locationIds.Length} 个不同 Veyon 地点 UUID；请先核对目录，不要直接同步。";
+            return $"已对应 Veyon 地点「{SelectedRoomProfile.DisplayName}」（UUID {locationIds[0]:D}）；" +
+                   $"本机已绑定 {bound.Length} 台电脑。";
+        }
+    }
+    public bool HasVeyonRoomBindingStatus => VeyonRoomBindingStatus.Length > 0;
+
     public void ToggleSeatMapEditing()
     {
         if (!CanToggleSeatMapEditing) return;
@@ -1248,6 +1272,8 @@ public sealed partial class TeacherViewModel
             Changed(nameof(CanStartClassroomCountdown));
             Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanDeleteRoomProfile));
+            Changed(nameof(VeyonRoomBindingStatus));
+            Changed(nameof(HasVeyonRoomBindingStatus));
             if (value is null)
             {
                 RoomProfileName = "";
@@ -1587,6 +1613,81 @@ public sealed partial class TeacherViewModel
         SeatMapStatus = "座位已从本机草稿移除；Veyon 中的电脑不会删除。点击“保存”提交更改。";
         if (RoomNames.Count > 0) UpdateRoomPreviewRows();
         InvalidateRoomReview();
+    }
+
+    /// <summary>
+    /// Deletes a seat's Veyon computer object by UUID when present, then removes the local seat
+    /// and persists immediately: a Veyon deletion is irreversible and preview mode has no save
+    /// button. Seats without a Veyon UUID are removed locally only, so right-click deletion is
+    /// never a silent no-op.
+    /// </summary>
+    public async Task<string> DeleteSeatComputerFromVeyonAsync(int row, int column)
+    {
+        if (!OperatingSystem.IsWindows()) return "只有 Windows 教师端可以删除 Veyon 电脑。";
+        var grid = _seatGrid;
+        if (grid is null) return "当前没有打开座位图。";
+        var seat = grid.Seats.SingleOrDefault(item => item.Row == row && item.Column == column);
+        if (seat is null) return "找不到该座位；没有删除任何内容。";
+        var objectId = seat.VeyonObjectId ?? Guid.Empty;
+        var updated = grid with
+        {
+            Seats = grid.Seats.Where(item => item.SeatId != seat.SeatId).ToArray()
+        };
+
+        string resultText;
+        try
+        {
+            if (objectId != Guid.Empty)
+            {
+                var result = await Task.Run(() => VeyonNetworkObjectDirectory.RemoveComputer(objectId));
+                resultText = $"已删除 Veyon 电脑“{result.ComputerName}”（{result.HostAddress}），" +
+                             $"剩余 {result.RemainingComputerCount} 台；本机对应座位已移除。";
+            }
+            else
+            {
+                resultText = "此座位没有绑定 Veyon 电脑 UUID；已仅从本机座位图移除该座位，Veyon 未改动。";
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException or
+            IOException or UnauthorizedAccessException or PlatformNotSupportedException or
+            System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            var failure = "删除未完成：" + exception.Message + " 没有删除任何本机座位。";
+            SeatMapStatus = failure;
+            return failure;
+        }
+
+        try
+        {
+            var saved = _classroomSeatGridStore.RestoreLayout(updated);
+            ApplySeatGrid(saved);
+            _seatMapUndo.Clear();
+            _seatMapRedo.Clear();
+            Changed(nameof(CanUndoSeatMapEdit));
+            Changed(nameof(CanRedoSeatMapEdit));
+            SeatMapStatus = resultText;
+            if (RoomNames.Count > 0) UpdateRoomPreviewRows();
+            InvalidateRoomReview();
+            if (objectId != Guid.Empty)
+            {
+                try { await ReadWebsiteLocationsAsync(); }
+                catch (Exception exception) when (exception is not OutOfMemoryException)
+                {
+                    SeatMapStatus += " 名单刷新未完成，请点「重新读取目录」。";
+                }
+            }
+            return resultText;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException or
+            IOException or UnauthorizedAccessException)
+        {
+            var failure = objectId != Guid.Empty
+                ? "Veyon 电脑已删除，但本机座位移除未能保存：" + exception.Message +
+                  " 请进入「编辑座位」后手动移除该座位，不要重复删除 Veyon 对象。"
+                : "本机座位移除未能保存：" + exception.Message + " 没有删除任何内容。";
+            SeatMapStatus = failure;
+            return failure;
+        }
     }
 
     public async Task<string?> SyncSeatStudentNameToVeyonAsync(int row, int column,

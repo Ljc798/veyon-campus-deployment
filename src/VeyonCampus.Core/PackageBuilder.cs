@@ -56,6 +56,9 @@ public static class PackageBuilder
             throw new InvalidDataException("策略信任根轮换授权必须为 1 至 3 项。");
         if (policyTrustRotationAuthorizations is { Count: > 0 } && teacherChannelRootCertificate is null)
             throw new InvalidDataException("schemaVersion=8 策略信任轮换包必须包含完整 teacherChannel 配置。");
+        if (policyTrustRotationAuthorizations is { Count: > 0 })
+            CampusPackageSchemaMigration.RequireExplicitRebuildInputs(policyTrustRotationAuthorizations,
+                teacherChannelEndpoints, teacherChannelRootCertificate, studentSystemPolicyPublicKeyPem);
         if (teacherChannelEndpoints is not null)
         {
             if (studentSystemPolicyPublicKeyPem is null || compatibility?.StudentAgent is null)

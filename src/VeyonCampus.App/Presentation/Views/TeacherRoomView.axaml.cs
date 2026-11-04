@@ -11,7 +11,6 @@ public partial class TeacherRoomView : UserControl
     public TeacherRoomView() => InitializeComponent();
 
     public event EventHandler<RoutedEventArgs>? PrepareRoomSeatGridRequested;
-    public event EventHandler<RoutedEventArgs>? SaveRoomProfileRequested;
     public event EventHandler<RoutedEventArgs>? ToggleSeatMapEditingRequested;
     public event EventHandler<RoutedEventArgs>? CancelSeatMapEditingRequested;
     public event EventHandler<RoutedEventArgs>? PrintSeatChartRequested;
@@ -25,14 +24,12 @@ public partial class TeacherRoomView : UserControl
     public event EventHandler<SeatGridAxisEventArgs>? DeleteSeatGridRowRequested;
     public event EventHandler<SeatGridAxisEventArgs>? DeleteSeatGridColumnRequested;
     public event EventHandler<SeatGridSeatEventArgs>? DeleteSeatRequested;
+    public event EventHandler<SeatGridSeatEventArgs>? DeleteSeatComputerRequested;
     public event EventHandler<SeatGridSeatEventArgs>? ClearSeatVeyonTargetRequested;
     public event EventHandler<RoutedEventArgs>? OpenInitialSeatGridConflictLocationRequested;
 
     private void RequestPrepareRoomSeatGrid(object? sender, RoutedEventArgs e) =>
         PrepareRoomSeatGridRequested?.Invoke(sender, e);
-
-    private void RequestSaveRoomProfile(object? sender, RoutedEventArgs e) =>
-        SaveRoomProfileRequested?.Invoke(sender, e);
 
     private void RequestToggleSeatMapEditing(object? sender, RoutedEventArgs e) =>
         ToggleSeatMapEditingRequested?.Invoke(sender, e);
@@ -108,10 +105,20 @@ public partial class TeacherRoomView : UserControl
             ClearSeatVeyonTargetRequested?.Invoke(this, new SeatGridSeatEventArgs(cell));
     }
 
+    private void RequestDeleteSeatComputer(object? sender, RoutedEventArgs e)
+    {
+        // Veyon object deletion is available in preview mode too. Seats without a Veyon UUID
+        // are handled as a local-only removal so a right-click is never a silent no-op.
+        var cell = sender is MenuItem { DataContext: TeacherSeatCell { IsSeat: true } menuCell }
+            ? menuCell
+            : GetContextPlacementTarget(sender)?.DataContext as TeacherSeatCell;
+        if (cell is { IsSeat: true })
+            DeleteSeatComputerRequested?.Invoke(this, new SeatGridSeatEventArgs(cell));
+    }
+
     private void SeatCellContextMenuOpening(object? sender, CancelEventArgs e)
     {
         if (sender is not ContextMenu menu ||
-            DataContext is not TeacherViewModel { IsSeatMapEditing: true } ||
             menu.PlacementTarget?.DataContext is not TeacherSeatCell { IsSeat: true } cell)
         {
             e.Cancel = true;

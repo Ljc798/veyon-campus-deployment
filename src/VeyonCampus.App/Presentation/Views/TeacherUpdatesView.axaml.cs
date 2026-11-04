@@ -37,6 +37,10 @@ public partial class TeacherUpdatesView : UserControl
     public event EventHandler<RoutedEventArgs>? ExportStudentUpdatePerformanceReportRequested;
     public event EventHandler<RoutedEventArgs>? ExportMaintenanceEventReportRequested;
     public event EventHandler<RoutedEventArgs>? RecheckStudentUpdateResultRequested;
+    public event EventHandler<RoutedEventArgs>? RefreshPolicyTrustRotationDraftRequested;
+    public event EventHandler<RoutedEventArgs>? CreatePolicyTrustRotationDraftRequested;
+    public event EventHandler<RoutedEventArgs>? ActivatePolicyTrustRotationDraftRequested;
+    public event EventHandler<RoutedEventArgs>? ClearPolicyTrustRotationDraftRequested;
 
     private void RequestCheckTeacherUpdate(object? sender, RoutedEventArgs e) =>
         CheckTeacherUpdateRequested?.Invoke(sender, e);
@@ -88,4 +92,16 @@ public partial class TeacherUpdatesView : UserControl
 
     private void RequestRecheckStudentUpdateResult(object? sender, RoutedEventArgs e) =>
         RecheckStudentUpdateResultRequested?.Invoke(sender, e);
+
+    private void RequestRefreshPolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        RefreshPolicyTrustRotationDraftRequested?.Invoke(sender, e);
+
+    private void RequestCreatePolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        CreatePolicyTrustRotationDraftRequested?.Invoke(sender, e);
+
+    private void RequestActivatePolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        ActivatePolicyTrustRotationDraftRequested?.Invoke(sender, e);
+
+    private void RequestClearPolicyTrustRotationDraft(object? sender, RoutedEventArgs e) =>
+        ClearPolicyTrustRotationDraftRequested?.Invoke(sender, e);
 }

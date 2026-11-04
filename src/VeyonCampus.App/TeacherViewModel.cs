@@ -1657,6 +1657,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(AssignMissingSeatComputerNumbersLabel));
         Changed(nameof(RoomSummary));
         Changed(nameof(SeatGridTitle));
+        Changed(nameof(VeyonRoomBindingStatus));
+        Changed(nameof(HasVeyonRoomBindingStatus));
         Changed(nameof(CanAddRoomToVeyon));
         Changed(nameof(CanApplySeatGridDimensions));
         Changed(nameof(SeatDimensionRemovalSummary));
@@ -3571,7 +3573,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     {
         if (SelectedCampusProfile is not { } selected) return;
         var campuses = CampusProfiles.Where(item => item.ProfileId != selected.ProfileId).ToArray();
-        if (PersistCampusDirectory(campuses, "校区模板已删除。"))
+        var roomCount = selected.Rooms?.Count ?? 0;
+        var message = $"已删除校区档案「{selected.DisplayName}」及其 {roomCount} 个地点；Veyon 中的地点与电脑未更改。";
+        message += campuses.Length > 0
+            ? $"本机还剩 {campuses.Length} 份校区档案；请重新读取 Veyon 目录后再确认课堂范围。"
+            : "本机已无校区档案；下次读取 Veyon 目录时会按首次安装创建一份。";
+        if (PersistCampusDirectory(campuses, message))
         {
             SelectedCampusProfile = null;
             CampusProfileName = "";
@@ -3940,8 +3947,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 ClassroomDirectoryError = "Veyon 地点名单未通过完整身份核对；课堂控制暂不可用。";
             }
 
-            var readNotice = GetVeyonDirectoryReadNotice();
-            if (readNotice.Length > 0) WebsiteDirectoryStatus += "\n" + readNotice;
+            // The full notice is already written to WebsiteDirectoryError above; do not render
+            // the same paragraph a second time in the status line.
             return !OperatingSystem.IsWindows() || IsVeyonDeviceDirectoryCurrent;
         }
         catch (Exception exception) when (exception is not OutOfMemoryException and
@@ -4109,39 +4116,130 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         catch (InvalidDataException exception) { RoomError = exception.Message; }
     }
 
+    private const string VeyonReadNoticeMarker = "目录未核对";
+    private const string VeyonNoticePointer = "详情见「地点与学生名单」页";
+    private const string VeyonDuplicateNoticeMarker = "重复对象";
+
+    /// <summary>
+    /// Builds a single, actionable notice for the read-only config-export fallback. The raw
+    /// diagnostic.Message already embeds the process detail, so it is intentionally not repeated
+    /// here; the structured fields below are the parts a teacher can actually act on.
+    /// </summary>
     private static string GetVeyonDirectoryReadNotice()
     {
         if (!OperatingSystem.IsWindows() ||
             VeyonNetworkObjectDirectory.LastReadDiagnostic is not
                 { FailureStage: VeyonDirectoryReadDiagnostic.PartialRead } diagnostic)
             return "";
-        var lastRead = diagnostic.LastSuccessfulReadUtc is { } timestamp
-            ? $"；最近一次成功读取 {timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
-            : "";
-        return "目录只读回退提示：" + diagnostic.Message + lastRead;
+        var detail = (diagnostic.Detail ?? "").Replace('\r', ' ').Replace('\n', ' ');
+        var reason = detail.Contains("重复 UUID", StringComparison.Ordinal) ||
+                     detail.Contains("重复对象", StringComparison.Ordinal)
+            ? "Veyon 目录里有重复对象"
+            : "Veyon 目录读取失败";
+        return VeyonReadNoticeMarker + "：" + reason + "，已隐藏未验证电脑；请点「重新读取目录」。";
+    }
+
+    /// <summary>
+    /// Non-blocking notice for byte-identical duplicate objects that Veyon persisted twice in
+    /// JsonStoreArray. A de-duplicated read is safe, but the operator still needs to know the
+    /// source directory is dirty; the teacher app never deletes or merges Veyon objects.
+    /// </summary>
+    private static string GetVeyonDuplicateObjectNotice()
+    {
+        var count = VeyonNetworkObjectDirectory.LastIdenticalDuplicateObjectCount;
+        if (!OperatingSystem.IsWindows() || count <= 0) return "";
+        return VeyonDuplicateNoticeMarker +
+               $"：发现 {count} 条重复对象，已按 UUID 去重；建议导出配置备份后清理。";
+    }
+
+    private void AppendVeyonDuplicateObjectNotice(bool classroomPage)
+    {
+        var notice = GetVeyonDuplicateObjectNotice();
+        if (notice.Length == 0) return;
+        if (classroomPage)
+        {
+            if (ClassroomDirectoryStatus.Contains(VeyonDuplicateNoticeMarker, StringComparison.Ordinal) ||
+                ClassroomDirectoryError.Contains(VeyonDuplicateNoticeMarker, StringComparison.Ordinal)) return;
+            if (ClassroomDirectoryError.Length > 0) ClassroomDirectoryError += "\n" + notice;
+            else ClassroomDirectoryStatus = ClassroomDirectoryStatus.Length > 0
+                ? ClassroomDirectoryStatus + "\n" + notice : notice;
+        }
+        else
+        {
+            if (WebsiteDirectoryStatus.Contains(VeyonDuplicateNoticeMarker, StringComparison.Ordinal) ||
+                WebsiteDirectoryError.Contains(VeyonDuplicateNoticeMarker, StringComparison.Ordinal)) return;
+            if (WebsiteDirectoryError.Length > 0) WebsiteDirectoryError += "\n" + notice;
+            else WebsiteDirectoryStatus = WebsiteDirectoryStatus.Length > 0
+                ? WebsiteDirectoryStatus + "\n" + notice : notice;
+        }
     }
 
     private bool RejectUnverifiedWindowsDirectoryRoster()
     {
         if (!OperatingSystem.IsWindows() || IsVeyonDeviceDirectoryCurrent) return false;
 
-        var detail = GetVeyonDirectoryReadNotice();
-        if (detail.Length == 0)
-            detail = "地点名单与完整 UUID 目录未能通过一致性核对。";
-        var message = "Veyon 当前名单尚未通过完整核对；已隐藏未验证的电脑，不会把它们当作当前设备。" +
-                      detail + " 请修复目录或读取权限后重新进入本页重试。";
+        var notice = GetVeyonDirectoryReadNotice();
+        var message = notice.Length > 0
+            ? notice
+            : VeyonReadNoticeMarker + "：已隐藏未验证电脑，请点「重新读取目录」。";
         WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
         WebsiteLocationIndex = -1;
         ClassroomLocationIndex = -1;
         WebsiteTargets = "";
         WebsiteDirectoryStatus = "";
         ClassroomDirectoryStatus = "";
-        WebsiteDirectoryError = message;
+        // Only the location page carries the full diagnostic; the policy page shows a short
+        // pointer so the same long paragraph is not rendered three times on one screen.
+        WebsiteDirectoryError = "名单待核对；" + VeyonNoticePointer + "。";
         ClassroomDirectoryError = message;
         _websiteLocationSelectionPending = false;
         _classroomDirectorySelectionPending = false;
         Changed(nameof(CanUseSelectedClassroomLocation));
         Changed(nameof(CanApplyWebsiteLocation));
+        return true;
+    }
+
+    /// <summary>Returns the first Veyon location name that appears more than once.</summary>
+    private static string? FindDuplicateVeyonLocationName(IReadOnlyList<VeyonNetworkLocation> locations)
+    {
+        for (var index = 0; index < locations.Count; index++)
+        for (var other = index + 1; other < locations.Count; other++)
+            if (string.Equals(locations[index].Name, locations[other].Name, StringComparison.OrdinalIgnoreCase))
+                return locations[index].Name;
+        return null;
+    }
+
+    /// <summary>
+    /// Two Veyon locations with the same display name cannot be told apart by the local profile
+    /// store, which merges rooms by name. Refuse to auto-apply anything until the operator has
+    /// cleaned up the Veyon directory; never silently merge or overwrite a saved seat map.
+    /// </summary>
+    private bool RejectDuplicateVeyonLocations(IReadOnlyList<VeyonNetworkLocation> locations,
+        out string duplicateName)
+    {
+        duplicateName = "";
+        if (OperatingSystem.IsMacOS()) return false;
+        var duplicate = FindDuplicateVeyonLocationName(locations);
+        if (duplicate is null) return false;
+        duplicateName = duplicate;
+        WebsiteLocations = Array.Empty<VeyonNetworkLocation>();
+        WebsiteLocationIndex = -1;
+        ClassroomLocationIndex = -1;
+        WebsiteTargets = "";
+        WebsiteDirectoryStatus = "";
+        ClassroomDirectoryStatus = "";
+        WebsiteDirectoryError = "存在同名地点；" + VeyonNoticePointer + "。";
+        ClassroomDirectoryError =
+            $"Veyon 中存在多个同名地点「{duplicate}」，教师端只按地点名称匹配本机档案，无法安全判断应对应哪一份座位图。" +
+            "如果两个地点里的电脑信息完全一样、删掉一个会两个一起消失，通常是同一个 Veyon 对象被重复引用，而不是两份独立数据。" +
+            "已停止自动应用，未修改任何本机档案、学生姓名或 Veyon 配置。" +
+            "\n请先导出并备份 Veyon 配置，在 Veyon 配置器中核对重复地点对象的 UUID，确认后再清理或重命名；不要在未备份时直接删除。" +
+            "\n处理完成后点击「重新读取目录」。";
+        _websiteLocationSelectionPending = false;
+        _classroomDirectorySelectionPending = true;
+        Changed(nameof(CanUseSelectedClassroomLocation));
+        Changed(nameof(CanApplyWebsiteLocation));
+        Changed(nameof(HasMultipleClassroomLocations));
         return true;
     }
 
@@ -4282,6 +4380,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             var locations = await Task.Run(_networkDirectory.ReadLocations);
             await RefreshVeyonDeviceDirectorySummaryAsync(locations);
             if (RejectUnverifiedWindowsDirectoryRoster()) return;
+            if (RejectDuplicateVeyonLocations(locations, out _)) return;
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -4296,6 +4395,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             {
                 WebsiteLocationIndex = 0;
                 FillWebsiteTargetsFromSelectedLocation();
+                WebsiteDirectoryStatus =
+                    $"已读取到 1 个机房、{locations[0].Targets.Count} 台电脑；地点与 UUID 目录已核对。";
                 return;
             }
 
@@ -4333,13 +4434,17 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             IsReadingWebsiteLocations = false;
             var readNotice = GetVeyonDirectoryReadNotice();
-            if (readNotice.Length > 0)
+            if (readNotice.Length > 0 &&
+                !WebsiteDirectoryStatus.Contains(VeyonReadNoticeMarker, StringComparison.Ordinal) &&
+                !WebsiteDirectoryError.Contains(VeyonReadNoticeMarker, StringComparison.Ordinal) &&
+                !WebsiteDirectoryError.Contains(VeyonNoticePointer, StringComparison.Ordinal))
             {
                 if (WebsiteDirectoryStatus.Length > 0)
                     WebsiteDirectoryStatus += "\n" + readNotice;
                 else if (WebsiteDirectoryError.Length > 0)
                     WebsiteDirectoryError += "\n" + readNotice;
             }
+            AppendVeyonDuplicateObjectNotice(classroomPage: false);
         }
     }
 
@@ -4368,6 +4473,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             var locations = await Task.Run(_networkDirectory.ReadLocations);
             await RefreshVeyonDeviceDirectorySummaryAsync(locations);
             if (RejectUnverifiedWindowsDirectoryRoster()) return;
+            if (RejectDuplicateVeyonLocations(locations, out _)) return;
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -4384,6 +4490,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 WebsiteLocationIndex = 0;
                 ApplyClassroomLocation(locations[0]);
                 if (!HasClassroomDirectoryError) FillWebsiteTargetsFromSelectedLocation();
+                WebsiteDirectoryStatus =
+                    $"已读取到 1 个机房、{locations[0].Targets.Count} 台电脑；地点与 UUID 目录已核对。";
                 return;
             }
 
@@ -4439,13 +4547,16 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             IsReadingWebsiteLocations = false;
             var readNotice = GetVeyonDirectoryReadNotice();
-            if (readNotice.Length > 0)
+            if (readNotice.Length > 0 &&
+                !ClassroomDirectoryStatus.Contains(VeyonReadNoticeMarker, StringComparison.Ordinal) &&
+                !ClassroomDirectoryError.Contains(VeyonReadNoticeMarker, StringComparison.Ordinal))
             {
                 if (ClassroomDirectoryStatus.Length > 0)
                     ClassroomDirectoryStatus += "\n" + readNotice;
                 else if (ClassroomDirectoryError.Length > 0)
                     ClassroomDirectoryError += "\n" + readNotice;
             }
+            AppendVeyonDuplicateObjectNotice(classroomPage: true);
         }
     }
 
@@ -4519,13 +4630,32 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 ? null : CampusId.Trim();
             var campusName = campus?.DisplayName ?? roomCampus ??
                 (WebsiteSigningCampuses.Count == 1 ? WebsiteSigningCampuses[0] : configuredCampus ?? "本机校区");
+
+            // Reading a Veyon location must never silently create another local campus profile.
+            // Only a genuine first install (no profiles at all) may create one, and it is reported.
+            if (campus is null && CampusProfiles.Count > 0)
+            {
+                ClassroomDirectoryStatus = "";
+                ClassroomDirectoryError =
+                    $"已读到 Veyon 地点「{location.Name}」（{location.Targets.Count} 台电脑），但本机已有 {CampusProfiles.Count} 份校区档案，无法确认它属于哪一份。" +
+                    "为避免凭空多出校区，本次只读取、不写入本机档案；Veyon 也未修改。" +
+                    "\n请在「地点与学生名单」选择对应校区档案，或先清理不需要的档案，再点击「重新读取目录」。";
+                _classroomDirectorySelectionPending = true;
+                Changed(nameof(CanUseSelectedClassroomLocation));
+                Changed(nameof(CanToggleClassroomSession));
+                Changed(nameof(HasMultipleClassroomLocations));
+                return;
+            }
+            var firstInstall = campus is null;
             var mergedCampus = TeacherCampusProfileFromVeyon.MergeLocation(campus, campusName, location);
             var selectedRoom = mergedCampus.Rooms.Single(room =>
                 string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase));
             var campuses = CampusProfiles.Where(item => item.ProfileId != mergedCampus.ProfileId).ToList();
             campuses.Add(mergedCampus);
-            if (!PersistCampusDirectory(campuses,
-                    $"已读取 Veyon 地点“{location.Name}”并更新学生电脑名单，共 {location.Targets.Count} 台电脑；没有修改 Veyon。"))
+            var successMessage = firstInstall
+                ? $"首次读取：已为本机创建校区档案「{campusName}」并导入 Veyon 地点「{location.Name}」的 {location.Targets.Count} 台电脑；没有修改 Veyon。"
+                : $"已读取 Veyon 地点「{location.Name}」并更新学生电脑名单，共 {location.Targets.Count} 台电脑；没有修改 Veyon。";
+            if (!PersistCampusDirectory(campuses, successMessage))
             {
                 ClassroomDirectoryStatus = "";
                 ClassroomDirectoryError = CampusDirectoryError;
@@ -5516,13 +5646,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         continue;
                     var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(run.Device.RouteAddress),
                         run.Device.RouteAddress);
-                    var configurationRun = module == MaintenanceConfigurationModule.TeacherConnectivity
-                        ? journal.Runs.Where(candidate => candidate.Device.Key == run.Device.Key &&
-                            candidate.Plan is { SynchronizeConfiguration: true } candidatePlan &&
-                            string.Equals(candidatePlan.ConfigurationSha256, status.DesiredFingerprint,
-                                StringComparison.OrdinalIgnoreCase))
-                            .OrderByDescending(candidate => candidate.UpdatedUtc).FirstOrDefault()
-                        : null;
+                    var configurationRun = FindRelatedConfigurationRun(journal, run, status);
                     MaintenanceConfigurationItems.Add(new TeacherMaintenanceConfigurationItem(displayName,
                         run.Device.RouteAddress, module, status, configurationRun));
                 }
@@ -5566,6 +5690,34 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// CM-05: associate every configuration module with the relevant configuration transaction,
+    /// not just TeacherConnectivity. A Desired fingerprint match is authoritative; modules
+    /// without a per-module fingerprint in MaintenancePlan fall back to the most recent
+    /// unfinished configuration transaction for the same fixed device, so the failure stage
+    /// is never silently attached to an unrelated completed run.
+    /// </summary>
+    private static MaintenanceRun? FindRelatedConfigurationRun(MaintenanceJournal journal,
+        MaintenanceRun run, MaintenanceConfigurationReconciliationStatus status)
+    {
+        var candidates = journal.Runs.Where(candidate =>
+            candidate.Device.Key == run.Device.Key &&
+            candidate.Plan is { SynchronizeConfiguration: true }).ToArray();
+        if (candidates.Length == 0) return null;
+        if (!string.IsNullOrWhiteSpace(status.DesiredFingerprint))
+        {
+            var matched = candidates.Where(candidate => candidate.Plan is { } plan &&
+                string.Equals(plan.ConfigurationSha256, status.DesiredFingerprint,
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matched.Length > 0)
+                return matched.OrderByDescending(candidate => candidate.UpdatedUtc).First();
+        }
+        var latest = candidates.OrderByDescending(candidate => candidate.UpdatedUtc).First();
+        return latest.State is MaintenanceRunState.Failed or MaintenanceRunState.RolledBack or
+            MaintenanceRunState.RecoveryRequired or MaintenanceRunState.ManualRequired or
+            MaintenanceRunState.PendingVerification ? latest : null;
+    }
+
     private static string BuildMaintenanceConfigurationOverview(MaintenanceJournal journal,
         IReadOnlyList<MaintenanceRun> latestRuns)
     {
@@ -5599,6 +5751,94 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         return summaries.Count == 0
             ? "本机当前校区记录中尚无 Desired/Reported 配置对账状态。"
             : "配置 Desired/Reported 对账（" + string.Join("；", summaries) + "）。统计仅覆盖本机 journal 中有事务记录的固定身份设备，不代表全校实时状态。";
+    }
+
+    public string PolicyTrustRotationStatus { get; private set; } = "点「查看草稿状态」读取本机策略根轮换草稿。";
+
+    public void RefreshPolicyTrustRotationStatus()
+    {
+        try
+        {
+            PolicyTrustRotationStatus = OperatingSystem.IsWindows()
+                ? PolicyTrustRotationDraftStore.Inspect(CampusId.Trim()) ??
+                  "当前没有策略根轮换草稿；生成配置包不会包含轮换授权。"
+                : "策略根轮换草稿保存在 Windows 当前用户证书库，当前平台不支持。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+            IOException or UnauthorizedAccessException or PlatformNotSupportedException or ArgumentException)
+        {
+            PolicyTrustRotationStatus = "轮换草稿无法读取：" + exception.Message + "；未修改任何信任根。";
+        }
+        Changed(nameof(PolicyTrustRotationStatus));
+    }
+
+    public void CreatePolicyTrustRotationDraft()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            PolicyTrustRotationStatus = "策略根轮换草稿仅支持 Windows 当前用户证书库。";
+            Changed(nameof(PolicyTrustRotationStatus));
+            return;
+        }
+        try
+        {
+            var draft = PolicyTrustRotationDraftStore.Create(CampusId.Trim(),
+                Enum.GetValues<PolicyTrustKeyRole>(), DateTimeOffset.UtcNow.AddDays(30));
+            PolicyTrustRotationStatus =
+                $"已创建 {draft.Entries.Count} 项轮换草稿；旧根保持活动，退休时间 {draft.RetirePreviousRootUtc.ToLocalTime():yyyy-MM-dd HH:mm}。" +
+                "请先生成含授权的配置包并分发，全部设备确认新根后再激活候选根。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+            IOException or UnauthorizedAccessException or InvalidOperationException or
+            PlatformNotSupportedException or ArgumentException)
+        {
+            PolicyTrustRotationStatus = "创建轮换草稿失败：" + exception.Message + "；没有更改当前信任根。";
+        }
+        Changed(nameof(PolicyTrustRotationStatus));
+    }
+
+    public void ActivatePolicyTrustRotationDraft()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            PolicyTrustRotationStatus = "策略根轮换草稿仅支持 Windows 当前用户证书库。";
+            Changed(nameof(PolicyTrustRotationStatus));
+            return;
+        }
+        try
+        {
+            var draft = PolicyTrustRotationDraftStore.Activate(CampusId.Trim());
+            PolicyTrustRotationStatus =
+                $"已固定 {draft.Entries.Count} 个候选根并清理草稿；旧根仍保持活动，请确认全部设备后再按退休时间退休。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or CryptographicException or
+            IOException or UnauthorizedAccessException or InvalidOperationException or
+            PlatformNotSupportedException or ArgumentException)
+        {
+            PolicyTrustRotationStatus = "激活失败：" + exception.Message;
+        }
+        Changed(nameof(PolicyTrustRotationStatus));
+    }
+
+    public void ClearPolicyTrustRotationDraft()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            PolicyTrustRotationStatus = "策略根轮换草稿仅支持 Windows 当前用户证书库。";
+            Changed(nameof(PolicyTrustRotationStatus));
+            return;
+        }
+        try
+        {
+            PolicyTrustRotationDraftStore.Clear(CampusId.Trim());
+            PolicyTrustRotationStatus = "已清理轮换草稿；当前固定信任根未更改。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or PlatformNotSupportedException or ArgumentException)
+        {
+            PolicyTrustRotationStatus = "清理草稿失败：" + exception.Message;
+        }
+        Changed(nameof(PolicyTrustRotationStatus));
     }
 
     public async Task ApproveMaintenanceIdentityRotationAsync(PendingMaintenanceIdentityRotationItem item,
@@ -5829,9 +6069,17 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     configurationRow?.SetMaintenanceResult(outcome.State, detail);
                 }
             }
-            if (requestedOperation == MaintenanceOperationKind.SoftwareUpdate || requestedOperation is null &&
-                results.Any(item => item.OperationKind is MaintenanceOperationKind.SoftwareUpdate or
-                    MaintenanceOperationKind.FullMaintenance))
+            // The anonymous rollout report is produced after the unified workflow returns, not
+            // by the removed ViewModel batch path. Include an explicitly requested
+            // FullMaintenance as well; configuration-only, service-only and reconcile runs
+            // are not student software rollouts and must not create a report.
+            var isStudentRollout = requestedOperation is null ||
+                requestedOperation == MaintenanceOperationKind.FullMaintenance ||
+                requestedOperation == MaintenanceOperationKind.SoftwareUpdate;
+            var hasRolloutResults = results.Any(item => item.OperationKind is
+                MaintenanceOperationKind.SoftwareUpdate or MaintenanceOperationKind.FullMaintenance);
+            if (isStudentRollout &&
+                (requestedOperation == MaintenanceOperationKind.SoftwareUpdate || hasRolloutResults))
                 CaptureStudentUpdatePerformanceReport(performanceStartedUtc, performanceStopwatch.ElapsedMilliseconds,
                     selectedTargets, results);
             SortStudentUpdateTargetRows();
@@ -5913,54 +6161,16 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         long rolloutDurationMilliseconds, IReadOnlyCollection<string> selectedTargets,
         IReadOnlyList<TeacherMaintenanceTargetResult> results)
     {
+        // The report is built in the Maintenance layer (P1-03 thin-ViewModel boundary);
+        // this method only wires UI row state into the factory and publishes the result.
         try
         {
-            var distinctResults = results.GroupBy(item => NormalizeTargetKey(item.Target),
-                    StringComparer.OrdinalIgnoreCase)
-                .Select(group => group.Last()).ToArray();
-            var samples = distinctResults.Select(outcome =>
-            {
-                var row = FindStudentUpdateTargetRow(outcome.Target);
-                var attempted = outcome.Result?.StudentSetupUpdateAttempted == true;
-                var sampleOutcome = outcome.State switch
-                {
-                    MaintenanceRunState.Completed => "succeeded",
-                    MaintenanceRunState.RolledBack => "rolledBack",
-                    MaintenanceRunState.Failed when attempted => "failed",
-                    _ => "needsReview"
-                };
-                return new StudentUpdatePerformanceSample(sampleOutcome, attempted,
-                    outcome.Result?.VerifiedCurrentVersions?.StudentSetupVersion ??
-                    outcome.CurrentVersions?.StudentSetupVersion,
-                    outcome.Result?.VerifiedCurrentVersions?.AgentRuntimeVersion ??
-                    outcome.CurrentVersions?.AgentRuntimeVersion,
-                    row?.Environment ?? StudentUpdateEnvironmentCategories.Unknown,
-                    row?.RawPhaseTimings ?? Array.Empty<StudentUpdatePhaseTiming>());
-            }).ToArray();
-            var targetVersion = distinctResults.Select(item => item.TargetVersions?.StudentSetupVersion)
-                .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version));
-            var alreadyCurrent = distinctResults.Count(item => item.State == MaintenanceRunState.Completed &&
-                item.Result?.StudentSetupUpdateAttempted != true);
-            var preflightFailure = distinctResults.Count(item => item.State is MaintenanceRunState.Failed or
-                MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired &&
-                item.Result?.StudentSetupUpdateAttempted != true);
-            var unresolved = distinctResults.Count(item => item.State is MaintenanceRunState.PendingVerification or
-                MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
-                MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing or
-                MaintenanceRunState.MaintenanceServiceHealthVerified);
-            var reportedTargets = distinctResults.Select(item => NormalizeTargetKey(item.Target))
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var notStarted = selectedTargets.Select(NormalizeTargetKey).Distinct(StringComparer.OrdinalIgnoreCase)
-                .Count(target => !reportedTargets.Contains(target));
-            var completedUtc = DateTimeOffset.UtcNow;
-            if (completedUtc < startedUtc) completedUtc = startedUtc;
-            var rolloutId = distinctResults.Select(item => item.RolloutId).FirstOrDefault(id => id is not null)
-                            ?? Guid.NewGuid();
-            _lastStudentUpdatePerformanceReport = StudentUpdatePerformanceReportBuilder.Create(rolloutId,
-                startedUtc, completedUtc, Math.Max(0, rolloutDurationMilliseconds), targetVersion,
-                selectedTargets.Count, alreadyCurrent, preflightFailure, notStarted, unresolved,
-                teacherCachePreparationRequired: true,
-                new StudentUpdatePerformancePreparation(null, null, null, null, null, null), samples);
+            _lastStudentUpdatePerformanceReport = TeacherMaintenancePerformanceReportFactory.Create(
+                startedUtc, rolloutDurationMilliseconds, selectedTargets, results,
+                NormalizeTargetKey,
+                target => FindStudentUpdateTargetRow(target) is { } row
+                    ? new TeacherMaintenanceReportRow(row.Environment, row.RawPhaseTimings)
+                    : null);
         }
         catch (Exception)
         {
@@ -7551,6 +7761,14 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 teacherChannelEndpoints = Array.AsReadOnly(sourceEndpoints.ToArray());
                 teacherChannelRootCertificate = await File.ReadAllBytesAsync(sourceRootPath);
             }
+            IReadOnlyList<string>? rotationAuthorizations = null;
+            if (OperatingSystem.IsWindows())
+            {
+                var rotationDraft = PolicyTrustRotationDraftStore.Read(campus);
+                if (rotationDraft is not null)
+                    rotationAuthorizations = Array.AsReadOnly(rotationDraft.Entries
+                        .Select(entry => entry.AuthorizationJson).ToArray());
+            }
             packageBuildCancellation = new CancellationTokenSource();
             _studentPackageBuildCancellation = packageBuildCancellation;
             IsBuildingStudentPackage = true;
@@ -7567,7 +7785,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     studentSystemPolicyPublicKeyPem: systemSigningKey.PublicKeyPem,
                     recommendedOperations: recommendations,
                     teacherChannelEndpoints: teacherChannelEndpoints,
-                    teacherChannelRootCertificate: teacherChannelRootCertificate), token);
+                    teacherChannelRootCertificate: teacherChannelRootCertificate,
+                    policyTrustRotationAuthorizations: rotationAuthorizations), token);
             }
             finally
             {
@@ -7578,6 +7797,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             PackageOutput = trustSourcePackage is null
                 ? $"已生成学生配置包：{built}\n请将此文件夹提供给最新 StudentSetup。"
                 : $"已生成策略密钥更新包：{built}\n保留了原包 Veyon 公钥；请先更新 StudentSetup，再在每台学生机以管理员身份重新应用此包。学生端完成更新前，Mac 上的状态和策略仍会显示未信任。";
+            if (rotationAuthorizations is { Count: > 0 })
+                PackageOutput += "\n本包包含策略信任根轮换授权（schemaVersion=8）；学生端全部确认新根前不要退休旧根。";
             ReadWebsiteSigningCampuses();
         }
         catch (OperationCanceledException) when (packageBuildCancellation?.IsCancellationRequested == true)
@@ -7879,6 +8100,12 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
     public bool HasStudentName => IsSeat && !string.IsNullOrWhiteSpace(StudentName);
     public bool CanEditComputerNumber => !HasVeyonTarget;
     public bool IsSeatWithoutVeyonTarget => IsSeat && !HasVeyonTarget;
+    public bool HasVeyonComputerObject => IsSeat && VeyonObjectId is { } id && id != Guid.Empty;
+    // Right-click deletion must never be a silent no-op. When the seat has no Veyon UUID we
+    // still offer a local-only removal with an explicit confirmation instead of a dead menu.
+    public bool CanDeleteSeatComputer => IsSeat;
+    public string DeleteSeatComputerMenuLabel => HasVeyonComputerObject
+        ? "删除学生电脑（含 Veyon）" : "删除此座位（仅本机）";
     public string ComputerStatusLabel => "填写姓名后自动关联电脑编号";
     public string PrimaryLabel => IsSeat
         ? $"{(SeatNumber is { } number ? $"电脑编号 {number}" : "电脑编号待设置")} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"

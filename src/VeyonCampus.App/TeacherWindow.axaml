@@ -11,7 +11,6 @@
     <DataTemplate x:Key="RoomPageTemplate" x:DataType="vm:TeacherViewModel">
       <views:TeacherRoomView
           PrepareRoomSeatGridRequested="PrepareRoomSeatGrid"
-          SaveRoomProfileRequested="SaveRoomProfile"
           ToggleSeatMapEditingRequested="ToggleSeatMapEditing"
           CancelSeatMapEditingRequested="CancelSeatMapEditing"
           PrintSeatChartRequested="PrintSeatChart"
@@ -20,6 +19,7 @@
           DeleteSeatGridRowRequested="DeleteSeatGridRow"
           DeleteSeatGridColumnRequested="DeleteSeatGridColumn"
           DeleteSeatRequested="DeleteSeat"
+          DeleteSeatComputerRequested="DeleteSeatComputer"
           ClearSeatVeyonTargetRequested="ClearSeatVeyonTarget"
           OpenInitialSeatGridConflictLocationRequested="OpenInitialSeatGridConflictLocation"
           AddSeatGridRowRequested="AddSeatGridRow"
@@ -91,6 +91,10 @@
             ReviewStudentUpdateIdentityRequested="ReviewStudentUpdateIdentity"
             ExportStudentUpdatePerformanceReportRequested="ExportStudentUpdatePerformanceReport"
             ExportMaintenanceEventReportRequested="ExportMaintenanceEventReport"
+            RefreshPolicyTrustRotationDraftRequested="RefreshPolicyTrustRotationDraft"
+            CreatePolicyTrustRotationDraftRequested="CreatePolicyTrustRotationDraft"
+            ActivatePolicyTrustRotationDraftRequested="ActivatePolicyTrustRotationDraft"
+            ClearPolicyTrustRotationDraftRequested="ClearPolicyTrustRotationDraft"
             RecheckStudentUpdateResultRequested="RecheckStudentUpdateResult" />
       </StackPanel>
     </DataTemplate>
@@ -101,7 +105,11 @@
             DownloadTeacherUpdateRequested="DownloadTeacherUpdate"
             ExportOfflineTeacherUpdateRequested="ExportOfflineTeacherUpdate"
             VerifyOfflineTeacherUpdateRequested="VerifyOfflineTeacherUpdate"
-            InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate" />
+            InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
+            RefreshPolicyTrustRotationDraftRequested="RefreshPolicyTrustRotationDraft"
+            CreatePolicyTrustRotationDraftRequested="CreatePolicyTrustRotationDraft"
+            ActivatePolicyTrustRotationDraftRequested="ActivatePolicyTrustRotationDraft"
+            ClearPolicyTrustRotationDraftRequested="ClearPolicyTrustRotationDraft"            />
       </StackPanel>
     </DataTemplate>
     <DataTemplate x:Key="ClassroomPageTemplate" x:DataType="vm:TeacherViewModel">

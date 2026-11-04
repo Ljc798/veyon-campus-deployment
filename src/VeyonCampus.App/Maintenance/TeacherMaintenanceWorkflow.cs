@@ -571,3 +571,74 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
         return normalized.Length > 512 ? normalized[..512] : normalized;
     }
 }
+
+/// <summary>
+/// Builds the anonymous rollout report from unified maintenance workflow results. This lives in
+/// the Maintenance layer so the ViewModel stays a thin entry point: the UI only supplies target
+/// normalisation and its per-device row projection through delegates.
+/// </summary>
+public sealed record TeacherMaintenanceReportRow(
+    StudentUpdateEnvironmentCategories? Environment,
+    IReadOnlyList<StudentUpdatePhaseTiming> Phases);
+
+public static class TeacherMaintenancePerformanceReportFactory
+{
+    public static StudentUpdatePerformanceReport Create(DateTimeOffset startedUtc,
+        long rolloutDurationMilliseconds, IReadOnlyCollection<string> selectedTargets,
+        IReadOnlyList<TeacherMaintenanceTargetResult> results,
+        Func<string, string> normalizeTargetKey,
+        Func<string, TeacherMaintenanceReportRow?> findRow)
+    {
+        ArgumentNullException.ThrowIfNull(selectedTargets);
+        ArgumentNullException.ThrowIfNull(results);
+        ArgumentNullException.ThrowIfNull(normalizeTargetKey);
+        ArgumentNullException.ThrowIfNull(findRow);
+
+        var distinctResults = results.GroupBy(item => normalizeTargetKey(item.Target),
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Last()).ToArray();
+        var samples = distinctResults.Select(outcome =>
+        {
+            var row = findRow(outcome.Target);
+            var attempted = outcome.Result?.StudentSetupUpdateAttempted == true;
+            var sampleOutcome = outcome.State switch
+            {
+                MaintenanceRunState.Completed => "succeeded",
+                MaintenanceRunState.RolledBack => "rolledBack",
+                MaintenanceRunState.Failed when attempted => "failed",
+                _ => "needsReview"
+            };
+            return new StudentUpdatePerformanceSample(sampleOutcome, attempted,
+                outcome.Result?.VerifiedCurrentVersions?.StudentSetupVersion ??
+                outcome.CurrentVersions?.StudentSetupVersion,
+                outcome.Result?.VerifiedCurrentVersions?.AgentRuntimeVersion ??
+                outcome.CurrentVersions?.AgentRuntimeVersion,
+                row?.Environment ?? StudentUpdateEnvironmentCategories.Unknown,
+                row?.Phases ?? Array.Empty<StudentUpdatePhaseTiming>());
+        }).ToArray();
+        var targetVersion = distinctResults.Select(item => item.TargetVersions?.StudentSetupVersion)
+            .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version));
+        var alreadyCurrent = distinctResults.Count(item => item.State == MaintenanceRunState.Completed &&
+            item.Result?.StudentSetupUpdateAttempted != true);
+        var preflightFailure = distinctResults.Count(item => item.State is MaintenanceRunState.Failed or
+            MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired &&
+            item.Result?.StudentSetupUpdateAttempted != true);
+        var unresolved = distinctResults.Count(item => item.State is MaintenanceRunState.PendingVerification or
+            MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
+            MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing or
+            MaintenanceRunState.MaintenanceServiceHealthVerified);
+        var reportedTargets = distinctResults.Select(item => normalizeTargetKey(item.Target))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var notStarted = selectedTargets.Select(normalizeTargetKey).Distinct(StringComparer.OrdinalIgnoreCase)
+            .Count(target => !reportedTargets.Contains(target));
+        var completedUtc = DateTimeOffset.UtcNow;
+        if (completedUtc < startedUtc) completedUtc = startedUtc;
+        var rolloutId = distinctResults.Select(item => item.RolloutId)
+            .FirstOrDefault(id => id is not null) ?? Guid.NewGuid();
+        return StudentUpdatePerformanceReportBuilder.Create(rolloutId, startedUtc, completedUtc,
+            Math.Max(0, rolloutDurationMilliseconds), targetVersion, selectedTargets.Count,
+            alreadyCurrent, preflightFailure, notStarted, unresolved,
+            teacherCachePreparationRequired: true,
+            new StudentUpdatePerformancePreparation(null, null, null, null, null, null), samples);
+    }
+}

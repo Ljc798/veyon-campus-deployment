@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=56">
-  <script src="/app.js?v=56" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=57">
+  <script src="/app.js?v=57" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -142,6 +142,14 @@
           <div class="policy-page-heading">
             <p class="eyebrow">VEYON CAMPUS · 电脑目录</p>
             <h2>学生电脑</h2>
+          </div>
+          <div id="directory-health" class="directory-health" role="status" aria-live="polite" data-state="ok">
+            <div class="directory-health-head">
+              <span id="directory-health-badge" class="directory-health-badge">正在核对</span>
+              <span id="directory-health-count" class="directory-health-count"></span>
+            </div>
+            <p id="directory-health-message" class="directory-health-message">正在读取教师电脑的 Veyon 地点…</p>
+            <p id="directory-health-hint" class="directory-health-hint hidden"></p>
           </div>
           <div id="directory-room-picker" class="room-picker hidden">
             <label for="directory-room-select">地点

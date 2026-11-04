@@ -14,6 +14,9 @@ public sealed record VeyonNetworkComputer(string ComputerName, string Host, stri
 
 public sealed record VeyonNetworkObject(string Type, string Name, string Host, string Mac, string Location,
     Guid ObjectId = default, Guid ParentObjectId = default);
+/// <summary>Outcome of deleting exactly one Veyon computer object by UUID.</summary>
+public sealed record VeyonComputerRemovalResult(string ComputerName, string HostAddress,
+    string Location, int RemainingComputerCount);
 public sealed record VeyonDirectorySnapshot(string ConfigFingerprint,
     IReadOnlyList<VeyonNetworkObject> Objects);
 internal sealed record VeyonConfigurationExport(string CliPath, string WorkingDirectory, byte[] Bytes);
@@ -296,6 +299,54 @@ public static class VeyonNetworkObjectDirectory
         }
     }
 
+    /// <summary>
+    /// Removes exactly one Veyon computer object by UUID. Verifies before and after the write;
+    /// never removes a location, another computer, or an object identified only by display name.
+    /// </summary>
+    public static VeyonComputerRemovalResult RemoveComputer(Guid objectId)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("只有 Windows 教师端可以修改 Veyon 目录。");
+        if (objectId == Guid.Empty)
+            throw new InvalidOperationException("缺少有效的 Veyon 电脑 UUID；没有删除任何内容。");
+
+        using var mutationGate = VeyonDirectoryMutationGate.Acquire();
+        var cliPath = ResolveCliPathOrThrow("networkobjects remove");
+        var workingDirectory = Path.GetDirectoryName(cliPath) ??
+            throw new InvalidOperationException("无法确定 Veyon CLI 工作目录。");
+
+        var before = ReadDirectorySnapshot();
+        var matches = before.Objects.Where(item =>
+            item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+            item.ObjectId == objectId).ToArray();
+        if (matches.Length != 1)
+            throw new InvalidOperationException("Veyon 目录里找不到唯一匹配的电脑对象；没有删除任何内容。");
+        var target = matches[0];
+        var beforeIds = before.Objects.Where(item =>
+            item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.ObjectId).ToHashSet();
+
+        var runner = new ProcessRunner();
+        runner.Run(cliPath, ["networkobjects", "remove", objectId.ToString("D")],
+            workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
+        if (runner.ExitCode is not 0)
+            throw new InvalidOperationException(
+                $"Veyon 删除电脑失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+
+        var after = ReadDirectorySnapshot();
+        if (after.Objects.Any(item => item.ObjectId == objectId))
+            throw new InvalidOperationException("删除后仍能读到该电脑 UUID；请核对 Veyon 目录，教师端不会重复删除。");
+        var afterIds = after.Objects.Where(item =>
+            item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.ObjectId).ToHashSet();
+        if (afterIds.Count != beforeIds.Count - 1 || afterIds.Any(id => !beforeIds.Contains(id)))
+            throw new InvalidOperationException("删除后的 Veyon 电脑名单与预期不一致；请导出配置备份并核对目录。");
+
+        LastReadDiagnostic = VeyonDirectoryReadDiagnostic.Success(cliPath, "networkobjects remove",
+            after.ConfigFingerprint);
+        return new VeyonComputerRemovalResult(target.Name, target.Host, target.Location, afterIds.Count);
+    }
+
     /// <summary>Reads Veyon objects with their stable UUIDs and a fingerprint of the exact config export.</summary>
     public static VeyonDirectorySnapshot ReadDirectorySnapshot()
     {
@@ -345,10 +396,21 @@ public static class VeyonNetworkObjectDirectory
         return ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!);
     }
 
+    private static volatile int _lastIdenticalDuplicateObjectCount;
+
+    /// <summary>
+    /// Number of identical duplicate rows collapsed by the most recent ParseNetworkObjectsDump call.
+    /// Veyon 4.x can persist the very same location object twice in JsonStoreArray; the
+    /// config-export reader already de-duplicates such entries, so the dump reader does the same.
+    /// Entries sharing a UUID but differing in content are still rejected as a real conflict.
+    /// </summary>
+    public static int LastIdenticalDuplicateObjectCount => _lastIdenticalDuplicateObjectCount;
+
     /// <summary>Parses the bordered table printed by `veyon-cli networkobjects dump`.</summary>
     public static IReadOnlyList<VeyonNetworkObject> ParseNetworkObjectsDump(string output)
     {
         ArgumentNullException.ThrowIfNull(output);
+        _lastIdenticalDuplicateObjectCount = 0;
         var lines = output.Replace("\r\n", "\n", StringComparison.Ordinal).Split('\n');
         var rulerIndex = Array.FindIndex(lines, IsNetworkObjectsRuler);
         if (rulerIndex < 0)
@@ -362,8 +424,11 @@ public static class VeyonNetworkObjectDirectory
             throw new InvalidDataException("Veyon 电脑目录清单列格式无法识别。");
 
         var objects = new List<VeyonNetworkObject>();
-        var objectIds = new HashSet<Guid>();
+        // Value = the identity of every other column. A repeated UUID is only safe to collapse
+        // when the whole row is identical, matching ParseConfigurationDirectory's semantics.
+        var objectIds = new Dictionary<Guid, string>();
         var foundEnd = false;
+        var identicalDuplicates = 0;
         for (var lineIndex = rulerIndex + 3; lineIndex < lines.Length; lineIndex++)
         {
             var line = lines[lineIndex];
@@ -379,16 +444,32 @@ public static class VeyonNetworkObjectDirectory
                 throw new InvalidDataException("Veyon 电脑目录清单行格式无法识别。");
 
             var fields = ParseNetworkObjectsRow(line, boundaries);
-            if (!Guid.TryParse(fields[0], out var objectId) || objectId == Guid.Empty ||
-                !objectIds.Add(objectId))
-                throw new InvalidDataException("Veyon 电脑目录对象标识无效或重复。");
+            if (!Guid.TryParse(fields[0], out var objectId) || objectId == Guid.Empty)
+                throw new InvalidDataException("Veyon 电脑目录对象标识无效（缺少有效 UUID）。");
+            var identity = string.Join("\u001f", fields.Skip(1));
+            if (objectIds.TryGetValue(objectId, out var existingIdentity))
+            {
+                if (!string.Equals(existingIdentity, identity, StringComparison.Ordinal))
+                    throw new InvalidDataException(
+                        $"Veyon 电脑目录里同一个对象 UUID 出现了多次且内容不一致（UUID {objectId:D}，类型 {fields[2].Trim()}，名称「{fields[3].Trim()}」）：" +
+                        "已停止读取，避免把电脑绑定到错误地点。请先导出并备份 Veyon 配置，核对 BuiltinDirectory/NetworkObjects/JsonStoreArray 中该 UUID 的条目；教师端不会自动删除或合并 Veyon 对象。");
+                identicalDuplicates++;
+                continue;
+            }
+            objectIds.Add(objectId, identity);
             var parentObjectId = Guid.Empty;
             if (fields[1].Length > 0 && !Guid.TryParse(fields[1], out parentObjectId))
                 throw new InvalidDataException("Veyon 电脑目录地点标识无效。");
 
             var typeLabel = fields[2];
+            // Veyon 4.11.2 prints a top-level Location with an all-zero Parent UUID and empty
+            // Host/MAC columns. It is a real Location object (name-derived UUID), not the Root
+            // pseudo-row: dropping it leaves every computer with an unresolvable parent UUID,
+            // which marks the whole device directory as conflicting and blocks seat/Veyon sync.
+            // Only genuine Root rows and unrecognised rows without Host/MAC are excluded.
             if (IsRootTypeLabel(typeLabel) ||
-                (parentObjectId == Guid.Empty && fields[4].Length == 0 && fields[5].Length == 0))
+                (!IsLocationTypeLabel(typeLabel) && !IsComputerTypeLabel(typeLabel) &&
+                 parentObjectId == Guid.Empty && fields[4].Length == 0 && fields[5].Length == 0))
                 continue;
             var type = IsLocationTypeLabel(typeLabel) ? "location" :
                 IsComputerTypeLabel(typeLabel) ? "computer" :
@@ -402,6 +483,7 @@ public static class VeyonNetworkObjectDirectory
 
         if (!foundEnd)
             throw new InvalidDataException("Veyon 电脑目录清单不完整。");
+        _lastIdenticalDuplicateObjectCount = identicalDuplicates;
         var locationNames = objects.Where(item => item.Type.Equals("location", StringComparison.OrdinalIgnoreCase))
             .ToDictionary(item => item.ObjectId, item => item.Name);
         return Array.AsReadOnly(objects.Select(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)
@@ -442,7 +524,9 @@ public static class VeyonNetworkObjectDirectory
                     .Where(group => group.Count() > 1).Select(group => group.Key).ToArray();
                 if (duplicateTargets.Length > 0)
                     throw new InvalidDataException(
-                        $"Veyon 地点“{pair.Key}”导出包含重复 Host/电脑目标：{string.Join("、", duplicateTargets.Take(5))}。目录读取未应用，请先核对 Veyon。");
+                        $"Veyon 地点“{pair.Key}”导出包含重复 Host/电脑目标：{string.Join("、", duplicateTargets.Take(5))}。" +
+                        "若 Veyon 配置器里有两个同名地点且电脑完全一样，通常是同一对象被重复引用（删一个会两个一起消失）；" +
+                        "请先导出并备份 Veyon 配置再核对重复对象。目录读取未应用。");
                 var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var computer in computers)
                 {
@@ -638,103 +722,103 @@ public static class VeyonNetworkObjectDirectory
                 LocationCreated: false, AssociatedExisting: namedMatches,
                 AddedComputerTargets: Array.Empty<VeyonAddedComputerTarget>());
 
-        var importPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-room-{Guid.NewGuid():N}.txt");
         var locationCreated = false;
-        try
+        var runner = new ProcessRunner();
+        var existingLocationIds = current.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase))
+            .Select(item => item.ObjectId).ToArray();
+        var locationId = existingLocationIds.Length == 1 ? existingLocationIds[0] : Guid.Empty;
+
+        if (locationId == Guid.Empty)
         {
-            var importText = string.Join(Environment.NewLine,
-                preview.ComputersToAdd.Select(FormatComputerImportRecord));
-            File.WriteAllText(importPath, importText + Environment.NewLine,
-                new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-
-            var runner = new ProcessRunner();
-            if (!preview.LocationExists)
-            {
-                runner.Run(cliPath, ["networkobjects", "add", "location", locationName],
-                    workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
-                if (runner.ExitCode is not 0)
-                    throw new InvalidOperationException($"创建 Veyon 地点失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
-                locationCreated = true;
-            }
-
-            try
-            {
-                runner.Run(cliPath,
-                    ["networkobjects", "import", importPath, "location", locationName, "format", ImportFormat],
-                    workingDirectory, TimeSpan.FromSeconds(90), outputLimitChars: 16384);
-            }
-            catch (Exception exception)
-            {
-                throw new InvalidOperationException(
-                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入状态未确认；控制台下次操作会先重读目录，请勿重复执行其他导入：{exception.Message}", exception);
-            }
+            runner.Run(cliPath, ["networkobjects", "add", "location", locationName],
+                workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
             if (runner.ExitCode is not 0)
-                throw new InvalidOperationException(
-                    $"地点“{locationName}”已{(locationCreated ? "创建" : "复用")}，但电脑清单导入失败；请返回教师控制台重试，控制台会先读取现有目录（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
-
-            IReadOnlyList<VeyonNetworkObject> after;
-            try { after = ReadNetworkObjects(cliPath, workingDirectory); }
-            catch (Exception exception)
-            {
-                throw new InvalidOperationException(
-                    $"地点“{locationName}”和新增电脑已提交，但教师控制台暂时无法读回核对；请稍后在教师控制台重新执行，系统会先读取现有目录：{exception.Message}", exception);
-            }
-            var locationMatches = after.Where(item =>
+                throw new InvalidOperationException($"创建 Veyon 地点失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+            locationCreated = true;
+            var created = ReadNetworkObjects(cliPath, workingDirectory);
+            var createdMatches = created.Where(item =>
                 item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (locationMatches.Length != 1 || locationMatches[0].ObjectId == Guid.Empty)
-                throw new InvalidDataException("地点操作已提交，但读回时地点对象 UUID 不唯一；请人工核对 Veyon 目录。");
-            var locationObject = locationMatches[0];
-            var beforeIds = current.Select(item => item.ObjectId).ToHashSet();
-            var addedTargets = new List<VeyonAddedComputerTarget>(preview.ComputersToAdd.Count);
-            foreach (var computer in preview.ComputersToAdd)
-            {
-                var expectedHost = VeyonHostAddress.NormalizeOverride(computer.Host);
-                var matches = after.Where(item =>
-                {
-                    if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
-                        item.ParentObjectId != locationObject.ObjectId ||
-                        !string.Equals(item.Name, computer.DisplayName, StringComparison.Ordinal))
-                        return false;
-                    try
-                    {
-                        return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
-                            StringComparison.OrdinalIgnoreCase);
-                    }
-                    catch (InvalidDataException) { return false; }
-                }).ToArray();
-                if (matches.Length != 1 || matches[0].ObjectId == Guid.Empty ||
-                    beforeIds.Contains(matches[0].ObjectId))
-                    throw new InvalidDataException(
-                        $"地点操作已提交，但新增电脑“{computer.DisplayName}”未获得唯一的新 UUID 读回确认；请人工核对 Veyon 目录。");
-                addedTargets.Add(new VeyonAddedComputerTarget(computer.DisplayName, expectedHost,
-                    matches[0].ObjectId, locationObject.ObjectId, locationObject.Name));
-            }
-
-            foreach (var existing in namedMatches)
-            {
-                var matches = after.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                    item.ObjectId == existing.ObjectId && item.ParentObjectId == existing.ParentObjectId &&
-                    string.Equals(item.Name, existing.ComputerName, StringComparison.Ordinal) &&
-                    string.Equals(item.Location, existing.Location, StringComparison.OrdinalIgnoreCase) &&
-                    string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), existing.Host,
-                        StringComparison.OrdinalIgnoreCase)).ToArray();
-                if (matches.Length != 1)
-                    throw new InvalidDataException(
-                        $"地点操作已提交，但已存在电脑“{existing.ComputerName}”的 UUID/Host/地点读回不一致；请人工核对目录。");
-            }
-
-            return new VeyonLocationImportResult(locationName, computers.Count,
-                computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
-                preview.ComputersToAdd.Count, preview.SkippedComputers.Count, locationCreated,
-                namedMatches, Array.AsReadOnly(addedTargets.ToArray()));
+            if (createdMatches.Length != 1 || createdMatches[0].ObjectId == Guid.Empty)
+                throw new InvalidDataException("地点已创建，但读回 UUID 不唯一；请人工核对 Veyon 目录。");
+            locationId = createdMatches[0].ObjectId;
         }
-        finally
+
+        // Veyon 4.11.2 `networkobjects import ... location <name>` resolves the parent with
+        // findByName() and, on a miss, appends a NEW Location object. Location UUIDs are
+        // name-derived, so the appended object has the SAME UUID as the existing one and
+        // Veyon Configurator then shows two identical rooms. Adding each computer with an
+        // explicit parent UUID uses findNetworkObject() and never creates a location.
+        foreach (var computer in preview.ComputersToAdd)
         {
-            try { if (File.Exists(importPath)) File.Delete(importPath); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
+            runner.Run(cliPath,
+                ["networkobjects", "add", "computer", computer.DisplayName,
+                    computer.Host, "", locationId.ToString("D")],
+                workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
+            if (runner.ExitCode is not 0)
+                throw new InvalidOperationException(
+                    $"添加电脑“{computer.DisplayName}”失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}。" +
+                    "地点对象未被修改；请返回教师控制台重试，系统会先读取现有目录。");
         }
+
+        IReadOnlyList<VeyonNetworkObject> after;
+        try { after = ReadNetworkObjects(cliPath, workingDirectory); }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException(
+                $"地点“{locationName}”和新增电脑已提交，但教师控制台暂时无法读回核对；请稍后在教师控制台重新执行，系统会先读取现有目录：{exception.Message}", exception);
+        }
+        var locationMatches = after.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (locationMatches.Length != 1 || locationMatches[0].ObjectId == Guid.Empty)
+            throw new InvalidDataException("地点操作已提交，但读回时地点对象 UUID 不唯一；请人工核对 Veyon 目录。");
+        var locationObject = locationMatches[0];
+        var beforeIds = current.Select(item => item.ObjectId).ToHashSet();
+        var addedTargets = new List<VeyonAddedComputerTarget>(preview.ComputersToAdd.Count);
+        foreach (var computer in preview.ComputersToAdd)
+        {
+            var expectedHost = VeyonHostAddress.NormalizeOverride(computer.Host);
+            var matches = after.Where(item =>
+            {
+                if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
+                    item.ParentObjectId != locationObject.ObjectId ||
+                    !string.Equals(item.Name, computer.DisplayName, StringComparison.Ordinal))
+                    return false;
+                try
+                {
+                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
+                        StringComparison.OrdinalIgnoreCase);
+                }
+                catch (InvalidDataException) { return false; }
+            }).ToArray();
+            if (matches.Length != 1 || matches[0].ObjectId == Guid.Empty ||
+                beforeIds.Contains(matches[0].ObjectId))
+                throw new InvalidDataException(
+                    $"地点操作已提交，但新增电脑“{computer.DisplayName}”未获得唯一的新 UUID 读回确认；请人工核对 Veyon 目录。");
+            addedTargets.Add(new VeyonAddedComputerTarget(computer.DisplayName, expectedHost,
+                matches[0].ObjectId, locationObject.ObjectId, locationObject.Name));
+        }
+
+        foreach (var existing in namedMatches)
+        {
+            var matches = after.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                item.ObjectId == existing.ObjectId && item.ParentObjectId == existing.ParentObjectId &&
+                string.Equals(item.Name, existing.ComputerName, StringComparison.Ordinal) &&
+                string.Equals(item.Location, existing.Location, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), existing.Host,
+                    StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1)
+                throw new InvalidDataException(
+                    $"地点操作已提交，但已存在电脑“{existing.ComputerName}”的 UUID/Host/地点读回不一致；请人工核对目录。");
+        }
+
+        return new VeyonLocationImportResult(locationName, computers.Count,
+            computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
+            preview.ComputersToAdd.Count, preview.SkippedComputers.Count, locationCreated,
+            namedMatches, Array.AsReadOnly(addedTargets.ToArray()));
     }
 
     private static void ValidateImportPlan(string locationName, IReadOnlyList<VeyonNetworkComputer> computers)

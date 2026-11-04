@@ -34,6 +34,7 @@ let accessToken = null;
 let connectionAttemptInFlight = false;
 let serverClockOffsetMs = 0;
 let rooms = [];
+let directoryLoadError = "";
 let policyPageMode = "directory";
 let selectedComputerTarget = null;
 let computerDirectoryScrollY = null;
@@ -1234,7 +1235,57 @@ function duplicateDirectoryRoomIndexes() {
     .flat());
 }
 
+/**
+ * Single source of truth for directory-level state on the phone. Previously the same
+ * duplicate-location warning was rendered in the room picker, summary and grid; keeping
+ * one card avoids three copies of the same paragraph on one small screen.
+ */
+function renderDirectoryHealth() {
+  const card = $("directory-health");
+  const badge = $("directory-health-badge");
+  const count = $("directory-health-count");
+  const message = $("directory-health-message");
+  const hint = $("directory-health-hint");
+  if (!card || !badge || !count || !message || !hint) return;
+  const duplicateRooms = duplicateDirectoryRoomIndexes().size;
+  const duplicateTargets = duplicateDirectoryTargets().size;
+  const totalTargets = rooms.reduce((sum, room) =>
+    sum + (Array.isArray(room.targets) ? room.targets.length : 0), 0);
+  count.textContent = rooms.length ? `${rooms.length} 个地点 · ${totalTargets} 台电脑` : "";
+  let state = "ok";
+  let label = "目录已核对";
+  let text = "学生电脑名单来自教师电脑的 Veyon 目录，可用于课堂管控。";
+  let tip = "教室或电脑有变动时，点下方「刷新电脑名单」重新读取。";
+  if (directoryLoadError) {
+    state = "warn";
+    label = "名单待核对";
+    text = directoryLoadError;
+    tip = "点「刷新电脑名单」重试；若持续失败，在教师电脑的「地点与学生名单」页查看完整诊断并重新读取目录。";
+  } else if (!rooms.length) {
+    state = "error";
+    label = "名单暂不可用";
+    text = "没有读到 Veyon 地点：可能尚未配置，或教师端目录仍在读取 / 处于只读回退。";
+    tip = "点「刷新电脑名单」重试；若仍为空，在教师电脑的「地点与学生名单」页查看完整诊断，修复后再重新读取。";
+  } else if (duplicateRooms) {
+    state = "warn";
+    label = "地点名称重复";
+    text = `Veyon 中有 ${duplicateRooms} 个同名地点，按名称无法判断对应哪份座位图，这些地点已停用。`;
+    tip = "通常是同一地点对象被重复写入。请先导出 Veyon 配置备份，按 UUID 核对后再清理或重命名；不要在未备份时直接删除，教师端不会自动删除或合并 Veyon 对象。";
+  } else if (duplicateTargets) {
+    state = "warn";
+    label = "电脑名单有冲突";
+    text = `有 ${duplicateTargets} 台电脑同时出现在多个地点，这些电脑的限制已停用。`;
+    tip = "请在教师电脑核对 Veyon 地点与电脑归属后重新读取；不要把同一台电脑留在多个地点。";
+  }
+  card.dataset.state = state;
+  badge.textContent = label;
+  message.textContent = text;
+  hint.textContent = tip;
+  hint.classList.remove("hidden");
+}
+
 function renderComputerDirectory() {
+  renderDirectoryHealth();
   const selector = $("directory-room-select");
   const picker = $("directory-room-picker");
   const roomSummary = $("directory-room-summary");
@@ -1245,7 +1296,7 @@ function renderComputerDirectory() {
   if (!rooms.length) {
     picker.classList.add("hidden");
     roomSummary.classList.remove("hidden");
-    roomSummary.textContent = "未配置教室；请在教师电脑的“地点与学生名单”中添加地点，再重新读取电脑名单。";
+    roomSummary.textContent = "当前没有可用地点；请查看上方目录状态。";
     selector.disabled = true;
     if (selectedComputerTarget) {
       selectedComputerTarget = null;
@@ -1257,25 +1308,22 @@ function renderComputerDirectory() {
     selector.append(option);
     const empty = document.createElement("p");
     empty.className = "computer-directory-empty";
-    empty.textContent = "当前没有可用地点，请在教师电脑确认电脑名单后刷新。";
+    empty.textContent = "这里暂时没有可操作的电脑；请按上方提示在教师电脑核对目录，再点「刷新电脑名单」。";
     grid.append(empty);
     return;
   }
 
   const duplicateRoomIndexes = duplicateDirectoryRoomIndexes();
   selector.disabled = false;
-  if (rooms.length === 1) {
-    picker.classList.add("hidden");
-    roomSummary.classList.remove("hidden");
-  } else {
-    picker.classList.remove("hidden");
-    roomSummary.classList.add("hidden");
-  }
+  if (rooms.length === 1) picker.classList.add("hidden");
+  else picker.classList.remove("hidden");
+  // Keep the active location visible even with a picker, so cards are never ambiguous.
+  roomSummary.classList.remove("hidden");
   rooms.forEach((room, index) => {
     const option = document.createElement("option");
     option.value = String(index);
     option.textContent = duplicateRoomIndexes.has(index)
-      ? `${room.name || "未命名地点"} · 地点名称重复`
+      ? `${room.name || "未命名地点"} · 同名地点（已停用）`
       : `${room.name || "未命名地点"} · ${(room.targets || []).length} 台`;
     option.disabled = duplicateRoomIndexes.has(index);
     selector.append(option);
@@ -1290,11 +1338,11 @@ function renderComputerDirectory() {
     selector.disabled = true;
     selector.selectedIndex = -1;
     roomSummary.classList.remove("hidden");
-    roomSummary.textContent = "地点名称有重复，无法确认要操作哪个地点；请先在教师电脑修正地点名称。";
-    const warning = document.createElement("p");
-    warning.className = "computer-directory-warning";
-    warning.textContent = roomSummary.textContent;
-    grid.append(warning);
+    roomSummary.textContent = "所有地点都因同名被停用，暂时无法操作；详见上方目录状态。";
+    const empty = document.createElement("p");
+    empty.className = "computer-directory-empty";
+    empty.textContent = "先按上方提示处理 Veyon 里的重复地点，再刷新电脑名单。";
+    grid.append(empty);
     return;
   }
   selector.value = String(selectedRoomIndex);
@@ -1306,14 +1354,7 @@ function renderComputerDirectory() {
     selectedComputerTarget = null;
     if (policyPageMode === "single") setPolicyPageMode("directory");
   }
-  if (rooms.length === 1)
-    roomSummary.textContent = `当前教室：${selectedDirectoryRoomName}`;
-  if (duplicateRoomIndexes.size) {
-    const warning = document.createElement("p");
-    warning.className = "computer-directory-warning";
-    warning.textContent = "部分地点名称重复，已停用这些地点；请在教师电脑修改名称后重新读取。";
-    grid.append(warning);
-  }
+  roomSummary.textContent = `当前教室：${selectedDirectoryRoomName} · ${(room.targets || []).length} 台电脑`;
   const duplicates = duplicateDirectoryTargets();
   const allTargets = Array.isArray(room.targets) ? room.targets : [];
   const query = ($("directory-search")?.value || "").trim().toLocaleLowerCase();
@@ -2414,8 +2455,10 @@ async function loadDashboard() {
   ]);
   if (roomsResult.status === "fulfilled" && Array.isArray(roomsResult.value)) {
     rooms = roomsResult.value;
+    directoryLoadError = "";
   } else {
     rooms = [];
+    directoryLoadError = "教师端暂时没有返回电脑名单；可能是 Veyon 目录仍在读取或处于只读回退。";
     loadWarnings.push("学生电脑名单暂不可用，请稍后刷新。");
   }
   if (websiteListsResult.status === "rejected" || websiteListsResult.value !== true)
@@ -3923,17 +3966,21 @@ $("pair-form").addEventListener("submit", pair);
 $("refresh-rooms").addEventListener("click", async () => {
   try {
     rooms = await api("/api/rooms");
+    directoryLoadError = "";
     renderRooms(true);
     latestStatusByTarget.clear();
     await refreshStatusIfSelected();
     toast("学生电脑名单已刷新。");
-  } catch { toast("暂时无法刷新学生电脑名单，请稍后重试。"); }
+  } catch { directoryLoadError = "最近一次刷新失败，请重试或查看教师电脑的目录诊断。"; toast("暂时无法刷新学生电脑名单，请稍后重试。"); }
 });
 $("refresh-computer-directory").addEventListener("click", async () => {
   const button = $("refresh-computer-directory");
+  const originalLabel = button.textContent;
   button.disabled = true;
+  button.textContent = "正在刷新…";
   try {
     rooms = await api("/api/rooms");
+    directoryLoadError = "";
     renderRooms(true);
     if (policyPageMode === "directory") await refreshVisibleDirectoryStatuses(false);
     const targetStillListed = !selectedComputerTarget || rooms.some(room =>
@@ -3959,8 +4006,12 @@ $("refresh-computer-directory").addEventListener("click", async () => {
       }
       toast("电脑名单已刷新。");
     }
-  } catch { toast("暂时无法刷新电脑名单，请稍后重试。"); }
-  finally { button.disabled = false; }
+  } catch {
+    directoryLoadError = "最近一次刷新失败，下面显示的是上次读到的名单。";
+    renderComputerDirectory();
+    toast("暂时无法刷新电脑名单，请稍后重试。");
+  }
+  finally { button.disabled = false; button.textContent = originalLabel; }
 });
 $("directory-room-select").addEventListener("change", () => {
   const room = rooms[Number($("directory-room-select").value)];

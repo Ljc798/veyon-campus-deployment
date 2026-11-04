@@ -98,6 +98,20 @@
                 <Button Classes="secondary" Content="仅同步教师连接配置" Click="RequestSyncStudentConfiguration"
                         IsEnabled="{Binding CanSyncStudentConfiguration}" Margin="0,0,8,6" />
               </WrapPanel>
+              <Border Classes="subtle-panel" Margin="0,8,0,0">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="策略信任根轮换（高级）" Classes="component-title" />
+                  <TextBlock Text="创建草稿 → 生成含授权的配置包并分发 → 全部设备确认新根后再激活候选根。旧根在候选阶段保持活动；不要在学生端完成更新前退休旧根。"
+                             Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="{Binding PolicyTrustRotationStatus}" Classes="muted" TextWrapping="Wrap" />
+                  <WrapPanel Orientation="Horizontal">
+                    <Button Classes="secondary" Content="查看草稿状态" Click="RequestRefreshPolicyTrustRotationDraft" Margin="0,0,8,6" />
+                    <Button Classes="secondary" Content="创建轮换草稿" Click="RequestCreatePolicyTrustRotationDraft" Margin="0,0,8,6" />
+                    <Button Classes="secondary" Content="激活候选根" Click="RequestActivatePolicyTrustRotationDraft" Margin="0,0,8,6" />
+                    <Button Classes="secondary" Content="清理草稿" Click="RequestClearPolicyTrustRotationDraft" Margin="0,0,8,6" />
+                  </WrapPanel>
+                </StackPanel>
+              </Border>
             </StackPanel>
           </Expander>
           <Border x:Name="ConfigurationSyncSection" Classes="subtle-panel">

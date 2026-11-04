@@ -1,10 +1,22 @@
 # Veyon Campus — Maintenance 最终实施计划（Goals · Plan · Issues 001–009）
 
-> **最终版 · 2026-11-02 · 供 Codex 逐项执行** · 源码核对基线：`develop@930af1a516d51f9f1c35aa1d674f06ed568b1723`（2026-11-02）
+> **规范基线版 · 初稿 2026-11-02 · 最近校准 2026-11-04** · 历史审查基线：`develop@930af1a516d51f9f1c35aa1d674f06ed568b1723`（2026-11-02）；校准时工作区 HEAD：`3be164751777247e058c432bdf8bed5b93422cef`（2026-11-04 20:28 校准）。`930af1a` 只用于对比历史源码结论，**任何修复与验收以执行时的实际 HEAD 和真实测试结果为准**。
 > 目标：将「教师端更新 + 学生端更新 + 校区配置同步 + 故障修复」整理为可靠的维护体系；逐步引入独立于 Student Agent 的 Maintenance Service，保证后续课堂业务协议升级不再导致全校区人工重装。
 > **性质：计划与验收规范，不代表以下功能已经实现或完成实机验证。**
-> **合并范围：** 既有 Maintenance P0–P4 路线 + 用户提供的项目问题台账 `001–009`，包含稳定版升级版本错配、配置热更新、课堂验收、版本/恢复状态、失败回滚、连接诊断、切换前回执、未知目标版本和 AppLocker/Appx 覆盖。
+> **合并范围：** 既有 Maintenance P0–P4 路线 + 用户提供的项目问题台账 `001–009`，包含稳定版升级版本错配、配置热更新、课堂验收、版本/恢复状态、失败回滚、连接诊断、切换前回执、未知目标版本和 AppLocker/Appx 覆盖。**标题沿用 001–009 的历史命名；实际台账已扩展到 `001–012`，并由附录 A 补齐 LM / CM / P5 任务族，不在本文件之外的任何地方另立一套编号。**
 > **状态约束：** 静态审查不等于 Windows 实机复现；`930af1a` 已有若干兼容修复，禁止把旧结论当成最新事实；任何修复以当前 HEAD 和真实测试结果为准。
+
+### 文档分工与权威顺序（避免多份计划互相矛盾）
+
+| 文档 | 角色 | 权威范围 |
+| ---- | ---- | -------- |
+| **本文件** | **Goals、架构不变量、阶段出口、验收规范、各子任务的原始执行记录** | 判定「怎样算做完」；验收门槛、安全边界、T01–T40 用例定义以本文件为准 |
+| [完整实施计划（Codex 连续开发版）](VeyonCampus_Maintenance_%E5%AE%8C%E6%95%B4%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92_Codex%E8%BF%9E%E7%BB%AD%E5%BC%80%E5%8F%91%E7%89%88.md) | 2026-11-03 的**扩展执行稿**（001–012、LM / CM / P5、RC 交付、37 项任务表） | 扩展任务族的定义与连续执行顺序；本文件附录 A 与其保持一致 |
+| [连续实施进度](maintenance/implementation-progress.md) | **逐任务状态流水**（37 项、代码/自动化/VM/现场分列） | 判定「现在做到哪一步」；状态更新优先写这里 |
+| [项目问题记录 001–012](问题跟踪/README.md) | **问题证据台账** | 原始证据、时间线、复现条件、修复提交；不以计划替代台账 |
+| [课堂验收台账](maintenance/classroom-feature-acceptance.md)、[历史兼容矩阵](maintenance/legacy-compatibility-matrix.md)、[P0-02 自测清单](maintenance/P0-02-自测清单.md) | 专项证据 | 现场效果、历史版本读回、用户自测步骤 |
+
+**冲突处理：** 任务语义冲突时以本文件的 Goals / 不变量 / 验收门槛为准；任务清单范围以连续开发版为准；实时状态以进度日志为准；证据以问题台账为准。**唯一任务键是任务 ID（如 `P0-03`、`CM-02`），不是表格里的顺序号**——本文件第 10 节的 01–25 与进度日志的 01–37 编号不同，不得互换引用。
 
 ---
 
@@ -48,18 +60,72 @@
 
 ### Project Milestones 与阶段出口
 
-| 里程碑                       | 前置条件                                    | 可交付结果                                                 | 阻断条件                                   |
-| ---------------------------- | ------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------ |
-| **M0：旧架构可靠**           | 解决 001、002、005、007、008，建立 003 基线 | 旧升级、回滚和配置同步无伪成功；风险有证据                 | 未解决的 `recoveryRequired` 或关键版本错配 |
-| **M1：协调器可恢复**         | M0                                          | 逐设备状态机、持久化任务、诊断/版本独立展示，处理 004、006 | 教师端重启丢失事务或误下发                 |
-| **M1-S：AppLocker 独立验收** | 003 测试基线、001/005 更新安全              | 009 的设计、受限实现和 Windows 兼容矩阵                    | 未验证即开启大规模阻断/全盘策略            |
-| **M2：维护通道独立**         | M1                                          | Maintenance 与 Student Agent 解耦、独立签名操作            | Agent 停止导致 Maintenance 不可用          |
-| **M3：维护自身可修复**       | M2                                          | Maintenance 自更新/看门狗/断电回滚                         | 唯一恢复链依赖维护进程自身                 |
-| **M4：统一体验+灰度**        | M0–M3 + 课堂验收                            | 双入口 UI、设备分组 rollout、可审计发布                    | 未完成 VM、历史签名、安全及功能回归        |
+| 里程碑                       | 前置条件                                    | 可交付结果                                                 | 阻断条件                                   | 截至 2026-11-04 状态 |
+| ---------------------------- | ------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------ | --------------------- |
+| **M0：旧架构可靠**           | 解决 001、002、005、007、008，建立 003 基线 | 旧升级、回滚和配置同步无伪成功；风险有证据                 | 未解决的 `recoveryRequired` 或关键版本错配 | **未通过**：P0-02 `BLOCKED-BY-ENVIRONMENT`，001/002/005/007/008 多为 `FIXED-CODE`，缺 VM/故障注入证据 |
+| **M1：协调器可恢复**         | M0                                          | 逐设备状态机、持久化任务、诊断/版本独立展示，处理 004、006 | 教师端重启丢失事务或误下发                 | **代码已实施，出口未通过**：重启/并发/UI 场景 `TEST-DEFERRED` |
+| **M1-S：AppLocker 独立验收** | 003 测试基线、001/005 更新安全              | 009 的设计、受限实现和 Windows 兼容矩阵                    | 未验证即开启大规模阻断/全盘策略            | **仅范围澄清**：Edition 矩阵、真实阻断与恢复 `VM-PENDING` |
+| **M2：维护通道独立**         | M1                                          | Maintenance 与 Student Agent 解耦、独立签名操作            | Agent 停止导致 Maintenance 不可用          | **代码已接线，出口未通过**：服务安装、ACL、"Agent 停止仍可维护" 全待 VM |
+| **M3：维护自身可修复**       | M2                                          | Maintenance 自更新/看门狗/断电回滚                         | 唯一恢复链依赖维护进程自身                 | **代码已接线，出口未通过**：断电/强杀/旧版恢复矩阵未执行 |
+| **M4：统一体验+灰度**        | M0–M3 + 课堂验收                            | 双入口 UI、设备分组 rollout、可审计发布                    | 未完成 VM、历史签名、安全及功能回归        | **部分代码 + 规则已定**：Ring 0–3 `RING-PENDING`，UI/隐私/现场验收未做 |
+
+**「代码可并行、验收门槛不放行」规则（澄清计划与执行的表面冲突）：** 第 0 节要求按依赖顺序推进，P0-02 也写明「完成前不进入 P0-03」。实际执行中因测试与 Windows VM 由用户统一安排，代码与文档工作并未被环境阻塞项卡住，P0-03 起至 P4 乃至 LM / CM / P5 均已并行实施。这不代表依赖门槛被跳过：
+
+- **代码实施**允许在受阻项之外继续，但每项必须标注真实证据级别；
+- **阶段出口（M0–M4）**、生产发布、stable 晋级、真实校区推送**一律不因代码完成而放行**，仍按上表阻断条件逐条核验；
+- 因此上表所有里程碑均不得标记「通过」。进度日志中的「已实现 / 已接线」只描述代码状态，不构成阶段出口结论。
 
 ---
 
 ## 0. 给 Codex 的执行约束（每次执行前必读）
+
+### 0.1 本次梳理：原文档没做好的内容与处理（2026-11-04）
+
+> 本表回答「这份文档还缺什么」。原稿 888 行以「计划正文 + 逐节追加执行续记」的方式增长，导致规范、进度、证据三种信息混在一起；下表逐项列出缺口与本次补齐位置。**「已补齐」只指文档层面，不代表对应功能已通过验收。**
+
+| #  | 缺口 | 原状态 | 本次处理位置 |
+| -- | ---- | ------ | ------------ |
+| 1  | 自称「最终版」，但仓库已有 2026-11-03 的扩展执行稿，未说明主从与优先级 | 读者无法判断以哪份为准 | 头部「文档分工与权威顺序」 |
+| 2  | 源码基线写死 `930af1a`，期间已产生十余个提交 | 基线过时，旧结论易被当成最新事实 | 头部补最近校准日期与 HEAD `3d842d4` |
+| 3  | 范围只到 `001–009` / `P0–P4`；台账已到 `012`，进度日志另有 LM / CM / P5 族 | `010` 完全缺席，`011`/`012` 只在续记里顺带出现 | 1.4 表、附录 A |
+| 4  | 缺当前状态总览，进度散落在 20 余段「续记」中 | 需通读全文才知道进度 | 新增 1.6 |
+| 5  | 里程碑表无状态列；「按依赖顺序」与「实际已并行推进 P1–P5」未解释 | 计划与执行看似互相矛盾 | 里程碑表加状态列 + 「代码可并行、验收门槛不放行」规则 |
+| 6  | Issues 表状态停留在 2026-11-02 的编写时认定 | 无法反映 `FIXED-CODE` 等后续变化 | 1.4 表加「当前状态」列 |
+| 7  | 1.4.1 给出 YAML 证据卡模板，但从未填充，且实际台账是散文式 | 模板形同虚设 | 1.4.1 明确台账为主、模板为辅及字段对齐要求 |
+| 8  | 第 8 节表头要求逐行记录时间/快照/摘要/日志/结果，表格却只有 4 列 | T01–T40 全部无法登记结果，不能当验收台账用 | 第 8 节补「状态 / 证据」两列 + 附录 B 填写规则 |
+| 9  | 状态标签约 20 种散落全文，无定义、无合法组合、无升级规则 | 「已构建并推送」「FIXED-CODE」「VM-PENDING」混用易误读 | 0.2 统一词汇表 |
+| 10 | 第 9 条「不得运行测试、构建」与 P0-01、P0-04、P1-03 等「已构建 / 检查通过」记录冲突 | 历史证据与本轮约束的时间边界不清 | 0.3 第 9 条补充口径 |
+| 11 | 1.3 端口表仍写「Maintenance 通信：待实现」 | 与 P2-01/P2-02 已完成源码接线不符 | 1.3 就地更新 |
+| 12 | P2-01 建议的 9 个文件名在仓库中均不存在 | 建议布局被误读为已落地结构 | P2-01 标注「建议 vs 实际」并列出真实文件 |
+| 13 | 第 10 节 25 项表与进度日志 37 项表顺序号不同、任务集不同 | 同一编号指向不同任务（如 22 = P4-01 / CM-01） | 第 10 节声明唯一任务键为任务 ID |
+| 14 | DoD 只列 001/007/008/009 四条收尾条件 | 其余 8 条 Issue、LM/CM/P5、RC 交付无出口 | 第 11 节补齐 |
+| 15 | 环境/凭据阻塞散落正文，无解除条件与影响范围 | 无法集中排期 | 附录 C |
+| 16 | 没有文档维护规则，五份文档谁先更新没有约定 | 状态越写越分散 | 附录 D |
+| 17 | 原 `../问题跟踪/README.md` 相对路径错误 | 链接指向仓库根，实际不存在 | 已就地修正为 `问题跟踪/README.md` |
+| 18 | 本文件 T01–T40 与连续开发版另有一套 T01–T28 | 同名编号语义不同，易混淆 | 附录 B 明确区分 |
+| 19 | 第 9 节把「规范条款」和「实施进度补记」混排；P5 从未定义 | 章节标题与内容不符 | 第 9 节重排 + 附录 A.3 |
+| 20 | 文末一行孤立备注，无章节归属、无责任人、无验收条件 | 设计意图无法追踪 | 改为第 12 节「开放设计议题」D-01（原话保留在该条） |
+
+### 0.2 状态与证据标签口径（统一词汇表）
+
+**两轴原则：代码状态与验收状态必须分开写，禁止用一个词同时表达两者。** 例如 `FIXED-CODE; VM-PENDING` 合法，`FIXED-CODE; FIXED-VERIFIED` 冲突。
+
+| 轴 | 标签 | 含义与允许条件 |
+| -- | ---- | -------------- |
+| 代码 | `CODE-SUSPECT` / `PARTIAL-MITIGATION` | 静态审查疑点 / 已有部分防护但未完整验收 |
+| 代码 | `NOT-IMPLEMENTED` / `PARTIAL-CODE` / `CODE-IMPLEMENTED` / `CODE-WIRED` / `CODE-HARDENED` | 未实现 / 部分接线 / 源码完成 / 已接入调用链 / 在既有实现上加固；**均不隐含任何测试结论** |
+| 代码 | `FIXED-CODE` / `MODEL-IMPLEMENTED` / `NETWORK-WIRED` / `PACKAGE-WIRED` / `BOOT-RECOVERY-CODE` | 特定形态的源码完成，仍须单独写验收轴 |
+| 代码 | `LEDGER-ADDED` / `GATES-DEFINED` | 仅建立台账或规则，不代表功能执行 |
+| 验收 | `UNIT-PASS` / `CI-PASS` | 定向夹具 / CI 通过；**不能替代 Windows VM 或现场** |
+| 验收 | `FIELD-PASS` / `FIELD-FAIL` / `VM-PASS` | 真实环境执行结果，必须附构建 SHA、版本、环境、日期、日志路径 |
+| 验收 | `FIXED-VERIFIED` | 同一构建 SHA 下自动化 + Windows VM/现场指定用例**全部**通过；仅编译或模拟返回不算 |
+| 验收 | `NOT-TESTED` / `TEST-DEFERRED` | 未测试 / 用户统一安排测试前不运行测试 |
+| 验收 | `VM-PENDING` / `FIELD-PENDING` / `RING-PENDING` / `RUN-DEFERRED` | 待 Windows VM / 待现场 / 待灰度晋级 / 待 CI 运行 |
+| 阻塞 | `BLOCKED-BY-ENVIRONMENT` / `SIGNING-BLOCKED` / `ENVIRONMENT-PENDING` | 缺 VM 与快照 / 缺合法发行签名凭据 / 缺隔离云环境；**一律不等于通过** |
+
+**升级规则：** `FIXED-CODE → FIXED-VERIFIED` 需要① 同一 HEAD/构建 SHA；② 自动化或契约检查通过；③ 对应 Windows VM 或现场用例通过；④ 证据路径与日期。任一缺失则保持 `FIXED-CODE; VM-PENDING`。`FIELD-PASS` 必须限定「某版本 + 某现场 + 某配置」，不得推导为当前构建通过。
+
+### 0.3 执行约束（共 13 条）
 
 1. **从当前本地工作区开始**：先运行 `git status`、`git rev-parse HEAD`、`git log -3 --oneline`，核对实际分支和提交。上述基线仅用于对比；若本地已有更新，先阅读差异，**不得强行 checkout 或覆盖用户未提交改动**。
 2. **按依赖顺序逐项实施，但连续推进**（例如先完成 P0-01，再进入下一项）；不得将 P0～P4 打包为一次大重构。每项变更保持可审查，记录改动、设计取舍和风险；完成一项后继续下一项，不逐项停下等待用户确认。
@@ -70,8 +136,9 @@
 7. **故障默认保守**：无法确认身份、版本、事务结果或恢复状态时，标记“待核对/待恢复”，保留日志和旧版本；不能报告成功，不能直接清空事务或强制重装。
 8. **重要变更要能回退**：新增服务须 feature flag/能力发现、渐进切换；在新服务稳定前保留受支持旧版 `39174` 更新入口。
 9. **测试按用户安排执行**：当前用户已要求先持续实现 Maintenance，测试任务后续统一安排；安排前不得运行测试、构建、安装或 VM 验收，也不因源码完成推断测试通过。统一标记 `TEST-DEFERRED`，Windows/现场项目分别标记 `VM-PENDING` / `FIELD-PENDING`。获安排后再分开报告单元/契约、打包和独立 VM 端到端证据。**测试结果必须注明证据级别：现场已验证 / 有日志的现场故障 / 静态审查疑点 / 尚未验证。**
+   **时间边界澄清（2026-11-04）：** 本条约束适用于「2026-11-03 起的本轮连续实施」。文中 P0-01 的自动化检查与构建（2026-11-02）、P0-02 的 production 只读查询，以及 P0-04 / P1-03 / P4-03 等续记中的「源码已构建并推送」，均为各自轮次留下的**历史证据**，必须带日期与来源阅读；它们既不构成对本条约束的违反，也不能推断当前 HEAD `3d842d4` 已通过任何测试或构建。某一轮若确需构建，须在该轮记录中显式写明授权来源。
 10. **不要引入不必要的基础设施**：优先复用现有 Core、Release、UpdateHelper 和 LAN 更新服务器，不为 Maintenance 复制第二套安装事务引擎。
-11. **问题台账与计划互相链接但不互相覆盖**：先找到用户现有的「项目问题记录（001–009）」与 `开发路线与任务清单.md`；本文件是开发执行计划，问题台账保留原始证据、时间线和实际状态；修改完成后双向更新对应记录，不要重新生成冲突的另一份主表。
+11. **问题台账与计划互相链接但不互相覆盖**：先找到用户现有的「[项目问题记录（001–012）](问题跟踪/README.md)」与 `开发路线与任务清单.md`；本文件是开发执行与验收规范，问题台账保留原始证据、时间线和实际状态；修改完成后按附录 D 的顺序双向更新对应记录，不要重新生成冲突的另一份主表。
 12. **准确分级**：`001`、`007` 是具体代码审查可定位的逻辑风险；`008` 在 `930af1a` **已部分防护**，须先复核而非重新报告为完全未修；`005` 是历史真实事故但新版本修复效果未验证；`003`、`006` 主要是现场验收/诊断缺口；`009` 的 Appx 基线范围由源码可查，但 Windows 实际阻断必须现场验证。
 13. **不要做无证据的跨版本“修复”**：需要出具签名信任链、实际旧版二进制、运行时版本、事务状态和复现日志。若仍缺证据，报告 `NOT-REPRODUCED` 或 `BLOCKED-BY-ENVIRONMENT`，不要为了通过测试而修改安全协议。
 
@@ -131,31 +198,36 @@
 | `39174` HTTP                 | 旧 Student Agent 的签名状态、策略与更新入口 | 历史升级迁移使用，按身份和能力严格限制                                                               |
 | `39175` HTTP                 | 教师端向学生端提供经过授权的安装包传输      | 复用现有 LAN 文件服务器及完整性校验                                                                  |
 | `39176` 教师端 TLS/WebSocket | 新版 Student Agent 的主动连接               | 可复用 TLS 监听基础设施，但 Maintenance 必须是**独立路径与独立会话注册表**；不得依赖课堂会话正在进行 |
-| Maintenance 通信             | **待实现**                                  | 尽量不新增学生端入站端口。由学生机主动连接教师端，独立认证、独立重连                                 |
+| Maintenance 通信             | **源码已接线（P2-01 / P2-02），VM 未验收** | 学生机主动连接教师端现有 TLS 服务上的**独立维护路径**，独立会话注册表、心跳、认证与重连；未新增学生端入站端口。服务安装权限、ACL、身份移交与离线恢复仍 `VM-PENDING`，不得写成「待实现」 |
 
-### 1.4 最终 Issues 001–009（与用户问题台账保持同号）
+### 1.4 最终 Issues 001–012（与用户问题台账保持同号）
 
 > **重要：** `已确认逻辑风险` 不代表 Windows 复现；`部分修复` 不代表验收通过。以下状态是源码 `930af1a` + 用户现场记录在本计划编写时的认定，Codex 必须以实际本地 HEAD 复核并更新台账。
 
-| ID      | 问题                                            | 目前证据与准确状态                                                                        | 对应子任务        | 通过条件                                                        |
-| ------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------- | --------------------------------------------------------------- |
-| **001** | 稳定版更新使用错误的 Agent 暂存目标版本         | **可定位的源码逻辑风险**：已重设事务目标但旧局部变量仍用于 `StageAgentUpdate`；未 VM 复现 | **P0-03**         | 安装包内 Agent 版本=暂存/切换/事务目标/真实运行版本             |
-| **002** | 配置同步后请求处理仍用旧快照                    | **审查发现，待并发/真实验证**；不能单独归因现场长连接异常                                 | **P0-05**         | 配置热更新、签名状态指纹、下载/更新指纹及重启一致               |
-| **003** | 核心课堂与部分系统策略缺现场 E2E 证据           | **验收缺口**；网站黑白名单及到期解除是已验收例外                                          | **P0-06 / P4-04** | 每个功能独立 `FIELD-PASS/FAIL/NOT-TESTED`，不以发送成功冒充生效 |
-| **004** | 单一「最新版本」无法表达组件及恢复状态          | **历史现场混合状态**；部分 UI 字段存在，完整性须复核                                      | **P1-04**         | Setup、运行 Agent、Maintenance、事务与连接分离展示              |
-| **005** | 更新失败后回滚也可能失败                        | **用户历史故障证据**：`Access denied → Agent 路径缺失 → recoveryRequired`；现版未复测     | **P0-04**         | 故障注入后安全回滚或明确待恢复，不误报成功                      |
-| **006** | 课堂连接故障诊断反馈不足                        | **历史现场证据**：地址空、根证书缺失，但仅显示等待                                        | **P1-05**         | 能区别缺配置、TCP/TLS、认证、协议、未监听与离线                 |
-| **007** | 更新切换前 ACK 被按目标 Agent 版本校验          | **源码可定位的 P1/P2 逻辑风险**，未 VM 复现                                               | **P0-07**         | `202 Accepted` 验旧版身份/源版本，终态验目标版本                |
-| **008** | 未知目标 Agent 版本被当作无需更新               | **`930af1a` 已部分缓解**：Setup 已达标且目标未知会转 Manual；其他组合/统一 UI 仍需测      | **P0-08**         | 目标未知≠已最新；不能静默跳过、误降级或自动误修                 |
-| **009** | AppLocker 对 Store/Appx/MSIX 游戏未形成有效覆盖 | **源码范围缺口可查**：Appx 放行全体，EXE 策略不是打包应用限制；Windows E2E 未验收         | **P1-06 / P4-04** | 按版本/账户/包身份真实阻断、到期恢复，且保留系统必需应用        |
+| ID      | 问题                                            | 编写时证据认定（`930af1a`，2026-11-02）                                                | 当前状态（2026-11-04，详见进度日志）                     | 对应子任务           | 通过条件                                                        |
+| ------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- | -------------------- | --------------------------------------------------------------- |
+| **001** | 稳定版更新使用错误的 Agent 暂存目标版本         | **可定位的源码逻辑风险**：已重设事务目标但旧局部变量仍用于 `StageAgentUpdate`；未 VM 复现 | `FIXED-CODE; UNIT-PASS; VM-PENDING`；线上 `.56` 一跳升级未测 | **P0-03**            | 安装包内 Agent 版本=暂存/切换/事务目标/真实运行版本             |
+| **002** | 配置同步后请求处理仍用旧快照                    | **审查发现，待并发/真实验证**；不能单独归因现场长连接异常                                 | `CODE-HARDENED; UNIT-PASS; VM-PENDING`                    | **P0-05**            | 配置热更新、签名状态指纹、下载/更新指纹及重启一致               |
+| **003** | 核心课堂与部分系统策略缺现场 E2E 证据           | **验收缺口**；网站黑白名单及到期解除是已验收例外                                          | `LEDGER-ADDED; FIELD-PENDING`；仅历史网站规则限定 `FIELD-PASS` | **P0-06 / P4-04 / A.2** | 每个功能独立 `FIELD-PASS/FAIL/NOT-TESTED`，不以发送成功冒充生效 |
+| **004** | 单一「最新版本」无法表达组件及恢复状态          | **历史现场混合状态**；部分 UI 字段存在，完整性须复核                                      | `CODE-IMPLEMENTED; TEST-DEFERRED`；专用事故 UI 夹具未建    | **P1-04**            | Setup、运行 Agent、Maintenance、事务与连接分离展示              |
+| **005** | 更新失败后回滚也可能失败                        | **用户历史故障证据**：`Access denied → Agent 路径缺失 → recoveryRequired`；现版未复测     | `CODE-HARDENED; UNIT-PASS; VM-PENDING`；**整体未关闭**     | **P0-04**            | 故障注入后安全回滚或明确待恢复，不误报成功                      |
+| **006** | 课堂连接故障诊断反馈不足                        | **历史现场证据**：地址空、根证书缺失，但仅显示等待                                        | `CODE-IMPLEMENTED-PRELIMINARY; VM-PENDING`                 | **P1-05 / A.2**      | 能区别缺配置、TCP/TLS、认证、协议、未监听与离线                 |
+| **007** | 更新切换前 ACK 被按目标 Agent 版本校验          | **源码可定位的 P1/P2 逻辑风险**，未 VM 复现                                               | `UNIT-PASS; VM-PENDING`                                    | **P0-07**            | `202 Accepted` 验旧版身份/源版本，终态验目标版本                |
+| **008** | 未知目标 Agent 版本被当作无需更新               | **`930af1a` 已部分缓解**：Setup 已达标且目标未知会转 Manual；其他组合/统一 UI 仍需测      | `CODE-HARDENED; PREVIOUS-UNIT-PASS; VM-PENDING`            | **P0-08**            | 目标未知≠已最新；不能静默跳过、误降级或自动误修                 |
+| **009** | AppLocker 对 Store/Appx/MSIX 游戏未形成有效覆盖 | **源码范围缺口可查**：Appx 放行全体，EXE 策略不是打包应用限制；Windows E2E 未验收         | `SUPPORT-SCOPE-CLARIFIED; VM-PENDING`                      | **P1-06 / P4-04**    | 按版本/账户/包身份真实阻断、到期恢复，且保留系统必需应用        |
+| **010** | 现场 Agent 运行但预期 SYSTEM 启动/恢复任务缺失  | 编写本计划时尚未立项；2026-11-03 由用户 PowerShell 输出补录                                | `FIELD-FAIL（历史现场）; NOT-TESTED`；启动归属与重启行为未核实 | **A.2 / P3-02**      | 主/恢复任务的账户、动作、路径、ACL 独立读回；重启后 Agent 正常；教师端能识别「安装不完整」而非只看 health 200 |
+| **011** | 正式 StudentSetup 安装包没有内嵌 Authenticode 签名 | 编写本计划时尚未立项；2026-11-03 PE 证书目录读回确认                                     | `SIGNING-BLOCKED; RUN-DEFERRED`                            | **A.3 / P5-02**      | 真实 `Get-AuthenticodeSignature` 状态、发布者、最终 EXE SHA 与发行清单一致；改字节后签名失效 |
+| **012** | CloudBase 迁移顺序冲突缺少安全的选择性应用路径  | 编写本计划时尚未立项；2026-11-03 dry-run 发现                                             | `FIXED-CODE; TEST-DEFERRED`；隔离环境 ledger 未验收        | **A.3 / P5-03 / P0-02** | 只应用两条目标 migration、ledger 与 schema 一致、OperationsReporting 保持禁用、production 未写入 |
+
+> **010–012 说明：** 三条均为 2026-11-03 追加，原始证据、边界与处理方向保留在[问题台账](问题跟踪/README.md)，本表只做计划侧映射；验收条件见附录 A.3 与 P5 族。另一组跨子系统现场问题（地点 / Veyon 目录同步，L01–L08）单列于[现场反馈记录](maintenance/2026-11-04-location-sync-field-feedback.md)，**不并入 001–012 编号**。
 
 旧任务别名（仅用于搜索历史报告）：`REV-01 ≡ 001`、`REV-02 ≡ 002`、`QA-01 ≡ 003`、`QA-02 ≡ 已确认的网站策略正向回归`、`OBS-01 ≡ 004`、`OPS-01 ≡ 005`、`NET-01 ≡ 006`。新任务不得只引用别名而丢失原台账号。
 
 **证据分级：** `FIELD-PASS`（某版本某现场真实执行成功）、`FIELD-FAIL`（现场失败，有日志或可复现步骤）、`CODE-SUSPECT`（静态审查可疑）、`PARTIAL-MITIGATION`（已有部分保护但尚未完整验收）、`NOT-TESTED`、`FIXED-CODE`（改动已提交未 VM 验证）、`FIXED-VERIFIED`（自动化 + Windows VM/现场指定用例通过）。每条必须注明构建 SHA、环境、日期和证据路径。仅编译或模拟函数返回不算 `FIXED-VERIFIED`。
 
-### 1.4.1 九项问题的最小证据卡格式
+### 1.4.1 十二项问题的最小证据卡格式
 
-每个 ID 在原问题台账中至少维护以下字段：
+每个 ID（001–012）在[原问题台账](问题跟踪/README.md)中至少覆盖以下字段。台账目前是**分节散文式**记录，YAML 只是新增问题或补齐字段时的可选模板，**不要求把台账整体改写成 YAML，更不允许只填模板而不更新台账正文**：
 
 ```yaml
 id: '001'
@@ -176,6 +248,8 @@ owner: '待安排'
 next_action: '只修复/验证本条'
 ```
 
+**字段对齐要求：** 模板里的 `status` 必须使用 0.2 词汇表的标签；`baseline` 在证据产生时改为实际 HEAD，不得沿用 `930af1a`；`fix_commits` / `automated_tests` / `vm_tests` / `regression_tests` 分别记录提交、夹具、VM 与无回归证据，空数组即代表该项尚无证据。台账正文的「依据 / 处理方向 / 验收要求 / 状态」四段与上述字段一一对应；新增 013 及以后的问题沿用同一格式，跨子系统的现场反馈（如 L01–L08）另建局部编号并在此登记来源链接。
+
 ### 1.5 当前课堂功能的验收基线（不得混为“全面不可用”）
 
 | 功能                            | 现有证据                                  | 当前状态应如何记录                                          | 后续验收重点                             |
@@ -189,6 +263,23 @@ next_action: '只修复/验证本条'
 | 更新后 Setup + Agent + 事务恢复 | 曾有 `recoveryRequired` 事故              | `FIELD-FAIL`（历史事故）；新修复 `NOT-TESTED`               | 完整更新、回滚、二次升级、实际运行版本   |
 
 原则：**不要降低已经正常运行的网站规则可靠性来交换新功能。** 每阶段复测网站黑白名单实际生效及自动解除；未测试 AppLocker 不等于证明其实现必然错误。
+
+### 1.6 当前状态总览（截至 2026-11-04，索引性质）
+
+> 本表用于快速回答「现在做到哪一步」。**实时状态以[连续实施进度](maintenance/implementation-progress.md)为准**，本表只做汇总；代码状态与验收状态分列，两者都不得读作「已通过」。
+
+| 任务族 | 代码状态 | 验收状态 | 关键缺口 |
+| ------ | -------- | -------- | -------- |
+| **P0** | 001/002/005/007/008 已修正或加固；P0-06 台账已建 | `FIXED-CODE / UNIT-PASS` 为主，全部 `VM-PENDING`；**P0-02 `BLOCKED-BY-ENVIRONMENT`** | 旧 VM 快照、stable 签名包、故障注入、课堂现场 |
+| **P1** | Coordinator / journal / 薄 ViewModel / 版本与诊断 UI 已接线 | `TEST-DEFERRED; UI-REVIEW-DEFERRED` | 教师端重启、并发、事故 UI 夹具、UI 视觉与隐私审查 |
+| **P2** | 独立 SYSTEM 服务、协议 v1、事务复用、StudentSetup 打包均已接线 | `TEST-DEFERRED; VM-PENDING` | 服务安装/ACL/身份移交、Agent 停止仍可维护、安全拒绝矩阵 |
+| **P3** | 自更新、SCM/开机恢复任务、证据收集脚本已接线；P3-03 故障注入矩阵未实现 | `TEST-DEFERRED; VM-PENDING` | 断电/强杀/跨阶段恢复、旧教师协议兼容 |
+| **P4** | UI 精简、运维概览与匿名导出部分代码；Ring 0–3 仅规则已定义 | `RING-PENDING; FIELD-PENDING` | Ring 0–3 未执行、现场功能回归未完成 |
+| **LM**（附录 A.1） | LM-01 路由保护已接线；LM-02/03 为源码准备 | `SIGNING-BLOCKED; VM-PENDING` | 合法 stable Schema 3 签名与 0.4.55/0.4.56 快照 |
+| **CM**（附录 A.2） | CM-01～05 均为 `PARTIAL-CODE` | `TEST-DEFERRED` | 其余配置模块、教师端轮换/包生成端到端、stable schemaVersion=8 |
+| **P5**（附录 A.3） | CI / 签名脚本 / 本机 RC 候选路径已接线 | `RUN-DEFERRED; SIGNING-BLOCKED` | workflow 未运行、代码签名凭据缺失、无正式 RC |
+
+**一句话结论：截至 2026-11-04，M0–M4 全部未通过阶段出口；没有可供正式发布的 RC，没有 stable 版本，未对 production 或真实校区做任何写入。** 详细的阻塞清单、解除条件与影响范围见附录 C。
 
 ---
 
@@ -280,7 +371,7 @@ flowchart TD
 
 **追加执行记录（2026-11-03，按用户要求进行真实环境只读测试）：** 仅配置的 CloudBase 环境 `veyon-control-d3gs8hmuyd09c00a7` 已确认是 production。`tcb db pg migration list --remote-only --json` 返回远端 21 项、最新 `20261018100000`；本地 `20261021140000_create_file_update_release_catalog.sql` 和 `20261102120000_support_signed_student_agent_targets.sql` 均未应用。`veyon-api` 云函数 Active（Nodejs20.19），修改时间 `2026-10-30`。线上 `/v4/releases/latest?role=StudentSetup&architecture=win-x64` 返回 404；线上 `/v3/...` 返回 200，当前 StudentSetup 为 `1.1.44`、Schema 3，不含 Agent target sidecar。通过 production `/v3` artifact 实际下载 1.1.44 安装包，68,144,138 字节，SHA-256 与线上 manifest 一致；另从历史 GitHub Release 实际下载 1.1.40/1.1.41 安装包，两者摘要都与 GitHub Release API 一致。三个安装器 PE `VERSIONINFO.ProductVersion` 均匹配其发行版本；PE 证书表 RVA/size 均为 0，即文件未嵌入 Authenticode 签名，没有可读的内嵌发布者证书链。安装器没有运行，安装后的 Agent 版本仍未读回。本机工作区缺少 Developer Release 公钥，真实 RSA 发行签名未验证。没有应用迁移或部署代码。该生产只读结果证实新发行功能尚未上线，不满足“测试环境部署并验签”的验收要求，也不改变六项未勾选状态；Windows VM 证据仍缺。生产迁移/API 部署需另行审查和授权；完成 P0-02 前不进入 P0-03。
 
-**执行补充（2026-11-03，按用户要求停止测试）：** 用户说明 Windows 设备尚未开机，要求不执行测试、由其自行测试。此后未连接 Windows App 中保存的主机、未运行 Windows 安装器或测试，也未向 CloudBase 写入。唯一新增的 CloudBase 操作为 `tcb db pg migration up --dry-run --json` 只读预演，结果为 `dryRun=true`、`executable=false`：两条目标 migration `20261021140000`、`20261102120000` 待应用；另报告本地旧 migration `20261010090000_add_daily_operations_reporting` 早于远端最新 migration。仓库部署脚本注明 OperationsReporting 仍禁用并排除此旧 migration；CLI `--include-all` 的实际选择集合未验证，因此新增问题 [012](../问题跟踪/README.md#012cloudbase-迁移顺序冲突缺少安全的选择性应用路径)。为解决这一前置阻塞，新增 [allowlist migration helper](../scripts/apply-cloudbase-release-migrations.sh)：只将两条目标 SQL 暴露给 CloudBase CLI 临时目录，先验证远端必需基线并拒绝已含禁用迁移的环境，默认只预演，拒绝仓库 production envId，应用时须二次确认 envId 和 migration ID，成功后读回远端 ledger；新增离线契约夹具并接入 API contract CI。脚本和夹具均未运行，隔离环境迁移选择/执行和 ledger 仍由用户按[自测清单](maintenance/P0-02-自测清单.md)验证。清单覆盖 Windows 版本读回、签名/39174、Schema 3、Schema 4 拒绝、事务回滚、1.1.40 指纹迁移、别名目录及 CloudBase 部署。P0-02 仍为 `BLOCKED-BY-ENVIRONMENT`，不进入 P0-03。
+**执行补充（2026-11-03，按用户要求停止测试）：** 用户说明 Windows 设备尚未开机，要求不执行测试、由其自行测试。此后未连接 Windows App 中保存的主机、未运行 Windows 安装器或测试，也未向 CloudBase 写入。唯一新增的 CloudBase 操作为 `tcb db pg migration up --dry-run --json` 只读预演，结果为 `dryRun=true`、`executable=false`：两条目标 migration `20261021140000`、`20261102120000` 待应用；另报告本地旧 migration `20261010090000_add_daily_operations_reporting` 早于远端最新 migration。仓库部署脚本注明 OperationsReporting 仍禁用并排除此旧 migration；CLI `--include-all` 的实际选择集合未验证，因此新增问题 [012](问题跟踪/README.md#012cloudbase-迁移顺序冲突缺少安全的选择性应用路径)。为解决这一前置阻塞，新增 [allowlist migration helper](../scripts/apply-cloudbase-release-migrations.sh)：只将两条目标 SQL 暴露给 CloudBase CLI 临时目录，先验证远端必需基线并拒绝已含禁用迁移的环境，默认只预演，拒绝仓库 production envId，应用时须二次确认 envId 和 migration ID，成功后读回远端 ledger；新增离线契约夹具并接入 API contract CI。脚本和夹具均未运行，隔离环境迁移选择/执行和 ledger 仍由用户按[自测清单](maintenance/P0-02-自测清单.md)验证。清单覆盖 Windows 版本读回、签名/39174、Schema 3、Schema 4 拒绝、事务回滚、1.1.40 指纹迁移、别名目录及 CloudBase 部署。P0-02 仍为 `BLOCKED-BY-ENVIRONMENT`，不进入 P0-03。
 
 **本轮遇到的发行测试阻塞与用户指示（2026-11-03）：**
 
@@ -324,10 +415,12 @@ flowchart TD
 - [ ] 对文件锁（学生程序占用 EXE/DLL）、权限拒绝、目录重命名失败、安装器非零退出、UpdateHelper 意外退出、暂存目录缺失注入故障。
 - [x] 审查 `StudentUpdateAtomicTransaction.PreservePreviousInstallation`、`Rollback`、`RecoverPending`、`StudentApplicationUpdateHandoff` 和 `WebsitePolicyAgentInstaller` 的版本目录约束；移动前先核对旧 StudentSetup 角色/程序集版本、旧 Agent 文件/程序集版本、SYSTEM 任务动作、受信配置指纹和健康接口；回滚路径再次核对旧 Agent 目录版本与程序集版本。
 - [x] 失败后不删除原 Agent、可信配置、身份密钥或恢复日志。事务只有在旧 Agent 通过**版本、任务路径、配置指纹、健康接口**读回，且 StudentSetup 旧版角色/程序集读回一致后才标为 `RolledBack`；恢复失败保留 `recoveryRequired`。
-- [ ] 无法回滚时保留 `recoveryRequired`、停止自动重发、给出受限的“重新检查/继续恢复/现场修复”入口；不能静默显示“最新”或“成功”。
-- [ ] 批量场景单台故障不影响其余设备，但更新队列需要阈值熔断（相同失败连续发生时暂停扩大 rollout）。
+- [x] 无法回滚时保留 `recoveryRequired`、停止自动重发、给出受限的“重新检查/继续恢复/现场修复”入口；不能静默显示“最新”或“成功”。
+- [x] 批量场景单台故障不影响其余设备，但更新队列需要阈值熔断（相同失败连续发生时暂停扩大 rollout）。
 
 **优先文件：** `StudentUpdateAtomicTransaction.cs`、`StudentApplicationUpdateHandoff.cs`、`StudentApplicationUpdates.cs`、`WebsitePolicyRuntime.cs`、Windows 故障注入检查。
+
+**代码续记（2026-11-04，未做故障注入验收）：** Maintenance 批次按相同校区、release channel、发行摘要和失败阶段对连续结果计数；达到 3 次后将尚未发送的后续设备标记 `ManualRequired`，不发送命令。每个设备更新故障仍隔离。教师设备行现在分别显示 `RecoveryRequired`（保留原 operationId 的核对入口）和 `ManualRequired`（需现场维护，不显示恢复按钮），避免被压成普通“待验证”。实现位于 `TeacherMaintenanceCoordinator.cs` 和 `TeacherViewModel.cs`；源码已构建并推送，提交 `d541bb8`、`609426e`、`f87b187`、`37b5d5e`。VM 故障注入、跨进程恢复与 UI 实测仍未执行。
 
 **代码实施记录（2026-11-03）：** `PreservePreviousInstallation` 在重命名 Student 目录前校验旧 StudentSetup 版本与程序集、旧 Agent 固定版本目录与程序集、SYSTEM 启动任务动作、当前配置指纹及健康读回；预检失败时不移动安装目录。移动后再次校验旧 StudentSetup 角色与程序集。Agent 回滚/恢复入口检查旧版本目录与程序集版本一致，避免旧目录内放入错误版本二进制后仍改写 SYSTEM 任务。定向更新夹具新增程序集版本匹配/冲突检查并通过；真实锁文件、拒绝访问、重启中断及 UpdateHelper 故障注入仍待 Windows VM，不能标记现场通过。
 
@@ -340,11 +433,13 @@ flowchart TD
 - [x] 同步只接受签名的教师端点/TLS 根变化；校区公钥、学生设备身份、遥测/部署身份及应用/系统策略信任根必须与原快照一致。证书/信任根轮换仍须经认证安装流程。
 - [x] 配置同步写入后读回磁盘对象和完整 SHA-256 指纹，将当前请求快照绑定为读回对象，并用 `/health` 的 `X-VeyonCampus-Agent-Config` 确认活动处理器已读到相同指纹后才签名确认。
 - [ ] 注入“配置同步恰好发生于更新预检/下载/提交期间”，定义安全序列化行为：延后配置变更或将明确版本的快照绑定到事务，不能让事务使用混合指纹。
-- [ ] 即使教师地址为空或 TLS 根缺失，也应准确显示“配置缺失”，不能误判为“运行时同步故障”。
+- [x] 即使教师地址为空或 TLS 根缺失，也应准确显示“配置缺失”，不能误判为“运行时同步故障”。
 
 **优先文件：** `WebsitePolicyRuntime.cs`、`StudentApplicationUpdates.cs`、Agent 配置同步处理及 `AgentReconfigurationChecks.cs`。
 
 **代码实施记录（2026-11-03）：** 更新请求在下载前与下载后取得机器锁时均重读配置；只允许教师连接端点/TLS 根变化，校区、公钥、部署/应用身份、遥测及策略信任根变化则拒绝开始更新。教师连接配置同步在写后重新读取配置、比对配置指纹并等待本机 `/health` 头部读回一致后才确认成功。新增快照兼容性夹具，验证允许连接端点轮换、拒绝网站/应用策略公钥和部署身份变化；定向更新夹具通过。并发注入期间的 Windows VM 场景仍未测试。
+
+**诊断源码续记（2026-11-04）：** 学生端连接诊断会把空地址、缺少 TLS 根分别记为 `MissingEndpoint` / `MissingRootCertificate`；教师端按错误码展示配置同步、DNS、监听、TLS、身份及协议的下一步。源码已存在并接入签名状态读回。实机/VM 专项回归仍待执行。
 
 ### P0-06：真实课堂功能验收基线与保留回归（`QA-01`、`QA-02`）
 
@@ -358,8 +453,6 @@ flowchart TD
 **文档实施记录（2026-11-03）：** 已建立 `docs/maintenance/classroom-feature-acceptance.md`，按场景拆分 Veyon 基础控制、WebSocket、双向消息、课堂状态、网站策略解除、AppLocker/系统限制、Edge 刷新、下课恢复与重启恢复；仅将用户已报告的历史网站黑白名单完整链路录为限定 `FIELD-PASS`，其余均为 `NOT-TESTED`。没有当前版本、校区设备、账户和日期信息的历史通过项不会作为本次发布证据。真实 VM/现场验收仍待执行。
 
 **本条退出门槛**：形成按功能分项的验收台账与已确认网站规则的回归记录。P0 整体出口统一见 P0-08 后的阶段退出门槛；不要在 007/008 未验收前进入下一阶段。
-
----
 
 ### P0-07：区分切换前 ACK 与切换后终态（**Issue 007**）
 
@@ -453,19 +546,23 @@ src/VeyonCampus.App/Maintenance/
 └── MaintenanceRunStore.cs
 ```
 
-- [ ] Coordinator 提供 `InspectAsync`、`PlanAsync`、`ExecuteAsync`、`ResumeAsync`、`GetResultsAsync`，取消信号只停止等待/新下发，不破坏已经开始的 SYSTEM 安装恢复。
-- [ ] `LegacyAgentMaintenanceAdapter` 复用 `StudentApplicationUpdateTransport`、现有签名身份/HTTP `39174` 兼容逻辑和 `39175` LAN 文件服务器。
-- [ ] 教师端维护日志持久化（原子写文件或本机 SQLite，结合已有依赖选最轻方案）；恢复时先从学生端签名状态和真实事务核对，不能仅信任教师端缓存。
-- [ ] 维护状态按校园和设备身份隔离。避免不同校区或改 IP 后误匹配旧事务。
-- [ ] 支持每台机器独立超时、重试预算、失败隔离；禁止并发修改同台设备的配置与安装。
-- [ ] 多教师端或教师端重启后的事务冲突必须由**学生机上的机器级锁/事务日志**最终裁决，教师端本地锁只是辅助。
+- [x] Coordinator 提供 `InspectAsync`、`PlanAsync`、`ExecuteAsync`、`ResumeAsync`、`GetResultsAsync`，取消信号只停止等待/新下发，不破坏已经开始的 SYSTEM 安装恢复。
+- [x] `LegacyAgentMaintenanceAdapter` 复用 `StudentApplicationUpdateTransport`、现有签名身份/HTTP `39174` 兼容逻辑和 `39175` LAN 文件服务器。
+- [x] 教师端维护日志持久化（原子写文件或本机 SQLite，结合已有依赖选最轻方案）；恢复时先从学生端签名状态和真实事务核对，不能仅信任教师端缓存。
+- [x] 维护状态按校园和设备身份隔离。避免不同校区或改 IP 后误匹配旧事务。
+- [x] 支持每台机器独立超时、重试预算、失败隔离；禁止并发修改同台设备的配置与安装。
+- [x] 多教师端或教师端重启后的事务冲突必须由**学生机上的机器级锁/事务日志**最终裁决，教师端本地锁只是辅助。
+
+**代码续记（2026-11-04，源码完成、验收未执行）：** `TeacherMaintenanceCoordinator` 已提供上述五类 API；`LegacyAgentMaintenanceAdapter` 复用签名 Agent 身份读回、HTTP 39174 和只传私网地址的 39175 文件服务。教师端使用带文件锁与原子替换的 journal；恢复路径重新向学生端读取签名身份/事务，operation 状态按 `campusId + pinned identity fingerprint` 隔离。每目标请求携带独立取消/超时；更新命令不因不确定响应自动重发，失败后只允许原 operation 读回或显式终态重试，连续相同失败由 rollout 熔断；Agent 侧配置与更新共用机器级锁。本条均为源码接线状态，跨教师进程、重启与超时注入仍待 VM 验收。
 
 ### P1-03：将 `TeacherViewModel` 减薄
 
-- [ ] 保留现有 UI 绑定适配，业务动作只调用 Coordinator；把 `MaintainStudentDevicesAsync` 迁移为薄入口。
-- [ ] 将 `DeployStudentUpdateAsync` 与 `SyncStudentConfigurationAsync` 的实际执行能力抽到可注入服务，不依赖 ViewModel 互相调用。
-- [ ] 保留“仅更新软件”“仅同步配置”“重新查询结果”为高级操作，共用相同身份检查和状态机。
-- [ ] 尽量不改变课堂策略执行路径，不在此阶段修改独立 Windows 服务安装行为。
+- [x] 保留现有 UI 绑定适配，业务动作只调用 Coordinator；把 `MaintainStudentDevicesAsync` 迁移为薄入口。
+- [x] 将 `DeployStudentUpdateAsync` 与 `SyncStudentConfigurationAsync` 的实际执行能力抽到可注入服务，不依赖 ViewModel 互相调用。
+- [x] 保留“仅更新软件”“仅同步配置”“重新查询结果”为高级操作，共用相同身份检查和状态机。
+- [x] 尽量不改变课堂策略执行路径，不在此阶段修改独立 Windows 服务安装行为。
+
+**代码续记（2026-11-04）：** ViewModel 通过公开 `ITeacherMaintenanceWorkflow` 接口注入计划/执行/恢复服务；默认组合仍创建既有 Coordinator、Legacy adapter 和发布服务。`MaintainStudentDevicesAsync` 只负责 UI 行、进度和结果呈现，更新/同步/恢复均进入共享 workflow/state machine。源码已构建并推送：`6a4af5d`。完整模拟适配器检查和 UI/网络独立验收未运行。
 
 **验收测试**
 
@@ -476,24 +573,28 @@ src/VeyonCampus.App/Maintenance/
 
 ### P1-04：分别显示组件版本、更新事务和连接健康（`OBS-01`）
 
-- [ ] 使用独立字段读取并展示 `StudentSetupVersion`、**实际运行** `AgentRuntimeVersion`、Agent 程序集产品版本、`MaintenanceVersion`（部署后）、目标发行 sidecar 版本，以及最近一次更新命令/事务状态。
-- [ ] 每台机器至少区分：`安装包版本符合目标`、`Agent 二进制符合目标`、`Agent 运行中且健康`、`维护事务已提交`、`课堂连接已认证`、`策略已生效`。其中任何一项未知或失败，**不能仅凭 Setup 版本显示整体“已是最新且正常”**。
-- [ ] 事务 `recoveryRequired` / `PendingVerification` 必须占据显著的维护状态，提供重新查询事务及受控修复入口，不用一个全局绿色勾遮蔽。
+- [x] 使用独立字段读取并展示 `StudentSetupVersion`、**实际运行** `AgentRuntimeVersion`、Agent 程序集产品版本、`MaintenanceVersion`（部署后）、目标发行 sidecar 版本，以及最近一次更新命令/事务状态。
+- [x] 每台机器至少区分：`安装包版本符合目标`、`Agent 二进制符合目标`、`Agent 运行中且健康`、`维护事务已提交`、`课堂连接已认证`、`策略已生效`。其中任何一项未知或失败，**不能仅凭 Setup 版本显示整体“已是最新且正常”**。
+- [x] 事务 `recoveryRequired` / `PendingVerification` 必须占据显著的维护状态，提供重新查询事务及受控修复入口，不用一个全局绿色勾遮蔽。
 - [ ] 有 `StudentSetup 1.1.44` + 运行 Agent `0.4.55` + 事务 `recoveryRequired` 的诊断夹具；界面必须显示不一致，而非“全部最新”。
-- [ ] 状态必须附最后验证时间与证据来源，过期健康回执不得当作在线事实。
+- [x] 状态必须附最后验证时间与证据来源，过期健康回执不得当作在线事实。
 
 **主要修改：** `TeacherViewModel.cs`、设备状态 DTO / Device Health、`TeacherHealthView.axaml`、`TeacherUpdatesView.axaml`、`StudentApplicationUpdateChecks.cs`。
 
+**源码续记（2026-11-04，VM/视觉验收待执行）：** 每设备维护行分开显示 Setup、运行 Agent、Agent 程序集、Maintenance、目标版本、事务 operation/command、签名读回时间及认证课堂通道核验时间；`RecoveryRequired` 显示“需要恢复”并保留原事务核对入口，`ManualRequired` 显示“需现场维护”且不开放恢复按钮。`TeacherViewModel` 状态映射已在 `609426e`、`f87b187`、`37b5d5e` 修正。现有测试源码有一般事务状态覆盖，但计划要求的 1.1.44/0.4.55/recoveryRequired 专用 UI 夹具仍未建立；未运行任何测试或 UI 自动化。
+
 ### P1-05：建立逐设备课堂连接故障诊断（`NET-01`）
 
-- [ ] 在**学生端本地**对教师端地址数组、TLS 根证书、证书链/域名校验、Agent 身份、协议版本、DNS/IP 可达、教师端监听与握手错误分别记录明确状态；区分 `MissingEndpoint`、`MissingRootCertificate`、`DnsFailure`、`TcpConnectFailure`、`TlsValidationFailure`、`AuthenticationRejected`、`ProtocolMismatch`、`TeacherNotListening`、`Connected`。
-- [ ] 显示最后连接成功时间、最后失败时间、受限错误码、最近一次教师端地址更新及其配置指纹；严格脱敏，**不能把私钥、完整令牌、证书私密材料或学生个人信息上传云端**。
-- [ ] 当前 Agent 连不上教师端时，如何把**本机诊断**传回教师端？先用经过身份认证的旧 `39174` 状态接口读回；待 P2 后使用独立 Maintenance 通道。不能要求故障中的 WebSocket 通道先建立才能报告错误。
-- [ ] 教师端按设备显示具体下一步：“同步教师连接配置”“核对身份”“教师监听检查”“证书更新待核验”“需要现场修复”，不同错误不得一律提示“等待教师端连接”。
+- [x] 在**学生端本地**对教师端地址数组、TLS 根证书、证书链/域名校验、Agent 身份、协议版本、DNS/IP 可达、教师端监听与握手错误分别记录明确状态；区分 `MissingEndpoint`、`MissingRootCertificate`、`DnsFailure`、`TcpConnectFailure`、`TlsValidationFailure`、`AuthenticationRejected`、`ProtocolMismatch`、`TeacherNotListening`、`Connected`。
+- [x] 显示最后连接成功时间、最后失败时间、受限错误码、最近一次教师端地址更新及其配置指纹；严格脱敏，**不能把私钥、完整令牌、证书私密材料或学生个人信息上传云端**。
+- [x] 当前 Agent 连不上教师端时，如何把**本机诊断**传回教师端？先用经过身份认证的旧 `39174` 状态接口读回；待 P2 后使用独立 Maintenance 通道。不能要求故障中的 WebSocket 通道先建立才能报告错误。
+- [x] 教师端按设备显示具体下一步：“同步教师连接配置”“核对身份”“教师监听检查”“证书更新待核验”“需要现场修复”，不同错误不得一律提示“等待教师端连接”。
 - [ ] 配置为空和证书缺失的现场场景作为专用回归；还需验证证书无效、教师端 IP 变化、断网/重连、课堂未开启时连接、网络能达但身份被拒绝。
-- [ ] 不以简单端口 TCP 成功就认为业务长连接健康；必须验证认证握手、心跳及双向消息回执。
+- [x] 不以简单端口 TCP 成功就认为业务长连接健康；必须验证认证握手、心跳及双向消息回执。
 
 **主要修改：** `StudentAgentTeacherChannelClient.cs`、`StudentAgentChannelProtocol.cs`、`WebsitePolicyRuntime.cs`、`TeacherMobileControlServer.cs`、设备健康和教师端诊断 UI。
+
+**源码续记（2026-11-04，场景回归待执行）：** 学生端把诊断以有界本地 JSON 保存；旧版签名状态端点以及独立 Maintenance 通道可在业务长连接异常时读回。连接成功要求 TLS、Agent 身份认证和协议校验；诊断保存连接尝试/成功/失败/配置变更时间、错误阶段和配置摘要。教师 UI 已为诊断错误映射下一步。空配置、错证书、改 IP、断网重连和认证拒绝场景仍未跑 VM 回归。
 
 ### P1-06：AppLocker / Store / Appx-MSIX 覆盖与 Windows 适配（**Issue 009**）
 
@@ -525,7 +626,9 @@ src/VeyonCampus.App/Maintenance/
 
 ### P2-01：增加独立的系统组件
 
-建议新增：
+> **文件树口径（2026-11-04 校准）：** 下方是立项时的**建议布局**，其中 `MaintenanceWorker.cs`、`MaintenanceConnection.cs`、`MaintenanceCommandDispatcher.cs`、`MaintenanceHealthReporter.cs`、`MaintenanceCommandCryptography.cs`、`MaintenanceUpdateExecutor.cs`、`MaintenanceTrustStore.cs`、`MaintenanceRecovery.cs` 这 8 个文件**并未在仓库落地**，实现时已拆分或改名。查找代码请以「实际落地」清单为准，不要按建议文件名推断实现是否存在。
+
+建议新增（历史，仅作设计意图参考）：
 
 ```text
 src/VeyonCampus.MaintenanceService/
@@ -544,12 +647,20 @@ src/VeyonCampus.Core/Maintenance/
 └── MaintenanceRecovery.cs
 ```
 
-- [ ] Windows Service 使用独立 SCM 服务名（建议 `VeyonCampusMaintenance`），以受限设计的 SYSTEM 权限运行；不可与 Student Agent 共享进程或依赖其启动成功。
-- [ ] 使用与业务 Agent 分离的配置和身份持久化边界，设计可信的旧 Agent → Maintenance 首次身份移交（经同一已签名安装包、校区身份验证、证书或公钥固定，不自动接受任意新密钥）。
-- [ ] 优先采用**学生端主动连接教师端**，复用既有 `39176` TLS 服务基础设施，但使用单独 WebSocket 路径、独立会话注册表/心跳状态、独立认证和重连。
-- [ ] 连接准入与**课堂是否开始**解耦；维护连接断开不应自动结束事务，重新连接后可查询真实状态。
-- [ ] 服务在教师端不可达时仍可执行已授权本地恢复；教师端在线后重新报告状态。
-- [ ] 学生机不应为此新增未经必要性审查的公网或 LAN 任意命令执行端口。
+**实际落地（2026-11-04，HEAD `3d842d4`）：**
+
+- `src/VeyonCampus.MaintenanceService/`：共 4 个文件 —— `Program.cs`（单文件宿主，Worker/连接/分发/健康报告未拆成独立文件）、`VeyonCampus.MaintenanceService.csproj`、`app.manifest`、`packages.lock.json`。
+- `src/VeyonCampus.Core/Maintenance/`：共 21 个文件 —— `MaintenanceProtocolV1.cs`、`MaintenanceServiceChannelProtocol.cs`、`MaintenanceServiceCommandDispatcher.cs`、`MaintenanceServiceTrustStore.cs`、`MaintenanceServiceIdentityStore.cs`、`MaintenanceServiceConfigurationStore.cs`、`MaintenanceServiceUpdateExecutor.cs`、`MaintenanceServiceReleaseUpdateExecutor.cs`、`MaintenanceServiceRecoveryTask.cs`、`MaintenanceServiceTeacherChannelClient.cs`、`MaintenanceReplayWindow.cs`、`MaintenanceFaultInjection.cs`、`MaintenanceEventReport.cs`、`MaintenanceValidation.cs`、`MaintenanceConfiguration.cs`、`MaintenanceCapabilities.cs`、`MaintenanceDeviceIdentity.cs`、`MaintenancePlan.cs`、`MaintenanceRun.cs`、`MaintenanceResult.cs`、`MaintenanceJournal.cs`。
+- `src/VeyonCampus.App/Maintenance/`：共 7 个文件 —— `TeacherMaintenanceCoordinator.cs`、`TeacherMaintenanceWorkflow.cs`、`TeacherMaintenanceServiceChannel.cs`、`MaintenanceServiceTeacherClient.cs`、`MaintenanceRunStore.cs`、`LegacyAgentMaintenanceAdapter.cs`、`TeacherMaintenanceArtifactProvider.cs`。
+
+- [x] Windows Service 使用独立 SCM 服务名（建议 `VeyonCampusMaintenance`），以受限设计的 SYSTEM 权限运行；不可与 Student Agent 共享进程或依赖其启动成功。
+- [x] 使用与业务 Agent 分离的配置和身份持久化边界，设计可信的旧 Agent → Maintenance 首次身份移交（经同一已签名安装包、校区身份验证、证书或公钥固定，不自动接受任意新密钥）。
+- [x] 优先采用**学生端主动连接教师端**，复用既有 `39176` TLS 服务基础设施，但使用单独 WebSocket 路径、独立会话注册表/心跳状态、独立认证和重连。
+- [x] 连接准入与**课堂是否开始**解耦；维护连接断开不应自动结束事务，重新连接后可查询真实状态。
+- [x] 服务在教师端不可达时仍可执行已授权本地恢复；教师端在线后重新报告状态。
+- [x] 学生机不应为此新增未经必要性审查的公网或 LAN 任意命令执行端口。
+
+**代码续记（2026-11-04，尚未部署验收）：** Service 项目使用独立 SCM 角色/身份配置，学生端通过教师现有 TLS 服务上的独立维护路径主动连接；重连/心跳与课堂 Session 分开。离线恢复由独立 SYSTEM 启动任务和 UpdateHelper 承担，未新增学生端监听端口。源码、安装脚本和角色目录均在仓库；服务安装权限、离线恢复和身份移交仍需 Windows VM 验收。
 
 ### P2-02：制定长期稳定的最小协议 `MaintenanceProtocol.v1`
 
@@ -578,19 +689,21 @@ src/VeyonCampus.Core/Maintenance/
 
 ### P2-03：复用现有事务，而不是复制一套
 
-- [ ] `MaintenanceUpdateExecutor` 调用现有可信安装能力、UpdateHelper、角色白名单和安装事务机制；如需增加组件角色，先重构事务 API 的角色边界并补回归测试。
-- [ ] 明确区分：`StudentSetup`（完整包）、`StudentAgent`（可由已验证 Setup 安装）、`MaintenanceService`（自身更新）；避免 Setup 与 Agent 版本混用。
-- [ ] 更新 Agent 时，Maintenance 不退出；UpdateHelper 停止/切换 Agent 后 Maintenance 仍可查询结果、发起有限恢复。
-- [ ] 更新 Agent 期间业务中断属于预期事件，应展示维护状态；不能因业务 Agent 的临时离线把 Maintenance 判定为离线。
-- [ ] 必须保持当前受保护校区配置、设备身份和策略密钥；新组件不得重置既有身份。
+- [x] `MaintenanceUpdateExecutor` 调用现有可信安装能力、UpdateHelper、角色白名单和安装事务机制；如需增加组件角色，先重构事务 API 的角色边界并补回归测试。
+- [x] 明确区分：`StudentSetup`（完整包）、`StudentAgent`（可由已验证 Setup 安装）、`MaintenanceService`（自身更新）；避免 Setup 与 Agent 版本混用。
+- [x] 更新 Agent 时，Maintenance 不退出；UpdateHelper 停止/切换 Agent 后 Maintenance 仍可查询结果、发起有限恢复。
+- [x] 更新 Agent 期间业务中断属于预期事件，应展示维护状态；不能因业务 Agent 的临时离线把 Maintenance 判定为离线。
+- [x] 必须保持当前受保护校区配置、设备身份和策略密钥；新组件不得重置既有身份。
 
 ### P2-04：将服务纳入完整 StudentSetup
 
-- [ ] 修改 `scripts/package-windows-offline.ps1` 和 `installer/VeyonCampus-Student.iss`，只从经过校验的同一构建产物安装 Maintenance。
-- [ ] 安装前确认 .NET 运行时、架构、二进制签名/来源和路径权限；Windows Service 安装与首次启动需可重试，已有服务不可直接无条件覆盖。
-- [ ] 明确 Service binary 的 ACL、SCM 管理权限、工作目录、受保护的配置/密钥目录；普通学生用户不能修改它们。
-- [ ] 旧 Agent 完成可信升级时能自动安装新服务，但**只有新服务健康、身份匹配后**教师端才把该设备标记为“Maintenance 已接管”。
-- [ ] 若服务首次安装失败，应回滚或明确标记该角色未就绪；不得因为 Setup 成功而把独立维护能力标为可用。
+- [x] 修改 `scripts/package-windows-offline.ps1` 和 `installer/VeyonCampus-Student.iss`，只从经过校验的同一构建产物安装 Maintenance。
+- [x] 安装前确认 .NET 运行时、架构、二进制签名/来源和路径权限；Windows Service 安装与首次启动需可重试，已有服务不可直接无条件覆盖。
+- [x] 明确 Service binary 的 ACL、SCM 管理权限、工作目录、受保护的配置/密钥目录；普通学生用户不能修改它们。
+- [x] 旧 Agent 完成可信升级时能自动安装新服务，但**只有新服务健康、身份匹配后**教师端才把该设备标记为“Maintenance 已接管”。
+- [x] 若服务首次安装失败，应回滚或明确标记该角色未就绪；不得因为 Setup 成功而把独立维护能力标为可用。
+
+**安装源码续记（2026-11-04，打包源码已执行，VM 未验收）：** StudentSetup 发布脚本从同次 Release 输出单独发布 MaintenanceService，核对服务版本/角色/架构和依赖，再由 Student Inno 安装到 Program Files 的版本目录；服务自身设置 SYSTEM SCM 与受保护身份/配置/事务目录。安装器会查询既有 ImagePath、停止/启动服务并在失败时恢复旧服务状态；Teacher maintenance 只在签名身份、服务能力和健康读回成功后统计“已接管”。本机 TeacherConsole 安装器已打包；StudentSetup 首装/覆盖安装、ACL 和失败回滚仍需 VM 检查。
 
 **验收测试**
 
@@ -610,21 +723,21 @@ src/VeyonCampus.Core/Maintenance/
 
 ### P3-01：Maintenance 自身更新
 
-- [ ] 定义独立的、经过签名验证的 Maintenance 发行角色与最低兼容协议；新版教师端只使用旧 Maintenance 已支持的协议发起更新。
-- [ ] 本地签名验证后才暂存新版服务；通过独立 UpdateHelper（不能由目标 Service 直接覆盖自身 EXE）完成停止、切换、重新启动和健康核验。
-- [ ] 保留上一版服务文件及配置；失败后使用独立恢复任务/更新助手恢复旧版本，不能依赖已损坏的 Maintenance 服务自己恢复。
-- [ ] 服务版本化目录与 Setup/Agent 版本目录分开；禁止误用 StudentSetup 版本充当 Maintenance 版本。
+- [x] 定义独立的、经过签名验证的 Maintenance 发行角色与最低兼容协议；新版教师端只使用旧 Maintenance 已支持的协议发起更新。
+- [x] 本地签名验证后才暂存新版服务；通过独立 UpdateHelper（不能由目标 Service 直接覆盖自身 EXE）完成停止、切换、重新启动和健康核验。
+- [x] 保留上一版服务文件及配置；失败后使用独立恢复任务/更新助手恢复旧版本，不能依赖已损坏的 Maintenance 服务自己恢复。
+- [x] 服务版本化目录与 Setup/Agent 版本目录分开；禁止误用 StudentSetup 版本充当 Maintenance 版本。
 - [ ] 升级期间保留原有信任根、设备身份、已接受事务与待处理状态；设计密钥轮换双信任窗口及最终退役条件。
 
-**实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。Maintenance 单独包会把 UpdateHelper 与服务放在同一版本目录。P3-01 新增专属签名命令、SYSTEM 私有暂存、版本切换、健康核验和旧服务回滚；Teacher provider/adapter 已接入 Coordinator/journal 与 Workflow，高级维护操作新增“仅更新 Maintenance 服务”入口，可单独执行该升级；发送前检查签名能力列表是否声明更新与事务查询命令，不兼容的旧服务不会收到新命令。当前仍是单一 Maintenance 更新事务，成功后没有自动接续 StudentSetup 更新的多阶段 operation。协议只接受当前 v1，尚未完成旧教师协议的最低兼容协商及密钥轮换。CloudBase migration 未部署；本轮按用户要求不构建、不测试、不打包，故无可安装测试包。状态：`WORKFLOW-WIRED; TEST-DEFERRED; VM-PENDING; FIELD-PENDING`。
+**实施进度补记（2026-11-03，未验收）：** 已有 MaintenanceService 独立签名发行角色（schema 5）与 API/migration 源码；新增独立服务版本、`MaintenanceService\Versions\<version>` 安装目录、独立 Inno 安装器和打包脚本。StudentSetup 现在按 Maintenance 项目自身版本嵌入服务文件，并在升级时保留已独立管理的服务；其服务控制命令会按受管 SCM `ImagePath` 定位当前服务版本。Maintenance 单独包会把 UpdateHelper 与服务放在同一版本目录。P3-01 新增专属签名命令、SYSTEM 私有暂存、版本切换、健康核验和旧服务回滚；Teacher provider/adapter 已接入 Coordinator/journal 与 Workflow，高级维护操作新增“仅更新 Maintenance 服务”入口，可单独执行该升级；发送前检查签名能力列表是否声明更新与事务查询命令，不兼容的旧服务不会收到新命令。独立 service-only 操作只更新服务；统一 `FullMaintenance` 会在服务健康读回后，沿原 operation 自动继续 StudentSetup/Agent 与配置阶段。协议只接受当前 v1，尚未完成旧教师协议最低兼容矩阵及密钥轮换。CloudBase migration 未部署，VM/现场升级回滚仍待验收。
 
 **实施进度续记（2026-11-03，本机 MaintenanceService 测试候选，未验收）：** 教师端本机测试来源新增独立 MaintenanceService 安装器选择；验证本机 `.exe.release.json`、固定 Developer Release 公钥、Schema 5、`local-test` 通道、SHA-256 与当前协议 v1 后，复制到本机受信暂存目录并经现有独立 SYSTEM 事务发送。新增离线 signer 只写本机签名 sidecar，不调用 CloudBase；Stable 发行查询仍只走 stable。服务端发行清单验证允许固定 Developer Release 密钥签名的 schema 5 `local-test` 包，安装器角色、协议、摘要、版本和固定 LAN 传输校验保持不变。此改动为 P3-01/P5-04 本机候选准备；未运行 signer、构建、测试或 VM，实际接收/升级/回滚仍 `TEST-DEFERRED; VM-PENDING`，尚未实现与 StudentSetup 合并成单一多阶段 operation。
 
 ### P3-02：恢复任务和健康自检
 
-- [ ] 使用 SCM 恢复选项、必要时独立 SYSTEM 恢复任务，确保服务启动失败、意外退出、主机重启后可恢复。
-- [ ] 恢复任务必须有上限、超时和退避，不能造成循环启动、CPU/磁盘占用异常或无限重试。
-- [ ] 恢复任务检测真实系统状态后决定恢复、回滚或停止待人工检查；所有决策可审计。
+- [x] 使用 SCM 恢复选项、必要时独立 SYSTEM 恢复任务，确保服务启动失败、意外退出、主机重启后可恢复。
+- [x] 恢复任务必须有上限、超时和退避，不能造成循环启动、CPU/磁盘占用异常或无限重试。
+- [x] 恢复任务检测真实系统状态后决定恢复、回滚或停止待人工检查；所有决策可审计。
 - [ ] 需要验证在更新任一关键阶段断电/强杀进程后的事务状态一致性，尤其是“文件已替换但日志未提交”“服务已停但新服务未健康”等边界。
 
 **实施进度补记（2026-11-03，未验收）：** SCM 失败动作仍为 5/15/30 秒三次重启；新增 SYSTEM 开机任务，使用受保护 Task Scheduler XML，执行 Maintenance 版本目录中的独立 UpdateHelper。恢复器在共享安装锁内读取服务更新事务、检查正在运行的 Helper、目标/旧版本文件版本及 SCM/SYSTEM 健康；最多三轮并退避，成功时提交或回滚事务，失败时保留记录并写受保护日志。StudentSetup 与独立 Maintenance 安装流程均会注册任务，服务卸载流程删除任务。尚未构建或实机验证计划任务 ACL、更新各阶段断电、服务二进制损坏后的旧版恢复和 task scheduler 重试行为；状态：`BOOT-RECOVERY-CODE; TEST-DEFERRED; VM-PENDING`。
@@ -659,12 +772,14 @@ src/VeyonCampus.Core/Maintenance/
 
 交互约束：
 
-- [ ] 默认主操作只显示“检查并维护所选设备”；设备身份变化时始终单独要求核对。
-- [ ] 设备列表统一使用一份选择状态，不再出现多个相互独立且容易误解的勾选来源。
-- [ ] 每台设备显示：`Legacy Agent` / `Maintenance Online` / `Maintenance Offline` / `Updating` / `PendingVerification` / `RecoveryRequired` / `ManualRequired` 等真实状态。**组件版本、事务状态、业务 Agent 健康和认证长连接状态独立展示；不要以安装版本覆盖异常。**
-- [ ] 错误提示指出具体阻断原因，例如“旧 Agent 不信任本机测试公钥”“教师端地址未配置”“TLS 根证书缺失”“签名身份不匹配”“更新事务待恢复”，而非笼统的“无法连接 TCP”或“等待教师连接”。
-- [ ] 保留“仅更新软件”“仅同步教师连接配置”“重新查询事务结果”“导出诊断记录”为高级功能。
-- [ ] 修复和更新进度必须来源于真实事务阶段；禁止用计时模拟百分比冒充安装进度。
+- [x] 默认主操作只显示“检查并维护所选设备”；设备身份变化时始终单独要求核对。
+- [x] 设备列表统一使用一份选择状态，不再出现多个相互独立且容易误解的勾选来源。
+- [x] 每台设备显示：`Legacy Agent` / `Maintenance Online` / `Maintenance Offline` / `Updating` / `PendingVerification` / `RecoveryRequired` / `ManualRequired` 等真实状态。**组件版本、事务状态、业务 Agent 健康和认证长连接状态独立展示；不要以安装版本覆盖异常。**
+- [x] 错误提示指出具体阻断原因，例如“旧 Agent 不信任本机测试公钥”“教师端地址未配置”“TLS 根证书缺失”“签名身份不匹配”“更新事务待恢复”，而非笼统的“无法连接 TCP”或“等待教师连接”。
+- [x] 保留“仅更新软件”“仅同步教师连接配置”“重新查询事务结果”“导出诊断记录”为高级功能。
+- [x] 修复和更新进度必须来源于真实事务阶段；禁止用计时模拟百分比冒充安装进度。
+
+**源码续记（2026-11-04，页面验收待执行）：** 主维护动作沿统一 Coordinator/Workflow；软件更新、连接配置同步、原事务读回、身份核对、诊断导出分别使用既有高级入口。设备状态从签名状态和事务阶段映射；`RecoveryRequired` / `ManualRequired` 已分开展示。全局问题列表与单设备受限重试已接入（见 P4-03）。未做 Windows UI 视觉和实机状态验收。
 
 **实施进度补记（2026-11-03，未验收）：** 教师“设备与更新”页的六个内部跳转已缩为“设备概览 / 学生端维护”两个区段；教师端在线/离线软件更新移至独立“关于与软件更新”页；设备选择改为设备概览的单一 `WebsitePolicyTargetChoices`，课堂策略和学生维护读取同一选择；学生维护区不再提供另一套勾选框；身份核对入口移入高级维护折叠项，主操作只保留检查并维护所选设备。维护工具与诊断仍位于设备概览已有的折叠区。源码变更未构建或做 UI 视觉验收；逐设备状态层级与诊断文案仍需后续复核。状态：`PARTIAL-CODE; UI-REVIEW-DEFERRED; TEST-DEFERRED`。
 
@@ -693,14 +808,16 @@ src/VeyonCampus.Core/Maintenance/
 
 ### P4-03：运维与可观察性
 
-- [ ] 维护事件按 `campusId + deviceIdentity + operationId` 关联，包含目标版本、实际版本、协议模式、开始/结束时间、失败阶段、最终状态。
-- [ ] 故障报告支持匿名导出，自动去除设备秘密、私钥、令牌和学生个人信息。
-- [ ] 日志具有容量、保留时间和清理策略；云端只上传业务需要的**聚合/必要状态**，优先保持局域网维护数据本地化。
-- [ ] 教师端可集中看到“已接管 Maintenance / 仍为 Legacy / 需现场维护”数量，并能对失败设备定向重试。
+- [x] 维护事件按 `campusId + deviceIdentity + operationId` 关联，包含目标版本、实际版本、协议模式、开始/结束时间、失败阶段、最终状态。
+- [x] 故障报告支持匿名导出，自动去除设备秘密、私钥、令牌和学生个人信息。
+- [x] 日志具有容量、保留时间和清理策略；云端只上传业务需要的**聚合/必要状态**，优先保持局域网维护数据本地化。
+- [x] 教师端可集中看到“已接管 Maintenance / 仍为 Legacy / 需现场维护”数量，并能对失败设备定向重试。
 
 **实施进度补记（2026-11-03，部分代码，未验收）：** Maintenance journal 写入时增加终态 run 清理，最多保留最近 500 条且不早于 180 天，活动事务不清理；高级维护操作增加本机匿名事件 JSON 导出（最多 500 条、512 KiB），剔除 campusId、固定设备身份、路由、operationId 和错误自由文本；当前批次状态可汇总已验证 Maintenance 服务、签名 Legacy Agent、需现场维护及未分类数量。报告内用短期 device alias 关联同一导出中的多条事件，不保留可跨导出关联的原始身份。**截至本次续记之前**，设备概览全局问题列表和单条失败行定向重试尚未接入。清理仅在写 journal 时触发，Desired/Reported/Pending 配置记录保持原样。未构建、测试或 UI/隐私审计；P4-03 仍 `PARTIAL-CODE; TEST-DEFERRED; UI-REVIEW-DEFERRED`。
 
 **实施进度续记（2026-11-03，未验收）：** 设备概览的“维护工具与诊断记录”增加本机 journal 运维概览，按当前校区每台设备最近一条事务分类，列出近期未完成/失败/回滚记录并显示版本与失败阶段。只对具有已验证能力且仍属于当前设备名单的 Failed/RolledBack 设备开放单台重试；活动事务使用既有 operationId 恢复，ManualRequired 不提供自动重试。该统计只覆盖本机 journal 已出现的设备，不代表所有校区或全体设备的实时状态；未构建、测试和 UI 验收，P4-03 仍为部分实施。
+
+**实施进度续记（2026-11-04，源码已构建，UI/隐私审查待执行）：** 当前维护 journal 事件可按校区/设备身份/operationId 关联；导出使用短期别名并省略身份、路由、operationId、任意错误文本和密钥类字段，报告大小受限；journal 对终态 run 保留最近 500 条/180 天并保留活动事务。概览按当前校区本机 journal 分类 Maintenance、Legacy、现场处理并提供受限单设备重试。源码已存在并构建；不代表所有设备实时状态，匿名性审查和页面验收仍开放。
 
 ### P4-04：课堂功能发布门槛与现场回归闭环（`QA-01`、`QA-02`）
 
@@ -721,55 +838,57 @@ src/VeyonCampus.Core/Maintenance/
 
 ## 8. 跨版本验收矩阵（必须真实执行）
 
-> 每行都记录“测试时间 / VM 快照 / Setup 版本 / Agent 版本 / Maintenance 版本 / 测试签名或正式签名类型 / 原始与目标摘要 / 日志路径 / 结果”。未测记为 `NOT TESTED`，不得记为通过。
+> **本表是 40 个跨版本/故障注入用例的定义与状态登记表。** 每次真实执行后就地更新「状态 / 证据登记」，并在证据路径所指日志中记录：测试时间、VM 快照、Setup/Agent/Maintenance 版本、签名类型与构建 SHA、原始与目标摘要、日志路径、结果。未测一律 `NOT-TESTED`，不得记为通过；`UNIT-PASS` 不能替代本表的 VM 验收。填写规则与编号区分见附录 B。
 
-| 测试    | 初始安装                                              | 升级入口                          | 预期结果                                                                                  |
-| ------- | ----------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- |
-| T01     | `1.1.40` + Agent `0.4.55`                             | 历史签名 HTTP                     | 在受信任发行条件下完成迁移或准确报告阻断；验证旧指纹处理                                  |
-| T02     | `1.1.41` + Agent `0.4.55`                             | 历史签名 HTTP                     | 版本、旧事务、配置、健康均通过                                                            |
-| T03     | `1.1.44` + Agent `0.4.56`                             | 历史签名 HTTP                     | **无需旧 Agent 先支持新 WebSocket**；成功装入新版 Agent 与 Maintenance                    |
-| T04     | 已有新 Maintenance，故意停止 Agent                    | Maintenance 独立通道              | 能恢复/升级业务 Agent                                                                     |
-| T05     | 已有新 Maintenance，改变业务 WebSocket 协议           | Maintenance 独立通道              | 业务连接失败但维护功能仍可用                                                              |
-| T06     | Maintenance 旧版 → 新版                               | Maintenance 自更新 + UpdateHelper | 备份、切换、健康、提交成功                                                                |
-| T07     | Maintenance 自更新中断                                | 独立恢复机制                      | 恢复旧版本或进入可核对恢复态                                                              |
-| T08     | 已更新但回执丢失                                      | 查询原事务                        | 不重复安装、不误判失败/成功                                                               |
-| T09     | 设备离线后上线                                        | 持久化待办与重新协商              | 安全恢复，不重放过期命令                                                                  |
-| T10     | 设备身份、公钥或校区不匹配                            | 任意通道                          | 全部拒绝、无安装副作用                                                                    |
-| T11     | 旧 Agent 收到 `local-test` 新公钥 Schema 4            | 旧 HTTP                           | 拒绝不受信任发行，不绕过安全校验                                                          |
-| T12     | 发行签名/摘要/安装角色错误                            | 任意通道                          | 验证失败且不触碰现有安装                                                                  |
-| T13     | Setup 已是目标版本，但 Agent 过旧                     | 签名 sidecar / 已验真包           | 不因 Setup 版本相同而错误跳过                                                             |
-| T14     | 两个教师端并行维护同一机器                            | 并发冲突                          | 机器级互斥 + 明确冲突/事务回读                                                            |
-| T15     | 用户取消或教师端关闭                                  | 状态机                            | 已开始安装继续安全恢复；UI 重开正确读回                                                   |
-| T16     | 10～70 台教室模拟分批更新                             | 限流批量维护                      | 单台失败隔离、状态一致、带宽不失控                                                        |
-| T17     | 稳定版 Setup 升级且 Agent 产品版本更高                | `001` 稳定版分支检查              | 验证目标版本/sidecar/真实二进制/提交路径一致                                              |
-| T18     | 稳定版 Setup 升级但 Agent 相同                        | `001` 修复路径                    | 不误跳过必要修复、不误触发 Agent 降级或错误回滚                                           |
-| T19     | 旧 Agent 下发教师端地址/TLS 新配置                    | `002` 原子生效                    | 请求处理、状态指纹、内存/磁盘配置、重启后一致                                             |
-| T20     | 配置同步与软件更新同时发生                            | `002` 竞态测试                    | 有明确串行/快照规则，不发生混合配置指纹造成假失败                                         |
-| T21     | 安装阶段 `Student` 目录移动被占用                     | `005` 故障注入                    | 旧安装与任务可恢复、无孤儿目录、状态诚实                                                  |
-| T22     | 更新失败且旧 Agent 恢复路径缺失                       | `005` 故障注入                    | 保留事务和恢复材料、提示人工恢复，不假报成功                                              |
-| T23     | Setup 1.1.44 / 运行 Agent 0.4.55 / `recoveryRequired` | `004` UI/状态                     | 三个状态独立显示，不能整体显示“已是最新且可用”                                            |
-| T24     | 教师端地址为空、TLS 根证书缺失                        | `006` 诊断                        | 精确指出 `MissingEndpoint` / `MissingRootCertificate`，即使长连接不可用仍可查看           |
-| T25     | 教师 IP 改变、证书失败、教师端未监听                  | `006` 分类                        | 分别定位失败阶段，恢复后记录最后成功连接时间                                              |
-| T26     | 现场已验证网站黑白名单                                | `003` 已确认正向回归              | 学生真实受限、到期自动解除，无 Maintenance 改造回归                                       |
-| T27     | AppLocker/系统策略                                    | `003/009` E2E                     | 标准用户真实阻断且解除恢复；未测不能标记稳定                                              |
-| T28     | 教师学生双向消息                                      | `003/009` E2E                     | 双向实际送达、读回、断线恢复与权限通过                                                    |
-| T29     | 单台更新失败后继续下一台                              | `005` 批量故障                    | 故障隔离+同类错误阈值熔断，不扩大到整个机房                                               |
-| **T30** | Schema 3 无 Agent 声明，内置 Agent 更高               | **Issue 001**                     | `StageAgentUpdate`、UpdateHelper、journal 和真实运行 Agent 指向同一产品版本，无旧目录混用 |
-| **T31** | 源 Agent 返回 `202 Accepted` 旧版本回执               | **Issue 007**                     | 通过源版本 + 签名 + commandId 验证，进入待提交，不提前要求目标版本                        |
-| **T32** | Agent 切换成功、终态 `committed` 为新版本             | **Issue 007**                     | 读回按目标二进制/Setup/事务判断，不与切换前 ACK 旧版本错误比较                            |
-| **T33** | 错误身份、错误版本、回滚或缺失终态                    | **Issue 007**                     | 严格拒绝错误回执；回滚/待核对不误标成功                                                   |
-| **T34** | Setup 已到目标版本，缺少可信 Agent 目标声明           | **Issue 008**                     | 明确 `TargetUnknown / ManualRequired` 或有证据的已达标，不以 0 比较冒充相等               |
-| **T35** | Setup 低/高于目标 + sidecar 缺失/无效/版本冲突        | **Issue 008**                     | 保留可信版本关系；禁止降级或静默误修；有证据时才更新                                      |
-| **T36** | Windows 10/11 标准账户打开 Store                      | **Issue 009**                     | 记录实际策略是否支持、实际打开结果和 Windows Edition                                      |
-| **T37** | Windows 10/11 标准账户下载 Store 游戏                 | **Issue 009**                     | 与「禁止打开 Store」分开验收；失败信息真实                                                |
-| **T38** | 已安装 Microsoft Solitaire/其他 Appx 游戏             | **Issue 009**                     | 精准阻止已知包，系统必需应用及维护账户保持可用                                            |
-| **T39** | Appx 策略到期/下课/重启/撤销                          | **Issue 009**                     | 已限制应用恢复，日志完整，无不可逆残留                                                    |
-| **T40** | 不支持相应策略的 Windows Edition                      | **Issue 009**                     | 明确显示 `Unsupported`，无假成功，不破坏现有网站策略                                      |
+| 测试    | 初始安装                                              | 升级入口                          | 预期结果                                                                                  | 状态 | 证据登记 |
+| ------- | ----------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------------------------------- | --------------------- | ---------------------------- |
+| T01     | `1.1.40` + Agent `0.4.55`                             | 历史签名 HTTP                     | 在受信任发行条件下完成迁移或准确报告阻断；验证旧指纹处理                                  | NOT-TESTED | — |
+| T02     | `1.1.41` + Agent `0.4.55`                             | 历史签名 HTTP                     | 版本、旧事务、配置、健康均通过                                                            | NOT-TESTED | — |
+| T03     | `1.1.44` + Agent `0.4.56`                             | 历史签名 HTTP                     | **无需旧 Agent 先支持新 WebSocket**；成功装入新版 Agent 与 Maintenance                    | NOT-TESTED | — |
+| T04     | 已有新 Maintenance，故意停止 Agent                    | Maintenance 独立通道              | 能恢复/升级业务 Agent                                                                     | NOT-TESTED | — |
+| T05     | 已有新 Maintenance，改变业务 WebSocket 协议           | Maintenance 独立通道              | 业务连接失败但维护功能仍可用                                                              | NOT-TESTED | — |
+| T06     | Maintenance 旧版 → 新版                               | Maintenance 自更新 + UpdateHelper | 备份、切换、健康、提交成功                                                                | NOT-TESTED | — |
+| T07     | Maintenance 自更新中断                                | 独立恢复机制                      | 恢复旧版本或进入可核对恢复态                                                              | NOT-TESTED | — |
+| T08     | 已更新但回执丢失                                      | 查询原事务                        | 不重复安装、不误判失败/成功                                                               | NOT-TESTED | — |
+| T09     | 设备离线后上线                                        | 持久化待办与重新协商              | 安全恢复，不重放过期命令                                                                  | NOT-TESTED | — |
+| T10     | 设备身份、公钥或校区不匹配                            | 任意通道                          | 全部拒绝、无安装副作用                                                                    | NOT-TESTED | — |
+| T11     | 旧 Agent 收到 `local-test` 新公钥 Schema 4            | 旧 HTTP                           | 拒绝不受信任发行，不绕过安全校验                                                          | NOT-TESTED | — |
+| T12     | 发行签名/摘要/安装角色错误                            | 任意通道                          | 验证失败且不触碰现有安装                                                                  | NOT-TESTED | — |
+| T13     | Setup 已是目标版本，但 Agent 过旧                     | 签名 sidecar / 已验真包           | 不因 Setup 版本相同而错误跳过                                                             | NOT-TESTED | — |
+| T14     | 两个教师端并行维护同一机器                            | 并发冲突                          | 机器级互斥 + 明确冲突/事务回读                                                            | NOT-TESTED | — |
+| T15     | 用户取消或教师端关闭                                  | 状态机                            | 已开始安装继续安全恢复；UI 重开正确读回                                                   | NOT-TESTED | — |
+| T16     | 10～70 台教室模拟分批更新                             | 限流批量维护                      | 单台失败隔离、状态一致、带宽不失控                                                        | NOT-TESTED | — |
+| T17     | 稳定版 Setup 升级且 Agent 产品版本更高                | `001` 稳定版分支检查              | 验证目标版本/sidecar/真实二进制/提交路径一致                                              | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| T18     | 稳定版 Setup 升级但 Agent 相同                        | `001` 修复路径                    | 不误跳过必要修复、不误触发 Agent 降级或错误回滚                                           | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| T19     | 旧 Agent 下发教师端地址/TLS 新配置                    | `002` 原子生效                    | 请求处理、状态指纹、内存/磁盘配置、重启后一致                                             | NOT-TESTED | — |
+| T20     | 配置同步与软件更新同时发生                            | `002` 竞态测试                    | 有明确串行/快照规则，不发生混合配置指纹造成假失败                                         | NOT-TESTED | — |
+| T21     | 安装阶段 `Student` 目录移动被占用                     | `005` 故障注入                    | 旧安装与任务可恢复、无孤儿目录、状态诚实                                                  | NOT-TESTED | — |
+| T22     | 更新失败且旧 Agent 恢复路径缺失                       | `005` 故障注入                    | 保留事务和恢复材料、提示人工恢复，不假报成功                                              | NOT-TESTED | — |
+| T23     | Setup 1.1.44 / 运行 Agent 0.4.55 / `recoveryRequired` | `004` UI/状态                     | 三个状态独立显示，不能整体显示“已是最新且可用”                                            | NOT-TESTED | — |
+| T24     | 教师端地址为空、TLS 根证书缺失                        | `006` 诊断                        | 精确指出 `MissingEndpoint` / `MissingRootCertificate`，即使长连接不可用仍可查看           | NOT-TESTED | — |
+| T25     | 教师 IP 改变、证书失败、教师端未监听                  | `006` 分类                        | 分别定位失败阶段，恢复后记录最后成功连接时间                                              | NOT-TESTED | — |
+| T26     | 现场已验证网站黑白名单                                | `003` 已确认正向回归              | 学生真实受限、到期自动解除，无 Maintenance 改造回归                                       | NOT-TESTED（当前构建） | 历史限定 FIELD-PASS，缺版本/日期 |
+| T27     | AppLocker/系统策略                                    | `003/009` E2E                     | 标准用户真实阻断且解除恢复；未测不能标记稳定                                              | NOT-TESTED | — |
+| T28     | 教师学生双向消息                                      | `003/009` E2E                     | 双向实际送达、读回、断线恢复与权限通过                                                    | NOT-TESTED | — |
+| T29     | 单台更新失败后继续下一台                              | `005` 批量故障                    | 故障隔离+同类错误阈值熔断，不扩大到整个机房                                               | NOT-TESTED | — |
+| **T30** | Schema 3 无 Agent 声明，内置 Agent 更高               | **Issue 001**                     | `StageAgentUpdate`、UpdateHelper、journal 和真实运行 Agent 指向同一产品版本，无旧目录混用 | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T31** | 源 Agent 返回 `202 Accepted` 旧版本回执               | **Issue 007**                     | 通过源版本 + 签名 + commandId 验证，进入待提交，不提前要求目标版本                        | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T32** | Agent 切换成功、终态 `committed` 为新版本             | **Issue 007**                     | 读回按目标二进制/Setup/事务判断，不与切换前 ACK 旧版本错误比较                            | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T33** | 错误身份、错误版本、回滚或缺失终态                    | **Issue 007**                     | 严格拒绝错误回执；回滚/待核对不误标成功                                                   | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T34** | Setup 已到目标版本，缺少可信 Agent 目标声明           | **Issue 008**                     | 明确 `TargetUnknown / ManualRequired` 或有证据的已达标，不以 0 比较冒充相等               | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T35** | Setup 低/高于目标 + sidecar 缺失/无效/版本冲突        | **Issue 008**                     | 保留可信版本关系；禁止降级或静默误修；有证据时才更新                                      | NOT-TESTED | 定向夹具历史通过；VM 未执行 |
+| **T36** | Windows 10/11 标准账户打开 Store                      | **Issue 009**                     | 记录实际策略是否支持、实际打开结果和 Windows Edition                                      | NOT-TESTED | — |
+| **T37** | Windows 10/11 标准账户下载 Store 游戏                 | **Issue 009**                     | 与「禁止打开 Store」分开验收；失败信息真实                                                | NOT-TESTED | — |
+| **T38** | 已安装 Microsoft Solitaire/其他 Appx 游戏             | **Issue 009**                     | 精准阻止已知包，系统必需应用及维护账户保持可用                                            | NOT-TESTED | — |
+| **T39** | Appx 策略到期/下课/重启/撤销                          | **Issue 009**                     | 已限制应用恢复，日志完整，无不可逆残留                                                    | NOT-TESTED | — |
+| **T40** | 不支持相应策略的 Windows Edition                      | **Issue 009**                     | 明确显示 `Unsupported`，无假成功，不破坏现有网站策略                                      | NOT-TESTED | — |
 
 
 ---
 
-## 9. CI、发布与回滚规范
+## 9. CI、发布、迁移与 RC 交付规范（P5 族）
+
+> 本章为**规范条款**；P5-01～P5-05 的任务定义、验收条件与 RC 交付清单见附录 A.3。章节下方的执行补记只记录事实，不改变规范效力。
 
 - [ ] 运行仓库已有的 App checks、API contract checks 和 Windows installers；新增测试应进入当前检查体系而非只写 README 声称通过。
 - [ ] 检查 `930af1a` 引入的数据库迁移 `cloudbase/migrations/20261102120000_support_signed_student_agent_targets.sql`、`/v4/releases/latest`、Student Agent 目标版本 sidecar；测试环境先部署、再验收，生产发布前做迁移及回滚预案。
@@ -778,6 +897,15 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] 新 Maintenance 协议必须维护版本矩阵，旧兼容接口的退役应以实际装机占比和测试证据判断，不能随着新业务版本随意删除。
 - [ ] 生产发布严格采用正式发行凭据；不得将本地测试签名、新测试根证书或私钥加入生产安装包。
 - [ ] 用户拒绝重试、机器需人工维护或事务恢复未闭环时，提供完整错误原因和明确现场操作说明，不自动清除用户数据/校区配置。
+
+### 9.1 补充规范（2026-11-04）
+
+- [ ] **两条签名信任链分开**：Authenticode 代码签名与 RSA 发行清单/SHA-256 校验互不替代。有获授权证书时**先签最终 EXE**，再计算 SHA-256 并生成 `.release.json` 与 Agent target sidecar；无证书时明确披露未签名，不得伪造或用 sidecar 冒充 Authenticode（对应 Issue 011）。
+- [ ] **RC 交付物固定清单**：可创建明确**非 stable、非生产目录**的 RC/pre-release，含 Teacher/Student 安装包、发行签名清单、sidecar、SHA256SUMS、变更日志、构建 SHA 与 T01–T40 真实结果；权限或门禁不满足时交付本地产物 + 阻塞原因，不得标记 stable。
+- [ ] **测试矩阵编号区分**：本文件第 8 节 `T01–T40` 是跨版本/故障注入 **VM 验收**用例；连续开发版第 7 节另有一套 `T01–T28`（含 T01 = 0.4.55 → 新版 Setup，语义不同）。引用测试用例必须写明来源文档，禁止只写 `T0x`。
+- [ ] **CloudBase 迁移**：allowlist 迁移先离线验证，再在与 production 相同基线的**隔离环境**经授权执行；不得默认改生产库或覆盖 stable `/v4/releases/latest`（对应 Issue 012）。
+
+### 9.2 执行记录（只记事实，不改变规范条款）
 
 **P5-01 实施进度补记（2026-11-03，未运行 CI）：** 已有 App checks、API contract 和 Windows installers workflows。Windows installer workflow 新增独立 Maintenance Service 安装器打包步骤及隔离 artifact；Student/Teacher 发布 artifact 与生产发布明确继续只使用 StudentSetup、TeacherConsole。Workflow 未运行，不能视为安装包构建或服务安装验收通过。
 
@@ -788,6 +916,8 @@ src/VeyonCampus.Core/Maintenance/
 ## 10. Codex 执行计划（按依赖连续实施）
 
 **执行方式：按依赖连续实施；完成一项后直接继续下一项，不逐项等待用户确认。** 用户已明确本轮先推进实现，测试任务后续统一安排；因此在用户安排测试前，不运行测试、构建、安装或 VM 验收，每项都如实记录为未测试。遇到 Windows VM、隔离云环境或发行签名等外部条件时，记录阻塞并继续不依赖该条件的代码与文档工作。不得因此跳过安全门槛、伪造验收或触碰生产环境。AppLocker 009 与 Maintenance 可在依赖允许时持续推进，风险较高的系统策略改动仍要保留 VM 验收门槛。
+
+**编号与范围说明（2026-11-04 校准，必读）：** 下表 01–25 只覆盖 **P0–P4**，是本文件保留的规范映射；[连续开发版第 6 节](VeyonCampus_Maintenance_%E5%AE%8C%E6%95%B4%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92_Codex%E8%BF%9E%E7%BB%AD%E5%BC%80%E5%8F%91%E7%89%88.md)与[进度日志](maintenance/implementation-progress.md)使用 **37 项**编号，额外包含 LM / CM / P5 族，且顺序号含义完全不同（例如本表 22 = P4-01，进度日志 22 = CM-01）。**引用任务时一律使用任务 ID（如 `P0-03`、`CM-02`、`P5-02`），禁止只写顺序号。** 本表不含状态列，实时状态以进度日志为准；LM / CM / P5 的任务定义与验收条件见附录 A。
 
 |   序号 | 子任务                                        | Issues                  | 目标交付物（代码＋测试＋证据）                | 启动条件/通过门槛    |
 | -----: | --------------------------------------------- | ----------------------- | --------------------------------------------- | -------------------- |
@@ -863,6 +993,188 @@ src/VeyonCampus.Core/Maintenance/
 - [ ] **Issue 008**：未知 Agent 目标经 sidecar 或明确 `TargetUnknown` 表示；当前已存在的 `ManualRequired` 防护完成全矩阵验证。
 - [ ] **Issue 009**：AppLocker/Store/Appx-MSIX 仅按真实 Windows Edition/普通用户操作证据声明支持，撤销恢复实测，系统和维护应用未受误伤。
 
+**补齐的 DoD 条目（2026-11-04；原稿只覆盖 001/007/008/009）：**
+
+- [ ] **Issue 002 / 005**：配置同步后内存、磁盘、HTTP 状态与健康指纹一致；文件占用、权限拒绝、路径缺失、重启中断任一注入后能安全回滚或明确 `RecoveryRequired`，且不误报成功。
+- [ ] **Issue 003 / 004 / 006**：课堂能力台账逐项有当前构建的 `FIELD-PASS/FAIL/NOT-TESTED`；Setup、运行 Agent、Maintenance、事务与课堂连接独立展示；连接故障可区分缺配置、DNS、TCP、TLS、认证、协议、未监听与离线。
+- [ ] **Issue 010**：Agent 主 SYSTEM 任务与恢复任务的账户、动作、路径、ACL 独立读回，重启后启动链验证通过；教师端能把「任务缺失但 health 200」识别为安装不完整。
+- [ ] **Issue 011**：正式安装包具备可验证的 Authenticode 签名（或明确披露未签名并获用户接受），最终 EXE SHA、发行清单与 Agent sidecar 一致；签名清单随发布交付。
+- [ ] **Issue 012**：隔离 CloudBase 环境完成 allowlist 迁移、ledger/schema 读回与失败续跑；OperationsReporting 保持禁用，production 未被写入。
+- [ ] **LM / CM / P5**：LM-01～03、CM-01～05、P5-01～05 均有代码提交或明确阻塞记录；001–012 每条台账有修复 commit、测试、状态与证据路径。
+- [ ] **RC 交付**：Teacher / Student 同一源码 SHA 的候选安装包、发行签名清单、SHA256SUMS、变更日志、构建 SHA、T01–T40 真实结果齐备；签名或构建环境不满足时明确 `SIGNING-BLOCKED` / `BUILD-BLOCKED`，不冒称稳定版。
+- [ ] **跨子系统现场反馈**：[地点 / Veyon 目录同步 L01–L08](maintenance/2026-11-04-location-sync-field-feedback.md) 逐项闭环或有明确未关闭记录；设备身份与课堂范围不因同名地点、重复对象 UUID、只读快照回退或自动建档而误判。
+
+**任一上述条目未勾选，不得宣布 Maintenance 架构完成。**
+
 **设计原则：兼容层解决“如何迁移已经装好的旧软件”；独立 Maintenance 解决“以后业务 Agent 再怎么变化都不影响升级”。二者缺一不可，但必须按阶段落地。**
 
-一定要好好设计一下maintenance
+---
+
+## 12. 开放设计议题（Design Open Issues）
+
+> 原稿末尾留有一句孤立的「一定要好好设计一下maintenance」，没有章节归属、责任人或验收条件。现把它拆成可决策的议题清单，原话保留为 D-01。**这些是设计待决项，不是已完成的实施项**；未决策前不得据此改动安全边界或删改已接线代码。
+
+| ID | 议题 | 为什么必须决策 | 当前状态 | 待决点 | 决策时点 / 责任人 | 影响任务 |
+| -- | ---- | -------------- | -------- | ------ | ----------------- | -------- |
+| **D-01** | **Maintenance 整体架构专项评审**（用户原话） | P2/P3 的代码已大量接线，但从未有一份把 G1–G5、不变量、协议冻结范围与恢复链边界串起来的最终设计说明；信任模型、事务唯一性、密钥轮换散落在各子任务续记里 | 源码接线完成，`VM-PENDING`；无统一设计评审记录 | ① 协议 v1 冻结范围与可扩展字段边界；② 旧 `39174` 与独立维护通道并发时由谁最终裁决；③ 旧接口退役条件；④ StudentSetup / Agent / Maintenance 三套版本目录的归属与互斥 | **Ring 0 之前、首轮 VM 之后**；用户 + 架构评审 | M2/M3、P2-02/03、P3-01/02、T04–T07 |
+| **D-02** | 地点数据是否收敛为「Veyon 单一真实来源」 | 本机校区档案/机房模板与 Veyon 目录各存一份，靠显示名匹配，是重复地点与不同步的结构性根因（现场反馈 [L05](maintenance/2026-11-04-location-sync-field-feedback.md)） | **已决策并执行（2026-11-04）**：用户确认删除「当前地点设置」面板，已移除 UI 与事件接线；Veyon 地点读回不再自动新建档案；同名地点拒绝自动应用；删除档案级联可见可确认 | 旧档案的来源/创建时间展示（需改持久化 schema）；固定电脑名规则归属；同名地点清理工具 | 决策已完成，剩余项随 P2 | L04/L05/L06/L07、003/004/006 |
+| **D-03** | 是否提供「从 Veyon 移除学生 / 电脑对象」 | 用户想删的是学生/电脑，产品只提供删本机座位，语义错位（[L03](maintenance/2026-11-04-location-sync-field-feedback.md)） | **用户 2026-11-04 22:00 改口要求实现**：已新增右键「删除学生电脑（含 Veyon）」，按 UUID 删除电脑对象并移除本机座位，带二次确认、写入前唯一性校验与读回验证 | 预览模式右键也可用；不按显示名删除、不删地点、失败保留座位 | 已实施，待 Windows VM 回归 | L03、设备身份与课堂范围 |
+| **D-04** | 密钥生命周期是否统一模型 | CM-05 覆盖 PolicyTrust 与 Maintenance 服务身份轮换，Agent 身份与校区根轮换另有路径，退役条件不一 | `PARTIAL-CODE; TEST-DEFERRED` | 旧/新根双信任窗口、紧急撤销、离线设备时钟变化、跨密钥类型的统一审计 | M3 出口前；架构评审 | CM-05、P2-02、T10 |
+| **D-05** | 旧 `39174` 更新入口何时退役 | G2 要求长期保留受限 Legacy 桥接，但「保留多久」没有量化条件 | 仍在代码中保留 | 按装机占比、按版本证据，还是按现场确认；退役前的回退预案 | M4 灰度前 | LM-03、P2 阶段出口 |
+| **D-06** | 测试与 Windows/现场验收排期 | 全计划绝大多数条目处于 `TEST-DEFERRED`，M0–M4 因此无法出口 | 用户明确「测试后续统一安排」 | 统一测试的日期、VM 快照清单、隔离环境、可执行授权范围 | 用户安排 | 所有 `TEST-DEFERRED`、T01–T40、Ring 0–3 |
+
+**规则：** D-01 未评审通过前，不得宣布 M2/M3 出口；D-02 已按用户决定实施（保留旧档案兼容读取），D-03 已按用户 22:00 新决定实施（按 UUID 删除 + 二次确认 + 读回），二者不再列为未决项；D-06 未安排前，任何 `FIXED-CODE` 不得升级为 `FIXED-VERIFIED`。
+
+---
+
+## 附录 A：扩展任务族（LM / CM / P5）与 001–012 映射
+
+> **编号来源与权威：** LM-01～03、CM-01～05、P5-01～05 定义在[完整实施计划（Codex 连续开发版）](VeyonCampus_Maintenance_%E5%AE%8C%E6%95%B4%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92_Codex%E8%BF%9E%E7%BB%AD%E5%BC%80%E5%8F%91%E7%89%88.md)第 2、4、6、8 节。本附录只做**规范侧映射**（验收条件、与 Goals/不变量的关系、状态索引），不另立第二份任务主表；详细执行顺序以连续开发版第 6 节的 37 项表为准，实时状态以[进度日志](maintenance/implementation-progress.md)为准。
+
+### A.1 LM 族 — 旧架构一次性迁移
+
+| 任务 | 目标 | 验收条件（不可放宽） | 当前状态 |
+| ---- | ---- | -------------------- | -------- |
+| **LM-01** | 按**可信运行状态**而非 Agent 版本号选择维护路由：Maintenance / Legacy Signed Update / ManualRecovery | 超时不得盲目 fallback 导致两条路径同时改同一设备；设备级互斥与持久化 `operationId` 生效 | 路由保护源码已接线，`TEST-DEFERRED` |
+| **LM-02** | `0.4.55 / 0.4.56` 一跳安装含独立 Maintenance 的 StudentSetup | 走旧 Agent 认可的 **stable Schema 3** 可信发行清单；不要求先升 `0.4.57`；`local-test` Schema 4 必须被旧 Agent 拒绝；安装后读回 SCM 服务、SYSTEM 身份、二进制版本、设备身份与协议；失败保留 `recoveryRequired`，不报成功 | `SIGNING-BLOCKED; VM-PENDING`（缺合法 stable 私钥与历史快照） |
+| **LM-03** | 长期保留受限 Legacy 桥接，冻结历史 `/v1/update` 协议与签名边界 | 只支持经真实验证的旧版迁移与必要安全修复；未知旧版本明确 `Unsupported` / `ManualRequired`；退役条件见 D-05 | 源码准备，`VM-PENDING` |
+
+**与 Goals 的关系**：LM 族承载 **G1（历史版本可迁移）**；它和 P0-02「历史兼容性基线」是同一件事的两面——P0-02 出证据，LM-02 出迁移链路。
+
+### A.2 CM 族 — 配置管理
+
+| 任务 | 目标 | 验收条件 | 当前状态 |
+| ---- | ---- | -------- | -------- |
+| **CM-01** | 建立 `DesiredConfiguration`（教师端权威期望）与 `ReportedConfiguration`（学生端可信读回），含模块、schemaVersion、revision、fingerprint、设备身份、签名与应用状态 | 区分 CampusIdentity / TeacherConnectivity / PolicyTrust / SystemConfiguration / RuntimeSettings；同 revision 报告只允许内容相同且采集时间更新的刷新 | `PARTIAL-CODE; TEST-DEFERRED` |
+| **CM-02** | 已绑定设备的日常配置同步无需重新生成包；离线重连重新签发有效任务 | 教师地址/TLS/策略参数改动后 Desired→签名修订→Reported revision/fingerprint 读回，重启仍一致；**不重放过期命令**；软件更新与配置同步同机串行，无混合快照 | `PARTIAL-CODE; TEST-DEFERRED`，仅 TeacherConnectivity 模块接线 |
+| **CM-03** | 模块级 Schema 迁移与回滚 | 明确输入/输出 schema、revision、校验摘要；先快照、迁移后校验、失败恢复；未知必需字段显式拒绝；**区分校区包 schema / Agent 本地配置 / stable Schema 3 / local-test Schema 4 / Maintenance 协议版本**，不得混为一个数字 | `PARTIAL-CODE; TEST-DEFERRED`（Schema 7 归档与 bootstrap 1→2 已修） |
+| **CM-04** | 无包首次安全配对 | 学生端生成身份与限时配对会话；教师确认设备/短码并明确批准校区绑定后才分发**公钥、证书和公开配置**；禁止发送教师私钥、禁止仅靠 LAN IP 自动认领 | `PARTIAL-CODE; TEST-DEFERRED`（12 位核对码已接入） |
+| **CM-05** | 对账、受控密钥轮换与故障阶段显示 | Desired/Reported revision、漂移、最后成功时间、失败阶段、人工建议可查；根轮换由旧可信根授权新根并经过渡期，无信任证明不自动接受新证书 | `PARTIAL-CODE; STUDENT-ROTATION-WIRED; TEST-DEFERRED`；教师端完整流程、macOS 钥匙串、stable schemaVersion=8 未完成 |
+
+**与 Goals 的关系**：CM 族承载 **G3（逐设备事务）** 与 **G4（状态可辨别）** 的配置维度；CM-02 与 P0-05 共用「机器级锁 + 快照一致性」不变量，不得造第二套配置源。
+
+### A.3 P5 族 — CI、签名、迁移与 RC 交付
+
+| 任务 | 目标 | 验收条件 | 当前状态 |
+| ---- | ---- | -------- | -------- |
+| **P5-01** | App checks / API contract checks / Windows installers 全量检查；CI 打包独立 Maintenance Service | workflow 真实运行通过；Student/Teacher 正式发布 artifact 仍只含原两角色；安装/卸载矩阵有 VM 证据 | `CI-PARTIAL; RUN-DEFERRED` |
+| **P5-02** | 候选安装器、Authenticode 签名政策、SHA 与 release sidecar（**Issue 011**） | 标签发布须配置 PFX/口令/thumbprint/RFC 3161 时间戳；签后核验两个安装器，产出含最终 SHA 的 Authenticode manifest 并连同 `SHA256SUMS` 交付；缺凭据有意阻断发布 | `SIGNING-BLOCKED; RUN-DEFERRED` |
+| **P5-03** | 隔离 CloudBase 迁移与发行 API 验证（**Issue 012**） | allowlist 只应用两条目标 migration、ledger 与 schema 一致、OperationsReporting 保持禁用、失败可续跑；**production 未写入**；再验 v3/v4 兼容 | `ENVIRONMENT-PENDING` |
+| **P5-04** | 非 stable RC 交付 | 本机 MaintenanceService 候选选择与 Developer Release sidecar 可用；包留在本机不上传 CloudBase；正式/预发布签名、全量检查、版本矩阵与包哈希齐备 | `LOCAL-TEST-CANDIDATE-PATH-WIRED; SIGNING-BLOCKED` |
+| **P5-05** | 用户 Windows VM / 现场逐项验收清单 | 补充本次签名包哈希、VM 快照、T01–T40 实测记录与用户反馈 | `CHECKLIST-RECORDED; VM-PENDING; FIELD-PENDING` |
+
+**RC 交付门槛**：见第 9.1 节；未经用户 Windows VM 与非关键校区验收并明确授权，不得晋级 stable 或 Ring 0→3。
+
+### A.4 Issues 001–012 → 任务与验收用例映射
+
+| Issue | 主任务 | 扩展任务 | 验收用例（第 8 节） | 台账状态索引 |
+| ----- | ------ | -------- | ------------------- | ------------ |
+| 001 | P0-03 | LM-02 | T17、T18、T30 | `FIXED-CODE; VM-PENDING` |
+| 002 | P0-05 | CM-02 | T19、T20 | `CODE-HARDENED; VM-PENDING` |
+| 003 | P0-06 / P4-04 | L01–L08（现场反馈） | T26–T28、T36–T40 | `LEDGER-ADDED; FIELD-PENDING` |
+| 004 | P1-04 | CM-01 / CM-05 | T23 | `CODE-IMPLEMENTED; TEST-DEFERRED` |
+| 005 | P0-01 / P0-04 | LM-01 | T21、T22、T29 | `CODE-HARDENED; VM-PENDING` |
+| 006 | P1-05 | CM-05 | T24、T25 | `CODE-IMPLEMENTED-PRELIMINARY; VM-PENDING` |
+| 007 | P0-07 | LM-02（旧回执语义） | T31–T33 | `UNIT-PASS; VM-PENDING` |
+| 008 | P0-08 | LM-02（sidecar） | T13、T34、T35 | `CODE-HARDENED; VM-PENDING` |
+| 009 | P1-06 / P4-04 | — | T27、T36–T40 | `SUPPORT-SCOPE-CLARIFIED; VM-PENDING` |
+| 010 | P1-05 / P3-02 | CM-01 | T21、T22（任务读回） | `FIELD-FAIL（历史）; NOT-TESTED` |
+| 011 | — | P5-02 | T12（签名/摘要） | `SIGNING-BLOCKED` |
+| 012 | P0-02 | P5-03 | T12（发行链） | `FIXED-CODE; TEST-DEFERRED` |
+
+> 跨子系统的[地点 / Veyon 目录同步现场反馈 L01–L08](maintenance/2026-11-04-location-sync-field-feedback.md) 使用局部编号，**不并入 001–012**；其结论影响 003/004/006 的现场验收与 D-02/D-03 决策。
+
+---
+
+### A.5 20:42 连续实施补记（P1-03 / CM-03 / CM-05）
+
+按用户「一个一个全都做了」的指示，三项不依赖测试环境的工作已连续实施；**均未运行测试 / 构建 / VM 验收**，状态一律 `TEST-DEFERRED; VM-PENDING`。
+
+| 任务 | 本轮补齐 | 仍待 |
+| ---- | -------- | ---- |
+| P1-03 | 匿名性能汇总生成逻辑迁入 `TeacherMaintenancePerformanceReportFactory`（App/Maintenance 层），ViewModel 只剩 22 行薄封装（委托注入行状态与目标规范化），行为不变 | 薄入口的 UI 验收、VM 回归 |
+| CM-03 | 新增 `CampusPackageSchemaMigration.Plan` 允许清单（同版本 / 7→8 显式重建 / 8→9 与降级跳级一律拒绝），`PackageBuilder.BuildCore` 接线守卫；规范见[校区配置包 Schema 迁移与回滚](maintenance/campus-package-schema-migration.md) | 7→8 实际迁移、旧根退休、VM 验收 |
+| CM-05 | ① `FindRelatedConfigurationRun` 让全部配置模块都能关联最近未闭环配置事务；② `PolicyTrustRotationDraftStore` 补 `Inspect / GetAuthorizations / Activate / Clear`，激活失败保留草稿且旧根保持活动；③ 包生成在有有效草稿时自动注入轮换授权；④ Teacher「高级维护操作」新增查看 / 创建 / 激活 / 清理四个入口，危险操作带二次确认 | macOS 钥匙串、stable 云端 API 的 schemaVersion=8、真实签名凭据、自动化与 VM 验收 |
+
+**边界**：未创建或激活任何真实信任根、未清理草稿、未生成配置包、未写 production / Veyon / CloudBase；危险动作只在用户显式点击并确认后执行。
+
+---
+
+## 附录 B：跨版本验收台账的使用规则
+
+### B.1 每次真实执行后必须记录的字段
+
+| 字段 | 要求 |
+| ---- | ---- |
+| 测试时间 | ISO 日期 + 执行人/环境标识 |
+| VM 快照 | 快照名称或现场设备标识，可还原 |
+| Setup / Agent / Maintenance 版本 | **安装后真实读回**，不按目录名或发行清单推断 |
+| 签名类型与构建 SHA | stable / local-test、使用的信任根、教师端与学生端构建 SHA |
+| 原始与目标摘要 | 安装包 SHA-256、发行清单签名与 Agent target sidecar |
+| 日志路径 | 仓库内相对路径或受控证据目录；不得只写「已通过」 |
+| 结果 | 状态标签 + 实际观察，区分「命令已发送」「进程已退出」「策略真实生效」 |
+
+### B.2 状态列填写规则
+
+- 只允许 0.2 词汇表的**验收轴**标签：`NOT-TESTED` / `VM-PASS` / `FIELD-PASS` / `FIELD-FAIL` / `BLOCKED` 等。
+- 定向夹具或 CI 通过但 VM 未执行，状态仍为 `NOT-TESTED`，可在「证据登记」注明 `UNIT-PASS` / `CI-PASS` 及其日期；**不得用它们顶替状态列**。
+- 升级为 `VM-PASS` / `FIELD-PASS` 必须同时具备：同一构建 SHA、真实执行日志、版本读回、结论与证据路径（见 0.2 升级规则）。
+- 「证据登记」列填日志相对路径；无证据填 `—`。禁止把结论写成证据。
+
+### B.3 两套 T 编号必须区分
+
+| 来源 | 编号 | 语义示例 |
+| ---- | ---- | -------- |
+| **本文件第 8 节** | `T01–T40` | 跨版本 / 故障注入 **VM 验收**用例；`T01` = `1.1.40 + 0.4.55` 历史签名 HTTP 迁移 |
+| [连续开发版第 7 节](VeyonCampus_Maintenance_%E5%AE%8C%E6%95%B4%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92_Codex%E8%BF%9E%E7%BB%AD%E5%BC%80%E5%8F%91%E7%89%88.md) | `T01–T28` | 另一套测试矩阵；其 `T01` = `0.4.55 → 新版含 Maintenance 的 Setup`，语义不同 |
+
+引用时必须写「本计划 T17」或「连续开发版 T04」，**禁止只写 `T0x`**；两套结果不可互相顶替。
+
+### B.4 当前登记状态（2026-11-04）
+
+T01–T40 **全部 `NOT-TESTED`**。其中 `T26` 只有历史限定 `FIELD-PASS`（缺构建版本与日期），当前构建未回归；`T17 / T18 / T30–T35` 有历史轮次的定向夹具通过记录，但本矩阵要求 VM 验收，状态不变。用户统一安排测试后逐行更新，不得批量勾选。
+
+---
+
+## 附录 C：阻塞与未决事项清单
+
+| ID | 阻塞 | 影响任务 | 解除条件 | 责任人 | 状态 |
+| -- | ---- | -------- | -------- | ------ | ---- |
+| **B-01** | 无可运行的 Windows VM 与 `1.1.40 / 1.1.41 / 1.1.44`（Agent `0.4.55 / 0.4.56`）快照 | P0-02、LM-02、T01–T03、T17–T18、P2/P3 安装与恢复验收 | VM 开机、快照可还原、初始/目标版本二进制读回齐备 | 用户 | `BLOCKED-BY-ENVIRONMENT` |
+| **B-02** | 缺与官网 `0.4.56` 内置公钥匹配的 Developer Release 私钥（仅 GitHub secret，不在仓库） | LM-02、P0-03 stable 一跳、Issue 001 VM 证据 | 经授权使用正式发行流水线签名的 Schema 3 包；**不得用测试公钥或绕过验签** | 用户 / 发行负责人 | `SIGNING-BLOCKED` |
+| **B-03** | 缺 Authenticode PFX Base64、口令、期望 thumbprint、RFC 3161 时间戳 URL 与受保护 runner | P5-02、Issue 011、正式/预发布标签 | 凭据与环境保护配置完成，SignTool 签名/验证与状态读回通过 | 用户 / CI 负责人 | `SIGNING-BLOCKED; RUN-DEFERRED` |
+| **B-04** | `cloudbaserc.json` 只有 production `envId`，无隔离测试环境 | P5-03、Issue 012、P0-02 的 v4 API 与 migration 验收 | 与 production 相同基线的隔离环境 + 明确授权；allowlist 迁移预演与 ledger 读回通过 | 用户 / 云端负责人 | `ENVIRONMENT-PENDING` |
+| **B-05** | 打包构建已完成（22:22 TeacherConsole 1.1.67，0 错误）；用户已实际安装 1.1.65 并在现场复现问题，**自动化测试 / VM / 现场验收仍由用户执行**，构建通过不等于验收通过 | 所有 `TEST-DEFERRED`、T01–T40、Ring 0–3、M0–M4 出口 | 用户给出排期与可执行授权范围 | 用户 | `BUILD-PASS; USER-TEST-PENDING` |
+| **B-06** | production 迁移、stable 发布与真实校区推送未获授权 | P5-03、P4-02、正式发行 | 单独审查与明确授权；此前只读、不写入 | 用户 | 未授权 |
+| **B-07** | [地点 / Veyon 目录同步现场反馈 L01–L08](maintenance/2026-11-04-location-sync-field-feedback.md)：回退提示重复、凭空多出校区、同名地点、模板双数据源、配置数组里同一 Uid 的 Location 重复 2 条（19:07 实证）、同名保护数据源错配（L08） | 003/004/006 现场验收、设备身份与课堂范围 | 实机取证已于 19:07 完成（本机只读导出，见反馈文档 F 节）；P0-4 已改代码（20:04：完全相同重复对象安全去重 + 非阻断提示，现场数据已验证折叠 1 条，见反馈文档 G 节），待 VM 回归；剩余：用户授权后清理 Veyon 重复条目、统一测试排期 | 用户 + 开发 | `FIELD-EVIDENCE` 已取证 / `FIELD-FAIL` 待清理；代码层修复已在工作区，`TEST-DEFERRED; VM-PENDING` |
+| **B-08** | P3-03 完整故障注入 / 跨版本安全矩阵的用例已定义，但**未执行、无结果**；进度日志曾重复登记该任务，20:28 已合并 | M3 出口、T04–T10、T14–T16、T21–T22 | 强杀、断电、文件占用、混合旧版本、两教师并发、安全拒绝矩阵逐项有结果 | 开发（跟随 B-05 排期） | `CASES-DEFINED; EXECUTION-DEFERRED; VM-PENDING` |
+| **B-09** | CM-05 剩余外部门槛：macOS 钥匙串路径、stable 云端发布 API 的 schemaVersion=8 支持、真实发行 / Authenticode 签名凭据 | CM-05 完整闭环、schema 8 正式发布 | 对应平台实现、隔离环境与凭据授权到位，并随 B-05 统一验收 | 用户 / 平台负责人 | `ENVIRONMENT-PENDING; SIGNING-BLOCKED` |
+
+**规则**：任一阻塞未解除时，继续推进**不依赖它**的代码与文档工作，但不得跳过签名、事务或安全门槛来制造「全部完成」；不得对 production 或真实校区做任何写入。
+
+---
+
+## 附录 D：文档维护规则
+
+### D.1 更新顺序（每次改动必须走完）
+
+1. **改代码 / 专项文档**：保持改动可审查，记录设计取舍与风险。
+2. **更新[连续实施进度](maintenance/implementation-progress.md)**：按任务 ID 更新代码状态、自动化、VM、现场、发行状态；这是实时状态唯一来源。
+3. **更新[问题台账 001–012](问题跟踪/README.md)**：补证据、时间线、复现条件、修复 commit 与状态；按 1.4.1 字段对齐。
+4. **更新本文件**：仅在规范、里程碑状态、Issues 表、T01–T40 状态、DoD 或阻塞发生变化时修改；**不复制进度日志的逐条流水**。
+5. **更新专项台账**：[课堂验收](maintenance/classroom-feature-acceptance.md)、[历史兼容矩阵](maintenance/legacy-compatibility-matrix.md)、[P0-02 自测清单](maintenance/P0-02-自测清单.md)、[地点现场反馈](maintenance/2026-11-04-location-sync-field-feedback.md)。
+
+### D.2 硬性规则
+
+- 状态标签**只用 0.2 词汇表**；代码轴与验收轴分列，`FIXED-CODE` 不等于 `FIXED-VERIFIED`。
+- 每次校准更新头部的「最近校准」日期与工作区 HEAD；`930af1a` 永远只是历史审查基线。
+- 新增执行记录必须带**日期、证据级别、构建 SHA、环境**；**不改写或删除历史续记**（时间线是证据的一部分）。
+- 不得把「源码已构建并推送」「定向夹具通过」写成阶段出口或 VM/现场通过；DoD 有未勾选项时不得宣布完成。
+- 双向链接：本文件引用台账与进度日志时写任务 ID；台账与进度日志反向引用本文件章节/用例号。
+- 冲突处理顺序：**本文件（规范/门槛）→ 连续开发版（任务范围）→ 进度日志（实时状态）→ 问题台账（证据）**。
+- 不新建同义主表；新任务沿用 P/LM/CM/P5 编号或申请新 ID，跨子系统反馈用局部编号（如 L01–L08）并登记来源。
+- 生产 CloudBase、stable 发布、真实校区推送始终按各自授权门槛执行，不因文档更新而自动放行。
+
+### D.3 本文件的权威范围
+
+Goals（G1–G5）、Non-goals、里程碑与阶段出口、架构不变量、P0–P4 验收门槛、Issue 通过条件、T01–T40 用例定义与状态、CI/发布规范、Definition of Done、开放设计议题。**不权威**：实时任务状态（进度日志）、原始证据（问题台账）、扩展任务族的 executes 顺序（连续开发版）、现场功能效果（专项台账）。

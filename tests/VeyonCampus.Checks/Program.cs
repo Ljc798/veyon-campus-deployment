@@ -387,6 +387,29 @@ void CheckNetworkObjectsDumpParsing()
            networkObjects.Single(item => item.ObjectId == computerId) is
                { Type: "computer", Name: "PC-01", Host: "10.0.0.1", Location: "三楼机房" });
     Reject(() => VeyonNetworkObjectDirectory.ParseNetworkObjectsDump("目录内容无法识别"));
+
+    // Veyon 4.11.2 prints a top-level Location with an all-zero Parent UUID and empty
+    // Host/MAC columns. It must stay in the identity snapshot, otherwise every computer
+    // loses its parent location UUID and the device directory is rejected as conflicting.
+    var rootLevelLocationId = Guid.Parse("44444444-4444-4444-4444-444444444444");
+    var rootLevelComputerId = Guid.Parse("55555555-5555-5555-5555-555555555555");
+    var realDump = string.Join('\n', [
+        ruler,
+        FormatRow("对象 UUID", "Parent UUID", "类型", "名称", "主机地址", "MAC 地址"),
+        ruler,
+        FormatRow(rootLevelLocationId.ToString(), Guid.Empty.ToString(), "Location", "测试校区", "", ""),
+        FormatRow(rootLevelComputerId.ToString(), rootLevelLocationId.ToString(), "Computer", "123123", "pc-02", ""),
+        ruler
+    ]);
+    var realObjects = VeyonNetworkObjectDirectory.ParseNetworkObjectsDump(realDump);
+    Expect(realObjects.Count == 2 &&
+           realObjects.Single(item => item.ObjectId == rootLevelLocationId) is
+               { Type: "location", Name: "测试校区" } &&
+           realObjects.Single(item => item.ObjectId == rootLevelComputerId) is
+               { Type: "computer", Host: "pc-02", Location: "测试校区" });
+    var realLocations = VeyonNetworkObjectDirectory.ParseLocationsFromObjects(realObjects);
+    Expect(realLocations.Count == 1 && realLocations[0].Name == "测试校区" &&
+           realLocations[0].Targets.Count == 1 && realLocations[0].Targets[0] == "pc-02");
 }
 void CheckPinnedApplicationReleasePublicKey()
 {

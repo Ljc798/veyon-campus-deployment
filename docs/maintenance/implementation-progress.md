@@ -27,7 +27,7 @@
 | 08 | P0-06 / Issue 003 课堂能力验收台账 | `LEDGER-ADDED; FIELD-PENDING` | 已逐项建账；仅用户曾确认的网站黑白名单完整链路为历史限定 `FIELD-PASS`，不代表当前版本；其余能力 `NOT-TESTED`。 |
 | 09 | P1-01 设备状态机、身份、能力、计划和结果 | `MODEL-IMPLEMENTED; PREVIOUS-UNIT-PASS` | Core DTO 与状态机已有历史定向夹具；本轮已接入教师协调器与存储，详见 10–13。 |
 | 10 | P1-02 MaintenanceCoordinator、旧 Agent adapter、journal | `CODE-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | Teacher Console 维护调用已进入 Coordinator；签名状态与更新/配置同步复用旧 Agent 通道；按校区/设备身份写入原子 JSON journal。需后续统一运行自动化与重启/并发 VM 验收。 |
-| 11 | P1-03 ViewModel 薄入口与高级操作复用 | `COORDINATOR-ONLY; LEGACY-CLEANUP-PARTIAL; TEST-DEFERRED` | Maintain、仅更新、仅同步配置、重新核对统一走 Workflow/Coordinator；学生软件更新入口不再保留旧的 ViewModel 私有批量推送实现，也不接受只依赖教师内存快照的事务回查。旧 Agent 通道签名回报的逐阶段耗时现透传到逐台进度行；汇总性能报告尚未迁入 Coordinator，导出不会出现报告。未构建或 UI 验收。 |
+| 11 | P1-03 ViewModel 薄入口与高级操作复用 | `COORDINATOR-ONLY; REPORT-MIGRATED; TEST-DEFERRED` | Maintain、仅更新、仅同步配置、重新核对统一走 Workflow/Coordinator；学生软件更新入口不再保留旧的 ViewModel 私有批量推送实现，也不接受只依赖教师内存快照的事务回查。旧 Agent 通道签名回报的逐阶段耗时现透传到逐台进度行。**20:42 收尾**：匿名性能汇总生成逻辑已迁入 `src/VeyonCampus.App/Maintenance/TeacherMaintenancePerformanceReportFactory`（App/Maintenance 层，含 `TeacherMaintenanceReportRow` 投影），ViewModel 只剩 22 行薄封装（通过委托注入目标规范化与行状态），不再引用 `StudentUpdatePerformanceReportBuilder`；行为保持不变，`COORDINATOR-ONLY` 薄入口目标已达成。未构建或 UI 验收。 |
 | 12 | P1-04 组件版本、事务与连接状态 | `CODE-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 逐设备显示 Setup、运行 Agent、Agent 程序集、Maintenance、计划/签名读回版本、事务、认证课堂连接与核验时间；已签名读回优先显示。设备状态事故夹具和 UI 验收未运行。 |
 | 13 | P1-05 教师连接失败诊断 | `CODE-IMPLEMENTED-PRELIMINARY; ACL-HARDENED; TYPED-FAILURES-PARTIAL; TEST-DEFERRED; VM-PENDING` | 新增本机诊断 sidecar、签名状态协议 v5 及 v4→v1 回退；诊断在本机分类，教师端通过既有签名 HTTP 状态读取；UI 提供故障码和下一步。Windows 上读取前核验 sidecar 的 SYSTEM/Administrators 私有 ACL，不安全旧文件收紧 ACL 后不采信；临时文件在原子替换前加私有 ACL，替换后再次核验。TLS 验证、协议协商、身份挑战、配置重载、消息解析及帧校验使用固定故障类别，不再按本地化异常文本猜测类别；Supervisor 发现地址/根证书缺失或配置读取损坏时也会刷新 sidecar，避免沿用过期“已连接”状态。教师地址的 IP 格式错误明确分类为配置错误。Windows ACL、HTTP 兼容及连接时间线仍需 VM 验收。 |
 | 14 | P1-06 AppLocker/Store/Appx-MSIX（Issue 009） | `SUPPORT-SCOPE-CLARIFIED; VM-PENDING` | 教师端明确说明 AppLocker 只约束 EXE、Appx/MSIX 保持全签名放行；Store 隐藏/常规安装限制不等于阻止已安装游戏启动。规则和 Edition 的真实效果仍未在 Windows VM 验收。 |
@@ -37,23 +37,22 @@
 | 18 | P2-04 StudentSetup 安装 Maintenance | `PACKAGE-WIRED; VM-PENDING` | StudentSetup 离线包包含独立服务文件；安装/更新时停止并重新注册服务，异常时尝试恢复旧服务；卸载前停止服务并在安全清理后移除 SCM 注册。ACL、升级覆盖、失败恢复和完整卸载均需后续 VM 验收。 |
 | 19 | P3-01 Maintenance 自更新 | `COMPOSITE-WORKFLOW-WIRED; LOCAL-TEST-CANDIDATE-WIRED; TEST-DEFERRED; VM-PENDING; FIELD-PENDING` | 在既有独立签名包接收器/事务、SYSTEM 私有暂存、版本化 Helper 安装切换/回滚/健康核验基础上，新增本机 MaintenanceService 包选择与 Developer Release schema 5 `local-test` 离线 signer；教师端按固定公钥、协议 v1、角色、摘要与版本验签，经 LAN 下发。默认完整维护现把 MaintenanceService 与 StudentSetup/Agent 两份独立发行摘要绑定在同一 operation/journal，先更新服务并签名读回版本、事务与健康通道，再允许下发 StudentSetup/Agent；每阶段 commandId 追加到同一 run 历史，恢复按最后持久化阶段继续。仍需验证不同故障/重启点的阶段恢复；旧协议协商/密钥轮换未完成。Signer、构建、自动化与 VM 均未运行；CloudBase migration 未部署。 |
 | 20 | P3-02 看门狗、SCM 与重启恢复 | `BOOT-RECOVERY-CODE; TASK-OWNERSHIP-HARDENED; EVIDENCE-COLLECTOR-WIRED; TEST-DEFERRED; VM-PENDING` | SCM 已配置 5/15/30 秒三次重启并按 24 小时重置；服务启动会核对中断事务。SYSTEM 开机恢复任务调用 Maintenance 版本目录中与服务分离的 UpdateHelper；恢复程序检查事务、Helper 存活、共享软件更新锁、目标/旧版本文件与 SCM 健康，最多尝试三轮并退避，失败保留事务并记录受保护日志。现新增同名任务 XML 归属校验：只覆盖/删除 SYSTEM、固定参数且 Helper 位于受管 Maintenance 目录的任务，注册后读回核验；未知同名任务拒绝覆盖或删除。另新增只读证据收集脚本，可留存 SCM 状态/受管二进制版本、恢复任务配置和脱敏服务事务版本/状态；脚本未运行。跨阶段断电、任务实际账户/ACL、服务 EXE 损坏恢复仍未构建或 VM 验收。 |
-| 21 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 强杀、断电、文件占用、混合旧版本、回滚恢复与兼容拒绝矩阵未执行；VM 退出门槛保持。 |
+| 21 | P3-03 完整故障注入/跨版本安全矩阵 | `CASES-DEFINED; EXECUTION-DEFERRED; VM-PENDING` | 用例定义已在[最终实施计划第 8 节](../VeyonCampus_Maintenance_最终实施计划_Goals与问题001-009.md)的 T04–T10、T14–T16、T21–T22 存在，缺的是**执行与结果登记**：强杀、断电、文件占用、混合旧版本、两教师并发、回滚恢复与兼容拒绝矩阵未执行；VM 退出门槛保持。原顺序 27 是同一任务的重复登记，2026-11-04 20:28 已合并到本行，后续顺序号相应顺延。 |
 | 22 | CM-01 Desired/Reported 与 revision | `PARTIAL-CODE; TEST-DEFERRED` | TeacherConnectivity revision、签名读回和 journal 已接通；其他配置模块尚未实施。 |
 | 23 | CM-02 自动配置同步与离线对账 | `PARTIAL-CODE; TEST-DEFERRED` | Maintenance 签名同步现同时写 Agent 配置、维护 bootstrap，在共享更新锁内拒绝活动更新，重启 SYSTEM Agent 并等待活动配置指纹；运行失败回滚两侧快照，断电中断由受保护恢复记录在服务启动时恢复旧快照。教师 journal 新增按固定 Agent 身份持久化的 TeacherConnectivity 待发送队列；Agent 通道或独立 Maintenance 服务通道认证重连后会触发一次对账，按学生端健康状态签发下一 revision 并同步，重复连接事件有本机并发抑制。已完成源码接线，未构建/测试/VM 验收；CM-02 的其他配置模块与验证仍未完成。 |
-| 24 | CM-03 Schema 迁移与回滚 | `PARTIAL-CODE; TEST-DEFERRED` | 修复 Schema 7 校区包归档器缺口；新增 Maintenance bootstrap Schema 1→2 显式迁移：保留原始字节快照、原子替换、核对 schema/revision/固定身份/配置指纹，失败时恢复原字节。Agent 本地主配置没有 schema 字段；校区包未来版本与 7→8→9 迁移语义尚未定义，未虚构目标 schema。未构建/测试/VM 验收。 |
+| 24 | CM-03 Schema 迁移与回滚 | `SPEC-DEFINED; CODE-WIRED; TEST-DEFERRED; VM-PENDING` | 修复 Schema 7 校区包归档器缺口；Maintenance bootstrap Schema 1→2 显式迁移（原字节快照、原子替换、读回、失败恢复）已接线。**20:42 补齐 7→8→9 语义**：新增 `CampusPackageSchemaMigration.Plan` 允许清单（同版本 NoMigration、7→8 显式重建、8→9 与降级/跳级/未知版本一律 Rejected），明确 9 未发布故不虚构字段；`PackageBuilder.BuildCore` 生成 schema 8 包时调用 `RequireExplicitRebuildInputs` 守卫；完整语义见[校区配置包 Schema 迁移与回滚](campus-package-schema-migration.md)。未构建/测试/VM 验收，7→8 实际迁移与旧根退休仍待执行。 |
 | 25 | CM-04 无包首次安全配对 | `PARTIAL-CODE; TEST-DEFERRED` | Agent 首次身份由 SYSTEM 生成并通过签名状态披露；教师首次固定仍需显式勾选确认。新增学生课堂助手 12 位身份核对码，并在教师首次信任/身份轮换对话中并列显示，帮助现场核对设备。仅覆盖已装有签名校区公钥/证书配置的设备；限时无包入网、首次公钥/证书/公开配置安全分发、审计记录与 VM 验收仍未完成。 |
-| 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; STUDENT-ROTATION-WIRED; ROTATION-KEY-STAGING-WIRED; ROTATION-DRAFT-STORE-WIRED; CONFIG-STATUS-DETAIL-WIRED; CONFIG-FAILURE-STAGE-WIRED; TEST-DEFERRED` | TeacherConnectivity Desired/Reported 对账状态已进入逐台维护结果摘要；维护概览新增按本机 journal 中固定身份统计各配置模块排队、待回报、应用中、拒绝、漂移和同步数量，并按设备/模块显示 Desired 与 Reported revision、状态、最后回报时间及状态对应建议；明确不是全校实时状态。教师连接 Desired 条目现关联最近同 fingerprint 的配置同步事务；适配器为计划预检、配置快照、签名命令/回执、学生端配置读回、SYSTEM/Agent 健康、事务和版本核验标阶段，失败阶段与原因写入维护 transition 并显示；其他配置模块尚未接入此事务关联；P4-03 待处理列表现有按事务状态生成的下一步建议；Maintenance 服务身份变化现需显示新旧完整指纹并由教师明确批准。PolicyTrust 轮换格式、schemaVersion=8 本地包承载、学生端授权安装、旧/新根过渡验签及旧根退休已接线；Windows 当前用户证书库新增不可导出的候选根创建、按指纹重开和显式固定接口；旧根在候选阶段保持活动。轮换草稿现持久保存用途、旧/候选证书指纹、双签名授权和退休时间；读取时重验旧根、候选私钥与载荷一致。Teacher UI/草稿激活/包生成完整流程、macOS 钥匙串路径、其他配置模块的事务失败阶段关联、stable 云端发布 API 的 schemaVersion=8 支持、自动化与 Windows VM 验收仍未完成。 |
-| 27 | P3-03 完整故障注入/跨版本安全矩阵 | `NOT-IMPLEMENTED; TEST-DEFERRED; VM-PENDING` | 用户要求统一安排测试；强杀、断电、文件占用、混合版本与安全拒绝矩阵未运行。 |
-| 28 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
-| 29 | P4-03 运维可观察性 | `PARTIAL-CODE; RECOVERY-ADVICE-WIRED; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。待处理列表现按事务状态显示建议操作，不会建议重发未决 commandId 或绕过恢复核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
-| 30 | P4-02 Ring 0–3 灰度部署 | `GATES-DEFINED; TEST-DEFERRED; RING-PENDING` | 最终计划已明确各 Ring 准入、逐台组件/课堂/网站回归记录与熔断恢复条件；隔离包按目标机既有信任根验证，不要求先正式公开发行。未运行 VM 或真实教室灰度，需用户安排后再执行。 |
-| 31 | P4-04 课堂能力发布门槛 | `PARTIAL-CODE; FIELD-PENDING; TEST-DEFERRED` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；应用限制结果改用中性提示并明确只是 Agent 签名回执，非 Windows 实际拦截证明。历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
-| 32 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
-| 33 | P5-02 / Issue 011 Authenticode、摘要与签名清单 | `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED` | 新增签名脚本与受保护签名 job；标签发布需配置 PFX/password、预期 thumbprint、RFC 3161 timestamp URL，签后核验两安装器、生成含最终 SHA 的 Authenticode manifest 并连同 SHA256SUMS 发布。凭据/证书未配置且本轮未运行 workflow，不能称已签名。 |
-| 34 | P5-03 / Issue 012 隔离 CloudBase 迁移 | `ENVIRONMENT-PENDING` | 已有 migration contract 工作流；没有确认隔离环境连接与访问凭据，本轮不执行生产迁移。 |
-| 35 | P5-04 非 stable RC 交付 | `LOCAL-TEST-CANDIDATE-PATH-WIRED; SIGNING-BLOCKED; TEST-DEFERRED` | 已接入本机 MaintenanceService 候选选择与 Developer Release 签名 sidecar 生成入口，包留在本机，不上传 CloudBase。尚未运行 signer、构建、签名包接收/升级或 VM 验收；正式/预发布签名、全量检查、版本矩阵和包哈希仍未完成。 |
-| 36 | P5-05 用户 Windows VM/现场验收清单 | `CHECKLIST-RECORDED; VM-PENDING; FIELD-PENDING` | 原计划已有逐版本验收矩阵；仍须补充本次签名包哈希、VM 快照和用户实测记录。 |
-| 37 | LM-02/03 旧 Agent 一跳迁移与兼容矩阵 | `SOURCE-IMPLEMENTED; VM-PENDING; SIGNING-BLOCKED` | 旧版稳定发行信任链与 Legacy bridge 代码已接线，但缺合法 stable 签名和 0.4.55/0.4.56 快照；不得宣称迁移完成。 |
+| 26 | CM-05 密钥轮换、配置状态与诊断 UI | `PARTIAL-CODE; ALL-MODULE-FAILURE-STAGE-WIRED; ROTATION-ACTIVATION-WIRED; ROTATION-PACKAGE-WIRED; ROTATION-UI-WIRED; TEST-DEFERRED` | 原有 TeacherConnectivity 对账、配置状态明细与失败阶段接线保留。**20:42 补齐三块**：① `FindRelatedConfigurationRun` 让所有 `MaintenanceConfigurationModule`（校区身份 / 教师连接 / 策略信任 / 系统配置 / 运行参数）都能关联同一固定设备最近未闭环的配置事务，Desired fingerprint 匹配优先，无模块级 fingerprint 时才回退最近未闭环事务，不再只覆盖 TeacherConnectivity；② `PolicyTrustRotationDraftStore` 新增 `Inspect / GetAuthorizations / Activate / Clear`，`Activate` 逐角色固定候选根、全部成功才清理草稿，失败保留草稿并报告已固定项、旧根保持活动；③ `PackageBuilder.Build` 在存在有效草稿时自动注入 `policyTrustRotationAuthorizations`，并在结果里注明这是 schemaVersion=8 包；④ Teacher「高级维护操作」新增查看 / 创建 / 激活 / 清理四个入口，激活与清理均有二次确认。**仍未完成**：macOS 钥匙串路径、stable 云端发布 API 的 schemaVersion=8 支持、真实发行/Authenticode 签名凭据、自动化与 Windows VM 验收；未创建或激活任何真实信任根、未生成配置包。 |
+| 27 | P4-01 设备与更新导航精简 | `PARTIAL-CODE; UI-REVIEW-DEFERRED` | 更新页收敛为设备概览/学生端维护两个区段；教师软件更新移入“关于与软件更新”；设备勾选统一复用 `WebsitePolicyTargetChoices` 并在设备概览维护，策略与学生维护共用；身份核对移入高级维护。还需 UI 视觉复核设备状态层级、诊断折叠与真实事务进度，测试待用户统一安排。 |
+| 28 | P4-03 运维可观察性 | `PARTIAL-CODE; RECOVERY-ADVICE-WIRED; TEST-DEFERRED; UI-REVIEW-DEFERRED` | Teacher journal 终态记录写入时裁剪到最近 500 条且不早于 180 天，活动事务不裁剪；导出最多 500 条/512 KiB 匿名 JSON；设备概览从本机 journal 按当前校区/最近设备事务显示 Maintenance、Legacy、现场维护、能力未知数量及未完成事务；对已验证能力且仍在当前设备名单内的失败/回滚设备提供单台重试，活动事务继续核对。待处理列表现按事务状态显示建议操作，不会建议重发未决 commandId 或绕过恢复核对。尚无 VM/全局设备数据覆盖证明，隐私字段和 UI 需审查，未构建或测试。 |
+| 29 | P4-02 Ring 0–3 灰度部署 | `GATES-DEFINED; TEST-DEFERRED; RING-PENDING` | 最终计划已明确各 Ring 准入、逐台组件/课堂/网站回归记录与熔断恢复条件；隔离包按目标机既有信任根验证，不要求先正式公开发行。未运行 VM 或真实教室灰度，需用户安排后再执行。 |
+| 30 | P4-04 课堂能力发布门槛 | `PARTIAL-CODE; FIELD-PENDING; TEST-DEFERRED` | [课堂功能现场验收台账](classroom-feature-acceptance.md)为当前逐场景基线；应用限制结果改用中性提示并明确只是 Agent 签名回执，非 Windows 实际拦截证明。历史网站黑白名单记录只限定原环境，其余现场项仍未测试，不能变更为通过。 |
+| 31 | P5-01 CI / API / Windows installers | `CI-PARTIAL; RUN-DEFERRED` | 已有 App checks、API contract、Windows installers workflows；本轮 Windows installer workflow 增加独立 Maintenance Service 安装包构建并单独上传 artifact，Student/Teacher 正式发布 artifact 仍只含原两角色。尚未运行 workflow，安装器安装/卸载验证矩阵仍待统一测试安排。 |
+| 32 | P5-02 / Issue 011 Authenticode、摘要与签名清单 | `CODE-WIRED; SIGNING-BLOCKED; RUN-DEFERRED` | 新增签名脚本与受保护签名 job；标签发布需配置 PFX/password、预期 thumbprint、RFC 3161 timestamp URL，签后核验两安装器、生成含最终 SHA 的 Authenticode manifest 并连同 SHA256SUMS 发布。凭据/证书未配置且本轮未运行 workflow，不能称已签名。 |
+| 33 | P5-03 / Issue 012 隔离 CloudBase 迁移 | `ENVIRONMENT-PENDING` | 已有 migration contract 工作流；没有确认隔离环境连接与访问凭据，本轮不执行生产迁移。 |
+| 34 | P5-04 非 stable RC 交付 | `LOCAL-TEST-CANDIDATE-PATH-WIRED; SIGNING-BLOCKED; TEST-DEFERRED` | 已接入本机 MaintenanceService 候选选择与 Developer Release 签名 sidecar 生成入口，包留在本机，不上传 CloudBase。尚未运行 signer、构建、签名包接收/升级或 VM 验收；正式/预发布签名、全量检查、版本矩阵和包哈希仍未完成。 |
+| 35 | P5-05 用户 Windows VM/现场验收清单 | `CHECKLIST-RECORDED; VM-PENDING; FIELD-PENDING` | 原计划已有逐版本验收矩阵；仍须补充本次签名包哈希、VM 快照和用户实测记录。 |
+| 36 | LM-02/03 旧 Agent 一跳迁移与兼容矩阵 | `SOURCE-IMPLEMENTED; VM-PENDING; SIGNING-BLOCKED` | 旧版稳定发行信任链与 Legacy bridge 代码已接线，但缺合法 stable 签名和 0.4.55/0.4.56 快照；不得宣称迁移完成。 |
 
 ## 最近完成：P0-07 / Issue 007
 
@@ -282,3 +281,51 @@
 - 安装器将旧根及退休时间写入受保护的 Agent 配置和配置指纹；网站策略命令、课堂与设备状态请求、应用策略/审计/清单、系统策略在旧根退休前尝试当前根与旧根验签，退休后只接受当前根。配置同步不得改写这些固定信任状态。安装失败恢复路径只允许回到仍处于授权过渡期的旧根。
 - 教师端密钥保管、生成授权、显式轮换操作和 schemaVersion=8 本地包完整生成/交付流程尚未接入；Stable 云端发布路径也未开放 schemaVersion=8。因此这仍是学生端运行路径的代码接线，尚不可作为端到端用户测试包。
 - 本轮仅作静态代码审阅和 `git diff --check`；未运行测试、构建、安装或发布。轮换格式/恶意包/重复安装/过渡退休/失败回滚的自动化检查，以及 Windows VM 安装和教师端到端验收均待后续统一安排。
+
+## 2026-11-04 20:28 台账校准
+
+- 依据主计划附录 D 的更新顺序，校正 P1-03 的过时描述：匿名性能汇总**已**在 `workflow.MaintainAsync` 返回结果后生成，并非「导出不会出现报告」。本轮把生成条件显式化（`requestedOperation is null / FullMaintenance / SoftwareUpdate` 且结果含软件更新类），配置同步、仅服务更新、重新核对不生成报告；生成逻辑仍留在 ViewModel，`COORDINATOR-ONLY` 目标未完全达成。
+- 合并重复的 P3-03 登记：原顺序 21 与 27 为同一任务，已合并到 21，27 行删除，后续顺序号顺延；状态由 `NOT-IMPLEMENTED` 校正为 `CASES-DEFINED; EXECUTION-DEFERRED; VM-PENDING`（用例已在主计划第 8 节定义，缺的是执行）。
+- 同步更新主计划头部的「校准时工作区 HEAD」为 `3be164751777247e058c432bdf8bed5b93422cef`，以及附录 C B-08 的状态。
+- 本轮只做代码条件整理与台账校准，**未运行测试、构建、安装或 VM 验收，未写入 production / Veyon / CloudBase**。
+
+## 2026-11-04 20:42 CM-03 补充定义
+
+- 依据 `PackageManifest.Load`（7 = teacherChannel、8 = 7 + 1–3 个 policyTrustRotations、2–8 为已发布范围）与 `PackageBuilder.BuildCore` 的现有校验，新增 `src/VeyonCampus.Core/CampusPackageSchemaMigration.cs`：允许清单式 `Plan(from, to)`，只有 7→8 是允许的实际变换，且 `AllowsImplicitFieldInference = false`；8→9 / 降级 / 跳级 / 未知版本返回 `Rejected`。
+- `PackageBuilder.BuildCore` 生成 schema 8 包时调用 `RequireExplicitRebuildInputs`，使守卫进入真实构建路径，不是死代码。
+- 新增[校区配置包 Schema 迁移与回滚语义](campus-package-schema-migration.md)：版本事实、允许清单、7→8 执行顺序（原字节快照 → 校验 → 显式重建 → 原子替换 → 读回 → 失败恢复）、旧根退休/撤销、8→9 明确不定义、验收门槛。
+- 状态 `SPEC-DEFINED; CODE-WIRED; TEST-DEFERRED; VM-PENDING`；**未运行测试/构建/VM，未写入 production**。
+
+## 2026-11-04 20:42 三项连续实施（P1-03 / CM-03 / CM-05）
+
+用户指示「一个一个全都做了，我最后一起做测试」，按不依赖测试环境的顺序连续实施三项：
+
+- **P1-03 收尾**：新增 `TeacherMaintenancePerformanceReportFactory` + `TeacherMaintenanceReportRow`（`TeacherMaintenanceWorkflow.cs` 尾部，App/Maintenance 层），把原 ViewModel 约 60 行的匿名汇总生成逻辑整体迁入；`TeacherViewModel.CaptureStudentUpdatePerformanceReport` 缩为 22 行薄封装，用 `NormalizeTargetKey` 与行状态委托注入 UI 数据。行为不变，ViewModel 不再引用 `StudentUpdatePerformanceReportBuilder`。
+- **CM-03**：新增 `src/VeyonCampus.Core/CampusPackageSchemaMigration.cs`（允许清单 `Plan`：同版本 `NoMigration`、7→8 `ExplicitRebuild7To8`、8→9 / 降级 / 跳级 / 未知版本 `Rejected`，`AllowsImplicitFieldInference = false`），`PackageBuilder.BuildCore` 生成 schema 8 包时调用 `RequireExplicitRebuildInputs`；新增[校区配置包 Schema 迁移与回滚语义](campus-package-schema-migration.md)。9 未发布，明确不虚构字段。
+- **CM-05**：`TeacherViewModel.FindRelatedConfigurationRun` 把事务失败阶段关联扩展到全部配置模块；`PolicyTrustRotationDraftStore` 补 `Inspect / GetAuthorizations / Activate / Clear`；包生成入口注入轮换授权；Teacher「高级维护操作」加 4 个 UI 入口（`TeacherUpdatesView.axaml(.cs)` → `TeacherWindow.axaml(.cs)` → ViewModel），激活与清理带二次确认。
+- 静态检查：两个 XAML 可解析、21 个 Click 与 119 个 `Requested` 绑定全部有 handler、7 个 C# 文件大括号平衡、三份文档表格列数一致且 0 断链、`cr-at-eol` 下 `git diff --check` 干净。
+- **边界**：未运行测试/构建/安装/打包，未创建或激活真实信任根、未清理草稿、未生成配置包、未写入 production / Veyon / CloudBase；所有危险动作需要用户在 Teacher UI 显式点击并确认。状态统一 `TEST-DEFERRED; VM-PENDING`，跟随用户最后的统一测试安排。
+
+## 2026-11-04 21:29 打包构建（用户统一测试安排启动）
+
+用户指示「打包构建一下，我来测试，安装包放在 artifacts 文件夹下」，此前「不运行测试 / 构建 / 安装 / 打包」的约束解除。本轮**只构建打包**，自动化测试、Windows 安装、VM / 现场验收仍由用户执行。
+
+- 使用仓库既有 `scripts/package-windows-offline.ps1 -Role TeacherConsole -TestVersionOverride 1.1.65`，工具链为 .NET SDK 10.0.401 与本地 Inno Setup 6.7.1。产物：`artifacts/VeyonCampus-TeacherConsole-1.1.65-Maintenance-Test.exe`（70,984,234 B，SHA-256 `DA1492A04B3AD2482BC3FF43A6B548FBE870933DC548060374D60F7777A421A3`）；发布目录 `artifacts/windows-x64-v1.1.65-teacher-console-maintenance-test/`；日志 `artifacts/maintenance-package-20261104-1.1.65.log`。
+- 首次构建发现并修复 `TeacherWindow.axaml.cs(1243)` 的 `CS0019`：`List<TeacherRoomProfile> ?? TeacherRoomProfile[]` 类型不兼容（来自删除校区档案确认框的地点预览），已改为同类型 `List<TeacherRoomProfile>` 回退。
+- 顺带清理本轮 CM-05 引入的 6 个 `CA1416` 平台警告：`PolicyTrustRotationDraftStore` 的 `Inspect / GetAuthorizations / Activate / Clear` 加 `[SupportedOSPlatform("windows")]`，`TeacherViewModel` 的激活 / 清理命令加非 Windows 早返回。剩余 7 条 `CA1416` 位于既有 `ReadRaw / WriteRaw`，属历史基线。
+- 最终构建 **0 错误、102 个唯一警告**（历史基线约 103，均为仓库既有 CA1416 / 可空性 / 跨平台分析警告；日志中 204 行是同一批警告被输出两次）。`veyon-campus-role.json` 标记 `role=TeacherConsole`、`version=1.1.65`。
+- 已验证嵌入资源入包：`VeyonCampus.Teacher.dll` 含 `renderDirectoryHealth`、`directory-health`、`v=57`、`FindRelatedConfigurationRun`、`AppendVeyonDuplicateObjectNotice`、`PolicyTrustRotationStatus` —— 地点重复对象去重、手机端 v57 状态卡、CM-05 全模块关联与轮换 UI 均在本包内。
+- `-Clean` 因工具层批量删除保护（80 个文件 > 阈值）被拦截，未删除任何文件；改为重命名中间产物（`...-prev.exe` / `...-prev` 目录）后不带 `Clean` 重打，**最终交付包无 `-prev` 后缀**。
+- 状态 `BUILD-PASS; USER-TEST-PENDING`。**未创建或激活真实信任根、未生成配置包、未写 production / Veyon / CloudBase、未运行自动化测试或安装**。
+
+## 2026-11-04 22:22 现场复现、写入路径根因修复与 1.1.67
+
+用户成功安装 1.1.65 后反馈：Veyon 又出现两个相同地点、本机档案下拉仍是两份、新增人员无法同步（报「读回时地点对象 UUID 不唯一」）。
+
+- **覆盖安装疑问**：`installer/VeyonCampus-Teacher.iss` 与 `package-windows-offline.ps1` 本轮均无改动（`git status` 为空）；HEAD 里本来就是 `CloseApplications=no` / `RestartApplications=no`，打包脚本第 270 行还**强制校验**这两行必须存在。退出 app 才能安装是 Windows 文件锁 + 不自动强关教师端（避免上课中断）的既有设计，不是本轮改坏。
+- **决定性根因**：Veyon 4.11.2 插件 `importFile()` 用 `findByName(location)`，未命中就追加一个新 Location；Location UID 按名字生成，于是追加条目与已有条目 UUID 完全相同。教师端 `AddLocation` 原先用 `networkobjects import ... location <显示名>`，每次新增电脑都会制造重复地点。
+- **代码修复**：`VeyonNetworkObjectDirectory.AddLocation` 改为逐台 `networkobjects add computer <name> <host> "" <父地点 UUID>`（`handle_add` 的 `findNetworkObject` 支持 UUID 且不创建地点）；地点不存在才 `add location` 一次并读回取 UUID；保留写入后唯一 UUID 读回校验。顺带移除不再需要的临时 import 文件与其 `finally` 清理（首次重打包因此报过 `CS0103` / `CS1524`，已修）。
+- **其它代码**：① 右键「删除学生电脑（含 Veyon）」——`VeyonNetworkObjectDirectory.RemoveComputer(Guid)` 按 UUID 删除 + 前后读回校验，`TeacherViewModel.DeleteSeatComputerFromVeyonAsync` 移除本机座位并刷新名单，视图事件 / XAML / 二次确认全链路接通，且预览模式也能弹出右键菜单（原来 `SeatCellContextMenuOpening` 在非编辑模式直接 `Cancel`）；② 目录诊断文案压缩为一句，去掉快照指纹 / CLI / 退出码 / 原始错误堆叠，marker 去重保留。
+- **现场数据操作（均已备份）**：两轮 `config import` 去重，最终 Veyon 1 个 Location + 6 台电脑（PC-12 / PC-13 等全部保留）；本机 `campus-directory.json` 删除冗余「测试校区」档案及其 10 座位 layout，保留用户当前编辑的「测试」档案（3 座位）。备份与前后导出在 `artifacts/veyon-evidence-20261104-2200/`。Veyon 电脑对象未被删除。
+- **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.67-Maintenance-Test.exe`，70,977,027 B，SHA-256 `8E5747C7E168B1B90D3B6A35E0C8604CBB5818DE4020EDF282395E995EA896F4`；日志 `artifacts/maintenance-package-20261104-1.1.67.log`；0 错误、102 个唯一警告。**必须用 1.1.67**（1.1.66 不含 import 修复）。
+- **边界**：自动化测试 / Windows VM 验收仍未运行；用户当前运行 1.1.65，需重启到 1.1.67 才加载新档案数据。未写 production / CloudBase，未创建或激活真实信任根。

@@ -169,6 +169,80 @@ public static class PolicyTrustRotationDraftStore
             _ => throw new ArgumentOutOfRangeException(nameof(role))
         };
 
+    /// <summary>Read-only draft summary for the teacher UI; never returns private key material.</summary>
+    [SupportedOSPlatform("windows")]
+    public static string? Inspect(string campusId)
+    {
+        var draft = Read(campusId);
+        if (draft is null) return null;
+        var roles = string.Join("、", draft.Entries.Select(entry => entry.Role));
+        return $"草稿：{roles} · 创建 {draft.CreatedUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · " +
+               $"旧根退休 {draft.RetirePreviousRootUtc.ToLocalTime():yyyy-MM-dd HH:mm:ss} · 授权 {draft.Entries.Count} 项";
+    }
+
+    /// <summary>Verified rotation envelopes for PackageBuilder (schemaVersion=8).</summary>
+    [SupportedOSPlatform("windows")]
+    public static IReadOnlyList<string> GetAuthorizations(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var draft = Read(campusId) ??
+            throw new InvalidDataException("没有有效的策略根轮换草稿；请先创建草稿再生成 schemaVersion=8 配置包。");
+        return Array.AsReadOnly(draft.Entries.Select(entry => entry.AuthorizationJson).ToArray());
+    }
+
+    /// <summary>
+    /// Pins every verified candidate root and only then clears the draft. A failure keeps the
+    /// draft so the operator can see which roles were already pinned; old roots stay active
+    /// until the operator explicitly retires them.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    public static PolicyTrustRotationDraft Activate(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        var draft = Read(campusId) ?? throw new InvalidDataException("没有可激活的策略根轮换草稿。");
+        var pinned = new List<PolicyTrustKeyRole>(draft.Entries.Count);
+        try
+        {
+            foreach (var entry in draft.Entries)
+            {
+                var thumbprint = NormalizeThumbprint(entry.CandidateCertificateThumbprint);
+                switch (entry.Role)
+                {
+                    case PolicyTrustKeyRole.WebsitePolicy:
+                        WebsitePolicySigningKeyStore.PinExistingKey(campusId, thumbprint);
+                        break;
+                    case PolicyTrustKeyRole.ApplicationPolicy:
+                        ApplicationPolicySigningKeyStore.ActivateReplacement(campusId, thumbprint);
+                        break;
+                    case PolicyTrustKeyRole.StudentSystemPolicy:
+                        StudentSystemPolicySigningKeyStore.ActivateReplacement(campusId, thumbprint);
+                        break;
+                    default:
+                        throw new InvalidDataException("轮换草稿包含未知用途。");
+                }
+                pinned.Add(entry.Role);
+            }
+        }
+        catch (Exception exception) when (exception is CryptographicException or InvalidDataException or
+                                          IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            throw new InvalidOperationException(
+                $"候选根激活未完成，已固定 {pinned.Count}/{draft.Entries.Count} 项（{string.Join("、", pinned)}）；" +
+                "草稿已保留，旧根仍保持活动，请人工核对后再继续。", exception);
+        }
+        Clear(campusId);
+        return draft;
+    }
+
+    /// <summary>Deletes only the draft record; pinned roots and candidate certificates are untouched.</summary>
+    [SupportedOSPlatform("windows")]
+    public static void Clear(string campusId)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        using var key = Registry.CurrentUser.OpenSubKey(RegistryPathFor(campusId), writable: true);
+        key?.DeleteValue(DraftValue, throwOnMissingValue: false);
+    }
+
     private static string? ReadRaw(string campusId)
     {
         using var key = Registry.CurrentUser.OpenSubKey(RegistryPathFor(campusId), writable: false);

@@ -2,6 +2,8 @@
 
 本次现场反馈、更新审查问题及逐项补充的源码发现，集中记录在[项目问题记录](问题跟踪/README.md)；逐项实现顺序与验收要求见[Maintenance 最终实施计划](VeyonCampus_Maintenance_最终实施计划_Goals与问题001-009.md)。这两份文档区分已验证正常、现场故障和待验证问题，不替代项目任务主表。
 
+**Maintenance 文档体系（2026-11-04 校准）**：[最终实施计划](VeyonCampus_Maintenance_最终实施计划_Goals与问题001-009.md)是 Goals / 架构不变量 / 阶段出口 / 验收规范的权威基线；[完整实施计划（Codex 连续开发版）](VeyonCampus_Maintenance_%E5%AE%8C%E6%95%B4%E5%AE%9E%E6%96%BD%E8%AE%A1%E5%88%92_Codex%E8%BF%9E%E7%BB%AD%E5%BC%80%E5%8F%91%E7%89%88.md)是扩展到 001–012 / LM / CM / P5 的执行稿；[连续实施进度](maintenance/implementation-progress.md)是逐任务实时状态的唯一来源。引用任务一律使用任务 ID（`P0-03`、`CM-02`），不写表格顺序号。[地点 / Veyon 目录同步现场反馈](maintenance/2026-11-04-location-sync-field-feedback.md)（L01–L08，含 19:07 本机只读取证 F 节、代码改动清单与待办）单独记录设备目录与课堂范围相关的现场问题；[校区配置包 Schema 迁移与回滚语义](maintenance/campus-package-schema-migration.md)（CM-03）单独定义 7→8→9 的允许清单与回滚门槛。
+
 下一阶段 Phase 6 的教师操作说明、管理员部署/软件保护/灰度指南及待验收清单见[Phase 6 实施记录](../specs/next-phase/phase-6-stabilization-pilot-docs.md)、[教师端使用指南](教师端课堂快捷管控使用指南.md)和[管理员手册](管理员部署、软件保护与灰度试点手册.md)。
 
 2026-10-24 的架构边界、课堂网站恢复、管理员导航、手机 Veyon 屏幕巡视状态及后续拆分方向见[架构与易用性审查](架构与易用性审查-2026-10.md)。
