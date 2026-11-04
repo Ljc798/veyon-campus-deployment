@@ -67,6 +67,19 @@ if (args is ["--student-update-recovery-state-fixtures"])
     return;
 }
 
+if (args is ["--maintenance-independence-fixtures"])
+{
+    await MaintenanceIndependenceChecks.RunAsync();
+    return;
+}
+
+if (args is ["--maintenance-fault-injection-fixtures"])
+{
+    MaintenanceFaultInjectionChecks.Run();
+    Console.WriteLine("PASS P3-03 maintenance fault-injection recovery and cross-version safety scenarios");
+    return;
+}
+
 if (args is ["--student-agent-channel-fixtures"])
 {
     await StudentAgentChannelChecks.RunAsync();
@@ -869,8 +882,9 @@ Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲�
     var priorRoomComputer = new VeyonNetworkObject("computer", "PC-01", "PC-01", "", "一楼机房");
     var repeatedPrefixPreview = VeyonNetworkObjectDirectory.BuildImportPreview("二楼机房",
         [repeatedRoomPrefix], [priorRoomComputer]);
-    Expect(repeatedPrefixPreview.Conflicts.Count == 0 && repeatedPrefixPreview.ComputersToAdd.Count == 0 &&
-           repeatedPrefixPreview.SkippedComputers.Single().Contains("与显示名均已存在，保留已有项", StringComparison.Ordinal));
+    Expect(repeatedPrefixPreview.Conflicts.Count == 1 && repeatedPrefixPreview.ComputersToAdd.Count == 0 &&
+           repeatedPrefixPreview.SkippedComputers.Count == 0 &&
+           repeatedPrefixPreview.Conflicts.Single().Contains("其他或未确认地点", StringComparison.Ordinal));
 });
 Check("本机校区/机房档案稳定 ID、多机房持久化与 150 台上限", () =>
 {
@@ -895,12 +909,13 @@ Check("本机校区/机房档案稳定 ID、多机房持久化与 150 台上限"
         Expect(loaded.Count == 2 && loaded[0].ProfileId == campusId &&
                loaded[0].ProfileId != loaded[1].ProfileId && loaded[0].DisplayName == loaded[1].DisplayName &&
                loaded[0].Rooms.Count == 2 && loaded[0].Rooms[0].RoomId == firstRoomId &&
-               loaded[0].Rooms[0].HostOverrides!.SequenceEqual(["192.168.1.10", "", "pc-03.school.local"]) &&
+               loaded[0].Rooms[0].HostOverrides is null &&
                loaded[0].Rooms[0].ComputerRangeLabel == "PC-01–PC-150 · 150 台" &&
                loaded[0].Rooms[1].RoomId == secondRoomId);
 
         var savedText = File.ReadAllText(path);
-        Expect(!savedText.Contains("张三", StringComparison.Ordinal) &&
+        Expect(!savedText.Contains("hostOverrides", StringComparison.OrdinalIgnoreCase) &&
+               !savedText.Contains("张三", StringComparison.Ordinal) &&
                !savedText.Contains("studentRoster", StringComparison.OrdinalIgnoreCase));
         var originalBytes = File.ReadAllBytes(path);
         var overLimitRoom = firstRoom with { ComputerCount = 151 };

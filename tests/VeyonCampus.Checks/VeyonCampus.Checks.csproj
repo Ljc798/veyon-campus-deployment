@@ -35,6 +35,7 @@
     <Compile Include="../../src/VeyonCampus.App/ClassroomScreenPreviewCapture.cs" Link="ClassroomScreenPreviewCapture.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherClassroomModes.cs" Link="TeacherClassroomModes.cs" />
     <Compile Include="../../src/VeyonCampus.App/MobileControlTlsIdentity.cs" Link="MobileControlTlsIdentity.cs" />
+    <Compile Include="../../src/VeyonCampus.App/Maintenance/**" LinkBase="Maintenance" />
     <None Include="../../src/VeyonCampus.Agent/Assets/StudentDefaultWallpaper-v1.jpg"
           Link="Assets/StudentDefaultWallpaper-v1.jpg"
           CopyToOutputDirectory="PreserveNewest" />

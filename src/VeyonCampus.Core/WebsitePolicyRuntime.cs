@@ -5655,18 +5655,29 @@ public sealed class WebsitePolicyAgent
                 try
                 {
                     var now = DateTimeOffset.UtcNow;
-                    var inventory = await Task.Run<object>(() => VerifyWithPolicyTrustRoots(config,
-                        PolicyTrustKeyRole.ApplicationPolicy, publicKey => accountsOnly
-                        ? applicationPolicyAgent.ReadStudentAccounts(inventoryRequest, publicKey, now)
-                        : isCatalogRequest
-                            ? applicationPolicyAgent.ReadApplicationCatalog(inventoryRequest, publicKey, now)
-                            : isCatalogDetailsRequest
-                                ? applicationPolicyAgent.ReadSelectedApplicationDetails(inventoryRequest,
-                                    publicKey, now, cancellationToken)
-                                : applicationPolicyAgent.ReadInventory(inventoryRequest, publicKey, now, cancellationToken),
-                        now), cancellationToken)
-                        .ConfigureAwait(false);
-                    var bytes = JsonSerializer.SerializeToUtf8Bytes(inventory, JsonOptions);
+                    var inventoryResult = await Task.Run<object>(() =>
+                    {
+                        if (accountsOnly)
+                            return VerifyWithPolicyTrustRoots<ApplicationInventoryResponse>(config,
+                                PolicyTrustKeyRole.ApplicationPolicy,
+                                publicKey => applicationPolicyAgent.ReadStudentAccounts(inventoryRequest,
+                                    publicKey, now), now);
+                        if (isCatalogRequest)
+                            return VerifyWithPolicyTrustRoots<ApplicationCatalogResponse>(config,
+                                PolicyTrustKeyRole.ApplicationPolicy,
+                                publicKey => applicationPolicyAgent.ReadApplicationCatalog(inventoryRequest,
+                                    publicKey, now), now);
+                        if (isCatalogDetailsRequest)
+                            return VerifyWithPolicyTrustRoots<ApplicationCatalogResponse>(config,
+                                PolicyTrustKeyRole.ApplicationPolicy,
+                                publicKey => applicationPolicyAgent.ReadSelectedApplicationDetails(
+                                    inventoryRequest, publicKey, now, cancellationToken), now);
+                        return VerifyWithPolicyTrustRoots<ApplicationInventoryResponse>(config,
+                            PolicyTrustKeyRole.ApplicationPolicy,
+                            publicKey => applicationPolicyAgent.ReadInventory(inventoryRequest, publicKey, now,
+                                cancellationToken), now);
+                    }, cancellationToken).ConfigureAwait(false);
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(inventoryResult, JsonOptions);
                     var responseLimit = isCatalogRequest
                         ? ApplicationCatalogCryptography.MaximumCatalogResponseBytes : 512 * 1024;
                     if (bytes.Length > responseLimit) throw new InvalidDataException("应用清单结果超过大小限制。");

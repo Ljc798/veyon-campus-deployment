@@ -17,7 +17,15 @@ public enum VeyonDeviceDirectoryState
 public sealed record VeyonDeviceDirectoryEntry(Guid DeviceId, Guid VeyonObjectId,
     Guid VeyonLocationObjectId, string LocationName, string VeyonComputerName,
     string HostAddress, string MacAddress, VeyonDeviceDirectoryState State,
-    string? ConflictDetail, DateTimeOffset LastObservedUtc, DateTimeOffset? MissingSinceUtc);
+    string? ConflictDetail, DateTimeOffset LastObservedUtc, DateTimeOffset? MissingSinceUtc)
+{
+    public Guid? SeatId { get; init; }
+    public int? ComputerNumber { get; init; }
+    public string? StudentName { get; init; }
+}
+
+public sealed record VeyonDeviceSeatBinding(Guid SeatId, int? ComputerNumber, string StudentName,
+    Guid VeyonLocationObjectId, string HostAddress);
 
 public sealed record VeyonDeviceDirectorySnapshot(int SchemaVersion, string DirectoryFingerprint,
     DateTimeOffset LastFullReadUtc, IReadOnlyList<VeyonDeviceDirectoryEntry> Devices);
@@ -59,7 +67,8 @@ public sealed class VeyonDeviceDirectoryStore
 
     /// <summary>Reconciles only a complete, trusted networkobjects dump/config snapshot.</summary>
     public VeyonDeviceDirectorySnapshot Reconcile(IReadOnlyList<VeyonNetworkObject> objects,
-        string directoryFingerprint, DateTimeOffset? observedUtc = null)
+        string directoryFingerprint, DateTimeOffset? observedUtc = null,
+        IReadOnlyDictionary<Guid, VeyonDeviceSeatBinding>? seatBindings = null)
     {
         ArgumentNullException.ThrowIfNull(objects);
         if (objects.Count > MaximumDevices * 2 || directoryFingerprint is not { Length: 64 } ||
@@ -131,6 +140,28 @@ public sealed class VeyonDeviceDirectoryStore
             foreach (var owners in hostGroups.Values.Where(owners => owners.Count > 1))
                 foreach (var objectId in owners) AddConflict(objectId, "Veyon Host 在多个电脑对象中重复");
 
+            var bindingsByObjectId = seatBindings ?? new Dictionary<Guid, VeyonDeviceSeatBinding>();
+            foreach (var binding in bindingsByObjectId)
+            {
+                if (binding.Key == Guid.Empty || binding.Value.SeatId == Guid.Empty ||
+                    string.IsNullOrWhiteSpace(binding.Value.HostAddress))
+                    throw new InvalidDataException("座位设备绑定包含空 UUID 或 Host；原设备目录记录未修改。");
+                string normalizedSeatHost;
+                try { normalizedSeatHost = VeyonHostAddress.NormalizeOverride(binding.Value.HostAddress); }
+                catch (InvalidDataException exception)
+                {
+                    throw new InvalidDataException("座位设备绑定 Host 格式无效；原设备目录记录未修改。", exception);
+                }
+                if (Uri.CheckHostName(normalizedSeatHost) != UriHostNameType.Dns)
+                    throw new InvalidDataException("座位设备绑定必须使用固定 Windows Hostname；原设备目录记录未修改。");
+            }
+            var knownObjectIds = computers.Select(item => item.ObjectId).Concat(previousByObjectId.Keys).ToHashSet();
+            if (bindingsByObjectId.Keys.Any(objectId => !knownObjectIds.Contains(objectId)))
+                throw new InvalidDataException("座位绑定引用了当前及历史投影均未知的 Veyon UUID；原设备目录记录未修改。");
+            foreach (var group in bindingsByObjectId.GroupBy(pair => pair.Value.SeatId)
+                         .Where(group => group.Count() > 1))
+                foreach (var binding in group) AddConflict(binding.Key, "同一座位被多个 Veyon UUID 绑定");
+
             var entries = new List<VeyonDeviceDirectoryEntry>(computers.Length + previous.Devices.Count);
             foreach (var computer in computers)
             {
@@ -150,12 +181,26 @@ public sealed class VeyonDeviceDirectoryStore
                     : isHostChanged ? VeyonDeviceDirectoryState.HostChanged
                     : isRenamed ? VeyonDeviceDirectoryState.Renamed
                     : VeyonDeviceDirectoryState.InSync;
+                var seatBinding = bindingsByObjectId.GetValueOrDefault(computer.ObjectId);
+                if (seatBinding is not null &&
+                    (seatBinding.VeyonLocationObjectId != computer.ParentObjectId ||
+                     !string.Equals(VeyonHostAddress.NormalizeOverride(seatBinding.HostAddress), normalizedHost,
+                         StringComparison.OrdinalIgnoreCase)))
+                {
+                    AddConflict(computer.ObjectId, "座位绑定的 Host 或地点 UUID 与当前 Veyon 设备不一致");
+                    state = VeyonDeviceDirectoryState.Conflict;
+                }
                 entries.Add(new VeyonDeviceDirectoryEntry(prior?.DeviceId ?? Guid.NewGuid(),
                     computer.ObjectId, computer.ParentObjectId, Bound(locationName, 100),
                     Bound(computer.Name, 100), Bound(normalizedHost, 253), Bound(computer.Mac, 32), state,
                     conflicts.TryGetValue(computer.ObjectId, out var details)
                         ? string.Join("；", details.OrderBy(item => item, StringComparer.Ordinal)) : null,
-                    now, null));
+                    now, null)
+                {
+                    SeatId = seatBindings is null ? prior?.SeatId : seatBinding?.SeatId,
+                    ComputerNumber = seatBindings is null ? prior?.ComputerNumber : seatBinding?.ComputerNumber,
+                    StudentName = seatBindings is null ? prior?.StudentName : seatBinding?.StudentName
+                });
             }
 
             var currentIds = computers.Select(item => item.ObjectId).ToHashSet();
@@ -275,6 +320,9 @@ public sealed class VeyonDeviceDirectoryStore
                 item.VeyonComputerName is null || item.VeyonComputerName.Length > 100 ||
                 item.HostAddress is null || item.HostAddress.Length > 253 || item.MacAddress is null ||
                 item.MacAddress.Length > 32 || item.ConflictDetail?.Length > 500 ||
+                item.SeatId == Guid.Empty || item.ComputerNumber is <= 0 ||
+                item.StudentName is { Length: > 100 } ||
+                item.StudentName?.Any(char.IsControl) == true ||
                 item.LastObservedUtc.Offset != TimeSpan.Zero ||
                 (item.MissingSinceUtc is { } missingSince && missingSince.Offset != TimeSpan.Zero))
                 throw new InvalidDataException("Veyon 设备目录缓存含无效或重复设备身份；原文件未修改。");

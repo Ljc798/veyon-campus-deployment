@@ -293,7 +293,7 @@ public sealed class MaintenanceServiceWorker
                                               InvalidDataException or System.Security.SecurityException or
                                               InvalidOperationException or ArgumentException)
             {
-                await DelayAsync(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
             }
         }
         using (MaintenanceServiceIdentityStore.LoadOrCreateForSystemService(configPath)) { }
@@ -307,7 +307,7 @@ public sealed class MaintenanceServiceWorker
             {
                 // Keep the recovery journal and retry after the independent update transaction settles.
             }
-            await DelayAsync(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
         }
         _ = MaintenanceServiceConfigurationStore.LoadOrInitializeForSystemService(configPath);
         _ = StudentUpdateAtomicTransaction.RecoverFromCommand(configPath);

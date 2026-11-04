@@ -39,7 +39,7 @@ public static class MaintenanceServiceUpdateExecutor
 {
     public const string StagingDirectoryName = "UpdateStaging";
     private const string TransactionFileName = "maintenance-update-transaction.json";
-    private const long MaximumTransactionBytes = 32 * 1024;
+    private const long MaximumTransactionBytes = 32L * 1024;
     private static readonly Regex StudentSetupFileNamePattern = new(
         "^VeyonCampus-Student-Setup-(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?-win-x64\\.exe$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
@@ -76,7 +76,7 @@ public static class MaintenanceServiceUpdateExecutor
         PathLinkSecurity.RejectLinks(stagingDirectory);
         AgentFileSecurity.SecurePrivateDirectory(stagingDirectory);
         var transactionPath = Path.Combine(serviceDirectory, TransactionFileName);
-        var existing = ReadTransaction(transactionPath);
+        var existing = ReadTransactionFromPath(transactionPath);
         if (existing is not null && existing.CommandId == commandId)
         {
             if (!string.Equals(existing.ReleaseSha256, request.ReleaseSha256, StringComparison.OrdinalIgnoreCase) ||
@@ -93,13 +93,14 @@ public static class MaintenanceServiceUpdateExecutor
             throw new InvalidOperationException("已有 Maintenance 更新事务尚未安全结束；保留事务并拒绝新的安装包。" );
 
         ApplicationReleaseEnvelope release;
+        var canonicalEnvelope = Array.Empty<byte>();
         try
         {
             var signedEnvelopeBytes = Encoding.UTF8.GetBytes(request.SignedReleaseEnvelopeJson);
             PolicyJson.RejectDuplicateFields(signedEnvelopeBytes);
             release = JsonSerializer.Deserialize<ApplicationReleaseEnvelope>(signedEnvelopeBytes, JsonOptions)
                       ?? throw new InvalidDataException("StudentSetup 签名发行清单为空。" );
-            var canonicalEnvelope = JsonSerializer.SerializeToUtf8Bytes(release, JsonOptions);
+            canonicalEnvelope = JsonSerializer.SerializeToUtf8Bytes(release, JsonOptions);
             if (!signedEnvelopeBytes.AsSpan().SequenceEqual(canonicalEnvelope))
                 throw new InvalidDataException("StudentSetup 签名发行清单不是规范 JSON。" );
         }
@@ -200,7 +201,7 @@ public static class MaintenanceServiceUpdateExecutor
     public static MaintenanceServiceUpdateTransactionRecord? ReadTransaction(string configPath)
     {
         var directory = MaintenanceServiceIdentityStore.GetServiceDirectory(configPath);
-        return ReadTransaction(Path.Combine(directory, TransactionFileName));
+        return ReadTransactionFromPath(Path.Combine(directory, TransactionFileName));
     }
 
     [SupportedOSPlatform("windows")]
@@ -267,7 +268,7 @@ public static class MaintenanceServiceUpdateExecutor
                 agentRuntimeVersion = Path.GetFileName(Path.GetDirectoryName(path));
                 if (agentRuntimeVersion is not null)
                     _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
-                agentAssemblyVersion = WorkerLaunchContext.GetAssemblyProductVersion(path);
+                agentAssemblyVersion = WorkerInstallationGuard.GetAssemblyProductVersion(path);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -293,7 +294,7 @@ public static class MaintenanceServiceUpdateExecutor
         await Task.CompletedTask.ConfigureAwait(false);
     }
 
-    private static MaintenanceServiceUpdateTransactionRecord? ReadTransaction(string path)
+    private static MaintenanceServiceUpdateTransactionRecord? ReadTransactionFromPath(string path)
     {
         if (!File.Exists(path)) return null;
         PathLinkSecurity.RejectLinksAllowingMissingComponents(path);
@@ -421,7 +422,7 @@ public static class MaintenanceServiceUpdateExecutor
 
         private static MaintenanceServiceUpdateTransactionRecord RequireMatching(string path, Guid commandId)
         {
-            var current = ReadTransaction(path);
+            var current = ReadTransactionFromPath(path);
             if (current is null || current.CommandId != commandId)
                 throw new InvalidDataException("Maintenance 更新事务与 UpdateHelper commandId 不匹配。" );
             return current;
@@ -429,7 +430,7 @@ public static class MaintenanceServiceUpdateExecutor
 
         private static void WriteCore(string path, MaintenanceServiceUpdateTransactionRecord record)
         {
-            var current = ReadTransaction(path);
+            var current = ReadTransactionFromPath(path);
             if (current is not null)
             {
                 if (current.CommandId == record.CommandId)
@@ -457,7 +458,7 @@ public static class MaintenanceServiceUpdateExecutor
             PathLinkSecurity.RejectLinks(directory);
             if (File.Exists(path)) PathLinkSecurity.RejectLinks(path);
             var bytes = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
-            if (bytes.Length is 0 or > MaximumTransactionBytes)
+            if (bytes.Length == 0 || bytes.Length > (int)MaximumTransactionBytes)
                 throw new IOException("Maintenance 更新事务超过存储上限。" );
             var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
             try

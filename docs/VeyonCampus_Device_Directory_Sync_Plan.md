@@ -339,7 +339,7 @@ Inspect → PreviewExactDiff → CheckFingerprintAndUID
 | **UD-11** | **P1** 自动化回归与 Windows VM 用户验收脚本                 | 覆盖“Campus 新增→Veyon→策略列表”的主链路及失败恢复                                                 |
 | **UD-12** | **P2** 多教师机共享目录/权限来源策略                        | 明确 Builtin 与外部目录边界，禁止多人无锁覆盖                                                      |
 
-**当前代码状态：** UD-01、UD-02、UD-04 为首批代码已完成（仍待用户验收）；UD-03、UD-05、UD-06 为部分完成。UD-08 的固定 Hostname → Veyon Host 已实现。现已接入按 UUID 的双向 Name/学生姓名同步：Campus 修改后受控写入 Veyon，读取目录发现差异后可经教师确认原子更新 Campus；换座也覆盖空座位与单侧绑定。统一目录自动对账与 UD-09～UD-12 尚未完成。Name 不再要求等于 Host，Host/UUID/电脑编号/座位绑定保持独立。旧 HostOverrides 仍仅用于旧档案兼容。具体边界和手测项目以[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)及[手动验收清单](maintenance/2026-11-04-device-directory-sync-manual-checklist.md)为准。
+**当前代码状态：** UD-01、UD-02、UD-04 为首批代码已完成（仍待用户验收）；UD-03、UD-05、UD-06 为部分完成。UD-06 的本机 UUID 投影已纳入 SeatId、电脑编号和学生姓名，并在 Windows 策略/维护目标操作前要求完整可信目录对账与指纹一致；解除座位绑定会清除投影关联。UD-08 的固定 Hostname → Veyon Host 已实现。现已接入按 UUID 的双向 Name/学生姓名同步：Campus 修改后受控写入 Veyon，读取目录发现差异后可经教师确认原子更新 Campus；换座也覆盖空座位与单侧绑定。统一快照尚未供策略、监控、移动端共同消费，自动持续对账与 UD-09～UD-12 仍未完成。Name 不再要求等于 Host，Host/UUID/电脑编号/座位绑定保持独立。旧 HostOverrides 仍仅用于旧档案兼容。具体边界和手测项目以[实施记录](maintenance/2026-11-03-device-directory-sync-implementation-log.md)及[手动验收清单](maintenance/2026-11-04-device-directory-sync-manual-checklist.md)为准。
 要求每个 UD 都有最小可审查提交、自动化测试、变更说明。**源代码改动不等于 Windows 实测通过。** 与当前 Maintenance 更新协议和权限体系集成，而不是更换密钥或改造学生端安装器。
 
 ## 10. 测试验收矩阵

@@ -87,10 +87,10 @@ public static class MaintenanceServiceConfigurationStore
         var path = Path.Combine(directory, BootstrapFileName);
         if (File.Exists(path))
         {
-            var snapshot = ReadAndValidate(path, agentConfig, agentFingerprint, out var storedSchemaVersion);
+            var storedSnapshot = ReadAndValidate(path, agentConfig, agentFingerprint, out var storedSchemaVersion);
             if (storedSchemaVersion == 1)
-                return MigrateLegacyBootstrap(path, directory, snapshot, agentConfig, agentFingerprint);
-            return snapshot;
+                return MigrateLegacyBootstrap(path, directory, storedSnapshot, agentConfig, agentFingerprint);
+            return storedSnapshot;
         }
 
         var snapshot = CreateSnapshot(agentConfig, agentFingerprint, nowUtc ?? DateTimeOffset.UtcNow);

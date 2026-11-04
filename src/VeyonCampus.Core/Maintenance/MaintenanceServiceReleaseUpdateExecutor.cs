@@ -34,7 +34,7 @@ public static class MaintenanceServiceReleaseUpdateExecutor
 {
     public const string TransactionFileName = "maintenance-service-release-transaction.json";
     private const string StagingDirectoryName = "UpdateStaging";
-    private const long MaximumTransactionBytes = 16 * 1024;
+    private const long MaximumTransactionBytes = 16L * 1024;
     private const long MaximumArtifactBytes = 512L * 1024 * 1024;
     private static readonly Regex FileNamePattern = new(
         "^VeyonCampus-Maintenance-Setup-(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?-win-x64\\.exe$",
@@ -402,7 +402,7 @@ public static class MaintenanceServiceReleaseUpdateExecutor
         var directory = Path.GetDirectoryName(path)!;
         PathLinkSecurity.RejectLinks(directory);
         var bytes = JsonSerializer.SerializeToUtf8Bytes(record, JsonOptions);
-        if (bytes.Length is 0 or > MaximumTransactionBytes)
+        if (bytes.Length == 0 || bytes.Length > (int)MaximumTransactionBytes)
             throw new IOException("MaintenanceService 更新事务超过存储上限。");
         var temporary = path + ".tmp-" + Guid.NewGuid().ToString("N");
         try

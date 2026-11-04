@@ -2,6 +2,7 @@ using System.Runtime.Versioning;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
+using VeyonCampus.Core.Maintenance;
 
 namespace VeyonCampus.Core;
 

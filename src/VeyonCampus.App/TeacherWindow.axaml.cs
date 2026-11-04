@@ -1202,7 +1202,7 @@ public partial class TeacherWindow : Window
         var preview = string.Join("\n", conflicts.Select(item => item.DisplayLabel));
         if (!await ConfirmProfileActionAsync("确认按 Veyon Name 更新学生姓名",
                 "将按每台电脑的 UUID，把 Veyon Name 同步到对应 Campus 学生姓名：\n" + preview +
-                "\n\n若 Veyon Name 等于固定 HostAddress，将清空该座位学生姓名。Host、电脑编号、UUID 和座位设备绑定不变。",
+                "\n\n若 Veyon Name 等于固定电脑名（默认显示名），同步后该座位学生姓名为空。此操作只更新姓名；Host、电脑编号、UUID 和座位设备绑定不变。",
                 "同步学生姓名")) return;
         _model.SetSeatNameSyncStatus(await _model.ApplyVeyonNameConflictsToCampusAsync());
     }
@@ -1536,7 +1536,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = "将交换所选座位中的学生姓名。两个座位都有学生且均关联到已核验的 Veyon 电脑时，会同步更新电脑显示名；否则只更新本机座位记录，电脑编号、连接地址和 Veyon 关联保留在原座位。",
+            Text = "将交换所选座位中的学生姓名。已绑定的 Veyon 电脑会按各自 UUID 同步对应显示名；允许一个座位为空或未绑定。电脑编号、固定连接地址、UUID 和设备座位绑定保持不变；若绑定状态或名称存在冲突，会先要求核对。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         layout.Children.Add(new ListBox

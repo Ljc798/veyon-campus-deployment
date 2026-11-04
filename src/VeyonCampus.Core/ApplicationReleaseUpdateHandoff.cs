@@ -157,35 +157,40 @@ public static class ApplicationReleaseUpdateHandoff
                     updateLease.Release();
                 }
             }
-            if (args is ["--elevated-apply-release", var elevatedRole, var encodedInstallerPath,
-                    var encodedCurrentVersion])
+            if (args is ["--elevated-apply-release", var elevatedRole, var encodedElevatedInstallerPath,
+                    var encodedElevatedCurrentVersion])
             {
-                var decodedInstallerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedInstallerPath));
-                var decodedCurrentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCurrentVersion));
-                ApplyReleaseAsAdministrator(decodedInstallerPath, ParseRole(elevatedRole), decodedCurrentVersion);
+                var decodedElevatedInstallerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedElevatedInstallerPath));
+                var decodedElevatedCurrentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedElevatedCurrentVersion));
+                ApplyReleaseAsAdministrator(decodedElevatedInstallerPath, ParseRole(elevatedRole), decodedElevatedCurrentVersion);
                 return 0;
             }
-            if (args is ["--maintenance-apply-release", var encodedInstallerPath, var encodedConfigPath,
-                    var commandIdText, var encodedCurrentVersion])
+            if (args is ["--maintenance-apply-release", var encodedMaintenanceInstallerPath, var encodedMaintenanceConfigPath,
+                    var maintenanceCommandIdText, var encodedMaintenanceCurrentVersion])
             {
-                var installerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedInstallerPath));
-                var configPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedConfigPath));
-                var currentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCurrentVersion));
-                if (!Guid.TryParseExact(commandIdText, "N", out var commandId) || commandId == Guid.Empty)
+                var maintenanceInstallerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedMaintenanceInstallerPath));
+                var maintenanceConfigPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedMaintenanceConfigPath));
+                var maintenanceCurrentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedMaintenanceCurrentVersion));
+                if (!Guid.TryParseExact(maintenanceCommandIdText, "N", out var maintenanceCommandId) ||
+                    maintenanceCommandId == Guid.Empty)
                     throw new InvalidDataException("Maintenance 更新事务编号无效。");
-                ApplyReleaseFromMaintenanceService(installerPath, configPath, currentVersion, commandId);
+                ApplyReleaseFromMaintenanceService(maintenanceInstallerPath, maintenanceConfigPath,
+                    maintenanceCurrentVersion, maintenanceCommandId);
                 return 0;
             }
-            if (args is ["--maintenance-apply-service-release", var encodedInstallerPath,
-                    var encodedConfigPath, var commandIdText, var encodedCurrentVersion, var encodedTargetVersion])
+            if (args is ["--maintenance-apply-service-release", var encodedServiceInstallerPath,
+                    var encodedServiceConfigPath, var serviceCommandIdText, var encodedServiceCurrentVersion,
+                    var encodedServiceTargetVersion])
             {
-                var installerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedInstallerPath));
-                var configPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedConfigPath));
-                var currentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedCurrentVersion));
-                var targetVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedTargetVersion));
-                if (!Guid.TryParseExact(commandIdText, "N", out var commandId) || commandId == Guid.Empty)
+                var serviceInstallerPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedServiceInstallerPath));
+                var serviceConfigPath = Encoding.UTF8.GetString(Convert.FromBase64String(encodedServiceConfigPath));
+                var serviceCurrentVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedServiceCurrentVersion));
+                var serviceTargetVersion = Encoding.UTF8.GetString(Convert.FromBase64String(encodedServiceTargetVersion));
+                if (!Guid.TryParseExact(serviceCommandIdText, "N", out var serviceCommandId) ||
+                    serviceCommandId == Guid.Empty)
                     throw new InvalidDataException("MaintenanceService 更新事务编号无效。");
-                ApplyMaintenanceServiceRelease(installerPath, configPath, commandId, currentVersion, targetVersion);
+                ApplyMaintenanceServiceRelease(serviceInstallerPath, serviceConfigPath, serviceCommandId,
+                    serviceCurrentVersion, serviceTargetVersion);
                 return 0;
             }
             return 2;

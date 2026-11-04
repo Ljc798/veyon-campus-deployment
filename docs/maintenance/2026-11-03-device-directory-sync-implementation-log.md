@@ -60,7 +60,10 @@ TeacherRoomView → TeacherWindow.AddRoomToVeyon
 - 新增按 Veyon Computer UUID 保持稳定 `DeviceId` 的本机 JSON 投影；写入使用文件锁、临时文件和原子替换，并限制文件大小、设备数和链接路径。
 - 只在完整可信目录读取后进行对账，记录 `Discovered / Renamed / HostChanged / Moved / MissingInVeyon / Conflict`；UUID 消失后保留旧条目，UUID 重建时不继承旧身份。
 - 当前教师端将该投影用于冲突摘要及策略目标拦截；只读回退不会覆盖可信投影。
-- 该投影尚未合并 SeatId、学生姓名、Agent 信任状态，也未作为策略、监控、移动端共同消费的不可变快照；UD-06 仍属部分完成。
+- TeacherViewModel 暴露最近一次已验证的不可变 `VeyonDeviceDirectorySnapshot`；策略/维护目标按快照 Host 唯一匹配 UUID，且仅允许 InSync/Discovered 状态。Name/Host/地点变化、冲突、缺失、异常/回退或指纹不一致时禁止操作；异常/回退时保留最近快照供只读查看。监控和移动端尚未改为共同消费该属性。
+- 已将 `SeatId`、电脑编号和学生姓名按 Veyon UUID 并入投影；若 UUID 与座位绑定的 Host/地点不一致、同一 UUID 被多个座位绑定，或座位引用了当前及历史投影均未知的 UUID，本次投影更新会安全拒绝。
+- 完整座位快照确认解除绑定时会清除投影中的旧 SeatId、编号和姓名；未提供座位快照的调用继续保留缓存资料。
+- 该投影仍未作为策略、监控、移动端共同消费的不可变快照，Agent 信任状态也未合并；UD-06 仍属部分完成。
 
 ## UD-07：Veyon Name 与学生姓名双向同步（代码已接入；待 Windows 手测）
 

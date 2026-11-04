@@ -352,7 +352,7 @@ public sealed class MaintenanceServiceCommandDispatcher
                 agentRuntimeVersion = Path.GetFileName(Path.GetDirectoryName(path))
                                       ?? throw new InvalidDataException("Agent 安装目录缺少版本号。" );
                 _ = ApplicationReleaseClient.CompareVersions(agentRuntimeVersion, agentRuntimeVersion);
-                agentAssemblyVersion = WorkerLaunchContext.GetAssemblyProductVersion(path);
+                agentAssemblyVersion = WorkerInstallationGuard.GetAssemblyProductVersion(path);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
