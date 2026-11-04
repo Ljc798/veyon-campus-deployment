@@ -5724,6 +5724,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         row.SetPendingVerification(detail);
                         break;
                     case MaintenanceRunState.RecoveryRequired:
+                        row.SetRecoveryRequired(detail);
+                        break;
                     case MaintenanceRunState.ManualRequired:
                         row.SetResult(false, true, detail);
                         break;
@@ -5957,8 +5959,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     case MaintenanceRunState.Updating:
                     case MaintenanceRunState.WaitingForCommit:
                     case MaintenanceRunState.ConfigurationSyncing:
-                    case MaintenanceRunState.RecoveryRequired:
                         row.SetPendingVerification(detail);
+                        break;
+                    case MaintenanceRunState.RecoveryRequired:
+                        row.SetRecoveryRequired(detail);
                         break;
                     case MaintenanceRunState.ManualRequired:
                     case MaintenanceRunState.Failed:
@@ -9916,7 +9920,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     public Guid? CommandId => _commandId;
     public Guid? MaintenanceOperationId => _maintenanceOperationId;
     public bool CanRequery => MaintenanceOperationId is not null && _maintenanceCanResume &&
-        (StatusText is "待核对" or "待验证") && !_isRechecking;
+        (StatusText is "待核对" or "待验证" or "需要恢复") && !_isRechecking;
     public string RequeryButtonText => MaintenanceOperationId is null ? "重新查询更新结果" : "重新核对维护事务";
     public bool CanReviewIdentity => _canReviewIdentity && !_identityReviewActive;
     public string IdentityReviewStatus { get => _identityReviewStatus; private set => Set(ref _identityReviewStatus, value); }
@@ -9936,7 +9940,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     {
         "成功" or "已是最新" or "已核对版本" => SuccessForeground,
         "失败" => DangerForeground,
-        "待核对" or "待验证" or "已回滚" => WarningForeground,
+        "待核对" or "待验证" or "需要恢复" or "已回滚" => WarningForeground,
         "等待发送" => NeutralForeground,
         _ => InfoForeground
     };
@@ -9944,7 +9948,7 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
     {
         "成功" or "已是最新" or "已核对版本" => SuccessBackground,
         "失败" => DangerBackground,
-        "待核对" or "待验证" or "已回滚" => WarningBackground,
+        "待核对" or "待验证" or "需要恢复" or "已回滚" => WarningBackground,
         "等待发送" => NeutralBackground,
         _ => InfoBackground
     };
@@ -10175,6 +10179,25 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
         Raise(nameof(Priority));
         IsIndeterminate = false;
         StatusText = "待验证";
+        Detail = detail;
+        Raise(nameof(CanRequery));
+        SetCanReviewIdentity(IsIdentityReviewDetail(detail));
+    }
+
+    public void SetRecoveryRequired(string detail)
+    {
+        var canResume = MaintenanceOperationId is not null;
+        if (_maintenanceCanResume != canResume)
+        {
+            _maintenanceCanResume = canResume;
+            Raise(nameof(CanRequery));
+        }
+        _isRechecking = false;
+        _phase = 5;
+        _priority = 1;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        StatusText = "需要恢复";
         Detail = detail;
         Raise(nameof(CanRequery));
         SetCanReviewIdentity(IsIdentityReviewDetail(detail));
