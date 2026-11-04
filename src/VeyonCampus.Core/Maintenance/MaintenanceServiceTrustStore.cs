@@ -197,6 +197,8 @@ public sealed class MaintenanceServiceTrustStore
             WritePendingRotations(ReadPendingRotations().Where(item => item.CampusId != pending.CampusId ||
                 item.Target != pending.Target || item.AgentIdentityFingerprint != pending.AgentIdentityFingerprint)
                 .ToArray());
+            _ = MaintenanceServiceChannelHub.InvalidateConnectionsWithDifferentIdentity(rotated.CampusId,
+                rotated.Target, rotated.MaintenanceIdentityFingerprint);
             return rotated;
         }
     }
@@ -457,4 +459,5 @@ public sealed class MaintenanceServiceTrustStore
     private sealed record PendingRotationDocument(int SchemaVersion,
         IReadOnlyList<PendingMaintenanceServiceIdentityRotation> Requests);
 }
+
 

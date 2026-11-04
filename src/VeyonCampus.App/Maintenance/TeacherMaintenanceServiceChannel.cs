@@ -114,7 +114,8 @@ internal sealed partial class TeacherMobileControlService
 
             await using var connection = new TeacherMaintenanceServiceConnection(socket);
             using var registration = MaintenanceServiceChannelHub.Register(campusId, agentPin.Target,
-                connection.SendRequestAsync);
+                verifiedEnrollment.MaintenanceIdentityFingerprint, connection.SendRequestAsync,
+                connection.Invalidate);
             try { _maintenanceServiceChannelConnected?.Invoke(agentPin.Target); }
             catch (InvalidOperationException)
             {
@@ -265,11 +266,18 @@ internal sealed class TeacherMaintenanceServiceConnection(WebSocket socket) : IA
 
     public ValueTask DisposeAsync()
     {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0)
-        {
-            foreach (var pending in _pending.Values)
-                pending.TrySetException(new IOException("学生 Maintenance 服务连接已释放。"));
-        }
+        Invalidate();
         return ValueTask.CompletedTask;
     }
+
+    public void Invalidate()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        foreach (var pending in _pending.Values)
+            pending.TrySetException(new IOException("学生 Maintenance 服务身份已轮换；旧连接已撤销。"));
+        try { socket.Abort(); }
+        catch (ObjectDisposedException) { }
+        catch (WebSocketException) { }
+    }
 }
+

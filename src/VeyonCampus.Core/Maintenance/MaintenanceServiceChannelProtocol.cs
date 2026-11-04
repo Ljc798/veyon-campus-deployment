@@ -238,18 +238,53 @@ public static class MaintenanceServiceChannelProtocol
 public static class MaintenanceServiceChannelHub
 {
     private static readonly ConcurrentDictionary<string, Registration> Connections = new(StringComparer.Ordinal);
+    private static readonly object RegistrationGate = new();
 
     public static bool IsConnected(string campusId, string target) =>
         Connections.ContainsKey(Key(campusId, target));
 
-    public static IDisposable Register(string campusId, string target,
-        Func<string, CancellationToken, Task<string>> sendAsync)
+    public static IDisposable Register(string campusId, string target, string maintenanceIdentityFingerprint,
+        Func<string, CancellationToken, Task<string>> sendAsync, Action invalidate)
     {
         ArgumentNullException.ThrowIfNull(sendAsync);
+        ArgumentNullException.ThrowIfNull(invalidate);
+        var fingerprint = MaintenanceValidation.Fingerprint(maintenanceIdentityFingerprint,
+            nameof(maintenanceIdentityFingerprint));
         var key = Key(campusId, target);
-        var registration = new Registration(Guid.NewGuid(), sendAsync);
-        Connections[key] = registration;
+        var registration = new Registration(Guid.NewGuid(), fingerprint, sendAsync, invalidate);
+        Registration? previous;
+        lock (RegistrationGate)
+        {
+            Connections.TryGetValue(key, out previous);
+            Connections[key] = registration;
+        }
+        if (previous is not null) previous.Invalidate();
         return new RegistrationLease(key, registration);
+    }
+
+    /// <summary>
+    /// Drops an authenticated socket when its Maintenance identity no longer matches the
+    /// teacher-approved pin. A socket signed by the newly approved identity is retained.
+    /// </summary>
+    public static bool InvalidateConnectionsWithDifferentIdentity(string campusId, string target,
+        string approvedMaintenanceIdentityFingerprint)
+    {
+        var approvedFingerprint = MaintenanceValidation.Fingerprint(approvedMaintenanceIdentityFingerprint,
+            nameof(approvedMaintenanceIdentityFingerprint));
+        var key = Key(campusId, target);
+        Registration? revoked = null;
+        lock (RegistrationGate)
+        {
+            if (Connections.TryGetValue(key, out var current) &&
+                !string.Equals(current.MaintenanceIdentityFingerprint, approvedFingerprint,
+                    StringComparison.Ordinal))
+            {
+                Connections.TryRemove(key, out revoked);
+            }
+        }
+        if (revoked is null) return false;
+        revoked.Invalidate();
+        return true;
     }
 
     public static Task<string> SendAsync(string campusId, string target, string signedRequestJson,
@@ -269,19 +304,26 @@ public static class MaintenanceServiceChannelHub
         return campusId + "\n" + normalized[0].ToLowerInvariant();
     }
 
-    private sealed class Registration(Guid id, Func<string, CancellationToken, Task<string>> sendAsync)
+    private sealed class Registration(Guid id, string maintenanceIdentityFingerprint,
+        Func<string, CancellationToken, Task<string>> sendAsync, Action invalidate)
     {
         public Guid Id { get; } = id;
+        public string MaintenanceIdentityFingerprint { get; } = maintenanceIdentityFingerprint;
         public Task<string> SendAsync(string signedRequestJson, CancellationToken cancellationToken) =>
             sendAsync(signedRequestJson, cancellationToken);
+        public void Invalidate() => invalidate();
     }
 
     private sealed class RegistrationLease(string key, Registration registration) : IDisposable
     {
         public void Dispose()
         {
-            if (Connections.TryGetValue(key, out var current) && current.Id == registration.Id)
-                Connections.TryRemove(key, out _);
+            lock (RegistrationGate)
+            {
+                if (Connections.TryGetValue(key, out var current) && current.Id == registration.Id)
+                    Connections.TryRemove(key, out _);
+            }
         }
     }
 }
+
