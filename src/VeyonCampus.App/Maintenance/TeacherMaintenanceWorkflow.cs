@@ -13,8 +13,24 @@ public sealed record TeacherMaintenanceTargetResult(string Target, Guid? Operati
     StudentAgentTeacherChannelDiagnosticsSnapshot? TeacherChannelDiagnostics = null,
     Guid? RolloutId = null);
 
+/// <summary>Injectable boundary for teacher UI actions that maintain student devices.</summary>
+public interface ITeacherMaintenanceWorkflow
+{
+    Task<IReadOnlyList<TeacherMaintenanceTargetResult>> MaintainAsync(string campusId,
+        IEnumerable<string> targets, MaintenanceReleaseChannel channel,
+        IProgress<MaintenanceCoordinatorProgress>? progress = null,
+        CancellationToken cancellationToken = default,
+        MaintenanceOperationKind? requestedOperation = null);
+
+    Task<TeacherMaintenanceTargetResult> ResumeAsync(Guid operationId,
+        CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<TeacherMaintenanceTargetResult>> SynchronizePendingTeacherConnectivityAsync(
+        string campusId, string target, CancellationToken cancellationToken = default);
+}
+
 /// <summary>Plans, executes, and resumes device maintenance while keeping the ViewModel out of wire details.</summary>
-public sealed class TeacherMaintenanceWorkflow
+public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
 {
     private readonly TeacherMaintenanceCoordinator _coordinator;
     private readonly TeacherMaintenanceArtifactProvider _releases;

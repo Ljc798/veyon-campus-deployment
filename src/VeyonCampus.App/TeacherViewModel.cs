@@ -187,7 +187,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private readonly UpdateDiagnosticsStore _updateDiagnostics;
     private readonly CampusOperationsTelemetryStore _operationsTelemetryStore;
     private readonly ApplicationReleaseClient? _releaseClient;
-    private readonly TeacherMaintenanceWorkflow? _maintenanceWorkflow;
+    private readonly ITeacherMaintenanceWorkflow? _maintenanceWorkflow;
     private readonly MaintenanceRunStore _maintenanceRunStore = new();
     private readonly MaintenanceServiceTrustStore _maintenanceIdentityTrustStore = new();
     private readonly string? _releaseClientError;
@@ -437,11 +437,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         ClassroomCountdownStore? classroomCountdownStore = null,
         ClassroomTaskProgressStore? classroomTaskProgressStore = null,
         TeacherRoomSelectionStore? roomSelectionStore = null,
-        string? websitePolicyDraftDirectory = null)
+        string? websitePolicyDraftDirectory = null,
+        ITeacherMaintenanceWorkflow? maintenanceWorkflow = null)
         : this(installerStore, campusDirectoryStore, updateDiagnostics, classroomSessionStore,
             classroomModeStateStore, operationsTelemetryStore, classroomSeatGridStore, classroomCountdownStore,
             classroomTaskProgressStore, roomSelectionStore, websitePolicyDraftDirectory,
-            TeacherLoginStartPreferenceFactory.CreateForCurrentPlatform())
+            TeacherLoginStartPreferenceFactory.CreateForCurrentPlatform(), maintenanceWorkflow)
     {
     }
 
@@ -456,7 +457,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         ClassroomTaskProgressStore? classroomTaskProgressStore,
         TeacherRoomSelectionStore? roomSelectionStore,
         string? websitePolicyDraftDirectory,
-        ITeacherLoginStartPreference teacherLoginStartPreference)
+        ITeacherLoginStartPreference teacherLoginStartPreference,
+        ITeacherMaintenanceWorkflow? maintenanceWorkflow = null)
     {
         _teacherLoginStartPreference = teacherLoginStartPreference ??
             throw new ArgumentNullException(nameof(teacherLoginStartPreference));
@@ -507,7 +509,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             _teacherUpdateStatus = "教师端更新不可用：" + failure.ToUserMessage();
             _studentUpdateStatus = failure.ToUserMessage();
         }
-        if (_releaseClient is not null)
+        if (maintenanceWorkflow is not null)
+        {
+            _maintenanceWorkflow = maintenanceWorkflow;
+        }
+        else if (_releaseClient is not null)
         {
             var artifactProvider = new TeacherMaintenanceArtifactProvider(_releaseClient,
                 () => _localTestStudentSetupInstallerPath, () => _localTestMaintenanceInstallerPath);
