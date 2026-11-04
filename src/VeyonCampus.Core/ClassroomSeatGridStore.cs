@@ -124,7 +124,11 @@ public sealed class ClassroomSeatGridStore
         using (AcquireFileLock())
         {
             if (!File.Exists(_path) && !File.Exists(_legacyPath)) return;
-            var document = File.Exists(_path) ? ReadDocument() : ReadLegacyDocument();
+            var document = File.Exists(_path)
+                ? ReadDocument()
+                : File.Exists(_legacyPath)
+                    ? ReadLegacyDocument()
+                    : new SeatGridDocument(CurrentSchemaVersion, []);
             var remaining = document.Layouts.Where(layout =>
                 layout.CampusProfileId != campusProfileId || layout.RoomId != roomId).ToList();
             if (remaining.Count == document.Layouts.Count) return;
@@ -373,6 +377,36 @@ public sealed class ClassroomSeatGridStore
             };
             return layout with { Seats = seats };
         });
+    }
+
+    /// <summary>Updates the cached Veyon name for the one seat already bound to this UUID.</summary>
+    public ClassroomSeatGridLayout UpdateBoundVeyonComputerName(Guid objectId,
+        Guid locationObjectId, string expectedOldName, string newName)
+    {
+        if (objectId == Guid.Empty || locationObjectId == Guid.Empty)
+            throw new InvalidDataException("Veyon 电脑或地点 UUID 无效。");
+        ValidateVeyonComputerName(expectedOldName);
+        ValidateVeyonComputerName(newName);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            var document = File.Exists(_path) ? ReadDocument() : ReadLegacyDocument();
+            var matches = document.Layouts.SelectMany(layout => layout.Seats.Select(seat => (layout, seat)))
+                .Where(item => item.seat.VeyonObjectId == objectId).ToArray();
+            if (matches.Length != 1 ||
+                matches[0].seat.VeyonLocationObjectId != locationObjectId ||
+                !string.Equals(matches[0].seat.VeyonComputerName, expectedOldName, StringComparison.Ordinal))
+                throw new InvalidDataException("本机座位表中的 Veyon UUID/地点/旧名称已变化或存在重复绑定；学生姓名和原绑定均保留。");
+            var current = matches[0].layout;
+            var updated = current with
+            {
+                Seats = current.Seats.Select(seat => seat.VeyonObjectId == objectId
+                    ? seat with { VeyonComputerName = newName }
+                    : seat).ToArray()
+            };
+            WriteDocument(Replace(document, updated));
+            return Clone(updated);
+        }
     }
 
     /// <summary>Assigns a fully verified room plan in one local layout write.</summary>

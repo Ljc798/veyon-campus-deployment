@@ -44,6 +44,7 @@ public static class VeyonComputerRenameService
             throw new PlatformNotSupportedException("修改 Veyon 电脑显示名称仅支持 Windows 教师端。");
         ValidatePlan(expectedConfigFingerprint, targets);
 
+        using var mutationGate = VeyonDirectoryMutationGate.Acquire();
         var export = VeyonNetworkObjectDirectory.ExportConfiguration();
         string? backupPath = null;
         byte[]? updatedBytes = null;
@@ -135,7 +136,7 @@ public static class VeyonComputerRenameService
                 if (JsonEquivalent(updatedRoot, currentRoot))
                 {
                     var successTargets = targets.Select(target => TargetResult(target, selected[target.ObjectId],
-                        "succeeded", "名称已读回，原地址与 Veyon 对象标识保持不变。")).ToArray();
+                        "succeeded", "名称已读回，Host 与 Veyon 对象标识保持不变。")).ToArray();
                     var importNote = importFailure is null ? "" : "导入进程返回异常，但完整读回结果与计划一致。";
                     return new VeyonComputerRenameExecution(
                         new StepResult(StepId, ExecutionPlan.Succeeded,
@@ -316,6 +317,7 @@ public static class VeyonComputerRenameService
                 throw new InvalidDataException($"新名称“{target.NewName}”已被其他 Veyon 电脑使用；没有写入目录。");
         }
     }
+
 
     private static void ValidatePlan(string fingerprint, IReadOnlyList<VeyonComputerRenameTargetPlan> targets)
     {

@@ -1193,6 +1193,12 @@ public partial class TeacherWindow : Window
     }
 
     private async void AddRoomToVeyon(object? sender, RoutedEventArgs e) => await _model.AddRoomToVeyonAsync();
+    private async void ReadSeatVeyonTargets(object? sender, RoutedEventArgs e) =>
+        await _model.ReadSeatVeyonTargetsAsync();
+    private async void BindSelectedSeatVeyonTarget(object? sender, RoutedEventArgs e) =>
+        await _model.BindSelectedSeatVeyonTargetAsync();
+    private void ClearSelectedSeatVeyonTarget(object? sender, RoutedEventArgs e) =>
+        _model.ClearSelectedSeatVeyonTarget();
     private void TeacherSetupStep1(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(1);
     private void TeacherSetupStep2(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(2);
     private void TeacherSetupStep3(object? sender, RoutedEventArgs e) => _model.SetTeacherSetupWizardStep(3);
@@ -1338,8 +1344,13 @@ public partial class TeacherWindow : Window
         }
         if (!cell.IsSeat) return;
         var edit = await EditSeatCellAsync(cell);
-        if (edit is not null)
-            _model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber);
+        if (edit is null) return;
+        var shouldProvisionVeyonComputer = OperatingSystem.IsWindows() &&
+                                           !cell.HasVeyonTarget &&
+                                           !string.IsNullOrWhiteSpace(edit.StudentName);
+        if (!_model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber)) return;
+        if (shouldProvisionVeyonComputer)
+            await _model.AddRoomToVeyonAsync(keepSeatMapEditing: true);
     }
 
     private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1457,7 +1468,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。留空姓名只保留桌位，不分配编号。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。无姓名座位可手动填写编号并生成电脑；无编号座位只保留桌位。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,

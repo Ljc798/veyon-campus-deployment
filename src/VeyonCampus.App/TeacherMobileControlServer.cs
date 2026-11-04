@@ -3993,10 +3993,6 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     if (seatIndex < roomComputerNames.Count)
                         AddUnambiguousStudentNameMapping(namesByComputer, ambiguousComputers,
                             roomComputerNames[seatIndex], name);
-                    if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
-                        !string.IsNullOrWhiteSpace(hosts[seatIndex]))
-                        AddUnambiguousStudentNameMapping(namesByHost, ambiguousHosts,
-                            hosts[seatIndex], name);
                 }
             }
         }

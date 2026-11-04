@@ -179,6 +179,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private readonly ITeacherLoginStartPreference _teacherLoginStartPreference;
     private readonly ClassroomSessionStore _classroomSessionStore;
     private readonly ClassroomSeatGridStore _classroomSeatGridStore;
+    private readonly VeyonDeviceDirectoryStore _veyonDeviceDirectoryStore = new();
     private readonly ClassroomCountdownStore _classroomCountdownStore;
     private readonly ClassroomTaskProgressStore _classroomTaskProgressStore;
     private readonly TeacherRoomSelectionStore? _roomSelectionStore;
@@ -249,6 +250,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private CancellationTokenSource? _healthSnapshotFreshnessCancellation;
     private string _deviceHealthRowsCampus = "";
     private string _deviceHealthCacheError = "";
+    private string _veyonDeviceDirectorySummary = "尚未读取已验证 Veyon 目录。";
     private long _deviceHealthSelectionRevision;
     private IReadOnlyList<ApplicationCatalogProductChoice> _applicationCatalogChoices = Array.Empty<ApplicationCatalogProductChoice>();
     private IReadOnlyList<ApplicationCatalogProductChoice> _allApplicationCatalogChoices = Array.Empty<ApplicationCatalogProductChoice>();
@@ -258,6 +260,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<string> _lastFailedWebsiteTargets = Array.Empty<string>();
     private string _lastFailedWebsiteTargetsCampus = "";
     private bool _isExecuting, _isReadingWebsiteLocations, _websiteLocationSelectionPending, _showWebsitePolicyResultDetails;
+    private bool _settingWebsiteTargetsFromDirectory;
+    private bool _websiteTargetsRequireDirectorySnapshot;
+    private bool _websiteTargetsLoadedFromPartialRead;
+    private string? _websiteTargetsDirectoryFingerprint;
+    private readonly HashSet<string> _veyonConflictedTargets = new(StringComparer.OrdinalIgnoreCase);
     private bool _isCheckingTeacherSetupVeyon, _teacherSetupVeyonReady, _teacherSetupRoomSkippedForNow;
     private string _teacherSetupVeyonStatus = "尚未检查教师端 Veyon。";
     private string _macVeyonHelperStatus = OperatingSystem.IsMacOS() ? "尚未检查 Mac Veyon helper。" : "";
@@ -302,6 +309,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     private IReadOnlyList<TeacherRoomProfile> _roomProfiles = Array.Empty<TeacherRoomProfile>();
     private IReadOnlyList<TeacherSeatCell> _seatMapCells = Array.Empty<TeacherSeatCell>();
     private IReadOnlyList<TeacherVeyonTargetChoice> _seatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
+    private IReadOnlyList<TeacherSeatAssociationChoice> _seatAssociationSeatChoices =
+        Array.Empty<TeacherSeatAssociationChoice>();
+    private TeacherSeatAssociationChoice? _selectedSeatAssociationSeat;
+    private TeacherVeyonTargetChoice? _selectedSeatAssociationTarget;
     private ClassroomSeatGridLayout? _seatGrid;
     private ClassroomSeatGridLayout? _seatMapEditSnapshot;
     private HashSet<Guid> _seatMapEditOriginalSeatIds = [];
@@ -649,6 +660,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanSwapSeats));
             Changed(nameof(CanExecuteSeatSwapPlan));
             Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanToggleSeatMapEditing));
             Changed(nameof(CanToggleSeatAddRemoveMode));
             Changed(nameof(CanAssignMissingSeatComputerNumbers));
@@ -688,9 +700,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
          room.RoomId != active.Room.RoomId || campus.ProfileId != active.Room.CampusProfileId ||
          room.DisplayName != active.Room.RoomName || room.Prefix != active.Room.ComputerPrefix ||
          room.StartNumber != active.Room.StartNumber || room.ComputerCount != active.Room.ComputerCount ||
-         !(room.ComputerNumbers ?? []).SequenceEqual(active.Room.ComputerNumbers ?? []) ||
-         !(room.HostOverrides ?? []).SequenceEqual(active.Room.HostOverrides ?? [],
-             StringComparer.OrdinalIgnoreCase));
+         !(room.ComputerNumbers ?? []).SequenceEqual(active.Room.ComputerNumbers ?? []));
     public bool CanSwitchClassroomScope => HasPendingClassroomScopeChange &&
         !IsExecuting && !_isClassroomTransitioning && !_isRetryingClassroomRestores &&
         !IsReadingWebsiteLocations && !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
@@ -1297,9 +1307,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (index < 0) continue;
                 if (index < computerNames.Count && NormalizeTargetKey(computerNames[index]) == key)
                     matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
-                if (room.HostOverrides is { } hosts && index < hosts.Count &&
-                    !string.IsNullOrWhiteSpace(hosts[index]) && NormalizeTargetKey(hosts[index]) == key)
-                    matches[(campus.ProfileId, room.RoomId, seat.SeatId)] = seat.StudentName.Trim();
             }
         }
         return matches.Count == 1 ? matches.Values.Single() : "未填写姓名";
@@ -1327,11 +1334,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 break;
             }
         if (targetIndex < 0) return "未填写姓名";
-        var target = session.Room.HostOverrides is { } hosts && targetIndex < hosts.Length &&
-                     !string.IsNullOrWhiteSpace(hosts[targetIndex])
-            ? hosts[targetIndex].Trim()
-            : deviceLabel;
-        var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, targetIndex);
+        var seat = FindUniqueClassroomSeat(session, seats, deviceLabel, deviceLabel, targetIndex);
         return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
     public bool CanRetryClassroomRestores => PendingClassroomRestoreCount > 0 &&
@@ -1579,9 +1582,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             session.Room.RoomId, session.Room.StartNumber);
         if (layout.Seats.Length > 0) return layout;
 
-        var targets = session.Room.HostOverrides is { } hosts && hosts.Length == session.Targets.Length
-            ? hosts
-            : session.Targets.Select(item => item.DeviceLabel).ToArray();
+        var targets = session.Targets.Select(item => item.DeviceLabel).ToArray();
         var recoveredCampus = FindSavedSeatMapCampus(new VeyonNetworkLocation(
             session.Room.RoomName, Array.AsReadOnly(targets)), SelectedCampusProfile);
         if (recoveredCampus is null || recoveredCampus.ProfileId == session.Room.CampusProfileId) return layout;
@@ -2211,8 +2212,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string DeviceHealthScopeSummary => $"当前名单 · {DeviceHealthSelectedCount} 名学生";
     public bool HasDeviceHealthTargets => DeviceHealthSelectedCount > 0;
     public bool HasMultipleDeviceHealthPages => DeviceHealthPageCount > 1;
-    private IReadOnlyList<string> GetDeviceHealthTargets() => WebsitePolicyTargetChoices
-        .Select(item => item.Target).ToArray();
+    private IReadOnlyList<string> GetDeviceHealthTargets()
+    {
+        if (!AreWebsiteTargetsTrustedForActions()) return Array.Empty<string>();
+        var targets = WebsitePolicyTargetChoices.Select(item => item.Target).ToArray();
+        return AreTargetsConflictFree(targets) ? targets : Array.Empty<string>();
+    }
     public int DeviceHealthRecentlyReachableCount => GetSelectedHealthRows().Count(row => row.IsRecentlyReachable);
     public int DeviceHealthVeyonEligibleCount => GetSelectedHealthRows().Count(row =>
         row.IsRecentlyReachable && row.CanEnsureVeyonServiceRunning);
@@ -2442,7 +2447,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasTeacherSetupVeyonStatus => TeacherSetupVeyonStatus.Length > 0;
     public bool IsTeacherSetupVeyonReady => _teacherSetupVeyonReady;
     public bool CanRefreshTeacherSetupVeyon => !_isCheckingTeacherSetupVeyon;
-    public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridSeatCount > 0 && SeatGridNamedCount > 0;
+    public bool IsTeacherSetupRoomComplete => HasSeatMap && SeatGridComputerCount > 0;
     public bool IsTeacherSetupRoomSkippedForNow => _teacherSetupRoomSkippedForNow && !IsTeacherSetupRoomComplete;
     public bool IsWindowsTeacherHost => OperatingSystem.IsWindows();
     public bool IsMacTeacherHost => OperatingSystem.IsMacOS();
@@ -2500,10 +2505,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
             var summary = $"已保存 {SeatGridSeatCount} 个桌位 · 已填写 {SeatGridNamedCount} 个姓名。";
             if (IsTeacherSetupRoomComplete)
-                return summary + $"将为填写姓名的 {SeatGridNamedCount} 个桌位生成学生电脑；空姓名桌位只保留为桌子。";
+                return summary + $"将为已分配电脑编号的 {SeatGridComputerCount} 个座位生成电脑；学生姓名可以留空。";
             if (SeatGridSeatCount == 0)
-                return summary + "请添加至少一个桌位，并至少填写一个学生姓名。";
-            return summary + "至少填写一个学生姓名即可继续；未填写姓名的桌位不会生成学生电脑。";
+                return summary + "请添加桌位并为需要接入 Veyon 的电脑座位分配编号。";
+            return summary + "为需要接入 Veyon 的座位分配电脑编号即可继续；姓名可选。";
         }
     }
 
@@ -3240,14 +3245,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
     private IReadOnlyList<string> ResolveClassroomNetworkTargets(ClassroomSession session)
     {
-        var targets = session.Targets.Select((target, index) =>
-        {
-            var host = session.Room.HostOverrides is { } overrides && index < overrides.Length
-                ? overrides[index]
-                : null;
-            return string.IsNullOrWhiteSpace(host) ? target.DeviceLabel : host.Trim();
-        });
-        return WebsitePolicyTransport.NormalizeTargets(targets);
+        return WebsitePolicyTransport.NormalizeTargets(session.Targets.Select(target => target.DeviceLabel));
     }
 
     private void LoadActiveClassroomSession()
@@ -4303,7 +4301,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         !_isClassroomTransitioning;
     public bool CanEditRoomPlan => !IsExecuting;
     public bool CanAddRoomToVeyon => CanStartRoomCreation && HasRoomPreview && RoomError.Length == 0 &&
-        SeatGridNamedCount > 0 && !_isClassroomTransitioning &&
+        SeatGridComputerCount > 0 && !_isClassroomTransitioning &&
         _roomConflictCheckCompleted && _roomConflictCheckRevision == _roomPlanRevision &&
         _roomConflictResults.Length == 0;
     public bool CanReadWebsiteLocations =>
@@ -4968,6 +4966,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public string SeatGridTitle => SelectedRoomProfile?.DisplayName ?? "机房座位图";
     public int SeatGridSeatCount => _seatGrid?.Seats.Length ?? 0;
     public int SeatGridNamedCount => _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
+    public int SeatGridComputerCount => _seatGrid?.Seats.Count(seat => seat.ComputerNumber is not null) ?? 0;
     public int SeatGridNumberPendingCount => _seatGrid?.Seats.Count(seat =>
         !string.IsNullOrWhiteSpace(seat.StudentName) && seat.ComputerNumber is null) ?? 0;
     public string SeatGridSummary => $"已添加 {SeatGridSeatCount} 个桌位 · 已填写 {SeatGridNamedCount} 个姓名" +
@@ -4992,6 +4991,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(IsSeatMapPreview));
             Changed(nameof(SeatMapEditButtonLabel));
             Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatMapEditing));
             Changed(nameof(CanToggleSeatAddRemoveMode));
@@ -5024,13 +5024,57 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         !IsPreparingSeatSwapPlan && !SeatSwapMode;
     public bool CanStartRoomCreation => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsCheckingRoomConflicts && !IsPreparingSeatSwapPlan && HasSeatMap && IsSeatMapEditing && SeatGridSeatCount > 0 &&
-        SeatGridNamedCount > 0 && SeatGridNumberPendingCount == 0 &&
+        SeatGridComputerCount > 0 && SeatGridNumberPendingCount == 0 &&
         !string.IsNullOrWhiteSpace(RoomCampusName) &&
         !string.IsNullOrWhiteSpace(RoomLocationName);
     public IReadOnlyList<TeacherVeyonTargetChoice> SeatVeyonTargetChoices
     {
         get => _seatVeyonTargetChoices;
-        private set { _seatVeyonTargetChoices = value; Changed(); }
+        private set
+        {
+            _seatVeyonTargetChoices = value;
+            if (_selectedSeatAssociationTarget is { } previousTarget)
+                SelectedSeatAssociationTarget = value.SingleOrDefault(choice => choice.ObjectId == previousTarget.ObjectId);
+            Changed();
+            Changed(nameof(CanBindSelectedSeatVeyonTarget));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
+        }
+    }
+    public IReadOnlyList<TeacherSeatAssociationChoice> SeatAssociationSeatChoices
+    {
+        get => _seatAssociationSeatChoices;
+        private set
+        {
+            _seatAssociationSeatChoices = value;
+            if (_selectedSeatAssociationSeat is { } previousSeat)
+                SelectedSeatAssociationSeat = value.SingleOrDefault(choice => choice.SeatId == previousSeat.SeatId);
+            Changed();
+            Changed(nameof(CanBindSelectedSeatVeyonTarget));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
+        }
+    }
+    public TeacherSeatAssociationChoice? SelectedSeatAssociationSeat
+    {
+        get => _selectedSeatAssociationSeat;
+        set
+        {
+            if (_selectedSeatAssociationSeat == value) return;
+            _selectedSeatAssociationSeat = value;
+            Changed();
+            Changed(nameof(CanBindSelectedSeatVeyonTarget));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
+        }
+    }
+    public TeacherVeyonTargetChoice? SelectedSeatAssociationTarget
+    {
+        get => _selectedSeatAssociationTarget;
+        set
+        {
+            if (_selectedSeatAssociationTarget == value) return;
+            _selectedSeatAssociationTarget = value;
+            Changed();
+            Changed(nameof(CanBindSelectedSeatVeyonTarget));
+        }
     }
     public string SeatVeyonTargetStatus
     {
@@ -5038,6 +5082,23 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         private set { _seatVeyonTargetStatus = value; Changed(); Changed(nameof(HasSeatVeyonTargetStatus)); }
     }
     public bool HasSeatVeyonTargetStatus => SeatVeyonTargetStatus.Length > 0;
+    public bool CanBindSelectedSeatVeyonTarget
+    {
+        get
+        {
+            if (!CanEditSeatMap || IsReadingSeatVeyonTargets || _seatGrid is null ||
+                SelectedSeatAssociationSeat is not { } seat || SelectedSeatAssociationTarget is not { } target ||
+                !SeatAssociationSeatChoices.Any(item => item.SeatId == seat.SeatId) ||
+                !SeatVeyonTargetChoices.Any(item => item.ObjectId == target.ObjectId) ||
+                _seatGrid.Seats.Any(item => item.SeatId != seat.SeatId && item.VeyonObjectId == target.ObjectId))
+                return false;
+            var current = _seatGrid.Seats.SingleOrDefault(item => item.SeatId == seat.SeatId);
+            return current is not null && (current.VeyonObjectId is null || current.VeyonObjectId == target.ObjectId);
+        }
+    }
+    public bool CanClearSelectedSeatVeyonTarget => CanEditSeatMap && !IsReadingSeatVeyonTargets &&
+        SelectedSeatAssociationSeat is { VeyonObjectId: not null } seat &&
+        SeatAssociationSeatChoices.Any(item => item.SeatId == seat.SeatId);
     public bool CanReadSeatVeyonTargets => OperatingSystem.IsWindows() && !IsExecuting &&
                                            !IsReadingWebsiteLocations && !_isReadingSeatVeyonTargets &&
                                            !IsPreparingSeatSwapPlan &&
@@ -5050,6 +5111,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             _isReadingSeatVeyonTargets = value;
             Changed();
             Changed(nameof(CanReadSeatVeyonTargets));
+            Changed(nameof(CanBindSelectedSeatVeyonTarget));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanSwapSeats));
             Changed(nameof(CanSyncSeatGridWithVeyon));
         }
@@ -5066,6 +5129,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanSwapSeats));
             Changed(nameof(CanReadSeatVeyonTargets));
             Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanApplySeatGridDimensions));
             Changed(nameof(CanStartRoomCreation));
             Changed(nameof(CanAddRoomToVeyon));
@@ -5112,6 +5176,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SeatSwapSelectionSummary));
             Changed(nameof(IsSeatMapPreview));
             Changed(nameof(CanEditSeatMap));
+            Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanInteractWithSeatMap));
             Changed(nameof(CanToggleSeatMapEditing));
             Changed(nameof(CanToggleSeatAddRemoveMode));
@@ -5274,7 +5339,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 output.Append("<div class=\"name\">").Append(studentName).AppendLine("</div></div>");
             }
         }
-        output.AppendLine("</div><div class=\"legend\"><span class=\"legend-item\"><i class=\"swatch aisle\"></i>空桌位区域</span><span class=\"legend-item\"><i class=\"swatch seat\"></i>桌位</span></div><div class=\"note\">学生姓名保存在教师机。填写姓名时自动分配可用电脑编号并生成学生电脑；空姓名桌位只保留为桌位。</div></body></html>");
+        output.AppendLine("</div><div class=\"legend\"><span class=\"legend-item\"><i class=\"swatch aisle\"></i>空桌位区域</span><span class=\"legend-item\"><i class=\"swatch seat\"></i>桌位</span></div><div class=\"note\">学生姓名保存在教师机。填写姓名且编号留空时自动分配电脑编号；无姓名座位手动分配编号后也会生成电脑。没有编号的座位不会生成电脑。</div></body></html>");
         return output.ToString();
     }
 
@@ -5489,10 +5554,10 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    internal void SaveSeatCell(int row, int column, string studentName, string? computerNumberText = null)
+    internal bool SaveSeatCell(int row, int column, string studentName, string? computerNumberText = null)
     {
-        if (!CanEditSeatMap) return;
-        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return;
+        if (!CanEditSeatMap) return false;
+        if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room) return false;
         try
         {
             var currentSeat = _seatGrid?.Seats.SingleOrDefault(seat => seat.Row == row && seat.Column == column);
@@ -5516,14 +5581,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? willAutoAssignNumber
                     ? $"已从现有最大编号后自动分配电脑编号 {seatNumber}；座位资料已保存。"
                     : $"电脑编号 {seatNumber} 的座位资料已保存。"
-                : "桌位资料已保存；留空姓名只保留桌位，不生成学生电脑。";
+                : currentSeat?.ComputerNumber is not null
+                    ? "无姓名座位资料已保存；由于已有电脑编号，该座位会进入电脑清单。"
+                    : "桌位资料已保存；留空姓名且无电脑编号时只保留桌位。";
             if (RoomNames.Count > 0) UpdateRoomPreviewRows();
             InvalidateRoomReview();
             RefreshClassroomEventSeatLocations();
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             SeatMapStatus = "无法保存座位表；原布局未更改。" + exception.Message;
+            return false;
         }
     }
 
@@ -5589,10 +5658,19 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 SeatVeyonTargetStatus = "当前地点已切换；本次电脑清单未应用。";
                 return;
             }
-            var roomComputers = objects
-                .Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                               item.Location.Equals(room.DisplayName, StringComparison.OrdinalIgnoreCase))
-                .ToArray();
+            var roomLocations = objects.Where(item =>
+                item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Name, room.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (roomLocations.Length != 1 || roomLocations[0].ObjectId == Guid.Empty)
+            {
+                SeatVeyonTargetChoices = Array.Empty<TeacherVeyonTargetChoice>();
+                SeatVeyonTargetStatus = "Veyon 中找不到唯一、有 UUID 的当前地点；没有修改座位关联。";
+                return;
+            }
+            var roomLocation = roomLocations[0];
+            var allComputers = objects.Where(item =>
+                item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
+            var roomComputers = allComputers.Where(item => item.ParentObjectId == roomLocation.ObjectId).ToArray();
             var candidates = new List<(VeyonNetworkObject Computer, string HostAddress)>();
             foreach (var item in roomComputers)
             {
@@ -5614,168 +5692,41 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 .OrderBy(item => item.Computer.Name, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(item => item.HostAddress, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
-            var ambiguousIds = orderedCandidates.GroupBy(item => item.Computer.Name, StringComparer.OrdinalIgnoreCase)
-                .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.Computer.ObjectId)
-                .Concat(orderedCandidates.GroupBy(item => item.HostAddress,
-                        StringComparer.OrdinalIgnoreCase)
-                    .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.Computer.ObjectId))
+            var ambiguousIds = allComputers.GroupBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+                .Where(group => group.Count() > 1).SelectMany(group => group).Select(item => item.ObjectId)
                 .ToHashSet();
-            var studentNamesByAlias = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            var ambiguousStudentAliases = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            if (_seatGrid is { } currentLayout)
+            var allHostOwners = new Dictionary<string, List<Guid>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var item in allComputers)
             {
-                IReadOnlyList<int> roomNumbers;
-                IReadOnlyList<string> roomComputerNames;
-                try { roomNumbers = room.GetComputerNumbers(); roomComputerNames = room.GetComputerNames(); }
-                catch (InvalidDataException)
-                { roomNumbers = Array.Empty<int>(); roomComputerNames = Array.Empty<string>(); }
-                foreach (var seat in currentLayout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)))
+                try
                 {
-                    var studentName = seat.StudentName.Trim();
-                    if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
-                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
-                            seat.VeyonComputerName, studentName);
-                    if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
-                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
-                            seat.VeyonHostAddress, studentName);
-                    if (seat.ComputerNumber is not { } number) continue;
-                    var seatIndex = -1;
-                    for (var candidate = 0; candidate < roomNumbers.Count; candidate++)
-                        if (roomNumbers[candidate] == number) { seatIndex = candidate; break; }
-                    if (seatIndex < 0) continue;
-                    if (seatIndex < roomComputerNames.Count)
-                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
-                            roomComputerNames[seatIndex], studentName);
-                    if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
-                        !string.IsNullOrWhiteSpace(hosts[seatIndex]))
-                        AddUnambiguousStudentName(studentNamesByAlias, ambiguousStudentAliases,
-                            hosts[seatIndex], studentName);
+                    var host = VeyonHostAddress.NormalizeOverride(item.Host);
+                    if (!allHostOwners.TryGetValue(host, out var owners))
+                        allHostOwners.Add(host, owners = []);
+                    owners.Add(item.ObjectId);
                 }
+                catch (InvalidDataException) { }
             }
+            foreach (var owners in allHostOwners.Values.Where(owners => owners.Count > 1))
+                ambiguousIds.UnionWith(owners);
             var choices = orderedCandidates.Where(item => !ambiguousIds.Contains(item.Computer.ObjectId))
                 .Select(item => new TeacherVeyonTargetChoice(item.Computer.ObjectId, item.Computer.ParentObjectId,
                     item.Computer.Name, item.HostAddress, item.Computer.Location,
-                    studentNamesByAlias.GetValueOrDefault(NormalizeTargetKey(item.Computer.Name),
-                        studentNamesByAlias.GetValueOrDefault(NormalizeTargetKey(item.HostAddress), "未填写姓名"))))
+                    _seatGrid?.Seats.SingleOrDefault(seat => seat.VeyonObjectId == item.Computer.ObjectId)
+                        ?.StudentName ?? "未填写姓名"))
                 .ToArray();
-            var pendingCount = roomComputers.Length - choices.Length;
+            var pendingCount = Math.Max(0, roomComputers.Length - choices.Length);
             SeatVeyonTargetChoices = Array.AsReadOnly(choices);
-            var automaticallyBound = 0;
-            var namedSeatCount = _seatGrid?.Seats.Count(item => !string.IsNullOrWhiteSpace(item.StudentName)) ?? 0;
-            if (_seatGrid is { } layout)
-            {
-                var namedSeats = layout.Seats.Where(item => !string.IsNullOrWhiteSpace(item.StudentName)).ToArray();
-                var bindings = new List<ClassroomSeatGridTargetBinding>();
-                var assignedObjects = new HashSet<Guid>();
-                int? ReadComputerNumber(TeacherVeyonTargetChoice choice)
-                {
-                    var hostMatches = MachineNaming.TryParseNumber(room.Prefix, choice.HostAddress, out var hostNumber);
-                    var nameMatches = MachineNaming.TryParseNumber(room.Prefix, choice.ComputerName, out var nameNumber);
-                    if (hostMatches && nameMatches && hostNumber != nameNumber) return null;
-                    if (hostMatches) return hostNumber;
-                    return nameMatches ? nameNumber : null;
-                }
-
-                foreach (var seat in namedSeats)
-                {
-                    var studentName = seat.StudentName.Trim();
-                    var uniqueSeatName = namedSeats.Count(item => string.Equals(item.StudentName.Trim(), studentName,
-                        StringComparison.OrdinalIgnoreCase)) == 1;
-                    var nameMatch = uniqueSeatName
-                        ? choices.Where(item => string.Equals(item.ComputerName, studentName,
-                            StringComparison.OrdinalIgnoreCase)).ToArray()
-                        : Array.Empty<TeacherVeyonTargetChoice>();
-                    var explicitMatch = choices.Where(item =>
-                        !string.IsNullOrWhiteSpace(seat.VeyonComputerName) &&
-                        !string.IsNullOrWhiteSpace(seat.VeyonHostAddress) &&
-                        string.Equals(item.ComputerName, seat.VeyonComputerName,
-                            StringComparison.OrdinalIgnoreCase) &&
-                        string.Equals(item.HostAddress, seat.VeyonHostAddress,
-                            StringComparison.OrdinalIgnoreCase)).ToArray();
-                    var numberMatch = seat.ComputerNumber is { } seatNumber
-                        ? choices.Where(item => ReadComputerNumber(item) == seatNumber).ToArray()
-                        : Array.Empty<TeacherVeyonTargetChoice>();
-                    var candidatesForSeat = nameMatch.Length == 1 ? nameMatch
-                        : explicitMatch.Length == 1 ? explicitMatch
-                        : numberMatch.Length == 1 ? numberMatch
-                        : Array.Empty<TeacherVeyonTargetChoice>();
-                    var match = candidatesForSeat.Where(item => !assignedObjects.Contains(item.ObjectId)).ToArray();
-                    if (match.Length != 1) continue;
-                    var choice = match[0];
-                    assignedObjects.Add(choice.ObjectId);
-                    bindings.Add(new ClassroomSeatGridTargetBinding(seat.SeatId, choice.HostAddress,
-                        choice.ComputerName, choice.ObjectId, choice.LocationObjectId));
-                }
-
-                HashSet<Guid> boundSeatIds;
-                while (true)
-                {
-                    boundSeatIds = bindings.Select(binding => binding.SeatId).ToHashSet();
-                    var reservedHosts = layout.Seats.Where(seat => !boundSeatIds.Contains(seat.SeatId))
-                        .Select(seat => seat.VeyonHostAddress)
-                        .Where(host => !string.IsNullOrWhiteSpace(host))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var reservedObjectIds = layout.Seats.Where(seat => !boundSeatIds.Contains(seat.SeatId))
-                        .Where(seat => seat.VeyonObjectId is not null)
-                        .Select(seat => seat.VeyonObjectId!.Value).ToHashSet();
-                    var remainingBindings = bindings.Where(binding => !reservedHosts.Contains(binding.HostAddress) &&
-                                                                       !reservedObjectIds.Contains(binding.ObjectId))
-                        .ToList();
-                    if (remainingBindings.Count == bindings.Count) break;
-                    bindings = remainingBindings;
-                }
-                boundSeatIds = bindings.Select(binding => binding.SeatId).ToHashSet();
-
-                var renumbered = 0;
-                if (bindings.Count == namedSeats.Length)
-                {
-                    var targetNumbers = bindings.Select(binding =>
-                    {
-                        var choice = choices.Single(item => item.ObjectId == binding.ObjectId);
-                        return ReadComputerNumber(choice) ?? 0;
-                    }).ToArray();
-                    var untouchedNumbers = layout.Seats.Where(seat => !boundSeatIds.Contains(seat.SeatId))
-                        .Where(seat => seat.ComputerNumber is not null)
-                        .Select(seat => seat.ComputerNumber!.Value).ToHashSet();
-                    if (targetNumbers.All(number => number > 0) &&
-                        targetNumbers.Distinct().Count() == targetNumbers.Length &&
-                        !targetNumbers.Any(untouchedNumbers.Contains))
-                    {
-                        var oldNumbers = layout.Seats.ToDictionary(seat => seat.SeatId,
-                            seat => seat.ComputerNumber);
-                        bindings = bindings.Select((binding, index) => binding with
-                            { ComputerNumber = targetNumbers[index] }).ToList();
-                        renumbered = bindings.Count(binding => oldNumbers.GetValueOrDefault(binding.SeatId) !=
-                                                               binding.ComputerNumber);
-                    }
-                }
-
-                if (bindings.Count > 0)
-                {
-                    try
-                    {
-                        layout = _classroomSeatGridStore.AssignVeyonTargets(campus.ProfileId, room.RoomId, bindings);
-                        ApplySeatGrid(layout, preserveSeatSwapSelection: true);
-                        automaticallyBound = bindings.Count;
-                        if (renumbered > 0)
-                            SeatMapStatus = $"已按学生姓名核对 Veyon 电脑，并将 {renumbered} 个座位电脑编号同步为主机名编号。";
-                        RefreshClassroomEventSeatLocations();
-                    }
-                    catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or IOException)
-                    {
-                        // Do not apply a partial Veyon association if the current seat map changed.
-                    }
-                }
-            }
-            var automaticStatus = automaticallyBound > 0
-                ? $"已按学生姓名匹配 Veyon 显示名，并确认 {automaticallyBound} 个座位及电脑地址。" : "";
-            var unmatchedSeatCount = Math.Max(0, namedSeatCount - automaticallyBound);
-            if (unmatchedSeatCount > 0)
-                automaticStatus += $"另有 {unmatchedSeatCount} 个姓名座位未能唯一匹配 Veyon 显示名，原关联保持不变。";
+            var knownBindings = _seatGrid?.Seats.Where(seat => seat.VeyonObjectId is not null).ToArray() ?? [];
+            var staleBindings = knownBindings.Count(seat => !objects.Any(item =>
+                item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                item.ObjectId == seat.VeyonObjectId && item.ParentObjectId == seat.VeyonLocationObjectId &&
+                string.Equals(item.Host, seat.VeyonHostAddress, StringComparison.OrdinalIgnoreCase)));
+            SeatAssociationSeatChoices = BuildSeatAssociationSeatChoices(_seatGrid);
             SeatVeyonTargetStatus = choices.Length == 0
-                ? $"Veyon 地点“{room.DisplayName}”没有可唯一关联的电脑（需要明确的电脑名称和主机地址）；{pendingCount} 台仍待处理。"
-                : $"已读取“{room.DisplayName}”的 {choices.Length} 台可唯一关联电脑。{automaticStatus}" +
-                  (pendingCount == 0 ? "" : $"另有 {pendingCount} 台存在重名、重复地址或资料不完整，保留为待处理状态。");
+                ? $"Veyon 地点“{room.DisplayName}”没有可安全供教师选择的电脑；{pendingCount} 台有重复、Host 无效或资料不完整。"
+                : $"已读取“{room.DisplayName}”的 {choices.Length} 台可唯一候选电脑；没有按姓名或编号自动绑定。" +
+                  (staleBindings == 0 ? "" : $"另有 {staleBindings} 个原 UUID/Host/地点关联已变化，原绑定保留并需人工核对。");
         }
         catch (Exception exception) when (exception is InvalidDataException or IOException or
                                            UnauthorizedAccessException or InvalidOperationException or
@@ -5787,11 +5738,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         finally { IsReadingSeatVeyonTargets = false; }
     }
 
-    public void BindSeatVeyonTarget(int row, int column, Guid objectId)
+    private bool BindSeatVeyonTarget(int row, int column, Guid objectId)
     {
-        if (!CanEditSeatMap) return;
+        if (!CanEditSeatMap) return false;
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room || _seatGrid is null)
-            return;
+            return false;
         try
         {
             var choice = SeatVeyonTargetChoices.SingleOrDefault(item => item.ObjectId == objectId)
@@ -5805,12 +5756,85 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? "座位已关联学生设备；映射已保存在本机。"
                 : $"学生“{studentName}”已关联到该座位；设备映射已保存在本机。";
             RefreshClassroomEventSeatLocations();
+            return true;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                            InvalidDataException or InvalidOperationException)
         {
             SeatMapStatus = "无法关联 Veyon 电脑；原座位表未更改。" + exception.Message;
+            return false;
         }
+    }
+
+    public async Task BindSelectedSeatVeyonTargetAsync()
+    {
+        if (!CanBindSelectedSeatVeyonTarget || SelectedRoomProfile is not { } room ||
+            SelectedCampusProfile is not { } campus || _seatGrid is null ||
+            SelectedSeatAssociationSeat is not { } seatChoice ||
+            SelectedSeatAssociationTarget is not { } targetChoice)
+        {
+            SeatVeyonTargetStatus = "请先读取当前地点目录，再明确选择一个姓名座位和一台 Veyon 电脑。";
+            return;
+        }
+
+        var roomId = room.RoomId;
+        var campusId = campus.ProfileId;
+        var seatId = seatChoice.SeatId;
+        IsReadingSeatVeyonTargets = true;
+        SeatVeyonTargetStatus = "正在重新读取目录，核对所选 Veyon UUID、Host 和父地点……";
+        try
+        {
+            var objects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
+            if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId ||
+                _seatGrid?.Seats.All(seat => seat.SeatId != seatId) != false)
+            {
+                SeatVeyonTargetStatus = "读取期间地点或座位已变化；没有应用关联。";
+                return;
+            }
+
+            var locations = objects.Where(item => item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Name, room.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (locations.Length != 1 || locations[0].ObjectId != targetChoice.LocationObjectId)
+                throw new InvalidDataException("所选电脑的地点 UUID 已变化或当前地点不唯一；请重新读取并选择。");
+            var matches = objects.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                item.ObjectId == targetChoice.ObjectId).ToArray();
+            if (matches.Length != 1)
+                throw new InvalidDataException("所选电脑 UUID 已消失或重复；请重新读取目录。");
+            var current = matches[0];
+            var host = VeyonHostAddress.NormalizeOverride(current.Host);
+            if (current.ParentObjectId != targetChoice.LocationObjectId ||
+                !string.Equals(current.Name, targetChoice.ComputerName, StringComparison.Ordinal) ||
+                !string.Equals(host, targetChoice.HostAddress, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("所选电脑的 Name、Host 或父地点已变化；没有关联，请重新读取目录。");
+            var sameHost = objects.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+                .Where(item =>
+                {
+                    try { return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), host,
+                        StringComparison.OrdinalIgnoreCase); }
+                    catch (InvalidDataException) { return false; }
+                }).ToArray();
+            if (sameHost.Length != 1)
+                throw new InvalidDataException("所选 Host 在 Veyon 多个对象中重复；为避免错绑，没有应用关联。");
+
+            var boundSeat = _seatGrid.Seats.Single(seat => seat.SeatId == seatId);
+            if (boundSeat.VeyonObjectId is { } existingObjectId && existingObjectId != current.ObjectId)
+                throw new InvalidDataException("这个座位已关联另一台 Veyon 电脑；请先核对并明确解除旧关联。");
+
+            if (!BindSeatVeyonTarget(seatChoice.Row, seatChoice.Column, current.ObjectId))
+            {
+                SeatVeyonTargetStatus = "人工关联没有应用；" + SeatMapStatus;
+                return;
+            }
+            SeatVeyonTargetStatus = $"已由教师确认：座位“{seatChoice.DisplayLabel}”关联到 {targetChoice.DisplayLabel}。";
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                           UnauthorizedAccessException or InvalidOperationException or
+                                           TimeoutException or PlatformNotSupportedException or
+                                           System.ComponentModel.Win32Exception)
+        {
+            SeatVeyonTargetStatus = "人工关联没有应用；原座位绑定保持不变。" + exception.Message;
+        }
+        finally { IsReadingSeatVeyonTargets = false; }
     }
 
     public void ClearSeatVeyonTarget(int row, int column)
@@ -5830,6 +5854,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             SeatMapStatus = "无法解除电脑关联；原座位表未更改。" + exception.Message;
         }
+    }
+
+    public void ClearSelectedSeatVeyonTarget()
+    {
+        if (!CanClearSelectedSeatVeyonTarget || SelectedSeatAssociationSeat is not { } seat) return;
+        ClearSeatVeyonTarget(seat.Row, seat.Column);
     }
 
     public void SelectSeatForSwap(int row, int column)
@@ -6332,8 +6362,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(SeatGridColumns));
             Changed(nameof(SeatGridSeatCount));
             Changed(nameof(SeatGridNamedCount));
+            Changed(nameof(SeatGridComputerCount));
             Changed(nameof(SeatGridNumberPendingCount));
             Changed(nameof(SeatGridSummary));
+            Changed(nameof(IsTeacherSetupRoomComplete));
+            Changed(nameof(IsTeacherSetupRoomSkippedForNow));
+            Changed(nameof(TeacherSetupRoomSummary));
             Changed(nameof(CanAssignMissingSeatComputerNumbers));
             Changed(nameof(AssignMissingSeatComputerNumbersLabel));
             Changed(nameof(SeatGridTitle));
@@ -6372,8 +6406,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasSeatMap));
             Changed(nameof(SeatGridSeatCount));
             Changed(nameof(SeatGridNamedCount));
+            Changed(nameof(SeatGridComputerCount));
             Changed(nameof(SeatGridNumberPendingCount));
             Changed(nameof(SeatGridSummary));
+            Changed(nameof(IsTeacherSetupRoomComplete));
+            Changed(nameof(IsTeacherSetupRoomSkippedForNow));
+            Changed(nameof(TeacherSetupRoomSummary));
             Changed(nameof(CanAssignMissingSeatComputerNumbers));
             Changed(nameof(AssignMissingSeatComputerNumbersLabel));
             Changed(nameof(CanStartRoomCreation));
@@ -6446,8 +6484,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasSeatMap));
         Changed(nameof(SeatGridSeatCount));
         Changed(nameof(SeatGridNamedCount));
+        Changed(nameof(SeatGridComputerCount));
         Changed(nameof(SeatGridNumberPendingCount));
         Changed(nameof(SeatGridSummary));
+        Changed(nameof(IsTeacherSetupRoomComplete));
+        Changed(nameof(IsTeacherSetupRoomSkippedForNow));
+        Changed(nameof(TeacherSetupRoomSummary));
         Changed(nameof(CanAssignMissingSeatComputerNumbers));
         Changed(nameof(AssignMissingSeatComputerNumbersLabel));
         Changed(nameof(RoomSummary));
@@ -6459,6 +6501,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(CanSwapSeats));
         Changed(nameof(CanPrepareSeatSwapPlan));
         Changed(nameof(CanStartRoomCreation));
+        SeatAssociationSeatChoices = BuildSeatAssociationSeatChoices(_seatGrid);
         RebuildWebsitePolicyTargetChoices();
         RefreshSeatMapCells();
         if (_activeClassroomSession is { } active &&
@@ -6493,6 +6536,17 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 IsSeatMapEditing && seat is not null && !_seatMapEditOriginalSeatIds.Contains(seat.SeatId),
                 cell.VeyonComputerName ?? "");
         }).ToArray();
+    }
+
+    private static IReadOnlyList<TeacherSeatAssociationChoice> BuildSeatAssociationSeatChoices(
+        ClassroomSeatGridLayout? layout)
+    {
+        if (layout is null) return Array.Empty<TeacherSeatAssociationChoice>();
+        return Array.AsReadOnly(layout.Seats
+            .OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
+            .Select(seat => new TeacherSeatAssociationChoice(seat.SeatId, seat.Row, seat.Column,
+                seat.ComputerNumber, seat.StudentName ?? "未填写姓名", seat.VeyonObjectId))
+            .ToArray());
     }
 
     private IReadOnlyDictionary<string, string> ReadActiveSeatLabels(Guid sessionId)
@@ -6556,9 +6610,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (seatIndex < roomComputerNames.Count)
                     AddUnambiguousStudentName(namesByComputer, ambiguousComputers,
                         roomComputerNames[seatIndex], studentName);
-                if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
-                    !string.IsNullOrWhiteSpace(hosts[seatIndex]))
-                    AddUnambiguousStudentName(namesByHost, ambiguousHosts, hosts[seatIndex], studentName);
             }
         }
 
@@ -6692,6 +6743,12 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             value ??= "";
             if (_websiteTargets == value) return;
             _websiteTargets = value;
+            if (!_settingWebsiteTargetsFromDirectory)
+            {
+                _websiteTargetsRequireDirectorySnapshot = false;
+                _websiteTargetsLoadedFromPartialRead = false;
+                _websiteTargetsDirectoryFingerprint = null;
+            }
             RebuildWebsitePolicyTargetChoices();
             Changed(nameof(ClassroomTargetSummary));
             if (_websiteLocationSelectionPending)
@@ -6783,9 +6840,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(WebsitePolicyDisableConfirmationSummary));
         }
     }
-    public string WebsitePolicyTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
-        ? "请先从 Veyon 读取电脑名单。"
-        : $"已选择 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
+    public string WebsitePolicyTargetSelectionSummary => !AreWebsiteTargetsTrustedForActions()
+        ? "目录尚未完成可信读取；策略目标暂不可用。请重新读取 Veyon 电脑名单。"
+        : WebsitePolicyTargetChoices.Count == 0
+            ? "请先从 Veyon 读取电脑名单。"
+            : $"已选择 {WebsitePolicyTargetChoices.Count(item => item.IsSelected)}/{WebsitePolicyTargetChoices.Count} 名学生";
     public IReadOnlyList<TeacherPolicyTargetChoice> StudentUpdateTargetChoices => WebsitePolicyTargetChoices;
     public int StudentUpdateSelectedTargetCount => WebsitePolicyTargetChoices.Count(item => item.IsSelected);
     public string StudentUpdateTargetSelectionSummary => WebsitePolicyTargetChoices.Count == 0
@@ -6916,10 +6975,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     if (seatIndex < roomComputerNames.Count)
                         AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
                             roomComputerNames[seatIndex], studentName);
-                    if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
-                        !string.IsNullOrWhiteSpace(hosts[seatIndex]))
-                        AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
-                            hosts[seatIndex], studentName);
                 }
             }
         }
@@ -6940,7 +6995,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 studentName = computerName.Trim();
             if (string.IsNullOrWhiteSpace(studentName)) studentName = "未填写姓名";
             return new TeacherPolicyTargetChoice(target, studentName,
-                !previous.TryGetValue(targetKey, out var selected) || selected);
+                previous.TryGetValue(targetKey, out var selected) && selected);
         }).ToArray();
         WebsitePolicyTargetChoices = Array.AsReadOnly(choices);
     }
@@ -7118,8 +7173,36 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             : "查询摘要仅保存在本机；读取后会自动刷新。";
     }
 
-    private IReadOnlyList<string> GetSelectedWebsitePolicyTargets() => WebsitePolicyTargetChoices
-        .Where(item => item.IsSelected).Select(item => item.Target).ToArray();
+    private IReadOnlyList<string> GetSelectedWebsitePolicyTargets()
+    {
+        if (!AreWebsiteTargetsTrustedForActions()) return Array.Empty<string>();
+        var targets = WebsitePolicyTargetChoices.Where(item => item.IsSelected)
+            .Select(item => item.Target).ToArray();
+        return AreTargetsConflictFree(targets) ? targets : Array.Empty<string>();
+    }
+
+    private bool AreTargetsConflictFree(IEnumerable<string> targets) =>
+        !targets.Any(target => _veyonConflictedTargets.Contains(NormalizeTargetKey(target)));
+
+    private bool AreWebsiteTargetsTrustedForActions() => !_websiteTargetsLoadedFromPartialRead &&
+        (!_websiteTargetsRequireDirectorySnapshot ||
+         (HasFreshVerifiedVeyonDirectoryRead &&
+          !string.IsNullOrWhiteSpace(_websiteTargetsDirectoryFingerprint) &&
+          string.Equals(_websiteTargetsDirectoryFingerprint,
+              VeyonNetworkObjectDirectory.LastTrustedDirectoryFingerprint, StringComparison.Ordinal)));
+
+    private static bool HasFreshVerifiedVeyonDirectoryRead
+    {
+        get
+        {
+            if (!OperatingSystem.IsWindows()) return true;
+            if (VeyonNetworkObjectDirectory.LastReadDiagnostic is not
+                { FailureStage: VeyonDirectoryReadDiagnostic.None, LastSuccessfulReadUtc: { } lastRead })
+                return false;
+            var age = DateTimeOffset.UtcNow - lastRead;
+            return age >= TimeSpan.FromSeconds(-30) && age <= TimeSpan.FromMinutes(3);
+        }
+    }
 
     private IReadOnlyList<string> GetSelectedStudentUpdateTargets() => GetSelectedWebsitePolicyTargets();
 
@@ -7930,6 +8013,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     public bool HasWebsiteDirectoryStatus => WebsiteDirectoryStatus.Length > 0;
     public string WebsiteDirectoryError { get => _websiteDirectoryError; private set { _websiteDirectoryError = value; Changed(); Changed(nameof(HasWebsiteDirectoryError)); } }
     public bool HasWebsiteDirectoryError => WebsiteDirectoryError.Length > 0;
+    public string VeyonDeviceDirectorySummary
+    {
+        get => _veyonDeviceDirectorySummary;
+        private set
+        {
+            if (_veyonDeviceDirectorySummary == value) return;
+            _veyonDeviceDirectorySummary = value;
+            Changed();
+            Changed(nameof(HasVeyonDeviceDirectorySummary));
+        }
+    }
+    public bool HasVeyonDeviceDirectorySummary => VeyonDeviceDirectorySummary.Length > 0;
     public string WebsitePolicyResult { get => _websitePolicyResult; private set { _websitePolicyResult = value; Changed(); Changed(nameof(HasWebsitePolicyResult)); Changed(nameof(HasWebsitePolicyHistory)); } }
     public bool HasWebsitePolicyResult => WebsitePolicyResult.Length > 0;
     public string WebsitePolicyResultDetails
@@ -8583,8 +8678,8 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
         Changed(nameof(ClassroomQuickControlPresetSummary));
-        if (page is "classroom" or "updates" && string.IsNullOrWhiteSpace(WebsiteTargets))
-            _ = ReadClassroomLocationsAsync();
+        if (page is "classroom" or "updates")
+            _ = ReadClassroomLocationsAsync(forceSelection: false);
     }
 
     public void GenerateRoomPreview()
@@ -8718,7 +8813,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var range = MachineNaming.CreateRange(RoomProfilePrefix, RoomProfileStart, RoomProfileCount);
-            var hostOverrides = ParseHostOverrides(RoomProfileHostOverrides, range.Count);
             var current = index >= 0 ? rooms[index] : null;
             TeacherRoomProfile room;
             if (current?.ComputerNumbers is { } fixedNumbers)
@@ -8731,7 +8825,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 room = current with
                 {
                     DisplayName = RoomProfileName.Trim(),
-                    HostOverrides = hostOverrides.ToList(),
+                    HostOverrides = null,
                     ComputerNumbers = fixedNumbers.ToList()
                 };
             }
@@ -8739,7 +8833,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 room = new TeacherRoomProfile(selectedId ?? Guid.NewGuid(), RoomProfileName.Trim(),
                     RoomProfilePrefix, int.Parse(RoomProfileStart, CultureInfo.InvariantCulture), range.Count,
-                    hostOverrides.ToList());
+                    HostOverrides: null);
             }
             if (index >= 0) rooms[index] = room;
             else rooms.Add(room);
@@ -8822,7 +8916,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         CampusDirectoryError = "";
     }
 
-    public async Task AddRoomToVeyonAsync()
+    public async Task AddRoomToVeyonAsync(bool keepSeatMapEditing = false)
     {
         if (SeatGridNumberPendingCount > 0)
         {
@@ -8831,18 +8925,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
         if (!CanStartRoomCreation)
         {
-            RoomCreateError = "请先进入座位图编辑状态并至少填写一个学生姓名，再写入地点和电脑。";
-            return;
-        }
-        if (SeatGridNamedCount == 0)
-        {
-            RoomCreateError = "请至少填写一个学生姓名。空姓名桌位只保留为桌子，不会生成电脑。";
+            RoomCreateError = "请先进入座位图编辑状态，为至少一个电脑座位分配编号，再写入地点和电脑。";
             return;
         }
         if (_isClassroomTransitioning)
         {
             RoomConflictStatus = "课堂范围正在同步；请稍后再写入地点和电脑。";
             RoomCreateError = "课堂控制范围正在更新；稍后即可继续写入地点和电脑。";
+            return;
+        }
+        if (_activeClassroomSession is not null)
+        {
+            RoomCreateError = "课堂正在进行；座位信息已保存在教师电脑，但没有改动 Veyon 目录。请下课后重新添加电脑。";
             return;
         }
         if (!CanCheckRoomConflicts)
@@ -8866,75 +8960,25 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             RoomCreateError = "地点清单无效；没有修改 Veyon。" + exception.Message;
             return;
         }
-        if (!TryBeginExclusiveTask()) return;
+        if (!TryBeginExclusiveTask())
+        {
+            RoomCreateError = "另一项教师端操作正在运行；座位已保存在本机，但没有开始 Veyon 写入。完成后请重新核对并补齐电脑。";
+            return;
+        }
         RoomCreateResult = "";
         RoomCreateError = "";
-        var renamedExistingComputerCount = 0;
-        var existingComputerRenameSkipped = false;
+        var veyonWriteVerified = false;
+        string? locationNameForRefresh = null;
         try
         {
             var locationName = RoomLocationName.Trim();
+            locationNameForRefresh = locationName;
             RoomCreateStatus = "正在检查 Veyon 版本、权限和现有地点……";
             var veyon = await Task.Run(VeyonFacts.Probe);
             if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
             {
                 RoomCreateError = $"需要先安装并确认 Veyon {VeyonInstallerTrust.Version}。没有更改目录。\n{veyon.AsText()}";
                 return;
-            }
-            var directoryObjects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
-            VeyonComputerRenameTargetPlan[] renameTargets;
-            try { renameTargets = BuildRoomComputerRenamePlan(locationName, computers, directoryObjects); }
-            catch (InvalidDataException exception)
-            {
-                RoomCreateError = "现有 Veyon 电脑与本次座位编号无法安全对应；没有修改目录。" + exception.Message;
-                return;
-            }
-            string? renameConfigFingerprint = null;
-            if (renameTargets.Length > 0)
-            {
-                try
-                {
-                    var renameSnapshot = await Task.Run(VeyonNetworkObjectDirectory.ReadDirectorySnapshot);
-                    renameTargets = BuildRoomComputerRenamePlan(locationName, computers, renameSnapshot.Objects);
-                    if (renameTargets.Length > 0)
-                        renameConfigFingerprint = renameSnapshot.ConfigFingerprint;
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                   InvalidOperationException or TimeoutException or
-                                                   PlatformNotSupportedException or System.ComponentModel.Win32Exception)
-                {
-                    if (IsVeyonCrtInitializationFailure(exception))
-                    {
-                        existingComputerRenameSkipped = true;
-                        renameTargets = [];
-                    }
-                    else
-                    {
-                        RoomCreateError = "需要同步现有电脑名称，但无法读取 Veyon 配置；没有新增地点或学生电脑。" +
-                                          exception.Message;
-                        return;
-                    }
-                }
-            }
-            var renameSkippedNote = existingComputerRenameSkipped
-                ? "已有电脑显示名未同步（Veyon 配置导出遇到 R6031）。"
-                : "";
-            if (renameTargets.Length > 0)
-            {
-                RoomCreateStatus = $"正在同步 {renameTargets.Length} 台现有电脑的学生显示名……";
-                var renameResponse = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
-                    (requestId, caller) => new PrivilegedWorkerRequest(
-                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
-                        PrivilegedWorkerOperation.RenameVeyonComputers,
-                        VeyonConfigFingerprint: renameConfigFingerprint,
-                        VeyonComputerRenameTargets: renameTargets));
-                if (!renameResponse.Result.Ok)
-                {
-                    RoomCreateError = "现有电脑名称同步未完成；没有继续创建地点和电脑。" +
-                                      renameSkippedNote + renameResponse.Result.Detail;
-                    return;
-                }
-                renamedExistingComputerCount = renameTargets.Length;
             }
             RoomCreateStatus = "正在写入地点和电脑清单并读回核对……";
             var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
@@ -8944,47 +8988,134 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                     LocationName: locationName, Computers: computers));
             if (response.Result.Ok)
             {
+                veyonWriteVerified = true;
                 if (!TrySaveCurrentRoomProfile(out var profileError, computers))
                 {
+                    if (keepSeatMapEditing) BeginSeatMapEdit();
                     RoomCreateError = "Veyon 地点和电脑已写入并读回，但本机地点记录未保存；请重新打开本机权限后再试。" +
-                                      renameSkippedNote + profileError;
+                                      profileError;
                     return;
                 }
-                var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers);
-                RoomCreateResult = $"Veyon 地点和 {computers.Length} 台学生电脑已写入，并完成写入后自动核对。" +
-                                   (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "");
+                var bindingError = await TryBindRoomComputersToSeatGridAsync(locationName, computers,
+                    response.VeyonAddedComputerTargets);
+                RoomCreateResult = $"Veyon 地点和 {computers.Length} 台学生电脑已写入，并完成写入后自动核对。";
                 if (bindingError is null)
                 {
-                    CommitSeatMapEdit();
-                    IsSeatMapEditing = false;
-                    RoomCreateResult = $"已完成：{computers.Length} 台学生电脑已自动对应姓名桌位；空姓名桌位只保留为桌子。" +
-                                       (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "");
+                    if (keepSeatMapEditing)
+                        BeginSeatMapEdit();
+                    else
+                    {
+                        CommitSeatMapEdit();
+                        IsSeatMapEditing = false;
+                    }
+                    RoomCreateResult = $"已完成：{computers.Length} 台电脑已对应编号座位；空姓名座位也已纳入电脑目录。";
                 }
                 else
-                    RoomCreateError = $"Veyon 地点和 {computers.Length} 台学生电脑已成功写入。程序已在写入后自动核对，但未能确认教师机上的座位对应关系；已写入的 Veyon 电脑不受影响。" +
-                                      (renameSkippedNote.Length > 0 ? " " + renameSkippedNote : "") + "原因：" + bindingError;
+                {
+                    if (keepSeatMapEditing) BeginSeatMapEdit();
+                    else
+                    {
+                        CommitSeatMapEdit();
+                        IsSeatMapEditing = false;
+                    }
+                    RoomCreateError = $"Veyon 地点和 {computers.Length} 台电脑已成功写入。程序已在写入后自动核对，但未能确认教师机上的座位对应关系；已写入的 Veyon 电脑不受影响。原因：" +
+                                      bindingError;
+                }
             }
-            else RoomCreateError = (renamedExistingComputerCount > 0
-                ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步，但地点写入未完成。"
-                : "") + renameSkippedNote + "添加地点未完成：" + response.Result.Detail;
+            else
+            {
+                if (response.Result.Status == ExecutionPlan.NeedsReview)
+                {
+                    if (keepSeatMapEditing) BeginSeatMapEdit();
+                    else
+                    {
+                        CommitSeatMapEdit();
+                        IsSeatMapEditing = false;
+                    }
+                }
+                RoomCreateError = "Veyon 同步未完成：" + response.Result.Detail;
+            }
         }
         catch (Exception exception)
         {
-            RoomCreateError = (renamedExistingComputerCount > 0
-                ? $"已有 {renamedExistingComputerCount} 台电脑名称已同步；"
-                : "") + (existingComputerRenameSkipped
-                    ? "已有电脑显示名未同步（Veyon 配置导出遇到 R6031）。"
-                    : "") + "添加地点未完成：" + exception.Message;
+            RoomCreateError = "Veyon 同步未完成：" + exception.Message;
         }
         finally
         {
             RoomCreateStatus = "";
-            EndExclusiveTask();
+            try
+            {
+                if (veyonWriteVerified && locationNameForRefresh is { } writtenLocationName)
+                    await RefreshDirectoryViewsAfterVeyonWriteAsync(writtenLocationName);
+            }
+            finally { EndExclusiveTask(); }
+        }
+    }
+
+    private async Task RefreshDirectoryViewsAfterVeyonWriteAsync(string locationName)
+    {
+        var oldLocations = WebsiteLocations;
+        var oldTargets = WebsiteTargets.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(target => NormalizeTargetKey(target.Trim()))
+            .Where(target => target.Length > 0)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var selectedWebsiteLocation = WebsiteLocationIndex >= 0 &&
+                                      WebsiteLocationIndex < oldLocations.Count
+            ? oldLocations[WebsiteLocationIndex].Name
+            : null;
+        var selectedClassroomLocation = ClassroomLocationIndex >= 0 &&
+                                        ClassroomLocationIndex < oldLocations.Count
+            ? oldLocations[ClassroomLocationIndex].Name
+            : null;
+        var websiteTargetsFollowedLocation = selectedWebsiteLocation is not null &&
+                                             selectedWebsiteLocation.Equals(locationName,
+                                                 StringComparison.OrdinalIgnoreCase) &&
+                                             oldTargets.SetEquals(oldLocations[WebsiteLocationIndex].Targets
+                                                 .Select(NormalizeTargetKey));
+        try
+        {
+            var locations = await Task.Run(_networkDirectory.ReadLocations);
+            await RefreshVeyonDeviceDirectorySummaryAsync(locations);
+            WebsiteLocations = locations;
+            WebsiteLocationIndex = FindLocationIndex(locations, selectedWebsiteLocation);
+            ClassroomLocationIndex = FindLocationIndex(locations, selectedClassroomLocation);
+
+            var matchingLocation = locations.Where(location =>
+                string.Equals(location.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (websiteTargetsFollowedLocation && matchingLocation.Length == 1)
+            {
+                WebsiteLocationIndex = Array.IndexOf(locations.ToArray(), matchingLocation[0]);
+                FillWebsiteTargetsFromSelectedLocation();
+                WebsiteDirectoryStatus = $"已刷新“{locationName}”的学生电脑名单；新增设备默认未选中，请核对后再勾选。";
+            }
+            else
+            {
+                WebsiteDirectoryStatus = "Veyon 新增电脑已读回确认；策略名单保留原有手动目标。请刷新或选择对应地点以载入最新电脑。";
+            }
+
+            var readNotice = GetVeyonDirectoryReadNotice();
+            if (readNotice.Length > 0) WebsiteDirectoryStatus += "\n" + readNotice;
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+                                          not StackOverflowException and not AccessViolationException)
+        {
+            WebsiteDirectoryStatus = "Veyon 写入已读回确认，但策略页面名单暂未刷新；请重新读取地点。" +
+                                     exception.Message;
+        }
+
+        static int FindLocationIndex(IReadOnlyList<VeyonNetworkLocation> locations, string? name)
+        {
+            if (name is null) return -1;
+            var matches = locations.Select((location, index) => (location, index))
+                .Where(item => string.Equals(item.location.Name, name, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+            return matches.Length == 1 ? matches[0].index : -1;
         }
     }
 
     private async Task<string?> TryBindRoomComputersToSeatGridAsync(string locationName,
-        IReadOnlyList<VeyonNetworkComputer> computers)
+        IReadOnlyList<VeyonNetworkComputer> computers,
+        IReadOnlyList<VeyonAddedComputerTarget>? verifiedAddedTargets)
     {
         if (SelectedCampusProfile is not { } campus || SelectedRoomProfile is not { } room ||
             _seatGrid is null || room.ComputerCount != computers.Count ||
@@ -8993,7 +9124,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         var campusId = campus.ProfileId;
         var roomId = room.RoomId;
-        var seats = _seatGrid.Seats.Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName))
+        var seats = _seatGrid.Seats.Where(seat => seat.ComputerNumber is not null)
             .OrderBy(seat => seat.Row).ThenBy(seat => seat.Column).ToArray();
         if (seats.Length != computers.Count)
             return $"当前有 {seats.Length} 个座位，电脑清单有 {computers.Count} 台。";
@@ -9018,31 +9149,71 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
 
         var bindings = new List<ClassroomSeatGridTargetBinding>(computers.Count);
         var usedObjectIds = new HashSet<Guid>();
+        var currentById = objects.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(item => item.ObjectId).ToDictionary(group => group.Key, group => group.ToArray());
+        var manualReview = new List<string>();
         for (var index = 0; index < computers.Count; index++)
         {
             string expectedHost;
             try { expectedHost = VeyonHostAddress.NormalizeOverride(computers[index].Host); }
             catch (InvalidDataException exception) { return "电脑地址无效：" + exception.Message; }
-
-            var matches = objects.Where(item =>
+            var seat = _seatGrid.Seats.Single(item => item.SeatId == seats[index].SeatId);
+            VeyonNetworkObject? selectedObject = null;
+            if (seat.VeyonObjectId is { } currentObjectId)
             {
-                if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
-                    item.ObjectId == Guid.Empty || item.ParentObjectId != locationObject.ObjectId ||
-                    string.IsNullOrWhiteSpace(item.Name))
-                    return false;
+                if (!currentById.TryGetValue(currentObjectId, out var existing) || existing.Length != 1 ||
+                    existing[0].ParentObjectId != locationObject.ObjectId)
+                    return $"第 {index + 1} 个座位已有 UUID 关联，但该 UUID 已消失、重复或不在当前地点；原绑定保持不变，请人工核对。";
                 try
                 {
-                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
-                        StringComparison.OrdinalIgnoreCase);
+                    if (!string.Equals(VeyonHostAddress.NormalizeOverride(existing[0].Host), expectedHost,
+                            StringComparison.OrdinalIgnoreCase))
+                        return $"第 {index + 1} 个座位的现有 UUID 与本次 Host 不同；不会覆盖旧绑定，请在编辑座位图中人工核对。";
                 }
-                catch (InvalidDataException) { return false; }
-            }).ToArray();
-            if (matches.Length != 1 || !usedObjectIds.Add(matches[0].ObjectId))
-                return $"第 {index + 1} 个座位的电脑名和地址不能唯一匹配 Veyon 读回结果。";
+                catch (InvalidDataException exception) { return "现有 UUID 的 Host 无效：" + exception.Message; }
+                selectedObject = existing[0];
+            }
+            else if (verifiedAddedTargets is not null)
+            {
+                var added = verifiedAddedTargets.Where(target =>
+                {
+                    try { return string.Equals(VeyonHostAddress.NormalizeOverride(target.Host), expectedHost,
+                        StringComparison.OrdinalIgnoreCase); }
+                    catch (InvalidDataException) { return false; }
+                }).ToArray();
+                if (added.Length == 1 && added[0].ParentObjectId == locationObject.ObjectId &&
+                    string.Equals(added[0].Location, locationObject.Name, StringComparison.Ordinal) &&
+                    string.Equals(added[0].ComputerName, computers[index].DisplayName, StringComparison.Ordinal) &&
+                    currentById.TryGetValue(added[0].ObjectId, out var readBack) && readBack.Length == 1 &&
+                    readBack[0].ParentObjectId == added[0].ParentObjectId &&
+                    string.Equals(readBack[0].Name, added[0].ComputerName, StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        if (string.Equals(VeyonHostAddress.NormalizeOverride(readBack[0].Host), expectedHost,
+                                StringComparison.OrdinalIgnoreCase)) selectedObject = readBack[0];
+                    }
+                    catch (InvalidDataException) { }
+                }
+                if (selectedObject is null)
+                    manualReview.Add($"第 {index + 1} 个电脑座位（{seat.StudentName ?? "未填写姓名"}）没有由提权写入结果提供匹配的新 UUID");
+            }
+            else
+            {
+                manualReview.Add($"第 {index + 1} 个电脑座位（{seat.StudentName ?? "未填写姓名"}）对应的是已有电脑，尚未人工确认 UUID");
+            }
 
-            bindings.Add(new ClassroomSeatGridTargetBinding(seats[index].SeatId, expectedHost,
-                matches[0].Name, matches[0].ObjectId, locationObject.ObjectId));
+            if (selectedObject is null) continue;
+            if (selectedObject.ObjectId == Guid.Empty || !usedObjectIds.Add(selectedObject.ObjectId))
+                return $"第 {index + 1} 个座位与其他座位指向同一 UUID；没有更改本机座位关联。";
+            bindings.Add(new ClassroomSeatGridTargetBinding(seat.SeatId, expectedHost,
+                selectedObject.Name, selectedObject.ObjectId, locationObject.ObjectId));
         }
+
+        if (manualReview.Count > 0)
+            return string.Join("；", manualReview) + "。Veyon 目录写入成功；请在编辑座位图中读取目录并逐项确认 UUID 关联。";
+        if (bindings.Count != computers.Count)
+            return "并非全部座位都通过 UUID 核对；本机座位关联没有更改。";
 
         if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
             return "应用期间当前地点已切换。";
@@ -9075,18 +9246,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         return exception.Message;
     }
 
-    private static bool IsVeyonCrtInitializationFailure(Exception exception)
-    {
-        for (Exception? current = exception; current is not null; current = current.InnerException)
-        {
-            if (current.Message.Contains("R6031", StringComparison.OrdinalIgnoreCase) ||
-                current.Message.Contains("Attempt to initialize the CRT more than once",
-                    StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
     public void FillWebsiteTargetsFromRoom()
     {
         try
@@ -9101,6 +9260,94 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             WebsiteDirectoryError = "";
         }
         catch (InvalidDataException exception) { RoomError = exception.Message; }
+    }
+
+    private static string GetVeyonDirectoryReadNotice()
+    {
+        if (!OperatingSystem.IsWindows() ||
+            VeyonNetworkObjectDirectory.LastReadDiagnostic is not
+                { FailureStage: VeyonDirectoryReadDiagnostic.PartialRead } diagnostic)
+            return "";
+        var lastRead = diagnostic.LastSuccessfulReadUtc is { } timestamp
+            ? $"；最近一次成功读取 {timestamp.ToLocalTime():yyyy-MM-dd HH:mm:ss}"
+            : "";
+        return "目录只读回退提示：" + diagnostic.Message + lastRead;
+    }
+
+    private async Task RefreshVeyonDeviceDirectorySummaryAsync(
+        IReadOnlyList<VeyonNetworkLocation> locations)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            VeyonDeviceDirectorySummary = "此目录投影由 Windows 教师端维护。";
+            return;
+        }
+        if (VeyonNetworkObjectDirectory.LastReadDiagnostic?.FailureStage ==
+            VeyonDirectoryReadDiagnostic.PartialRead)
+        {
+            VeyonDeviceDirectorySummary = "当前名单来自只读回退；保留上次设备身份缓存，未把回退结果写入可信目录。";
+            return;
+        }
+
+        try
+        {
+            var objects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
+            var fingerprint = VeyonNetworkObjectDirectory.LastTrustedDirectoryFingerprint
+                              ?? throw new InvalidDataException("完整 Veyon 读取没有设备指纹。");
+            var snapshot = await Task.Run(() => _veyonDeviceDirectoryStore.Reconcile(objects, fingerprint));
+            _veyonConflictedTargets.Clear();
+            foreach (var item in snapshot.Devices.Where(item => item.State == VeyonDeviceDirectoryState.Conflict))
+            {
+                foreach (var alias in new[] { item.HostAddress, item.VeyonComputerName })
+                    if (!string.IsNullOrWhiteSpace(alias))
+                        _veyonConflictedTargets.Add(NormalizeTargetKey(alias));
+            }
+
+            var current = snapshot.Devices.Where(item => item.State != VeyonDeviceDirectoryState.MissingInVeyon)
+                .ToArray();
+            var discovered = current.Count(item => item.State == VeyonDeviceDirectoryState.Discovered);
+            var changed = current.Count(item => item.State is VeyonDeviceDirectoryState.Renamed or
+                VeyonDeviceDirectoryState.HostChanged or VeyonDeviceDirectoryState.Moved);
+            var conflicts = current.Count(item => item.State == VeyonDeviceDirectoryState.Conflict);
+            var missing = snapshot.Devices.Count(item => item.State == VeyonDeviceDirectoryState.MissingInVeyon);
+            var mismatch = !string.Equals(VeyonNetworkObjectDirectory.FingerprintLocations(locations),
+                fingerprint, StringComparison.Ordinal);
+            var mismatchNotice = mismatch
+                ? "读取期间目录有变化；名单操作暂时锁定，请重新刷新。"
+                : "同一地点名单与 UUID 设备目录已核对。";
+            VeyonDeviceDirectorySummary =
+                $"UUID 设备目录：{current.Length} 台 · 新发现 {discovered} · 名称/Host/地点变化 {changed} · 冲突 {conflicts} · Veyon 缺失 {missing}；{mismatchNotice}";
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanMigrateEdgeRealtime));
+            Changed(nameof(CanRestoreEdgeLegacy));
+            Changed(nameof(CanPushApplicationPolicy));
+            Changed(nameof(CanDisableApplicationPolicy));
+            Changed(nameof(CanReadApplicationPolicyAudit));
+            Changed(nameof(CanReadApplicationInventory));
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(CanDisableStudentSystemPolicy));
+            Changed(nameof(CanDeployStudentUpdate));
+            Changed(nameof(CanReadDeviceHealth));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or InvalidOperationException or
+                                           TimeoutException or PlatformNotSupportedException or
+                                           System.ComponentModel.Win32Exception)
+        {
+            _veyonConflictedTargets.Clear();
+            VeyonDeviceDirectorySummary = "Veyon 地点名单可显示，但 UUID 设备目录未能读回；策略和维护目标已要求重新刷新。" +
+                                           exception.Message;
+            Changed(nameof(CanPushWebsitePolicy));
+            Changed(nameof(CanDisableWebsitePolicy));
+            Changed(nameof(CanReadWebsitePolicyStatus));
+            Changed(nameof(CanPushApplicationPolicy));
+            Changed(nameof(CanDisableApplicationPolicy));
+            Changed(nameof(CanPushStudentSystemPolicy));
+            Changed(nameof(CanDisableStudentSystemPolicy));
+            Changed(nameof(CanDeployStudentUpdate));
+        }
     }
 
     public async Task ReadWebsiteLocationsAsync()
@@ -9118,6 +9365,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             ReadWebsiteSigningCampuses();
             var locations = await Task.Run(_networkDirectory.ReadLocations);
+            await RefreshVeyonDeviceDirectorySummaryAsync(locations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -9151,7 +9399,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? "读取本机地点档案失败："
                 : "读取 Veyon 机房目录失败：") + exception.Message;
         }
-        finally { IsReadingWebsiteLocations = false; }
+        finally
+        {
+            IsReadingWebsiteLocations = false;
+            var readNotice = GetVeyonDirectoryReadNotice();
+            if (readNotice.Length > 0)
+            {
+                if (WebsiteDirectoryStatus.Length > 0)
+                    WebsiteDirectoryStatus += "\n" + readNotice;
+                else if (WebsiteDirectoryError.Length > 0)
+                    WebsiteDirectoryError += "\n" + readNotice;
+            }
+        }
     }
 
     public async Task ReadClassroomLocationsAsync(bool forceSelection = false)
@@ -9173,6 +9432,7 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         {
             ReadWebsiteSigningCampuses();
             var locations = await Task.Run(_networkDirectory.ReadLocations);
+            await RefreshVeyonDeviceDirectorySummaryAsync(locations);
             WebsiteLocations = locations;
             if (locations.Count == 0)
             {
@@ -9223,7 +9483,18 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 ? "读取本机地点失败；保存的学生电脑名单没有更改。"
                 : "读取 Veyon 地点失败；本机学生电脑名单没有更改。") + exception.Message;
         }
-        finally { IsReadingWebsiteLocations = false; }
+        finally
+        {
+            IsReadingWebsiteLocations = false;
+            var readNotice = GetVeyonDirectoryReadNotice();
+            if (readNotice.Length > 0)
+            {
+                if (ClassroomDirectoryStatus.Length > 0)
+                    ClassroomDirectoryStatus += "\n" + readNotice;
+                else if (ClassroomDirectoryError.Length > 0)
+                    ClassroomDirectoryError += "\n" + readNotice;
+            }
+        }
     }
 
     public void UseSelectedClassroomLocation()
@@ -9364,7 +9635,24 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
         }
-        WebsiteTargets = string.Join(Environment.NewLine, location.Targets);
+        _settingWebsiteTargetsFromDirectory = true;
+        try { WebsiteTargets = string.Join(Environment.NewLine, location.Targets); }
+        finally { _settingWebsiteTargetsFromDirectory = false; }
+        _websiteTargetsRequireDirectorySnapshot = OperatingSystem.IsWindows();
+        _websiteTargetsLoadedFromPartialRead = OperatingSystem.IsWindows() &&
+            VeyonNetworkObjectDirectory.LastReadDiagnostic?.FailureStage ==
+            VeyonDirectoryReadDiagnostic.PartialRead;
+        _websiteTargetsDirectoryFingerprint = _websiteTargetsLoadedFromPartialRead
+            ? null
+            : VeyonNetworkObjectDirectory.FingerprintLocations(WebsiteLocations);
+        Changed(nameof(CanPushWebsitePolicy));
+        Changed(nameof(CanDisableWebsitePolicy));
+        Changed(nameof(CanReadWebsitePolicyStatus));
+        Changed(nameof(CanMigrateEdgeRealtime));
+        Changed(nameof(CanRestoreEdgeLegacy));
+        Changed(nameof(CanPushStudentSystemPolicy));
+        Changed(nameof(CanDisableStudentSystemPolicy));
+        Changed(nameof(CanDeployStudentUpdate));
         var campusStatus = string.IsNullOrWhiteSpace(CampusId)
             ? "请选择与学生配置包相同的校区。"
             : $"校区：{CampusId.Trim()}。";
@@ -9456,31 +9744,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             }
             catch (InvalidDataException) { continue; }
 
-            var hostOverrides = room.HostOverrides ?? [];
-            for (var index = 0; index < Math.Min(computerNames.Count, hostOverrides.Count); index++)
-            {
-                if (!string.IsNullOrWhiteSpace(hostOverrides[index]))
-                    AddTargetDisplayName(displayNames, hostOverrides[index], computerNames[index]);
-            }
-        }
-
-        var hasUnmappedIp = targets.Any(target =>
-            (Uri.CheckHostName(target) is UriHostNameType.IPv4 or UriHostNameType.IPv6) &&
-            !displayNames.ContainsKey(NormalizeTargetKey(target)));
-        if (hasUnmappedIp)
-        {
-            try
-            {
-                var currentLocations = await Task.Run(() =>
-                    VeyonNetworkObjectDirectory.ReadLocations(TimeSpan.FromSeconds(5)));
-                AddLocationDisplayNames(displayNames, currentLocations, replace: true);
-            }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or
-                UnauthorizedAccessException or InvalidOperationException or TimeoutException or
-                PlatformNotSupportedException or System.ComponentModel.Win32Exception)
-            {
-                _ = exception;
-            }
         }
 
         var studentsByTarget = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -9503,9 +9766,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             {
                 var studentName = seat.StudentName.Trim();
                 knownStudentNames.Add(studentName);
-                if (!string.IsNullOrWhiteSpace(seat.VeyonHostAddress))
-                    AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
-                        seat.VeyonHostAddress, studentName);
                 if (!string.IsNullOrWhiteSpace(seat.VeyonComputerName))
                     AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
                         seat.VeyonComputerName, studentName);
@@ -9517,10 +9777,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
                 if (seatIndex < roomComputerNames.Count)
                     AddUnambiguousStudentName(studentsByComputer, ambiguousComputers,
                         roomComputerNames[seatIndex], studentName);
-                if (room.HostOverrides is { } hosts && seatIndex < hosts.Count &&
-                    !string.IsNullOrWhiteSpace(hosts[seatIndex]))
-                    AddUnambiguousStudentName(studentsByTarget, ambiguousTargets,
-                        hosts[seatIndex], studentName);
             }
         }
 
@@ -12440,13 +12696,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
     {
         try
         {
-            if (GetStudentNamesForCurrentRoom().Count == 0)
-            {
-                RoomNames = Array.Empty<string>();
-                RoomPreviewRows = Array.Empty<string>();
-                RoomError = "";
-                return;
-            }
             var computers = BuildRoomImportPlan();
             RoomNames = computers.Select(computer => computer.ComputerName).ToArray();
             RoomPreviewRows = computers.Select(computer =>
@@ -12474,11 +12723,11 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             .Select(seat => seat.StudentName.Trim()).ToArray();
     }
 
-    private int GetCurrentBuilderSeatCount() => GetStudentNamesForCurrentRoom().Count;
+    private int GetCurrentBuilderSeatCount() => _seatGrid?.Seats.Length ?? 0;
 
     private int GetNamedStudentCount()
     {
-        return GetStudentNamesForCurrentRoom().Count(name => !string.IsNullOrWhiteSpace(name));
+        return _seatGrid?.Seats.Count(seat => !string.IsNullOrWhiteSpace(seat.StudentName)) ?? 0;
     }
 
     private bool TryBeginExclusiveTask()
@@ -12538,68 +12787,6 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
-    private static VeyonComputerRenameTargetPlan[] BuildRoomComputerRenamePlan(string locationName,
-        IReadOnlyList<VeyonNetworkComputer> computers, IReadOnlyList<VeyonNetworkObject> directoryObjects)
-    {
-        var locations = directoryObjects.Where(item =>
-            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
-            item.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (locations.Length > 1)
-            throw new InvalidDataException($"Veyon 中有多个同名地点“{locationName}”；请先在教师控制台处理重复地点。");
-
-        var existingComputers = directoryObjects.Where(item =>
-            item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
-        var locationId = locations.Length == 1 ? locations[0].ObjectId : (Guid?)null;
-        if (locationId is null && existingComputers.Any(item =>
-                item.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)))
-            throw new InvalidDataException($"地点“{locationName}”有电脑记录，但没有唯一地点对象；控制台未改动目录。");
-
-        var matchedByHost = new Dictionary<string, VeyonNetworkObject>(StringComparer.OrdinalIgnoreCase);
-        var renameTargets = new List<VeyonComputerRenameTargetPlan>();
-        foreach (var computer in computers)
-        {
-            var host = VeyonHostAddress.NormalizeOverride(computer.Host);
-            var matches = existingComputers.Where(item =>
-            {
-                try
-                {
-                    return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), host,
-                        StringComparison.OrdinalIgnoreCase);
-                }
-                catch (InvalidDataException) { return false; }
-            }).ToArray();
-            if (matches.Length > 1)
-                throw new InvalidDataException($"主机“{host}”对应多个 Veyon 电脑对象；无法自动关联。");
-            if (matches.Length == 0) continue;
-
-            var existing = matches[0];
-            if (locationId is null || existing.ParentObjectId != locationId.Value)
-                throw new InvalidDataException($"主机“{host}”已经属于其他地点；为避免重复关联，没有修改目录。");
-            matchedByHost.Add(host, existing);
-            if (!string.Equals(existing.Name, computer.DisplayName, StringComparison.Ordinal))
-                renameTargets.Add(new VeyonComputerRenameTargetPlan(existing.ObjectId,
-                    existing.ParentObjectId, existing.Name, computer.DisplayName, host));
-        }
-
-        var renamingIds = renameTargets.Select(target => target.ObjectId).ToHashSet();
-        foreach (var computer in computers)
-        {
-            var desiredName = computer.DisplayName;
-            var ownHost = VeyonHostAddress.NormalizeOverride(computer.Host);
-            matchedByHost.TryGetValue(ownHost, out var ownObject);
-            var nameMatches = existingComputers.Where(item =>
-                item.Name.Equals(desiredName, StringComparison.OrdinalIgnoreCase));
-            foreach (var match in nameMatches)
-            {
-                if (match.ObjectId == ownObject?.ObjectId) continue;
-                if (renamingIds.Contains(match.ObjectId)) continue;
-                throw new InvalidDataException($"学生姓名“{desiredName}”已被其他 Veyon 电脑使用；无法安全重命名。");
-            }
-        }
-
-        return renameTargets.ToArray();
-    }
-
     private VeyonNetworkComputer[] BuildRoomImportPlan()
     {
         if (_seatGrid is null || SelectedCampusProfile is not { } campus ||
@@ -12608,23 +12795,15 @@ public sealed class TeacherViewModel : INotifyPropertyChanged
             !string.Equals(room.DisplayName, RoomLocationName.Trim(), StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("请先选择并保存当前校区和机房座位图。");
         var seats = _seatGrid.Seats.OrderBy(seat => seat.Row).ThenBy(seat => seat.Column)
-            .Where(seat => !string.IsNullOrWhiteSpace(seat.StudentName)).ToArray();
+            .Where(seat => seat.ComputerNumber is not null).ToArray();
         if (seats.Length == 0)
-            throw new InvalidDataException("请至少为一个桌位填写学生姓名；空桌位不会生成学生电脑。");
-        if (seats.Any(seat => string.IsNullOrWhiteSpace(seat.StudentName)))
-            throw new InvalidDataException("学生姓名无效；空姓名桌位应从学生电脑清单中排除。");
-        var unnumbered = seats.Where(seat => seat.ComputerNumber is null).ToArray();
-        if (unnumbered.Length > 0)
-            throw new InvalidDataException($"有 {unnumbered.Length} 个已填写姓名的座位尚未分配电脑编号。请编辑座位填写编号，或点“给待编号座位分配新号”；已有编号不会改变。");
+            throw new InvalidDataException("请至少为一个电脑座位分配电脑编号；没有编号的空桌位不会生成学生电脑。");
 
-        var hostOverrides = ParseHostOverrides(RoomComputerHosts, MachineNaming.MaximumNumber);
         return seats.Select(seat =>
         {
             var number = seat.ComputerNumber!.Value;
             var name = MachineNaming.CreateName(RoomPrefix, number.ToString(CultureInfo.InvariantCulture));
-            var hostOverride = seat.VeyonHostAddress ?? ResolveRoomHostOverride(number, hostOverrides);
-            var host = string.IsNullOrWhiteSpace(hostOverride) ? name : hostOverride;
-            return new VeyonNetworkComputer(name, host, seat.StudentName.Trim());
+            return new VeyonNetworkComputer(name, name);
         }).ToArray();
     }
 
@@ -15215,7 +15394,25 @@ internal static class StudentUpdatePhaseDisplayNames
 public sealed record TeacherVeyonTargetChoice(Guid ObjectId, Guid LocationObjectId,
     string ComputerName, string HostAddress, string Location, string StudentName = "未填写姓名")
 {
-    public override string ToString() => StudentName;
+    public string DisplayLabel => $"{ComputerName} · {HostAddress} · UUID {ObjectId:D}";
+    public override string ToString() => DisplayLabel;
+}
+
+public sealed record TeacherSeatAssociationChoice(Guid SeatId, int Row, int Column,
+    int? ComputerNumber, string StudentName, Guid? VeyonObjectId)
+{
+    public string DisplayLabel =>
+        $"第 {Row} 行第 {Column} 列 · {StudentName.Trim()} · 编号 {ComputerNumber?.ToString(CultureInfo.InvariantCulture) ?? "未编号"}" +
+        (VeyonObjectId is { } objectId ? $" · 已绑 UUID {objectId:D}" : " · 未绑定");
+    public override string ToString() => DisplayLabel;
+}
+
+    Guid CampusProfileId, Guid RoomId, string LocationName, VeyonComputerRenameTargetPlan Target)
+{
+    public string ConfirmationSummary =>
+        $"只修改 Veyon 电脑显示名：\n地点：{LocationName}\n电脑 UUID：{Target.ObjectId:D}\n" +
+        $"Name：{Target.OldName} → {Target.NewName}\nHost：{Target.HostAddress}（保持不变）\n" +
+        "学生姓名、座位、Windows 主机名和 Agent 信任保持原值。系统会先备份配置，再核对并读回。";
 }
 
 public sealed record TeacherClassroomTaskItem(Guid TaskId, string Title, bool IsCompleted);

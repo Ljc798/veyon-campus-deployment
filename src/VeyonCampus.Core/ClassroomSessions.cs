@@ -60,7 +60,7 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
 
         var snapshot = new ClassroomRoomSnapshot(campus.ProfileId, campus.DisplayName, room.RoomId,
             room.DisplayName, room.Prefix, room.StartNumber, room.ComputerCount,
-            room.ComputerNumbers?.ToArray(), room.HostOverrides?.ToArray());
+            room.ComputerNumbers?.ToArray(), HostOverrides: null);
         var targets = labels.Select(label => new ClassroomSessionTarget(Guid.NewGuid(), label)).ToImmutableArray();
         var session = new ClassroomSession(CurrentSchemaVersion, Guid.NewGuid(), snapshot,
             startedAtUtc.ToUniversalTime(), null, ClassroomSessionStatus.Active, targets);
@@ -93,17 +93,12 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         var sameRoom = Room.CampusProfileId == replacement.Room.CampusProfileId &&
                        Room.RoomId == replacement.Room.RoomId;
         var previousTargets = sameRoom
-            ? Targets.Select((target, index) => (target.DeviceLabel, index, target))
-                .ToDictionary(item => item.DeviceLabel, item => (item.index, item.target),
-                    StringComparer.OrdinalIgnoreCase)
-            : new Dictionary<string, (int index, ClassroomSessionTarget target)>(StringComparer.OrdinalIgnoreCase);
-        var targets = replacement.Targets.Select((target, index) =>
+            ? Targets.ToDictionary(target => target.DeviceLabel, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, ClassroomSessionTarget>(StringComparer.OrdinalIgnoreCase);
+        var targets = replacement.Targets.Select(target =>
         {
             if (!previousTargets.TryGetValue(target.DeviceLabel, out var previous)) return target;
-            var previousHost = HostAt(Room.HostOverrides, previous.index);
-            var nextHost = HostAt(replacement.Room.HostOverrides, index);
-            return string.Equals(previousHost, nextHost, StringComparison.OrdinalIgnoreCase)
-                ? previous.target : target;
+            return previous;
         }).ToImmutableArray();
         var updated = this with { Room = replacement.Room, Targets = targets };
         Validate(updated);
@@ -140,15 +135,6 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         }
         if (session.Targets.Length != expectedLabels.Count)
             throw new InvalidDataException("课堂目标数量与机房快照不匹配。");
-        if (room.HostOverrides is { } hostOverrides)
-        {
-            if (hostOverrides.Length > room.ComputerCount)
-                throw new InvalidDataException("课堂记录中的主机名/IP 覆盖项超过电脑数量。");
-            foreach (var host in hostOverrides)
-                if (!string.IsNullOrEmpty(host) && VeyonHostAddress.NormalizeOverride(host) != host)
-                    throw new InvalidDataException("课堂记录中的主机名/IP 地址未规范化。");
-        }
-
         var targetIds = new HashSet<Guid>();
         for (var index = 0; index < session.Targets.Length; index++)
         {
@@ -177,8 +163,6 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
             throw new InvalidDataException($"{label}名称无效，无法用于课堂记录。");
     }
 
-    private static string HostAt(string[]? hosts, int index) =>
-        hosts is not null && index >= 0 && index < hosts.Length ? hosts[index] : "";
 }
 
 /// <summary>

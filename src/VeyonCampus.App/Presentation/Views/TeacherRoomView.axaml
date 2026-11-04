@@ -68,14 +68,7 @@
                        IsEnabled="{Binding CanEditRoomProfileNumbering}" PlaceholderText="150" />
             </StackPanel>
           </Grid>
-          <StackPanel Spacing="6">
-            <TextBlock Text="主机地址（每行一台；留空时使用电脑名称）" />
-            <TextBox Text="{Binding RoomProfileHostOverrides, Mode=TwoWay}"
-                     IsEnabled="{Binding CanEditRoomPlan}" AcceptsReturn="True" MinHeight="64"
-                     TextWrapping="NoWrap"
-                     PlaceholderText="例如：192.168.1.21" />
-          </StackPanel>
-          <TextBlock Text="当前座位图使用固定电脑编号；编号范围由座位图维护。"
+          <TextBlock Text="Veyon 连接地址直接使用固定 Windows 计算机名（如 PC-01）；不需要配置 IP 或地址映射。"
                      Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasFixedRoomComputerNumbers}" />
           <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted"
                      IsVisible="{Binding HasCampusDirectoryStatus}" TextWrapping="Wrap" />
@@ -107,7 +100,7 @@
                        PlaceholderText="默认使用配置包名称" />
             </StackPanel>
           </Grid>
-          <TextBlock Text="默认 15×15；可点按或按住鼠标拖动连续添加桌位。电脑编号固定跟随座位；填写姓名且编号留空时，从本机已登记地点的最大编号后续排。空姓名桌位不编号，也不生成学生电脑。"
+          <TextBlock Text="默认 15×15；可点按或按住鼠标拖动连续添加桌位。电脑编号固定跟随座位；填写姓名且编号留空时，从本机已登记地点的最大编号后续排。无姓名座位可手动填写编号并生成电脑；无编号座位不会生成电脑。"
                      Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
           <Button Classes="primary" Content="开始编辑座位图" Click="RequestPrepareRoomSeatGrid"
                   IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
@@ -192,7 +185,7 @@
               <Button Content="{Binding AssignMissingSeatComputerNumbersLabel}"
                       Click="RequestAssignMissingSeatComputerNumbers" IsEnabled="{Binding CanAssignMissingSeatComputerNumbers}"
                       IsVisible="{Binding IsSeatMapEditing}" />
-              <Button Classes="primary" Content="创建地点和学生电脑" Click="RequestAddRoomToVeyon"
+              <Button Classes="primary" Content="重新核对并补齐 Veyon 电脑" Click="RequestAddRoomToVeyon"
                       IsEnabled="{Binding CanStartRoomCreation}"
                       IsVisible="{Binding IsSeatMapEditing}" />
             </StackPanel>
@@ -200,6 +193,46 @@
                        IsVisible="{Binding HasSeatSwapStatus}" TextWrapping="Wrap" />
             <ListBox ItemsSource="{Binding SeatSwapTargetResults}" Height="100"
                      IsVisible="{Binding HasSeatSwapTargetResults}" />
+            <StackPanel Spacing="8" Margin="0,0,0,10" IsVisible="{Binding IsSeatMapEditing}">
+              <Button Content="读取当前地点 Veyon 电脑" Click="RequestReadSeatVeyonTargets"
+                      IsEnabled="{Binding CanReadSeatVeyonTargets}" HorizontalAlignment="Left" />
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="明确选择姓名座位" />
+                  <ComboBox ItemsSource="{Binding SeatAssociationSeatChoices}"
+                            SelectedItem="{Binding SelectedSeatAssociationSeat, Mode=TwoWay}"
+                            IsEnabled="{Binding CanEditSeatMap}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherSeatAssociationChoice">
+                        <TextBlock Text="{Binding DisplayLabel}" TextTrimming="CharacterEllipsis" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="4">
+                  <TextBlock Text="明确选择 Veyon 电脑（含 Host 和 UUID）" />
+                  <ComboBox ItemsSource="{Binding SeatVeyonTargetChoices}"
+                            SelectedItem="{Binding SelectedSeatAssociationTarget, Mode=TwoWay}"
+                            IsEnabled="{Binding CanEditSeatMap}">
+                    <ComboBox.ItemTemplate>
+                      <DataTemplate x:DataType="vm:TeacherVeyonTargetChoice">
+                        <TextBlock Text="{Binding DisplayLabel}" TextTrimming="CharacterEllipsis" />
+                      </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                  </ComboBox>
+                </StackPanel>
+              </Grid>
+              <Button Classes="primary" Content="确认关联所选座位和电脑"
+                      Click="RequestBindSelectedSeatVeyonTarget"
+                      IsEnabled="{Binding CanBindSelectedSeatVeyonTarget}"
+                      HorizontalAlignment="Left" />
+              <Button Content="解除所选座位的旧关联" Click="RequestClearSelectedSeatVeyonTarget"
+                      IsEnabled="{Binding CanClearSelectedSeatVeyonTarget}"
+                      HorizontalAlignment="Left" />
+              <TextBlock Text="{Binding SeatVeyonTargetStatus}" Classes="muted"
+                         IsVisible="{Binding HasSeatVeyonTargetStatus}"
+                         TextWrapping="Wrap" />
+            </StackPanel>
             <ItemsControl x:Name="SeatMapGrid" ItemsSource="{Binding SeatMapCells}">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>

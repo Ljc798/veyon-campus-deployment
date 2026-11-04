@@ -22,6 +22,9 @@
           ToggleSeatAddRemoveModeRequested="ToggleSeatAddRemoveMode"
           AssignMissingSeatComputerNumbersRequested="AssignMissingSeatComputerNumbers"
           AddRoomToVeyonRequested="AddRoomToVeyon"
+          ReadSeatVeyonTargetsRequested="ReadSeatVeyonTargets"
+          BindSelectedSeatVeyonTargetRequested="BindSelectedSeatVeyonTarget"
+          ClearSelectedSeatVeyonTargetRequested="ClearSelectedSeatVeyonTarget"
           SeatCellClickedRequested="SeatCellClicked" />
     </DataTemplate>
     <DataTemplate x:Key="SetupPageTemplate" x:DataType="vm:TeacherViewModel">

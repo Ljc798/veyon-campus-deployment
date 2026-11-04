@@ -27,6 +27,12 @@
               <StackPanel Spacing="3">
                 <TextBlock Text="操作范围" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy" />
+                <TextBlock Text="{Binding WebsiteDirectoryStatus}" Classes="supporting-copy" TextWrapping="Wrap"
+                           IsVisible="{Binding HasWebsiteDirectoryStatus}" />
+                <TextBlock Text="{Binding WebsiteDirectoryError}" Classes="supporting-copy" TextWrapping="Wrap"
+                           IsVisible="{Binding HasWebsiteDirectoryError}" />
+                <TextBlock Text="{Binding VeyonDeviceDirectorySummary}" Classes="supporting-copy" TextWrapping="Wrap"
+                           IsVisible="{Binding HasVeyonDeviceDirectorySummary}" />
                 <TextBlock Text="设备勾选请统一在“设备与更新 → 设备概览”中调整。" Classes="muted" TextWrapping="Wrap" />
               </StackPanel>
               <Border Height="1" Background="{DynamicResource Teacher.Color.Border}" />

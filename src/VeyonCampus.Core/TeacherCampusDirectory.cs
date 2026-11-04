@@ -72,21 +72,12 @@ public static class TeacherCampusProfileFromVeyon
         var existing = existingIndex >= 0 ? rooms[existingIndex] : null;
         var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
         var minimumNumber = existing is { ComputerCount: > 0 } ? existing.StartNumber : 1;
-        var savedNumberByHost = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         var usedNumbers = rooms.Where((_, index) => index != existingIndex)
             .SelectMany(room => room.GetComputerNumbers()).ToHashSet();
         if (existing is { ComputerCount: > 0 })
         {
             var savedNumbers = existing.GetComputerNumbers();
             usedNumbers.UnionWith(savedNumbers);
-            if (existing.HostOverrides is { } savedHosts && savedHosts.Count == existing.ComputerCount)
-            {
-                if (savedNumbers.Count != savedHosts.Count)
-                    throw new InvalidDataException("已保存电脑编号与主机清单数量不一致。");
-                savedNumberByHost = savedHosts.Select((host, index) =>
-                        (Host: VeyonHostAddress.NormalizeOverride(host), Number: savedNumbers[index]))
-                    .ToDictionary(item => item.Host, item => item.Number, StringComparer.OrdinalIgnoreCase);
-            }
         }
 
         var targetNumbers = new int[targets.Length];
@@ -106,10 +97,7 @@ public static class TeacherCampusProfileFromVeyon
                 throw new InvalidDataException($"Veyon 电脑“{computerDisplayName}”与主机名“{target}”的编号不一致；请先核对地点清单。");
 
             var parsedNumber = targetHasNumber ? targetNumber : displayNameHasNumber ? displayNumber : 0;
-            var hasSavedNumber = savedNumberByHost.TryGetValue(target, out var savedNumber);
-            if (hasSavedNumber && parsedNumber > 0 && savedNumber != parsedNumber)
-                throw new InvalidDataException($"Veyon 电脑“{computerDisplayName ?? target}”的编号与本机已保存记录不一致；请先核对地点清单。");
-            var knownNumber = hasSavedNumber ? savedNumber : parsedNumber;
+            var knownNumber = parsedNumber;
             if (knownNumber == 0) continue;
             if (!knownNumberTargets.Add(knownNumber))
                 throw new InvalidDataException($"Veyon 地点中存在重复电脑编号 {knownNumber}；请先核对电脑名和主机地址。");

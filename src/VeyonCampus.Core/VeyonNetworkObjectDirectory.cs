@@ -17,15 +17,44 @@ public sealed record VeyonNetworkObject(string Type, string Name, string Host, s
 public sealed record VeyonDirectorySnapshot(string ConfigFingerprint,
     IReadOnlyList<VeyonNetworkObject> Objects);
 internal sealed record VeyonConfigurationExport(string CliPath, string WorkingDirectory, byte[] Bytes);
+/// <summary>One existing Veyon computer offered as a safe association target for a planned addition.</summary>
+public sealed record VeyonExistingComputerMatch(string ComputerName, string Host, Guid ObjectId,
+    Guid ParentObjectId, string Location);
+public sealed record VeyonAddedComputerTarget(string ComputerName, string Host, Guid ObjectId,
+    Guid ParentObjectId, string Location);
 public sealed record VeyonLocationImportResult(string LocationName, int ComputerCount, int NamedStudentCount,
-    int AddedComputerCount, int SkippedComputerCount, bool LocationCreated);
+    int AddedComputerCount, int SkippedComputerCount, bool LocationCreated,
+    IReadOnlyList<VeyonExistingComputerMatch>? AssociatedExisting = null,
+    IReadOnlyList<VeyonAddedComputerTarget>? AddedComputerTargets = null)
+{
+    public VeyonLocationImportResult(string locationName, int computerCount, int namedStudentCount,
+        int addedComputerCount, int skippedComputerCount, bool locationCreated)
+        : this(locationName, computerCount, namedStudentCount, addedComputerCount,
+            skippedComputerCount, locationCreated, Array.Empty<VeyonExistingComputerMatch>(),
+            Array.Empty<VeyonAddedComputerTarget>())
+    {
+    }
+}
 public sealed record VeyonNetworkImportPreview(string LocationName, bool LocationExists,
     IReadOnlyList<VeyonNetworkComputer> ComputersToAdd, IReadOnlyList<string> SkippedComputers,
-    IReadOnlyList<string> Conflicts);
+    IReadOnlyList<string> Conflicts, IReadOnlyList<VeyonExistingComputerMatch>? ExistingMatches = null)
+{
+    public VeyonNetworkImportPreview(string locationName, bool locationExists,
+        IReadOnlyList<VeyonNetworkComputer> computersToAdd, IReadOnlyList<string> skippedComputers,
+        IReadOnlyList<string> conflicts)
+        : this(locationName, locationExists, computersToAdd, skippedComputers, conflicts,
+            Array.Empty<VeyonExistingComputerMatch>())
+    {
+    }
+}
 
 /// <summary>Reads the local Veyon built-in network object directory without changing it.</summary>
 public static class VeyonNetworkObjectDirectory
 {
+    /// <summary>Last successful read-only directory read in this process, used to show stale data honestly.</summary>
+    internal static DateTimeOffset LastSuccessfulReadUtc { get; private set; }
+    public static VeyonDirectoryReadDiagnostic? LastReadDiagnostic { get; private set; }
+    internal static string? LastTrustedDirectoryFingerprint { get; private set; }
     // Veyon's 4.11.2 format importer is a placeholder-to-regex parser, not an RFC CSV decoder.
     // Unit Separator cannot occur in accepted fields (control characters are rejected), so
     // semicolons, quotes and Chinese text remain unambiguous without CSV quote escaping.
@@ -50,6 +79,13 @@ public static class VeyonNetworkObjectDirectory
     public static IReadOnlyList<VeyonNetworkLocation> ReadLocations() =>
         ReadLocations(TimeSpan.FromSeconds(45));
 
+    /// <summary>Returns a stable target-membership fingerprint for comparing two directory reads.</summary>
+    public static string FingerprintLocations(IEnumerable<VeyonNetworkLocation> locations)
+    {
+        ArgumentNullException.ThrowIfNull(locations);
+        return ComputeLocationFingerprint(locations);
+    }
+
     public static IReadOnlyList<VeyonNetworkLocation> ReadLocations(TimeSpan timeout)
     {
         if (!OperatingSystem.IsWindows())
@@ -57,28 +93,193 @@ public static class VeyonNetworkObjectDirectory
         if (timeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout));
 
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        var cliPath = ResolveCliPathOrThrow("networkobjects export");
         var temporaryPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-targets-{Guid.NewGuid():N}.csv");
-
+        var runner = new ProcessRunner();
         try
         {
-            var runner = new ProcessRunner();
-            runner.Run(cliPath,
-                ["networkobjects", "export", temporaryPath, "format", ExportFormat],
-                Path.GetDirectoryName(cliPath)!, timeout, outputLimitChars: 1024);
+            try
+            {
+                runner.Run(cliPath,
+                    ["networkobjects", "export", temporaryPath, "format", ExportFormat],
+                    Path.GetDirectoryName(cliPath)!, timeout, outputLimitChars: 1024);
+            }
+            catch (Exception exception) when (exception is TimeoutException or UnauthorizedAccessException or
+                                              System.ComponentModel.Win32Exception or IOException or
+                                              InvalidOperationException or ArgumentException)
+            {
+                ThrowWithDiagnostic(VeyonDirectoryReadDiagnostic.For(
+                    exception switch
+                    {
+                        TimeoutException => VeyonDirectoryReadDiagnostic.Timeout,
+                        UnauthorizedAccessException => VeyonDirectoryReadDiagnostic.AccessDenied,
+                        _ => VeyonDirectoryReadDiagnostic.CliFailed,
+                    },
+                    exception.Message, cliPath, null, ProcessDetail(runner), "networkobjects export",
+                    exception is TimeoutException), exception);
+                return [];
+            }
             if (runner.ExitCode is not 0)
-                throw new InvalidOperationException($"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）。");
+            {
+                // `networkobjects export` can fail (observed exit code 255) while the trusted
+                // `config export` snapshot still works; use that single read for display only.
+                var exportFailure = VeyonDirectoryReadDiagnostic.For(
+                    VeyonDirectoryReadDiagnostic.CliFailed,
+                    $"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）。",
+                    cliPath, runner.ExitCode, ProcessDetail(runner), "networkobjects export",
+                    runner.TimedOut);
+                var fallback = TryReadLocationsFromFallbackRead(cliPath,
+                    Path.GetDirectoryName(cliPath)!);
+                if (fallback.Locations is { } fallbackLocations)
+                {
+                    LastTrustedDirectoryFingerprint = null;
+                    LastReadDiagnostic = CreateFallbackSuccessDiagnostic(exportFailure, fallback.Diagnostic);
+                    return fallbackLocations;
+                }
+                ThrowWithDiagnostic(CombineFallbackFailure(exportFailure, fallback.Diagnostic), null);
+                return [];
+            }
             if (!File.Exists(temporaryPath))
-                throw new InvalidDataException("Veyon 没有生成电脑目录导出文件。");
-
-            return ParseLocationsExport(File.ReadLines(temporaryPath, Encoding.UTF8));
+            {
+                var exportFailure = VeyonDirectoryReadDiagnostic.For(
+                    VeyonDirectoryReadDiagnostic.ExportFileMissing,
+                    "Veyon 没有生成电脑目录导出文件。", cliPath, runner.ExitCode,
+                    ProcessDetail(runner), "networkobjects export", runner.TimedOut);
+                var fallback = TryReadLocationsFromFallbackRead(cliPath,
+                    Path.GetDirectoryName(cliPath)!);
+                if (fallback.Locations is { } fallbackLocations)
+                {
+                    LastTrustedDirectoryFingerprint = null;
+                    LastReadDiagnostic = CreateFallbackSuccessDiagnostic(exportFailure, fallback.Diagnostic);
+                    return fallbackLocations;
+                }
+                ThrowWithDiagnostic(CombineFallbackFailure(exportFailure, fallback.Diagnostic), null);
+                return [];
+            }
+            try
+            {
+                var locations = ParseLocationsExport(File.ReadLines(temporaryPath, Encoding.UTF8));
+                LastSuccessfulReadUtc = DateTimeOffset.UtcNow;
+                LastTrustedDirectoryFingerprint = ComputeLocationFingerprint(locations);
+                LastReadDiagnostic = VeyonDirectoryReadDiagnostic.Success(cliPath, "networkobjects export");
+                return locations;
+            }
+            catch (InvalidDataException exception)
+            {
+                ThrowWithDiagnostic(VeyonDirectoryReadDiagnostic.For(
+                    VeyonDirectoryReadDiagnostic.ParseFailed, exception.Message, cliPath,
+                    runner.ExitCode, ProcessDetail(runner), "networkobjects export", false), exception);
+                return [];
+            }
         }
         finally
         {
             try { File.Delete(temporaryPath); }
             catch (IOException) { }
             catch (UnauthorizedAccessException) { }
+        }
+    }
+
+    /// <summary>Last resort: rebuild the display-only locations from one verified directory read.</summary>
+    private static (IReadOnlyList<VeyonNetworkLocation>? Locations,
+        VeyonDirectoryReadDiagnostic Diagnostic) TryReadLocationsFromFallbackRead(
+        string cliPath, string workingDirectory)
+    {
+        var read = SafeReadNetworkObjects(cliPath, workingDirectory);
+        if (read.Result is not { } objects) return (null, read.Diagnostic);
+        ParseLocationsFromSnapshot(objects, out var locations, out var error);
+        if (error is not null)
+            return (null, VeyonDirectoryReadDiagnostic.For(
+                VeyonDirectoryReadDiagnostic.ParseFailed,
+                "Veyon 目录快照无法转换为地点列表：" + error, cliPath, null, error,
+                "config export", false));
+        return (locations, read.Diagnostic);
+    }
+
+    private static VeyonDirectoryReadDiagnostic CombineFallbackFailure(
+        VeyonDirectoryReadDiagnostic original, VeyonDirectoryReadDiagnostic fallback)
+    {
+        var detail = string.Join(" | ", new[] { original.Detail, fallback.Detail }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (detail.Length > 2000) detail = detail[..2000];
+        return original with
+        {
+            Message = original.Message + " 只读回退失败：" + fallback.Message,
+            Detail = detail
+        };
+    }
+
+    private static VeyonDirectoryReadDiagnostic CreateFallbackSuccessDiagnostic(
+        VeyonDirectoryReadDiagnostic original, VeyonDirectoryReadDiagnostic fallback)
+    {
+        var detail = string.Join(" | ", new[] { original.Detail, fallback.Detail }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        if (detail.Length > 2000) detail = detail[..2000];
+        return VeyonDirectoryReadDiagnostic.For(
+            VeyonDirectoryReadDiagnostic.PartialRead,
+            original.Message + " 已使用只读目录回退结果；写入操作仍要求完整 UUID 读回。",
+            original.CliPath, original.ExitCode, detail,
+            original.SubCommand + " → " + fallback.SubCommand,
+            original.TimedOut, fallback.TrustedSnapshotFingerprint) with
+        {
+            LastSuccessfulReadUtc = LastSuccessfulReadUtc
+        };
+    }
+
+    private static void ParseLocationsFromSnapshot(IReadOnlyList<VeyonNetworkObject> objects,
+        out IReadOnlyList<VeyonNetworkLocation> locations, out string? error)
+    {
+        error = null;
+        try
+        {
+            var duplicateTarget = objects
+                .Where(entry => entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+                .Select(entry => (
+                    Location: entry.Location.Length > 0 ? entry.Location : "未分组电脑",
+                    Target: entry.Host.Length > 0 ? entry.Host : entry.Name.Trim()))
+                .Where(entry => entry.Target.Length > 0)
+                .GroupBy(entry => entry.Location + "\u001f" + entry.Target,
+                    StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault(group => group.Count() > 1);
+            if (duplicateTarget is not null)
+                throw new InvalidDataException("Veyon 配置快照在同一地点含有重复 Host，不能安全生成学生名单。");
+
+            var byLocation = new Dictionary<string, List<(string Target, string DisplayName)>>(
+                StringComparer.OrdinalIgnoreCase);
+            foreach (var entry in objects)
+            {
+                if (!entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)) continue;
+                var computerName = entry.Name.Trim();
+                var target = entry.Host.Length > 0 ? entry.Host : computerName;
+                if (target.Length == 0) continue;
+                if (!byLocation.TryGetValue(entry.Location.Length > 0 ? entry.Location : "未分组电脑",
+                        out var targets))
+                    byLocation.Add(entry.Location.Length > 0 ? entry.Location : "未分组电脑",
+                        targets = []);
+                targets.Add((target, computerName));
+            }
+            var built = byLocation
+                .OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(pair =>
+                {
+                    var computers = pair.Value.ToArray();
+                    var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var computer in computers)
+                        if (computer.DisplayName.Length > 0)
+                            names[computer.Target] = computer.DisplayName;
+                    return new VeyonNetworkLocation(pair.Key,
+                        Array.AsReadOnly(computers.Select(computer => computer.Target).ToArray()),
+                        new ReadOnlyDictionary<string, string>(names));
+                })
+                .Where(location => location.Targets.Count > 0)
+                .ToArray();
+            locations = Array.AsReadOnly(built);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or InvalidOperationException or
+                                          FormatException or OverflowException)
+        {
+            locations = [];
+            error = exception.Message;
         }
     }
 
@@ -92,9 +293,24 @@ public static class VeyonNetworkObjectDirectory
             var fingerprint = Convert.ToHexString(hash).ToLowerInvariant();
             CryptographicOperations.ZeroMemory(hash);
             var json = DecodeConfiguration(export.Bytes);
-            return new VeyonDirectorySnapshot(fingerprint, ParseConfigurationDirectory(json));
+            var objects = ParseConfigurationDirectory(json);
+            var snapshot = new VeyonDirectorySnapshot(fingerprint, objects);
+            LastSuccessfulReadUtc = DateTimeOffset.UtcNow;
+            LastTrustedDirectoryFingerprint = ComputeLocationFingerprint(objects);
+            LastReadDiagnostic = VeyonDirectoryReadDiagnostic.Success(export.CliPath, "config export", fingerprint);
+            return snapshot;
         }
         finally { CryptographicOperations.ZeroMemory(export.Bytes); }
+    }
+
+    private static string ResolveCliPathOrThrow(string subCommand)
+    {
+        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath();
+        if (cliPath is not null) return cliPath;
+        ThrowWithDiagnostic(VeyonDirectoryReadDiagnostic.For(
+            VeyonDirectoryReadDiagnostic.CliNotFound,
+            "找不到 Veyon CLI；请先安装教师端 Veyon。", "", null, "", subCommand, false), null);
+        return "";
     }
 
     /// <summary>Reads stable object IDs through Veyon's directory command, without exporting full configuration.</summary>
@@ -102,8 +318,7 @@ public static class VeyonNetworkObjectDirectory
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("读取 Veyon 电脑目录仅支持 Windows 教师端。");
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
         return ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!);
     }
 
@@ -198,8 +413,13 @@ public static class VeyonNetworkObjectDirectory
             .Select(pair =>
             {
                 var computers = pair.Value
-                    .GroupBy(item => item.Target, StringComparer.OrdinalIgnoreCase)
-                    .Select(group => group.First()).ToArray();
+                    .ToArray();
+                var duplicateTargets = computers.GroupBy(item => item.Target,
+                        StringComparer.OrdinalIgnoreCase)
+                    .Where(group => group.Count() > 1).Select(group => group.Key).ToArray();
+                if (duplicateTargets.Length > 0)
+                    throw new InvalidDataException(
+                        $"Veyon 地点“{pair.Key}”导出包含重复 Host/电脑目标：{string.Join("、", duplicateTargets.Take(5))}。目录读取未应用，请先核对 Veyon。");
                 var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var computer in computers)
                 {
@@ -245,8 +465,7 @@ public static class VeyonNetworkObjectDirectory
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("检查 Veyon 机房目录仅支持 Windows 教师端。");
         ValidateImportPlan(locationName, computers);
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
         return BuildImportPreview(locationName, computers,
             ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!)).Conflicts;
     }
@@ -258,8 +477,7 @@ public static class VeyonNetworkObjectDirectory
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("检查 Veyon 机房目录仅支持 Windows 教师端。");
         ValidateImportPlan(locationName, computers);
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
         return BuildImportPreview(locationName, computers,
             ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!));
     }
@@ -280,19 +498,23 @@ public static class VeyonNetworkObjectDirectory
         var conflicts = new List<string>();
         var existingLocations = existing.Where(entry => entry.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
             entry.Name.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
-        var locationExists = existingLocations.Length > 0 || existing.Any(entry =>
-            entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase));
+        var locationExists = existingLocations.Length > 0;
         if (existingLocations.Length > 1)
             conflicts.Add($"Veyon 中有多个同名地点“{locationName}”，无法安全选择目标。");
+        if (existingLocations.Length == 1 && existingLocations[0].ObjectId == Guid.Empty)
+            conflicts.Add($"地点“{locationName}”缺少可核对的 Veyon UUID，无法安全写入。");
+        if (existingLocations.Length == 0 && existing.Any(entry =>
+                entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)))
+            conflicts.Add($"地点“{locationName}”有电脑记录但缺少地点对象 UUID；请刷新目录并人工核对。");
 
         var existingComputers = existing
             .Where(entry => entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
-        var existingHosts = existingComputers.Select(entry => entry.Host.Length > 0 ? entry.Host : entry.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var existingNames = existingComputers.Select(entry => entry.Name)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var locationComputers = existingComputers.Where(entry =>
+            entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
         var plannedHosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var plannedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var existingMatches = new List<VeyonExistingComputerMatch>();
         var toAdd = new List<VeyonNetworkComputer>();
         var skipped = new List<string>();
         foreach (var computer in computers)
@@ -304,18 +526,100 @@ public static class VeyonNetworkObjectDirectory
                 conflicts.Add($"显示名称“{computer.DisplayName}”在本次清单中重复。");
             if (!plannedHosts.Add(computer.Host))
                 conflicts.Add($"主机名/IP“{computer.Host}”在本次清单中重复。");
-            var sameHost = existingHosts.Contains(computer.Host);
-            var sameName = existingNames.Contains(computer.DisplayName);
-            if (sameHost || sameName)
+            // A unique Host match inside this exact Veyon location can preserve an existing
+            // object even when its Veyon name differs; the reader binds its UUID without
+            // renaming it. Name-only matches remain conflicts because they can be reassigned.
+            var hostMatches = locationComputers.Where(entry => string.Equals(
+                entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
+                StringComparison.OrdinalIgnoreCase)).ToArray();
+            var nameMatches = locationComputers.Where(entry => string.Equals(
+                entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            var exactMatches = locationComputers.Where(entry =>
+                string.Equals(entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
+                    StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (existingComputers.Any(entry =>
+                    !entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase) &&
+                    (string.Equals(entry.Host.Length > 0 ? entry.Host : entry.Name, computer.Host,
+                         StringComparison.OrdinalIgnoreCase) ||
+                     string.Equals(entry.Name, computer.DisplayName, StringComparison.OrdinalIgnoreCase))))
             {
-                var reason = sameHost && sameName ? "主机/IP 与显示名均已存在" :
-                    sameHost ? "主机/IP 已存在" : "显示名已存在";
-                skipped.Add($"{computer.ComputerName} → {computer.Host}：{reason}，保留已有项。");
+                conflicts.Add($"电脑“{computer.ComputerName}”的主机/IP或显示名已存在于其他或未确认地点；" +
+                    "为避免跨地点误绑定，请先核对目录再写入。");
+                continue;
             }
-            else toAdd.Add(computer);
+            if (hostMatches.Length == 1 && nameMatches.Length == 0)
+            {
+                var match = hostMatches[0];
+                if (existingLocations.Length != 1 || match.ObjectId == Guid.Empty ||
+                    match.ParentObjectId == Guid.Empty ||
+                    match.ParentObjectId != existingLocations[0].ObjectId)
+                {
+                    conflicts.Add($"主机“{computer.Host}”已有同地点对象，但 Veyon UUID/父地点关系无法核对；拒绝自动关联。");
+                    continue;
+                }
+                skipped.Add($"{computer.ComputerName} → {computer.Host}：保留本地点已有电脑名“{match.Name}”，按唯一 Host/UUID 关联。");
+                existingMatches.Add(new VeyonExistingComputerMatch(match.Name,
+                    match.Host.Length > 0 ? match.Host : match.Name, match.ObjectId,
+                    match.ParentObjectId, match.Location));
+                continue;
+            }
+            if (exactMatches.Length == 1)
+            {
+                var match = exactMatches[0];
+                if (hostMatches.Length != 1 || nameMatches.Length != 1 || match.ObjectId == Guid.Empty ||
+                    match.ParentObjectId == Guid.Empty || existingLocations.Length != 1 ||
+                    match.ParentObjectId != existingLocations[0].ObjectId)
+                {
+                    conflicts.Add($"电脑“{computer.ComputerName}”虽有同名同地址对象，但 UUID 或唯一性核验失败。" +
+                        "请刷新 Veyon 目录后再试。");
+                    continue;
+                }
+                skipped.Add($"{computer.ComputerName} → {computer.Host}：同名同地址电脑已在本地点存在，保留并可按 UUID 关联。");
+                existingMatches.Add(new VeyonExistingComputerMatch(match.Name,
+                    match.Host.Length > 0 ? match.Host : match.Name, match.ObjectId,
+                    match.ParentObjectId, match.Location));
+                continue;
+            }
+            if (hostMatches.Length > 0 || nameMatches.Length > 0)
+            {
+                var reason = hostMatches.Length > 0 && nameMatches.Length > 0
+                    ? "本地点已有同地址或同名对象，但两者不是同一台设备"
+                    : hostMatches.Length > 0
+                        ? "本地点已有同地址但名称不同的电脑"
+                        : "本地点已有同名但地址不同的电脑";
+                conflicts.Add($"电脑“{computer.ComputerName}”存在潜在身份冲突：{reason}；不会自动跳过、绑定或覆盖。" +
+                    "请人工核对 Veyon UUID 后再操作。");
+                continue;
+            }
+            toAdd.Add(computer);
         }
         return new VeyonNetworkImportPreview(locationName, locationExists,
-            toAdd.AsReadOnly(), skipped.AsReadOnly(), conflicts.AsReadOnly());
+            toAdd.AsReadOnly(), skipped.AsReadOnly(), conflicts.AsReadOnly(),
+            existingMatches.AsReadOnly());
+    }
+
+    /// <summary>
+    /// Verifies that manually added computers still match the existing Veyon objects before
+    /// the seat grid associates them. The association uses stable object UUIDs, never a second
+    /// import, so existing Veyon computers are never duplicated.
+    /// </summary>
+    public static IReadOnlyList<VeyonExistingComputerMatch> VerifyExistingComputerAssociation(
+        string locationName, IReadOnlyList<VeyonNetworkComputer> computers)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("核对 Veyon 电脑关联仅支持 Windows 教师端。");
+        if (computers is not { Count: > 0 })
+            throw new InvalidDataException("关联核对至少需要一台电脑。");
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
+        var current = ReadNetworkObjects(cliPath, Path.GetDirectoryName(cliPath)!);
+        var preview = BuildImportPreview(locationName, computers, current);
+        if (preview.Conflicts.Count > 0)
+            throw new InvalidDataException("关联核对发现问题：" + string.Join("、", preview.Conflicts));
+        return (preview.ExistingMatches ?? []).Where(match =>
+                computers.Any(computer =>
+                    string.Equals(match.Host, computer.Host, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
     }
 
     /// <summary>Reuses an existing location, preserves duplicate objects and imports only new computers.</summary>
@@ -326,18 +630,23 @@ public static class VeyonNetworkObjectDirectory
             throw new PlatformNotSupportedException("写入 Veyon 机房目录仅支持 Windows 教师端。");
         ValidateImportPlan(locationName, computers);
 
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        using var mutationGate = VeyonDirectoryMutationGate.Acquire();
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
         var workingDirectory = Path.GetDirectoryName(cliPath)!;
         var current = ReadNetworkObjects(cliPath, workingDirectory);
         var preview = BuildImportPreview(locationName, computers, current);
         if (preview.Conflicts.Count > 0)
             throw new InvalidDataException("添加前冲突检查发现问题，未写入任何内容：" + string.Join("、", preview.Conflicts));
+        var namedMatches = (preview.ExistingMatches ?? [])
+            .Where(match => computers.Any(computer =>
+                string.Equals(match.Host, computer.Host, StringComparison.OrdinalIgnoreCase)))
+            .ToArray();
         if (preview.ComputersToAdd.Count == 0)
             return new VeyonLocationImportResult(locationName, computers.Count,
                 computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
                 AddedComputerCount: 0, SkippedComputerCount: preview.SkippedComputers.Count,
-                LocationCreated: false);
+                LocationCreated: false, AssociatedExisting: namedMatches,
+                AddedComputerTargets: Array.Empty<VeyonAddedComputerTarget>());
 
         var importPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-room-{Guid.NewGuid():N}.txt");
         var locationCreated = false;
@@ -380,19 +689,55 @@ public static class VeyonNetworkObjectDirectory
                 throw new InvalidOperationException(
                     $"地点“{locationName}”和新增电脑已提交，但教师控制台暂时无法读回核对；请稍后在教师控制台重新执行，系统会先读取现有目录：{exception.Message}", exception);
             }
-            var missing = preview.ComputersToAdd.Where(computer => !after.Any(entry =>
-                    entry.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
-                    entry.Location.Equals(locationName, StringComparison.OrdinalIgnoreCase) &&
-                    entry.Host.Equals(computer.Host, StringComparison.OrdinalIgnoreCase) &&
-                    entry.Name.Equals(computer.DisplayName, StringComparison.Ordinal)))
-                .Select(computer => computer.Host).ToArray();
-            if (missing.Length > 0)
-                throw new InvalidDataException(
-                    $"地点操作已提交，但有 {missing.Length} 台新增电脑未能读回确认：{string.Join("、", missing)}。教师控制台下次操作会先重读目录，请勿重复执行其他导入。");
+            var locationMatches = after.Where(item =>
+                item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (locationMatches.Length != 1 || locationMatches[0].ObjectId == Guid.Empty)
+                throw new InvalidDataException("地点操作已提交，但读回时地点对象 UUID 不唯一；请人工核对 Veyon 目录。");
+            var locationObject = locationMatches[0];
+            var beforeIds = current.Select(item => item.ObjectId).ToHashSet();
+            var addedTargets = new List<VeyonAddedComputerTarget>(preview.ComputersToAdd.Count);
+            foreach (var computer in preview.ComputersToAdd)
+            {
+                var expectedHost = VeyonHostAddress.NormalizeOverride(computer.Host);
+                var matches = after.Where(item =>
+                {
+                    if (!item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) ||
+                        item.ParentObjectId != locationObject.ObjectId ||
+                        !string.Equals(item.Name, computer.DisplayName, StringComparison.Ordinal))
+                        return false;
+                    try
+                    {
+                        return string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), expectedHost,
+                            StringComparison.OrdinalIgnoreCase);
+                    }
+                    catch (InvalidDataException) { return false; }
+                }).ToArray();
+                if (matches.Length != 1 || matches[0].ObjectId == Guid.Empty ||
+                    beforeIds.Contains(matches[0].ObjectId))
+                    throw new InvalidDataException(
+                        $"地点操作已提交，但新增电脑“{computer.DisplayName}”未获得唯一的新 UUID 读回确认；请人工核对 Veyon 目录。");
+                addedTargets.Add(new VeyonAddedComputerTarget(computer.DisplayName, expectedHost,
+                    matches[0].ObjectId, locationObject.ObjectId, locationObject.Name));
+            }
+
+            foreach (var existing in namedMatches)
+            {
+                var matches = after.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                    item.ObjectId == existing.ObjectId && item.ParentObjectId == existing.ParentObjectId &&
+                    string.Equals(item.Name, existing.ComputerName, StringComparison.Ordinal) &&
+                    string.Equals(item.Location, existing.Location, StringComparison.OrdinalIgnoreCase) &&
+                    string.Equals(VeyonHostAddress.NormalizeOverride(item.Host), existing.Host,
+                        StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (matches.Length != 1)
+                    throw new InvalidDataException(
+                        $"地点操作已提交，但已存在电脑“{existing.ComputerName}”的 UUID/Host/地点读回不一致；请人工核对目录。");
+            }
 
             return new VeyonLocationImportResult(locationName, computers.Count,
                 computers.Count(computer => !string.IsNullOrWhiteSpace(computer.StudentName)),
-                preview.ComputersToAdd.Count, preview.SkippedComputers.Count, locationCreated);
+                preview.ComputersToAdd.Count, preview.SkippedComputers.Count, locationCreated,
+                namedMatches, Array.AsReadOnly(addedTargets.ToArray()));
         }
         finally
         {
@@ -420,15 +765,210 @@ public static class VeyonNetworkObjectDirectory
 
     private static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects(string cliPath, string workingDirectory)
     {
+        var diagnostic = SafeReadNetworkObjects(cliPath, workingDirectory);
+        if (diagnostic.Result is { } objects && !diagnostic.PartialRead)
+            return objects;
+        ThrowWithDiagnostic(diagnostic.Diagnostic, null);
+        return [];
+    }
+
+    /// <summary>
+    /// Attempts `networkobjects dump` and, when that command fails, falls back to the trusted
+    /// `config export` snapshot so teachers keep a fingerprinted read instead of a bare exit code.
+    /// The fallback result is always flagged; it must not be used as a write-back identity source.
+    /// </summary>
+    internal static (IReadOnlyList<VeyonNetworkObject>? Result, VeyonDirectoryReadDiagnostic Diagnostic,
+        bool PartialRead) SafeReadNetworkObjects(string cliPath, string workingDirectory)
+    {
+        try
+        {
+            var objects = TryReadNetworkObjectsDump(cliPath, workingDirectory, out var dumpDiagnostic);
+            if (objects is not null)
+            {
+                LastSuccessfulReadUtc = DateTimeOffset.UtcNow;
+                LastTrustedDirectoryFingerprint = ComputeLocationFingerprint(objects);
+                var diagnostic = dumpDiagnostic is null
+                    ? VeyonDirectoryReadDiagnostic.Success(cliPath, "networkobjects dump")
+                    : dumpDiagnostic;
+                LastReadDiagnostic = diagnostic;
+                return (objects, diagnostic, false);
+            }
+            if (dumpDiagnostic is null) dumpDiagnostic = VeyonDirectoryReadDiagnostic.For(
+                VeyonDirectoryReadDiagnostic.CliFailed, "Veyon 电脑目录清单无法读取。",
+                cliPath, null, "", "networkobjects dump", false);
+            if (dumpDiagnostic.FailureStage is VeyonDirectoryReadDiagnostic.CliNotFound or
+                VeyonDirectoryReadDiagnostic.AccessDenied or
+                VeyonDirectoryReadDiagnostic.UnsupportedBackend)
+                return (null, dumpDiagnostic, false);
+            try
+            {
+                var export = ExportConfiguration(cliPath, workingDirectory);
+                var snapshot = ReadDirectorySnapshot(export);
+                var diagnostic = VeyonDirectoryReadDiagnostic.For(
+                       VeyonDirectoryReadDiagnostic.PartialRead,
+                       "Veyon 电脑目录清单读取失败，已改用可信配置快照（" +
+                       SnapshotFingerprintLabel(snapshot.ConfigFingerprint) +
+                       "）；该快照只用于只读核对，不能作为按 UUID 写回的身份依据。" +
+                       dumpDiagnostic.Detail,
+                       cliPath, null, dumpDiagnostic.Detail, "networkobjects dump → config export",
+                       dumpDiagnostic.TimedOut, snapshot.ConfigFingerprint) with
+                {
+                    LastSuccessfulReadUtc = LastSuccessfulReadUtc
+                };
+                LastTrustedDirectoryFingerprint = null;
+                LastReadDiagnostic = diagnostic;
+                return (snapshot.Objects, diagnostic, true);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              TimeoutException or System.ComponentModel.Win32Exception or
+                                              System.Text.Json.JsonException)
+            {
+                var stage = exception switch
+                {
+                    UnauthorizedAccessException => VeyonDirectoryReadDiagnostic.AccessDenied,
+                    TimeoutException => VeyonDirectoryReadDiagnostic.Timeout,
+                    InvalidDataException or System.Text.Json.JsonException => VeyonDirectoryReadDiagnostic.ParseFailed,
+                    _ => VeyonDirectoryReadDiagnostic.CliFailed
+                };
+                var detail = string.Join(" | ", new[] { dumpDiagnostic.Detail, exception.Message }
+                    .Where(value => !string.IsNullOrWhiteSpace(value)));
+                if (detail.Length > 2000) detail = detail[..2000];
+                return (null, VeyonDirectoryReadDiagnostic.For(stage,
+                    "Veyon 电脑目录读取失败，且配置快照回退不可用：" + exception.Message,
+                    cliPath, null, detail, "networkobjects dump → config export",
+                    exception is TimeoutException), false);
+            }
+        }
+        catch (VeyonDirectoryReadException failure)
+        {
+            return (null, failure.Diagnostic, false);
+        }
+    }
+
+    /// <summary>Reads a directory snapshot from an already exported configuration block.</summary>
+    internal static VeyonDirectorySnapshot ReadDirectorySnapshot(VeyonConfigurationExport export)
+    {
+        try
+        {
+            var hash = SHA256.HashData(export.Bytes);
+            var fingerprint = Convert.ToHexString(hash).ToLowerInvariant();
+            CryptographicOperations.ZeroMemory(hash);
+            var json = DecodeConfiguration(export.Bytes);
+            var snapshot = new VeyonDirectorySnapshot(fingerprint, ParseConfigurationDirectory(json));
+            LastSuccessfulReadUtc = DateTimeOffset.UtcNow;
+            LastTrustedDirectoryFingerprint = ComputeLocationFingerprint(snapshot.Objects);
+            LastReadDiagnostic = VeyonDirectoryReadDiagnostic.Success(export.CliPath, "config export", fingerprint);
+            return snapshot;
+        }
+        finally { CryptographicOperations.ZeroMemory(export.Bytes); }
+    }
+
+    private static IReadOnlyList<VeyonNetworkObject>? TryReadNetworkObjectsDump(string cliPath,
+        string workingDirectory, out VeyonDirectoryReadDiagnostic? dumpDiagnostic)
+    {
+        dumpDiagnostic = null;
         var runner = new ProcessRunner();
-        runner.Run(cliPath, ["networkobjects", "dump"], workingDirectory, TimeSpan.FromSeconds(45),
-            outputLimitChars: 8 * 1024 * 1024, redirectedOutputEncoding: Encoding.UTF8);
-        if (runner.ExitCode is not 0)
-            throw new InvalidOperationException(
-                $"Veyon 读取电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
-        if (runner.StdoutTruncated)
-            throw new InvalidDataException("Veyon 电脑目录清单超过读取上限；请检查目录。");
-        return ParseNetworkObjectsDump(runner.Stdout);
+        try
+        {
+            runner.Run(cliPath, ["networkobjects", "dump"], workingDirectory,
+                TimeSpan.FromSeconds(45), outputLimitChars: 8 * 1024 * 1024,
+                redirectedOutputEncoding: Encoding.UTF8);
+        }
+        catch (Exception exception) when (exception is TimeoutException or UnauthorizedAccessException or
+                                          PlatformNotSupportedException or System.ComponentModel.Win32Exception)
+        {
+            dumpDiagnostic = VeyonDirectoryReadDiagnostic.For(
+                exception switch
+                {
+                    TimeoutException => VeyonDirectoryReadDiagnostic.Timeout,
+                    UnauthorizedAccessException => VeyonDirectoryReadDiagnostic.AccessDenied,
+                    PlatformNotSupportedException => VeyonDirectoryReadDiagnostic.UnsupportedBackend,
+                    _ => VeyonDirectoryReadDiagnostic.CliFailed,
+                },
+                exception.Message, cliPath, null, ProcessDetail(runner), "networkobjects dump",
+                exception is TimeoutException);
+            return null;
+        }
+        try
+        {
+            if (runner.ExitCode is not 0)
+            {
+                dumpDiagnostic = VeyonDirectoryReadDiagnostic.For(
+                    VeyonDirectoryReadDiagnostic.CliFailed,
+                    $"Veyon 读取电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）。",
+                    cliPath, runner.ExitCode, ProcessDetail(runner), "networkobjects dump",
+                    runner.TimedOut);
+                return null;
+            }
+            if (runner.StdoutTruncated)
+            {
+                dumpDiagnostic = VeyonDirectoryReadDiagnostic.For(
+                    VeyonDirectoryReadDiagnostic.ExportFileMissing,
+                    "Veyon 电脑目录清单超过读取上限；请检查目录。",
+                    cliPath, runner.ExitCode, "", "networkobjects dump", false);
+                return null;
+            }
+            return ParseNetworkObjectsDump(runner.Stdout);
+        }
+        catch (InvalidDataException exception)
+        {
+            dumpDiagnostic = VeyonDirectoryReadDiagnostic.For(
+                VeyonDirectoryReadDiagnostic.ParseFailed, exception.Message, cliPath,
+                runner.ExitCode, ProcessDetail(runner), "networkobjects dump", false);
+            return null;
+        }
+    }
+
+    private static string SnapshotFingerprintLabel(string fingerprint) =>
+        fingerprint.Length >= 12 ? fingerprint[..12] : fingerprint;
+
+    private static void ThrowWithDiagnostic(VeyonDirectoryReadDiagnostic diagnostic, Exception? inner)
+    {
+        LastTrustedDirectoryFingerprint = null;
+        var enriched = diagnostic with
+        {
+            LastSuccessfulReadUtc = LastSuccessfulReadUtc
+        };
+        LastReadDiagnostic = enriched;
+        throw new VeyonDirectoryReadException(enriched, inner);
+    }
+
+    private static string ComputeLocationFingerprint(IEnumerable<VeyonNetworkObject> objects)
+    {
+        var locations = objects.Where(item => item.Type.Equals("location", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(item => item.ObjectId, item => item.Name);
+        var targets = objects.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
+            .Select(item => (Location: locations.GetValueOrDefault(item.ParentObjectId,
+                    string.IsNullOrWhiteSpace(item.Location) ? "未分组电脑" : item.Location),
+                Target: string.IsNullOrWhiteSpace(item.Host) ? item.Name : item.Host))
+            .Where(item => item.Target.Length > 0)
+            .Select(item => item.Location.Trim().ToUpperInvariant() + "\u001f" +
+                            item.Target.Trim().ToUpperInvariant())
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+        return FingerprintTargets(targets);
+    }
+
+    private static string ComputeLocationFingerprint(IEnumerable<VeyonNetworkLocation> locations)
+    {
+        var targets = locations.SelectMany(location => location.Targets.Select(target =>
+                location.Name.Trim().ToUpperInvariant() + "\u001f" + target.Trim().ToUpperInvariant()))
+            .OrderBy(item => item, StringComparer.Ordinal)
+            .ToArray();
+        return FingerprintTargets(targets);
+    }
+
+    private static string FingerprintTargets(IEnumerable<string> targets)
+    {
+        var bytes = Encoding.UTF8.GetBytes(string.Join("\n", targets));
+        try
+        {
+            var hash = SHA256.HashData(bytes);
+            try { return Convert.ToHexString(hash).ToLowerInvariant(); }
+            finally { CryptographicOperations.ZeroMemory(hash); }
+        }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
     private static bool IsNetworkObjectsRuler(string line) =>
@@ -473,8 +1013,7 @@ public static class VeyonNetworkObjectDirectory
     {
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("读取 Veyon 目录仅支持 Windows 教师端。");
-        var cliPath = WindowsVeyonAdapter.ResolveVeyonCliPath()
-                      ?? throw new InvalidOperationException("找不到 Veyon CLI；请先安装教师端 Veyon。");
+        var cliPath = ResolveCliPathOrThrow("config export");
         return ExportConfiguration(cliPath, Path.GetDirectoryName(cliPath)!);
     }
 
@@ -533,7 +1072,9 @@ public static class VeyonNetworkObjectDirectory
                 throw new InvalidDataException("Veyon 目录配置格式无法识别。");
             legacyLocalData.TryGetProperty("NetworkObjects", out objects);
         }
-        if (objects.ValueKind == JsonValueKind.Undefined) return Array.Empty<VeyonNetworkObject>();
+        if (objects.ValueKind == JsonValueKind.Undefined)
+            throw new InvalidDataException(
+                "Veyon 配置中没有可识别的 Builtin Directory；可能使用外部目录后端，已拒绝将其误判为空目录。");
         if (objects.ValueKind == JsonValueKind.Object && objects.TryGetProperty("JsonStoreArray", out var array))
             objects = array;
         if (objects.ValueKind != JsonValueKind.Array || objects.GetArrayLength() > 10000)
@@ -564,7 +1105,11 @@ public static class VeyonNetworkObjectDirectory
 
     private static string ProcessDetail(ProcessRunner runner)
     {
-        var detail = string.Join(" ", new[] { runner.Stderr, runner.Stdout }.Where(value => value.Length > 0));
+        // stdout may contain the full computer directory. Keep diagnostics useful without
+        // copying student names, Hosts, MAC addresses, or UUIDs into UI error details.
+        var detail = runner.Stderr.Trim();
+        detail = new string(detail.Where(character => !char.IsControl(character) ||
+            character is '\r' or '\n' or '\t').ToArray());
         return detail.Length > 1000 ? detail[..1000] : detail;
     }
 

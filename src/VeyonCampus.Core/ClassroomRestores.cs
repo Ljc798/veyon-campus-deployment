@@ -56,9 +56,7 @@ public static class ClassroomRestoreLedger
             !string.Equals(room.DisplayName, session.Room.RoomName, StringComparison.Ordinal) ||
             !string.Equals(room.Prefix, session.Room.ComputerPrefix, StringComparison.Ordinal) ||
             room.StartNumber != session.Room.StartNumber || room.ComputerCount != session.Room.ComputerCount ||
-            !room.GetComputerNumbers().SequenceEqual(snapshotNumbers) ||
-            !(room.HostOverrides ?? []).SequenceEqual(session.Room.HostOverrides ?? [],
-                StringComparer.OrdinalIgnoreCase))
+            !room.GetComputerNumbers().SequenceEqual(snapshotNumbers))
             return Array.Empty<ClassroomRestoreTarget>();
 
         var matchingLocations = locations.Where(item =>
@@ -72,10 +70,7 @@ public static class ClassroomRestoreLedger
         for (var index = 0; index < session.Targets.Length; index++)
         {
             var oldTarget = session.Targets[index];
-            var currentTarget = room.HostOverrides is { } overrides && index < overrides.Count &&
-                                !string.IsNullOrWhiteSpace(overrides[index])
-                ? VeyonHostAddress.NormalizeOverride(overrides[index])
-                : oldTarget.DeviceLabel;
+            var currentTarget = oldTarget.DeviceLabel;
             if (locationTargets.Count(item => string.Equals(item, currentTarget,
                     StringComparison.OrdinalIgnoreCase)) != 1)
                 continue;
