@@ -42,10 +42,11 @@ test('CloudBase web-function bootstrap has an LF-only shebang', () => {
   assert.match(attributes, /^cloudfunctions\/veyon-api\/scf_bootstrap text eol=lf$/m);
 });
 
-test('Windows installer releases do not depend on website license metadata', () => {
+test('Windows installer releases follow the build and signing dependency chain', () => {
   const workflow = fs.readFileSync(`${__dirname}/../../.github/workflows/windows-installers.yml`, 'utf8').replace(/\r\n/g, '\n');
   assert.match(workflow, /build-installers:/);
-  assert.match(workflow, /publish-release:[\s\S]*?needs: build-installers/);
+  assert.match(workflow, /sign-release-installers:[\s\S]*?needs: build-installers/);
+  assert.match(workflow, /publish-release:[\s\S]*?needs: sign-release-installers/);
   assert.doesNotMatch(workflow, /check-website-bundle-licenses|Check third-party license metadata before public release/);
 });
 
