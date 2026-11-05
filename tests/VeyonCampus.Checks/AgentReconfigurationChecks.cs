@@ -71,6 +71,7 @@ internal static class AgentReconfigurationChecks
                     compatibility: PackageCompatibility.ForSystemPolicyVersions("1.1.48",
                         VeyonInstallerTrust.Version, WebsitePolicyAgentInstaller.BuildVersion),
                     studentSystemPolicyPublicKeyPem: studentSystemPolicyKey.ExportSubjectPublicKeyInfoPem(),
+                    recommendedOperations: PackageSetupRecommendations.Default,
                     teacherChannelEndpoints: [ClassroomEventCryptography.CreateTeacherEndpoint(
                         System.Net.IPAddress.Parse("192.168.1.10"))],
                     teacherChannelRootCertificate: teacherChannelRoot.Export(X509ContentType.Cert),
