@@ -92,6 +92,38 @@ internal static class MaintenanceModelChecks
         Throws<InvalidDataException>(() => journal.Update(
             MaintenanceRun.Start(activeOperationId, new MaintenanceDeviceIdentity("ExampleCampus",
                 new string('D', 64), "192.168.1.20"), now), now.AddSeconds(4)));
+
+        // 回归：journal 每次从磁盘重读都会重建 evidence 实例。事务推进必须按值判定为单调延续，
+        // 不能因为 evidence 引用不同而拒绝在 VerifyIdentity 之后继续核验能力集。
+        var reloadOperationId = Guid.NewGuid();
+        var reloadRun = MaintenanceRun.Start(reloadOperationId, identity, now);
+        var reloadJournal = MaintenanceJournal.Empty(now)
+            .AddOrGet(reloadRun, now.AddSeconds(1))
+            .Update(reloadRun.VerifyIdentity(identityEvidence, "身份已核验", now.AddSeconds(1)),
+                now.AddSeconds(1));
+        var reloadOptions = new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            PropertyNameCaseInsensitive = false,
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+            Converters =
+            {
+                new JsonStringEnumConverter<MaintenanceRunState>(JsonNamingPolicy.CamelCase,
+                    allowIntegerValues: false)
+            }
+        };
+        var reloadedJournal = JsonSerializer.Deserialize<MaintenanceJournal>(
+            JsonSerializer.SerializeToUtf8Bytes(reloadJournal, reloadOptions), reloadOptions)!;
+        var inMemoryRun = reloadJournal.Find(reloadOperationId)!;
+        var advanced = inMemoryRun.VerifyCapabilities(capabilities, versions,
+            Evidence(identityFingerprint, "signed-capabilities", now.AddSeconds(2), capabilityDigest),
+            "签名能力集核验通过", now.AddSeconds(2));
+        var merged = reloadedJournal.Update(advanced, now.AddSeconds(2));
+        Assert(merged.Find(reloadOperationId)?.State == MaintenanceRunState.CapabilitiesVerified,
+            "A reloaded journal must accept monotonic evidence transitions by value, not by object identity.");
+        Assert(reloadJournal.Find(reloadOperationId)!.Transitions[0].Evidence ==
+               reloadedJournal.Find(reloadOperationId)!.Transitions[0].Evidence,
+            "Maintenance evidence must compare by value across journal reloads.");
     }
 
     private static MaintenanceEvidence Evidence(string identityFingerprint, string kind, DateTimeOffset time,

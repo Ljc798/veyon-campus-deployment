@@ -341,3 +341,14 @@
 - **验证**：TeacherConsole 与 Checks 项目编译 0 错误（仅历史 CA1416/可空性警告）；`--student-application-update-fixtures`、`--student-agent-channel-fixtures` PASS，新增 `CheckAutoTrustFirstUse` 覆盖「默认严格 / 首次自动固定 / 密钥变化不隐式替换 / 一键批准后可验证」。`--teacher-workflow-fixtures` 与 `--maintenance-fault-injection-fixtures` 在**未改动的基线**上同样失败，属本地环境既有问题，与本轮无关。
 - **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.50-OneClick-Test.exe`，70,984,086 B，SHA-256 `A6B83820B54F9BF7C8945359C740DEE076F85382DB67DB013E5E9EED48387BBB`；带 `artifacts/veyon-campus-release-public.pem` 发布公钥；发布目录 `artifacts/windows-x64-v1.1.50-teacher-console-oneclick-test/`；日志 `artifacts/one-click-package-20261105.log`（Inno `Successful compile`）。已核验 DLL 内含新按钮文案且不含被删除的旧按钮。用户需**先退出教师端**再安装（既有安装器不强关应用）。
 - **边界**：未做真机静默更新验收；未写 production / CloudBase；未创建或激活真实信任根。自动首次信任属 TOFU，密钥变化仍需教师主动点一次一键更新。
+
+## 2026-11-05 16:10 修复 Maintenance journal 单调性误判（1.1.51 测试包）
+
+用户装 1.1.50 后实测：网站策略推送成功（自动身份核对生效），一键维护报「维护未完成：Maintenance journal 更新不是当前操作的单调延续。」本机 journal 停在 `identityVerified`，未进入能力/计划阶段。
+
+- **根因**：`MaintenanceEvidence` 是普通 class，没有重写值相等。`MaintenanceTransition` 是 record，其相等性包含 `Evidence`，按引用比较。`MaintenanceRunStore.UpdateAsync` 每次都从磁盘重新反序列化 journal，`existing` 的 evidence 是新实例，而 `replacement` 的 evidence 来自内存旧实例 → `MaintenanceJournal.Update` 里 `existing.Transitions.SequenceEqual(replacement.Transitions.Take(n))` 为 false → 抛出「不是当前操作的单调延续」。`InspectRunAsync` 连续 `VerifyIdentity` → `VerifyCapabilities` 时必然触发；旧流程多数事务的 transition evidence 为 null，所以此前未暴露。
+- **修复**：`MaintenanceEvidence` 实现 `IEquatable<MaintenanceEvidence>`，按 `Kind / DeviceIdentityFingerprint / Sha256 / CommandId / VerifiedUtc` 值相等比较，并补 `==` / `!=` 与 `GetHashCode`。不改 journal 格式、不改状态机规则；已存在的 `identityVerified` 活动事务可直接续跑，无需清库。
+- **回归**：`MaintenanceModelChecks` 新增「journal JSON 往返后仍接受 CapabilitiesVerified 推进」与「evidence 跨重读值相等」两条断言，防止再次退化为引用比较。
+- **验证**：Core / App / Checks 编译 0 错误；`--student-application-update-fixtures` PASS（含新增回归）；`--student-agent-channel-fixtures` PASS。`--teacher-workflow-fixtures`、`--maintenance-fault-injection-fixtures` 在基线上同样失败，属本地既有问题。
+- **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.51-MaintFix-Test.exe`，70,983,620 B，SHA-256 `E7D569782C9A42FB6D45C1A1CFA46D0735B9D7E9DF90B1CC29EC58A249D113A5`；带发布公钥；发布目录 `artifacts/windows-x64-v1.1.51-teacher-console-maintfix-test/`；日志 `artifacts/maintfix-package-20261105.log`。安装前仍需退出教师端。
+- **边界**：未做真机静默更新验收；本机 journal 中 `8b1f526d` 事务保持原样，供 1.1.51 续跑验证。

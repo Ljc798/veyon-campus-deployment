@@ -21,7 +21,7 @@ public enum MaintenanceRunState
     Completed
 }
 
-public sealed class MaintenanceEvidence
+public sealed class MaintenanceEvidence : IEquatable<MaintenanceEvidence>
 {
     public string Kind { get; }
     public string? DeviceIdentityFingerprint { get; }
@@ -41,6 +41,24 @@ public sealed class MaintenanceEvidence
         CommandId = commandId;
         VerifiedUtc = MaintenanceValidation.Utc(verifiedUtc);
     }
+
+    // Journal 每次从磁盘重读都会产生新的 evidence 实例；必须按值比较，
+    // 否则 MaintenanceTransition 记录相等性会在重读后失败，事务被误判为非单调延续。
+    public bool Equals(MaintenanceEvidence? other) => other is not null &&
+        string.Equals(Kind, other.Kind, StringComparison.Ordinal) &&
+        string.Equals(DeviceIdentityFingerprint, other.DeviceIdentityFingerprint, StringComparison.Ordinal) &&
+        string.Equals(Sha256, other.Sha256, StringComparison.Ordinal) &&
+        CommandId == other.CommandId && VerifiedUtc == other.VerifiedUtc;
+
+    public override bool Equals(object? obj) => obj is MaintenanceEvidence other && Equals(other);
+
+    public override int GetHashCode() =>
+        HashCode.Combine(Kind, DeviceIdentityFingerprint, Sha256, CommandId, VerifiedUtc);
+
+    public static bool operator ==(MaintenanceEvidence? left, MaintenanceEvidence? right) =>
+        EqualityComparer<MaintenanceEvidence?>.Default.Equals(left, right);
+
+    public static bool operator !=(MaintenanceEvidence? left, MaintenanceEvidence? right) => !(left == right);
 }
 
 public sealed record MaintenanceTransition(MaintenanceRunState From, MaintenanceRunState To,
