@@ -6,7 +6,7 @@ ALTER TABLE public.application_releases
     DROP CONSTRAINT IF EXISTS application_releases_role_check,
     DROP CONSTRAINT IF EXISTS application_releases_product_check,
     DROP CONSTRAINT IF EXISTS application_releases_name_matches_role_check,
-    ADD COLUMN maintenance_protocol_version smallint;
+    ADD COLUMN IF NOT EXISTS maintenance_protocol_version smallint;
 
 ALTER TABLE public.application_releases
     ADD CONSTRAINT application_releases_role_check
