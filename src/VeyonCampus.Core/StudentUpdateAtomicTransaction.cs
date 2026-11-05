@@ -392,8 +392,11 @@ public static class StudentUpdateAtomicTransaction
         if (!File.Exists(previousSetupExecutable) ||
             !WorkerInstallationGuard.ProductVersionMatches(previousSetupExecutable, record.PreviousSetupVersion))
             throw new InvalidDataException("移动 StudentSetup 前旧版程序与角色版本读回不匹配；安装目录保持原位。");
-        WebsitePolicyAgentInstaller.ValidatePreviousAgentRecoveryMaterial(configPath, record.PreviousAgentVersion,
-            record.ConfigurationFingerprint);
+        // Validating the previous policy-agent recovery material needs the live SYSTEM agent
+        // (active task, runtime version, config fingerprint). That validation therefore lives in
+        // StudentApplicationUpdates.ProcessAsync, which only runs inside the SYSTEM agent; keeping
+        // it here made this storage-only transaction API impossible to exercise or reuse outside
+        // that context.
 
         var previousDirectory = GetPreviousInstallationDirectory(record);
         if (Directory.Exists(previousDirectory))

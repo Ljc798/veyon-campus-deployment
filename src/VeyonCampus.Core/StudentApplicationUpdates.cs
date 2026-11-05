@@ -740,6 +740,11 @@ public static class StudentApplicationUpdateProcessor
                         command.ExpiresUtc))
                     throw new InvalidDataException("学生更新命令已执行过；已拒绝重放。");
                 var configFingerprint = WebsitePolicyAgent.ConfigFingerprint(config);
+                // Runs inside the SYSTEM agent, before the journal exists, so a rejected rollback
+                // material leaves no half-prepared transaction behind. The directory move itself is
+                // storage-only and stays free of agent-state checks.
+                WebsitePolicyAgentInstaller.ValidatePreviousAgentRecoveryMaterial(configPath,
+                    currentAgentVersion, configFingerprint);
                 transaction = StudentUpdateAtomicTransaction.Create(configPath, command.CommandId, currentVersion,
                     manifest.Version, currentAgentVersion, targetAgentVersion, manifest.FileName, configFingerprint,
                     manifest.Sha256);

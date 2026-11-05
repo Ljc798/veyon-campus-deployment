@@ -424,6 +424,8 @@ flowchart TD
 
 **代码实施记录（2026-11-03）：** `PreservePreviousInstallation` 在重命名 Student 目录前校验旧 StudentSetup 版本与程序集、旧 Agent 固定版本目录与程序集、SYSTEM 启动任务动作、当前配置指纹及健康读回；预检失败时不移动安装目录。移动后再次校验旧 StudentSetup 角色与程序集。Agent 回滚/恢复入口检查旧版本目录与程序集版本一致，避免旧目录内放入错误版本二进制后仍改写 SYSTEM 任务。定向更新夹具新增程序集版本匹配/冲突检查并通过；真实锁文件、拒绝访问、重启中断及 UpdateHelper 故障注入仍待 Windows VM，不能标记现场通过。
 
+**代码实施记录（2026-11-05，校验位置上移）：** 旧 Agent 恢复材料校验需要运行中的 SYSTEM Agent（任务动作、运行时版本、配置指纹、健康读回），之前却写在存储层的 `PreservePreviousInstallation` 里，导致 `--student-update-atomic-storage-fixtures` 这类以管理员身份运行、只验证 journal/ACL/同卷移动的夹具必然抛 `UnauthorizedAccessException`（`学生网站策略代理恢复材料只能由 SYSTEM Agent 核验`），Windows installers 工作流因此在第 21 步失败。现在该校验上移到 `StudentApplicationUpdates.ProcessAsync`（只跑在 SYSTEM Agent 内、且在创建 journal 之前），存储层只负责目录移动与版本读回，生产保护范围不变；本地夹具已由 `failed/same-volume-previous-setup-preserve` 转为 `passed`（9 项子检查全 true）。
+
 ### P0-05：同步后消除运行时旧配置快照（`REV-02`）
 
 **审查疑点（P1 影响，放 P0 提前修正更新正确性）：** 教师地址/TLS 根已写入文件并通知连接管理器，但 Agent 的部分 HTTP 状态与更新处理路径仍可能持有启动时的 `WebsitePolicyAgentConfig config`。同进程对“当前配置”认知不同，可能回报旧指纹；更新后 Agent 重启读取新配置，导致旧指纹健康检查失败。**尚不能断定这是现场长连接失败的唯一或直接根因。**
