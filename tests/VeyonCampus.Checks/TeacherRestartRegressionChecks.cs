@@ -166,8 +166,8 @@ internal static class TeacherRestartRegressionChecks
                model.SelectedRoomProfile?.RoomId == originalRoom.RoomId &&
                model.SeatGridSeatCount == 2 && model.SeatGridNamedCount == 2,
             "Reading the same Veyon hosts must recover the original saved map rather than the empty duplicate.");
-        Expect(model.SelectedRoomProfile!.GetComputerNumbers().SequenceEqual([2, 1]),
-            "Saved computer numbers must follow their hosts even when the Veyon host order changes.");
+        Expect(model.SelectedRoomProfile!.GetComputerNumbers().SequenceEqual([1, 2]),
+            "A Veyon host-order change must not rewrite the saved room computer numbers.");
         Expect(File.ReadAllBytes(Path.Combine(root, "seats.json")).SequenceEqual(savedFile) &&
                seats.GetLayout(original.ProfileId, originalRoom.RoomId).Seats.SequenceEqual(saved.Seats),
             "Recovering a saved room must preserve every seat ID, position, name and number without rewriting the map.");
