@@ -3614,6 +3614,11 @@ public static class WebsitePolicyAgentInstaller
                 var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
                 var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
                 var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
+                var teacherChannelStatus = string.Equals(name,
+                    "agent-" + hash + ".json.teacher-channel-status.json", StringComparison.OrdinalIgnoreCase);
+                var teacherChannelStatusTemporary = Regex.IsMatch(name,
+                    "^agent-" + Regex.Escape(hash) + @"\.json\.teacher-channel-status\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
                 var edgePolicyRefreshQueue = string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase);
                 var legacyHealthRepairLedger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
                 var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
@@ -3632,13 +3637,14 @@ public static class WebsitePolicyAgentInstaller
                     !edgePolicyRefreshQueue && !healthRepairDirectory && !legacyHealthRepairLedger &&
                     !edgePolicyRefreshTemporary && !usageInstallationId &&
                     !legacyHealthRepairTemporary && !usageLastSentState && !startupLog && !runtimeLog &&
-                    !temporary && !identityTemporary)
+                    !temporary && !identityTemporary && !teacherChannelStatus && !teacherChannelStatusTemporary)
                     throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
-                if (legacyHealthRepairLedger || legacyHealthRepairTemporary)
+                if (legacyHealthRepairLedger || legacyHealthRepairTemporary || teacherChannelStatus ||
+                    teacherChannelStatusTemporary)
                 {
                     PathLinkSecurity.RejectLinks(entry);
                     if (!AgentFileSecurity.IsPrivate(entry, directory: false))
-                        throw new IOException("旧版 Agent 健康修复记录 ACL 无效；拒绝删除。" );
+                        throw new IOException("Agent 私有状态文件 ACL 无效；拒绝删除。" );
                 }
             }
         }

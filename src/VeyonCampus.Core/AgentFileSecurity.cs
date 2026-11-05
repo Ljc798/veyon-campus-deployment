@@ -95,6 +95,7 @@ internal static class AgentFileSecurity
                 VerifyPrivateMaintenanceDirectory(path);
             }
             else if (Directory.Exists(path)) SecureTree(path, executable);
+            else if (IsAgentTeacherChannelStatusFile(path)) SecurePrivateFile(path);
             else if (IsAgentConfigurationDirectory(directory) && IsLegacyHealthRepairLedgerFile(path))
                 SecurePrivateFile(path);
             else if (Path.GetFileName(path).Equals(StudentAgentIdentityKeyStore.FileName,
@@ -117,6 +118,19 @@ internal static class AgentFileSecurity
         foreach (var character in campusHash)
             if (!Uri.IsHexDigit(character)) return false;
         return true;
+    }
+
+    private static bool IsAgentTeacherChannelStatusFile(string path)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (directory is null || !IsAgentConfigurationDirectory(directory)) return false;
+        var campusHash = Path.GetFileName(directory);
+        var name = Path.GetFileName(path);
+        return string.Equals(name, $"agent-{campusHash}.json.teacher-channel-status.json",
+                   StringComparison.OrdinalIgnoreCase) ||
+               Regex.IsMatch(name, "^agent-" + Regex.Escape(campusHash) +
+                   @"\.json\.teacher-channel-status\.json\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     private static bool IsHealthRepairStateDirectory(string path) =>
