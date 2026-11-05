@@ -117,6 +117,7 @@ var
   MaintenanceServiceWasStopped: Boolean;
   MaintenanceServiceTouched: Boolean;
   MaintenanceServiceSetupCompleted: Boolean;
+  MaintenanceServiceDegraded: Boolean;
   MaintenanceServiceExternallyManaged: Boolean;
   MaintenanceServiceRegisteredExecutable: String;
 
@@ -204,11 +205,18 @@ end;
 function RunMaintenanceServiceControl(const Parameters: String; var ResultCode: Integer): Boolean;
 var
   ServiceExecutable: String;
+  FallbackExecutable: String;
 begin
-  ServiceExecutable := ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath);
-  if MaintenanceServiceExternallyManaged and (MaintenanceServiceRegisteredExecutable <> '') then
+  FallbackExecutable := ExpandConstant('{autopf}\' + MaintenanceServiceRelativePath);
+  ServiceExecutable := FallbackExecutable;
+  if MaintenanceServiceExternallyManaged and (MaintenanceServiceRegisteredExecutable <> '') and
+     FileExists(MaintenanceServiceRegisteredExecutable) then
     ServiceExecutable := MaintenanceServiceRegisteredExecutable;
   Result := RunMaintenanceServiceControlAt(ServiceExecutable, Parameters, ResultCode);
+  // A failed install may have removed the executable the SCM still points at; fall back to the
+  // version directory so stopping or removing an orphaned registration still works.
+  if (not Result) and (ServiceExecutable <> FallbackExecutable) then
+    Result := RunMaintenanceServiceControlAt(FallbackExecutable, Parameters, ResultCode);
 end;
 
 function StopMaintenanceServiceBeforeUpdate(): String;
@@ -406,6 +414,9 @@ procedure RestoreMaintenanceServiceAfterSetupFailure;
 var
   ServiceExecutable: String;
 begin
+  // A degraded install keeps the files but leaves no usable service; rolling back here would delete
+  // the version directory that the just-installed StudentSetup still references.
+  if MaintenanceServiceDegraded then Exit;
   if not MaintenanceServiceTouched or MaintenanceServiceSetupCompleted then Exit;
   if IsMaintenanceServiceSelfUpdate() and MaintenanceServiceInitiallyInstalled then
   begin
@@ -431,6 +442,7 @@ begin
   MaintenanceServiceWasStopped := MaintenanceServiceInitiallyInstalled;
   MaintenanceServiceTouched := MaintenanceServiceInitiallyInstalled;
   MaintenanceServiceSetupCompleted := False;
+  MaintenanceServiceDegraded := False;
   MaintenanceServiceExternallyManaged := False;
   MaintenanceServiceRegisteredExecutable := '';
   Result := AcquireInstallUpdateLease();
@@ -841,15 +853,26 @@ begin
         RemoveOwnedEdgeExtensionPolicy();
     end;
     if not InstallAndStartMaintenanceService() then
-      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
+    begin
+      // The independent Maintenance service is an optional transport. Every file is already written,
+      // and the signed student agent channel still installs and updates this machine, so aborting
+      // here only shows a false "install failed" and hides the real exit codes in the log.
+      MaintenanceServiceDegraded := True;
+      Log('Independent Maintenance service is unavailable; continuing with the signed student agent channel.');
+    end;
   end;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = wpFinished then
+  begin
     WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10 + #13#10 +
       '如果网站实时策略推送尚未生效，请注销当前 Windows 用户并重新登录；无需重启电脑。';
+    if MaintenanceServiceDegraded then
+      WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10 + #13#10 +
+        '独立 Maintenance 服务未启动；学生端仍可通过签名 Agent 通道接收更新（安装日志记录 control 与 state 退出码）。';
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
