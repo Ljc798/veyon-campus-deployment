@@ -375,3 +375,19 @@
 - **验证**：Core / App / Checks 编译 0 错误；`--student-application-update-fixtures`、`--student-agent-channel-fixtures` PASS。
 - **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.53-RetryFix-Test.exe`，70,986,805 B，SHA-256 `1D47A9F9B16B9B7A83C35CBDDE9F6CDD6ECABC9DED34E247F48D7B23F7BC5ADB`；带发布公钥；安装前退出教师端。
 - **现场证据（探针）**：`PC-01:39174/v1/update` 对旧信封返回「属于其他校区」，对现代信封返回「正文格式无效」，证明 1.1.52 的投影有效，问题转为「旧事务卡在待验证无法重试」。
+
+## 2026-11-05 安装目录被拒绝重命名（1.1.54）
+
+- **现场**：1.1.53 的一键维护真的下发成功，学生端开始安装，然后返回
+  `HTTP 500：学生端更新失败：联合回滚需要继续恢复… (Access to the path 'C://Program Files\Veyon Campus\Student' is denied.)`，
+  回滚同样被拒：`(Could not find a part of the path 'C://ProgramData//VeyonCampus//WebsitePolicyAgent//1.1.48//VeyonCampus.Agent.exe')`。
+  签名状态读回：`RunningAsSystem=true`、任务 ACL 正常、版本仍为 1.1.44、事务 `needsReview`。
+  → 不是权限/提权问题，而是**安装目录无法被重命名**（`PreservePreviousInstallation` 把 Student 目录 Move 到恢复目录时被拒）。
+- **教师端（1.1.54）**：`needsReview` / `recoveryRequired` 且版本未变时，不再当作“可等待恢复”，而是判为需人工核对，并直接给出可执行结论（在故障机上以管理员身份运行 StudentSetup，或重启该机）。
+- **学生端（1.1.54）**：`PreservePreviousInstallation` / `RestorePreviousInstallation` 的目录重命名统一走 `MoveInstallationDirectory`，失败会短暂等待后重试一次，仍失败则在错误里列出**占用该目录的进程映像名与 PID**，便于一次定位（不再是裸的 Access denied）。
+- **交付包**：
+  - 教师端 `artifacts/VeyonCampus-TeacherConsole-1.1.54-DirHold-Test.exe`，70,987,479 B，SHA-256 `E1029E212D971F7067618C9BF2C20ECA8B5C875366EFD7A800DDC1162666F7BC`。
+  - 学生端 `artifacts/VeyonCampus-Student-Setup-1.1.54-DirHold-Test.exe`，68,571,614 B，SHA-256 `EE96FF6CE8B0D46F4A6E4356C0062568F0FC4697FB4B036D7D146AF6758C5F80`。
+- **修复流程**：在故障学生机上以管理员身份运行学生端安装包，然后删除残留事务记录
+  `C://ProgramData//VeyonCampus//StudentUpdateTransactions//<hash>//student-update-transaction.json`，
+  否则该机会一直报“已有未结束的更新事务”。

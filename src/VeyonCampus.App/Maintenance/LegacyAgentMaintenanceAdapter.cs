@@ -1332,8 +1332,21 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                     ? detail
                     : "回滚状态已签名，但旧版本或 SYSTEM 健康状态没有完整恢复。" );
         }
-        if (state == "recoveryRequired" || state == "needsReview")
+        if (state is "recoveryRequired" or "needsReview")
+        {
+            // Nothing changed on the device and the Agent cannot roll back by itself: only a local
+            // administrator action can repair the install directory, so stop pretending this is
+            // recoverable by waiting.
+            var unchanged = string.Equals(status.StudentSetupVersion,
+                                plan.CurrentVersions.StudentSetupVersion, StringComparison.Ordinal) &&
+                            string.Equals(status.AgentVersion,
+                                plan.CurrentVersions.AgentRuntimeVersion, StringComparison.Ordinal);
+            if (unchanged)
+                return Observed(MaintenanceAdapterDisposition.ManualRequired,
+                    $"学生端未能写入安装目录，版本仍为 {status.StudentSetupVersion}（回滚材料已保留）。" +
+                    "在那台学生机上以管理员身份运行 StudentSetup 安装包，或重启该机后再试。" + detail);
             return Observed(MaintenanceAdapterDisposition.RecoveryRequired, detail);
+        }
         return Observed(MaintenanceAdapterDisposition.PendingVerification, detail);
     }
 

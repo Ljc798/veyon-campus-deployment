@@ -130,8 +130,40 @@ public static class VeyonCampusProcessCleanup
         }
     }
 
-    private static string ReadProcessPath(Process process, string name)
+    /// <summary>
+    /// Best-effort list of processes whose image lives inside <paramref name="directory"/>. Used only
+    /// for diagnostics when a directory move is refused, so unreadable processes are skipped silently.
+    /// </summary>
+    public static string DescribeProcessesUsingDirectory(string directory)
     {
+        if (!OperatingSystem.IsWindows() || string.IsNullOrWhiteSpace(directory)) return "";
+        var root = Path.GetFullPath(directory).TrimEnd(Path.DirectorySeparatorChar,
+            Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var names = new List<string>();
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    var path = process.MainModule?.FileName;
+                    if (string.IsNullOrWhiteSpace(path)) continue;
+                    if (!Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase)) continue;
+                    names.Add(Path.GetFileName(path) + "(PID " + process.Id.ToString(
+                        System.Globalization.CultureInfo.InvariantCulture) + ")");
+                }
+                catch (Exception exception) when (exception is Win32Exception or InvalidOperationException or
+                                                  System.Security.SecurityException or IOException or
+                                                  NotSupportedException)
+                {
+                    // A process whose image path cannot be read cannot be ruled in or out; skip it.
+                }
+            }
+        }
+        return string.Join("、", names.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string ReadProcessPath(Process process, string name)    {
         try
         {
             return Path.GetFullPath(process.MainModule?.FileName

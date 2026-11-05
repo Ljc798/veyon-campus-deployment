@@ -403,7 +403,7 @@ public static class StudentUpdateAtomicTransaction
             throw new IOException("学生更新恢复目录已存在；没有覆盖旧恢复资料。");
         CreateProtectedDirectory(Path.GetDirectoryName(recoveryDirectory)!);
         CreateProtectedDirectory(recoveryDirectory);
-        Directory.Move(installDirectory, previousDirectory);
+        MoveInstallationDirectory(installDirectory, previousDirectory, "移动当前 StudentSetup");
         PathLinkSecurity.RejectLinks(previousDirectory);
         EnsureNoReparsePointsInTree(previousDirectory);
         if (!string.Equals(ReadInstalledVersion(previousDirectory), record.PreviousSetupVersion,
@@ -436,14 +436,14 @@ public static class StudentUpdateAtomicTransaction
         {
             PathLinkSecurity.RejectLinks(installDirectory);
             EnsureNoReparsePointsInTree(installDirectory);
-            Directory.Move(installDirectory, failedDirectory);
+            MoveInstallationDirectory(installDirectory, failedDirectory, "移走失败的 StudentSetup");
         }
         else if (File.Exists(installDirectory))
         {
             throw new IOException("StudentSetup 活动路径被非目录文件占用；旧版仍安全保留在恢复目录。");
         }
 
-        Directory.Move(previousDirectory, installDirectory);
+        MoveInstallationDirectory(previousDirectory, installDirectory, "恢复旧版 StudentSetup");
         PathLinkSecurity.RejectLinks(installDirectory);
         EnsureNoReparsePointsInTree(installDirectory);
         var restoredVersion = ReadInstalledVersion(installDirectory);
@@ -451,8 +451,38 @@ public static class StudentUpdateAtomicTransaction
             throw new InvalidDataException("StudentSetup 旧版恢复后的角色或版本读回不匹配。");
     }
 
-    public static bool IsTargetSetupInstalled(StudentUpdateTransactionRecord record)
+    /// <summary>
+    /// Renames an installation directory, retrying once after a short pause. A refused rename almost
+    /// always means a process still holds the directory (an interactive student session, antivirus, or a
+    /// lingering updater); the reported error then names those images so the operator can act instead of
+    /// seeing a bare "Access to the path ... is denied".
+    /// </summary>
+    private static void MoveInstallationDirectory(string source, string destination, string description)
     {
+        try
+        {
+            Directory.Move(source, destination);
+            return;
+        }
+        catch (Exception firstFailure) when (firstFailure is IOException or UnauthorizedAccessException)
+        {
+            Thread.Sleep(TimeSpan.FromMilliseconds(750));
+            try
+            {
+                Directory.Move(source, destination);
+            }
+            catch (Exception retryFailure) when (retryFailure is IOException or UnauthorizedAccessException)
+            {
+                var holders = VeyonCampusProcessCleanup.DescribeProcessesUsingDirectory(source);
+                throw new IOException(description + "失败：" + (string.IsNullOrEmpty(holders)
+                    ? "安装目录不可重命名（被占用或权限不足）；请重启这台学生机后重试。"
+                    : "安装目录仍被这些进程占用：" + holders + "；请先结束它们或重启这台学生机后重试。"),
+                    new AggregateException(firstFailure, retryFailure));
+            }
+        }
+    }
+
+    public static bool IsTargetSetupInstalled(StudentUpdateTransactionRecord record)    {
         try { return ReadInstalledVersion(GetInstallDirectory()) == record.TargetSetupVersion; }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException or
                                            JsonException or ArgumentException)
