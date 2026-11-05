@@ -1,6 +1,6 @@
 {
   "schema": "graphify-location-sync/1",
-  "source_ref": "0f67214a8ae9e279c6d6f868909fd30e17226d6e",
+  "source_ref": "bdb3af856fab95ffc3f416bcbaa250ef16ac6d91",
   "scope": "Veyon 地点 / 电脑 / 设备目录同步链路",
   "method": "静态符号锚定 + 人工核对的调用/数据流边；非完整 AST 语义分析",
   "nodes": [
@@ -70,7 +70,7 @@
       "kind": "viewmodel",
       "file": "src/VeyonCampus.App/TeacherViewModel.cs",
       "symbol": "RejectDuplicateVeyonLocations",
-      "line": 4236,
+      "line": 4241,
       "verified": true,
       "external": false
     },
@@ -80,7 +80,7 @@
       "kind": "viewmodel",
       "file": "src/VeyonCampus.App/TeacherViewModel.cs",
       "symbol": "ApplyClassroomVeyonLocation",
-      "line": 4592,
+      "line": 4601,
       "verified": true,
       "external": false
     },
@@ -130,7 +130,7 @@
       "kind": "read",
       "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
       "symbol": "public static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects()",
-      "line": 399,
+      "line": 493,
       "verified": true,
       "external": false
     },
@@ -180,7 +180,7 @@
       "kind": "pure",
       "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
       "symbol": "BuildImportPreview",
-      "line": 584,
+      "line": 678,
       "verified": true,
       "external": false
     },
@@ -190,7 +190,7 @@
       "kind": "write",
       "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
       "symbol": "public static VeyonLocationImportResult AddLocation",
-      "line": 708,
+      "line": 802,
       "verified": true,
       "external": false
     },
@@ -281,8 +281,8 @@
       "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
       "symbol": "BuildLocationsById",
       "added_in_experiment": true,
-      "line": null,
-      "verified": false,
+      "line": 404,
+      "verified": true,
       "external": false
     },
     {
@@ -292,8 +292,8 @@
       "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
       "symbol": "SelectLocationObject",
       "added_in_experiment": true,
-      "line": null,
-      "verified": false,
+      "line": 475,
+      "verified": true,
       "external": false
     },
     {
@@ -302,7 +302,7 @@
       "kind": "test",
       "file": "tests/VeyonCampus.Checks/Program.cs",
       "symbol": "void Expect(bool condition)",
-      "line": 377,
+      "line": 384,
       "verified": true,
       "external": false
     },
@@ -584,10 +584,7 @@
   "summary": {
     "nodes": 32,
     "edges": 42,
-    "unverified_nodes": [
-      "core.locationbyid",
-      "core.selectlocation"
-    ],
+    "unverified_nodes": [],
     "read_sources": 3,
     "persistent_stores": 3
   }
