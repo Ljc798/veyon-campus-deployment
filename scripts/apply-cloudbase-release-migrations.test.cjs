@@ -54,7 +54,9 @@ const files = configuredDir && args.includes('up')
 const call = { args, envId, configPath, configuredDir, files };
 fs.appendFileSync(trace, JSON.stringify(call) + '\\n');
 const scenario = process.env.FAKE_TCB_SCENARIO || 'ok';
-const remoteItems = JSON.parse(process.env.FAKE_TCB_BASELINE).map(([version, name]) => ({ version, name }));
+const remoteItems = (fs.existsSync(statePath)
+  ? JSON.parse(fs.readFileSync(statePath, 'utf8'))
+  : JSON.parse(process.env.FAKE_TCB_BASELINE).map(([version, name]) => ({ version, name })));
 if (scenario === 'missing-baseline') remoteItems.shift();
 if (scenario === 'disabled-migration') remoteItems.push({
   version: '20261010090000', name: 'add_daily_operations_reporting'

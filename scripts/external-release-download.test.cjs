@@ -47,7 +47,7 @@ test('publisher verifies external bytes before sending JSON metadata, with zero 
     global.fetch = async (url, options = {}) => {
       url = new URL(url);
       assert.ok(!url.pathname.includes('/storages/'), 'CloudBase installer storage must never be accessed');
-      if (url.pathname === '/v3/releases/latest') return Response.json({ release: null });
+      if (url.pathname === '/v5/releases/latest') return Response.json({ release: null });
       if (url.hostname === 'gitcode.com') {
         assert.equal(options.headers?.Authorization, undefined, 'CloudBase credentials must not reach GitCode');
         downloaded = true;
@@ -129,7 +129,7 @@ test('StudentSetup publication binds its separately signed Agent target to the e
     };
     global.fetch = async (url, options = {}) => {
       url = new URL(url);
-      if (url.pathname === '/v3/releases/latest') return Response.json({ release: returnExistingRelease ? {
+      if (url.pathname === '/v5/releases/latest') return Response.json({ release: returnExistingRelease ? {
         manifest: {
           schemaVersion: 3,
           version: '1.1.57',

@@ -15,7 +15,7 @@
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
-    <Version>1.1.47</Version>
+    <Version>1.1.48</Version>
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'StudentSetup'">win-x64</RuntimeIdentifiers>
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">win-x64;osx-arm64</RuntimeIdentifiers>
     <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(MSBuildProjectDirectory)/packages.StudentSetup.lock.json</NuGetLockFilePath>
@@ -75,6 +75,8 @@
     <Compile Remove="Presentation/Views/TeacherPolicyView.axaml.cs" />
     <Compile Remove="SeatGridPaintGesture.cs" />
     <Compile Remove="TeacherViewModel.cs" />
+    <Compile Remove="TeacherViewModel.Classroom.cs" />
+    <Compile Remove="TeacherViewModel.RestoredMembers.cs" />
     <AvaloniaXaml Remove="TeacherMobileControlWindow.axaml" />
     <Compile Remove="TeacherMobileControlWindow.axaml.cs" />
     <Compile Remove="TeacherMobileControlServer.cs" />

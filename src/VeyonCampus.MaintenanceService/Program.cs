@@ -367,7 +367,7 @@ internal static class Program
                 Win32ExitCode = win32ExitCode,
                 ServiceSpecificExitCode = serviceExitCode,
                 CheckPoint = _checkpoint,
-                WaitHint = state is ServiceStartPending or ServiceStopPending ? 20000 : 0
+                WaitHint = state is ServiceStartPending or ServiceStopPending ? 20000u : 0u
             };
             if (!SetServiceStatusNative(_statusHandle, _lastStatus))
                 WriteLog("SetServiceStatus failed; Win32=" + Marshal.GetLastWin32Error());

@@ -29,7 +29,7 @@ internal static class MaintenanceModelChecks
         var run = MaintenanceRun.Start(operationId, identity, now);
         var identityEvidence = Evidence(identityFingerprint, "identity", now);
         run = run.VerifyIdentity(identityEvidence, "固定 Agent 身份核验通过", now.AddSeconds(1));
-        run = run.VerifyCapabilities(capabilities,
+        run = run.VerifyCapabilities(capabilities, versions,
             Evidence(identityFingerprint, "signed-capabilities", now.AddSeconds(2), capabilityDigest),
             "签名能力集核验通过", now.AddSeconds(2));
         run = run.SetPlan(plan, Evidence(identityFingerprint, "maintenance-plan", now.AddSeconds(3)),

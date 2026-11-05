@@ -123,4 +123,28 @@ internal static class MaintenanceFaultInjectionChecks
             Expect(!envelope.Verifies(other), "非信任根验签必须失败");
         });
     }
+
+    private static void Check(string name, Action action)
+    {
+        try
+        {
+            action();
+            Console.WriteLine($"PASS {name}");
+        }
+        catch (Exception exception)
+        {
+            throw new InvalidOperationException(name, exception);
+        }
+    }
+
+    private static void Expect(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+    }
+
+    private static void Expect<T>(T actual, T expected, string message)
+    {
+        if (!EqualityComparer<T>.Default.Equals(actual, expected))
+            throw new InvalidOperationException($"{message}: expected '{expected}', actual '{actual}'.");
+    }
 }

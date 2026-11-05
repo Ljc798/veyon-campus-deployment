@@ -23,6 +23,7 @@
     <InternalsVisibleTo Include="VeyonCampus.App" />
     <InternalsVisibleTo Include="VeyonCampus.Teacher" />
     <InternalsVisibleTo Include="VeyonCampus.StudentSetup" />
+    <InternalsVisibleTo Include="VeyonCampus.MaintenanceService" />
     <EmbeddedResource Include="../../packaging/third-party/veyon-4.11.2.0-win64-setup.exe"
                       LogicalName="VeyonCampus.Core.VeyonInstaller.exe"
                       Condition="'$(VeyonCampusIncludeInstaller)' != 'false'" />
