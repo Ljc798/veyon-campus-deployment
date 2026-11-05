@@ -85,7 +85,7 @@
 
 ## 6. 合并建议（**等待确认，不执行**）
 
-实验期间 `origin/develop` 又前进了 1 个提交：`87d37ce Record the v1.1.58 registry fallback release`，仅改动 `.workbuddy/memory/2026-11-05.md` 与 `docs/maintenance/implementation-progress.md`，**与本实验 9 个改动文件零重叠**，因此代码层面预期无冲突。
+实验期间 `origin/develop` 持续有并发提交（至少 `87d37ce Record the v1.1.58 registry fallback release`，随后还有更新），这些提交主要涉及 `.workbuddy/memory/`、`docs/maintenance/` 等文档，**与本实验 9 个产品代码/文档改动文件零重叠**，因此代码层面预期无冲突。
 
 建议顺序（**任何一步都需用户明确确认后才会执行**）：
 
@@ -95,4 +95,4 @@
 4. 由用户决定合并方式：建议 **squash 合并**或保留 3 个阶段提交（便于逐阶段回滚）；合并目标只应是 `develop`，不得直接进 `main`。
 5. 只有收到明确「可以合并」的指令后才执行合并，且不做 push、不触发发布流水线。
 
-> 当前分支状态：本报告提交后 `experiment/skills-evaluation` 相对 `origin/develop` **ahead 4、behind 1**，未设置上游到 develop 之外的分支，未配置自动推送。
+> 当前分支状态：实验分支相对 `origin/develop` 为 ahead（4 个实验提交及以上）、behind 少量并发提交；`develop` 在本实验期间仍在前进，具体数字与差异请在合并前用 `git fetch origin develop` + `git status -sb` 重新核对。未设置上游到 develop 之外的分支，未配置自动推送。
