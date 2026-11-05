@@ -1,6 +1,6 @@
 {
   "schema": "graphify-location-sync/1",
-  "source_ref": "bdb3af856fab95ffc3f416bcbaa250ef16ac6d91",
+  "source_ref": "149d319246ef0bd4189fd546b324abd32dd886fa",
   "scope": "Veyon 地点 / 电脑 / 设备目录同步链路",
   "method": "静态符号锚定 + 人工核对的调用/数据流边；非完整 AST 语义分析",
   "nodes": [
@@ -10,7 +10,7 @@
       "kind": "ui",
       "file": "src/VeyonCampus.App/Presentation/Views/TeacherRoomView.axaml",
       "symbol": "RequestRetrySeatMapSync",
-      "line": 136,
+      "line": 137,
       "verified": true,
       "external": false
     },
