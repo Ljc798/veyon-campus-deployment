@@ -418,3 +418,22 @@
 - 升级策略：1.1.44 及更早的学生机需手动装一次含进程清理的版本（建议 1.1.54 引导包，
   以便留出一次 1.1.54 → 1.1.55 的真机静默更新验证），完成后删除
   `C://ProgramData//VeyonCampus//StudentUpdateTransactions//` 残留事务。
+
+## 2026-11-05 真实教师机 veyon-cli 无法启动（R6031，1.1.58）
+
+- **现场**：真实教师机上「地点与学生名单」「网站策略」同时失效，三条读取路径全部返回退出码 255，stderr 为
+  `runtime error R6031 - Attempt to initialize the CRT more than once.` 同一台机器上 Veyon Configurator
+  与 Veyon 主控仍可用，说明不是 Veyon 配置损坏、也不是权限问题，而是 `veyon-cli.exe` 每次启动即 abort
+  （常见原因是安全/课堂管控软件向子进程注入 DLL，导致 MSVC 运行时重复初始化）。开发机与 VM 无该软件，故无法本地复现。
+- **修复**：`config export` 失败时，直接读 Veyon 自己的注册表目录快照
+  `HKLM\SOFTWARE\Veyon Solutions\Veyon\BuiltinDirectory\NetworkObjects`，
+  值为 `@@JsonValue(<base64 UTF-8 JSON>)`，payload 是 `{"a":[{Uid,Type,Name,HostAddress,ParentUid,...}]}`，
+  重新包装成 `{"BuiltinDirectory":{"NetworkObjects":[...]}}` 后交给既有 `ParseConfigurationDirectory`。
+  该回退只用于读取/展示，`LastTrustedDirectoryFingerprint` 置空，不能作为按 UUID 写回的依据。
+- **解码抽成纯函数** `TryDecodeRegistryDirectoryValue(raw, source, out bytes, out detail)`，便于不写注册表即可回归。
+- **诊断**：`ProcessDetail` 识别 R6031 后直接给出原因与处理方式，不再只显示裸退出码。
+- **UI**：读取失败时的空状态文案不再说「请先配置教室」（会误导已配好座位的学校）。
+- **仍然受限**：写回地点/电脑必须走 `veyon-cli`，因此「重试 Veyon 同步」在该机器上仍会失败并给出上述提示。
+  有意不直接改注册表 —— Veyon 自己维护这份目录，绕过它会产生同名重复地点（此前已踩过）。
+- **验证**：新增夹具 `--veyon-registry-snapshot`，在本机真实 Veyon 4.11 上读回「地点 1 个、电脑 1 台」，
+  与 `config export` 一致；注册表解码的 5 条断言（含 fail closed）全部 PASS。
