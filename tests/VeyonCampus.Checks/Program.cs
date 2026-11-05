@@ -6,6 +6,24 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--veyon-registry-snapshot"])
+{
+    // Run this on a machine where veyon-cli aborts with R6031 (exit code 255): it proves the
+    // registry fallback can still rebuild the roster without the CLI.
+    if (!VeyonNetworkObjectDirectory.TryReadConfigurationFromRegistry(out var registryBytes,
+            out var registryDetail))
+    {
+        Console.WriteLine("SKIP Veyon 注册表目录快照不可用：" + registryDetail);
+        return;
+    }
+    var registryObjects = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(
+        Encoding.UTF8.GetString(registryBytes));
+    Console.WriteLine("PASS Veyon 注册表目录快照：" + registryDetail +
+                      $"，地点 {registryObjects.Count(item => item.Type == "location")} 个、" +
+                      $"电脑 {registryObjects.Count(item => item.Type == "computer")} 台");
+    return;
+}
+
 if (args is ["--veyon-networkobjects-dump-fixtures"])
 {
     CheckNetworkObjectsDumpParsing();
@@ -1072,6 +1090,38 @@ Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID �
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("BuiltinDirectory", "LocalData")).Count == 3);
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222")));
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":\"invalid\"}}"));
+});
+Check("Veyon 注册表目录快照可在 veyon-cli 无法启动时恢复名单", () =>
+{
+    // Shape captured from a real Veyon 4.11 machine:
+    // HKLM\SOFTWARE\Veyon Solutions\Veyon\BuiltinDirectory\NetworkObjects =
+    //   @@JsonValue(base64({"a":[...]}))
+    const string directoryJson = """
+    {"a":[
+      {"Name":"测试校区","Type":2,"Uid":"{a285c66c-569b-5f3e-9880-5903b72943bf}"},
+      {"HostAddress":"PC-01","Name":"小子","ParentUid":"{a285c66c-569b-5f3e-9880-5903b72943bf}","Type":3,
+       "Uid":"{c459add7-20a3-5281-a5c1-356d05f24812}"}
+    ]}
+    """;
+    var raw = "@@JsonValue(" + Convert.ToBase64String(Encoding.UTF8.GetBytes(directoryJson)) + ")";
+    Expect(VeyonNetworkObjectDirectory.TryDecodeRegistryDirectoryValue(raw, "HKLM", out var bytes, out var detail));
+    var objects = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(Encoding.UTF8.GetString(bytes));
+    Expect(objects.Count == 2);
+    Expect(objects[0].Type == "location" && objects[0].Name == "测试校区" &&
+           objects[0].ObjectId == Guid.Parse("a285c66c-569b-5f3e-9880-5903b72943bf"));
+    Expect(objects[1] == new VeyonNetworkObject("computer", "小子", "PC-01", "", "测试校区",
+        Guid.Parse("c459add7-20a3-5281-a5c1-356d05f24812"),
+        Guid.Parse("a285c66c-569b-5f3e-9880-5903b72943bf")));
+    Expect(detail.Contains("HKLM", StringComparison.Ordinal));
+
+    // A plain JSON value (no @@JsonValue wrapper) must decode to the same directory.
+    Expect(VeyonNetworkObjectDirectory.TryDecodeRegistryDirectoryValue(directoryJson, "", out var plain, out _));
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(Encoding.UTF8.GetString(plain)).Count == 2);
+
+    // Unrecognized shapes must fail closed instead of producing an empty roster.
+    Expect(!VeyonNetworkObjectDirectory.TryDecodeRegistryDirectoryValue("not-a-directory", "", out _, out _));
+    Expect(!VeyonNetworkObjectDirectory.TryDecodeRegistryDirectoryValue("@@JsonValue(!!!)", "", out _, out _));
+    Expect(!VeyonNetworkObjectDirectory.TryDecodeRegistryDirectoryValue("{\"a\":\"x\"}", "", out _, out _));
 });
 Check("管理员启动复用权限，内部应用密钥不会作为校区名称", () =>
 {

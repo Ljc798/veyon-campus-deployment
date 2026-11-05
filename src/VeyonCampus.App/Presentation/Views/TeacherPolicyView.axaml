@@ -18,7 +18,7 @@
             </ComboBox>
             <TextBlock Text="{Binding ClassroomDirectoryError}" Classes="supporting-copy" TextWrapping="Wrap"
                        IsVisible="{Binding HasClassroomDirectoryError}" />
-            <TextBlock Text="请先在“地点与学生名单”中配置或选择教室。" Classes="supporting-copy"
+            <TextBlock Text="暂无学生电脑：请先在“地点与学生名单”中配置；若上方显示读取失败，请按提示修复。" Classes="supporting-copy"
                        IsVisible="{Binding !HasDeviceHealthTargets}" />
           </StackPanel>
           <Border Classes="section-card" IsVisible="{Binding IsWebsitePolicyPage}">
@@ -60,7 +60,7 @@
                              Classes="muted" TextWrapping="Wrap" />
                 </StackPanel>
               </Border>
-              <TextBlock Text="尚无可选择的学生电脑；请先完成地点与学生名单配置并读取 Veyon 目录。"
+              <TextBlock Text="暂无可选学生电脑：请先完成地点与学生名单配置；若上方显示读取失败，请按提示修复。"
                          Classes="supporting-copy" TextWrapping="Wrap"
                          IsVisible="{Binding !HasWebsitePolicyTargetChoices}" />
               <Border Height="1" Background="{DynamicResource Teacher.Color.Border}" />

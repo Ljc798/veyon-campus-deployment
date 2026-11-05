@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.Security;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Microsoft.Win32;
 
 namespace VeyonCampus.Core;
 
@@ -58,6 +60,12 @@ public static class VeyonNetworkObjectDirectory
     internal static DateTimeOffset LastSuccessfulReadUtc { get; private set; }
     public static VeyonDirectoryReadDiagnostic? LastReadDiagnostic { get; private set; }
     public static string? LastTrustedDirectoryFingerprint { get; private set; }
+    /// <summary>Why the last read fell back to the Veyon registry snapshot, or null when the CLI worked.</summary>
+    public static string? LastRegistrySnapshotDetail { get; private set; }
+    private const string RegistrySettingsSubKey = @"SOFTWARE\Veyon Solutions\Veyon\BuiltinDirectory";
+    private const string RegistryNetworkObjectsValue = "NetworkObjects";
+    // Veyon stores complex settings as "@@JsonValue(<base64 utf8 json>)" inside a single registry value.
+    private const string JsonValueMarker = "@@JsonValue(";
     // Veyon's 4.11.2 format importer is a placeholder-to-regex parser, not an RFC CSV decoder.
     // Unit Separator cannot occur in accepted fields (control characters are rejected), so
     // semicolons, quotes and Chinese text remain unambiguous without CSV quote escaping.
@@ -881,13 +889,15 @@ public static class VeyonNetworkObjectDirectory
             {
                 var export = ExportConfiguration(cliPath, workingDirectory);
                 var snapshot = ReadDirectorySnapshot(export);
+                var registryNote = LastRegistrySnapshotDetail is { Length: > 0 } note ? " " + note : "";
                 var diagnostic = VeyonDirectoryReadDiagnostic.For(
                        VeyonDirectoryReadDiagnostic.PartialRead,
                        "Veyon 电脑目录清单读取失败，已改用可信配置快照（" +
                        SnapshotFingerprintLabel(snapshot.ConfigFingerprint) +
                        "）；该快照只用于只读核对，不能作为按 UUID 写回的身份依据。" +
-                       dumpDiagnostic.Detail,
-                       cliPath, null, dumpDiagnostic.Detail, "networkobjects dump → config export",
+                       dumpDiagnostic.Detail + registryNote,
+                       cliPath, null, dumpDiagnostic.Detail + registryNote,
+                       "networkobjects dump → config export",
                        dumpDiagnostic.TimedOut, snapshot.ConfigFingerprint) with
                 {
                     LastSuccessfulReadUtc = LastSuccessfulReadUtc
@@ -1099,19 +1109,28 @@ public static class VeyonNetworkObjectDirectory
         var temporaryPath = Path.Combine(Path.GetTempPath(), $"veyon-campus-directory-{Guid.NewGuid():N}.txt");
         try
         {
-            var runner = new ProcessRunner();
-            runner.Run(cliPath, ["config", "export", temporaryPath],
-                workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
-            if (runner.ExitCode is not 0)
-                throw new InvalidOperationException($"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
-            if (!File.Exists(temporaryPath))
-                throw new InvalidDataException("Veyon 没有生成电脑目录导出文件；没有添加地点。");
-
-            var info = new FileInfo(temporaryPath);
-            if (info.Length is <= 0 or > 4 * 1024 * 1024)
-                throw new InvalidDataException("Veyon 配置超过读取上限；请核对目录。");
-            PathLinkSecurity.RejectLinks(temporaryPath);
-            return new VeyonConfigurationExport(cliPath, workingDirectory, File.ReadAllBytes(temporaryPath));
+            try
+            {
+                return ExportConfigurationViaCli(cliPath, workingDirectory, temporaryPath);
+            }
+            catch (Exception exception) when (exception is InvalidOperationException or TimeoutException or
+                                              System.ComponentModel.Win32Exception or IOException or
+                                              UnauthorizedAccessException or InvalidDataException)
+            {
+                // veyon-cli is unusable on some real teacher machines: a security or classroom
+                // product injects a DLL into every child process and the CLI aborts with
+                // "R6031 - Attempt to initialize the CRT more than once" (exit code 255). The
+                // Builtin Directory lives in Veyon's own registry store, so read that snapshot
+                // instead of losing the roster for the whole lesson.
+                if (!TryReadConfigurationFromRegistry(out var registryBytes, out var registryDetail))
+                {
+                    if (exception is TimeoutException) throw;
+                    throw new InvalidOperationException(
+                        $"{exception.Message} 注册表目录快照也不可用：{registryDetail}", exception);
+                }
+                LastRegistrySnapshotDetail = DescribeRegistryFallback(exception.Message, registryDetail);
+                return new VeyonConfigurationExport(cliPath, workingDirectory, registryBytes);
+            }
         }
         finally
         {
@@ -1120,6 +1139,186 @@ public static class VeyonNetworkObjectDirectory
             catch (UnauthorizedAccessException) { }
         }
     }
+
+    private static VeyonConfigurationExport ExportConfigurationViaCli(string cliPath, string workingDirectory,
+        string temporaryPath)
+    {
+        var runner = new ProcessRunner();
+        runner.Run(cliPath, ["config", "export", temporaryPath],
+            workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
+        if (runner.ExitCode is not 0)
+            throw new InvalidOperationException(
+                $"Veyon 导出电脑目录失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+        if (!File.Exists(temporaryPath))
+            throw new InvalidDataException("Veyon 没有生成电脑目录导出文件；没有添加地点。");
+
+        var info = new FileInfo(temporaryPath);
+        if (info.Length is <= 0 or > 4 * 1024 * 1024)
+            throw new InvalidDataException("Veyon 配置超过读取上限；请核对目录。");
+        PathLinkSecurity.RejectLinks(temporaryPath);
+        LastRegistrySnapshotDetail = null;
+        return new VeyonConfigurationExport(cliPath, workingDirectory, File.ReadAllBytes(temporaryPath));
+    }
+
+    /// <summary>
+    /// Reads the Builtin Directory straight from Veyon's registry store. Veyon keeps
+    /// <c>BuiltinDirectory\NetworkObjects</c> as <c>@@JsonValue(base64(json))</c>; the payload is the
+    /// same object array <c>config export</c> produces, so it is re-wrapped into the exported shape
+    /// and parsed by the regular reader. Only used when the CLI cannot run at all.
+    /// </summary>
+    internal static bool TryReadConfigurationFromRegistry(out byte[] bytes, out string detail)
+    {
+        bytes = [];
+        detail = "";
+        if (!OperatingSystem.IsWindows())
+        {
+            detail = "非 Windows 环境，无法读取 Veyon 配置注册表。";
+            return false;
+        }
+
+        string? raw = null;
+        var source = "";
+        try
+        {
+            // The location directory is machine-scoped; only fall back to the per-user hive when
+            // the machine hive carries no directory value at all.
+            foreach (var (hive, view, label) in new[]
+                     {
+                         (RegistryHive.LocalMachine, RegistryView.Registry64, @"HKLM (64 位)"),
+                         (RegistryHive.LocalMachine, RegistryView.Registry32, @"HKLM (32 位)"),
+                         (RegistryHive.CurrentUser, RegistryView.Default, @"HKCU")
+                     })
+            {
+                using var baseKey = RegistryKey.OpenBaseKey(hive, view);
+                using var key = baseKey.OpenSubKey(RegistrySettingsSubKey);
+                if (key?.GetValue(RegistryNetworkObjectsValue) is string value && value.Length > 0)
+                {
+                    raw = value;
+                    source = label;
+                    break;
+                }
+            }
+        }
+        catch (Exception exception) when (exception is SecurityException or UnauthorizedAccessException or
+                                          IOException)
+        {
+            detail = "读取 Veyon 配置注册表失败：" + exception.Message;
+            return false;
+        }
+
+        if (raw is null)
+        {
+            detail = "注册表中没有 Veyon 目录配置（可能使用外部目录后端）。";
+            return false;
+        }
+
+        return TryDecodeRegistryDirectoryValue(raw, source, out bytes, out detail);
+    }
+
+    /// <summary>
+    /// Decodes one raw <c>BuiltinDirectory\NetworkObjects</c> registry value into the JSON shape
+    /// <c>config export</c> produces. Split from the hive lookup so the decoding can be exercised
+    /// without writing to the registry.
+    /// </summary>
+    internal static bool TryDecodeRegistryDirectoryValue(string raw, string source,
+        out byte[] bytes, out string detail)
+    {
+        bytes = [];
+        detail = "";
+        ArgumentNullException.ThrowIfNull(raw);
+
+        string json;
+        if (raw.StartsWith(JsonValueMarker, StringComparison.Ordinal) &&
+            raw.EndsWith(')') && raw.Length > JsonValueMarker.Length)
+        {
+            var encoded = raw[JsonValueMarker.Length..^1];
+            try
+            {
+                json = new UTF8Encoding(false, true).GetString(
+                    Convert.FromBase64String(encoded.ReplaceLineEndings("")));
+            }
+            catch (Exception exception) when (exception is FormatException or DecoderFallbackException or
+                                              ArgumentException)
+            {
+                detail = "Veyon 目录注册表值的编码无法识别。";
+                return false;
+            }
+        }
+        else if (raw.TrimStart() is ['{' or '[', ..])
+        {
+            json = raw;
+        }
+        else
+        {
+            detail = "Veyon 目录注册表值的格式无法识别。";
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            var array = ExtractDirectoryArray(document.RootElement);
+            if (array is null)
+            {
+                detail = "Veyon 目录注册表值中没有对象数组。";
+                return false;
+            }
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartObject();
+                writer.WritePropertyName("BuiltinDirectory");
+                writer.WriteStartObject();
+                writer.WritePropertyName("NetworkObjects");
+                writer.WriteStartArray();
+                foreach (var entry in array.Value.EnumerateArray())
+                    entry.WriteTo(writer);
+                writer.WriteEndArray();
+                writer.WriteEndObject();
+                writer.WriteEndObject();
+            }
+            bytes = buffer.ToArray();
+            detail = string.IsNullOrWhiteSpace(source) ? "注册表目录快照" : $"{source} 注册表目录快照";
+            return true;
+        }
+        catch (Exception exception) when (exception is JsonException or InvalidOperationException)
+        {
+            detail = "Veyon 目录注册表值无法解析：" + exception.Message;
+            return false;
+        }
+    }
+
+    private static JsonElement? ExtractDirectoryArray(JsonElement root)
+    {
+        if (root.ValueKind == JsonValueKind.Array) return root;
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        // JsonStoreArray serializes as {"a":[...]}.
+        if (root.TryGetProperty("a", out var store) && store.ValueKind == JsonValueKind.Array) return store;
+        if (root.TryGetProperty("NetworkObjects", out var networkObjects))
+        {
+            if (networkObjects.ValueKind == JsonValueKind.Array) return networkObjects;
+            if (networkObjects.ValueKind == JsonValueKind.Object &&
+                networkObjects.TryGetProperty("JsonStoreArray", out var jsonStore) &&
+                jsonStore.ValueKind == JsonValueKind.Array)
+                return jsonStore;
+        }
+        if (root.TryGetProperty("BuiltinDirectory", out var builtin) &&
+            builtin.ValueKind == JsonValueKind.Object)
+            return ExtractDirectoryArray(builtin);
+        return null;
+    }
+
+    private static string DescribeRegistryFallback(string cliFailure, string registryDetail)
+    {
+        var reason = IsCrtReinitializationFailure(cliFailure)
+            ? "Veyon 命令行被系统组件干扰而无法启动（R6031：CRT 重复初始化），通常是安全/管控软件向子进程注入 DLL 所致。"
+            : "Veyon 命令行无法完成配置导出。";
+        return $"{reason}已改用只读注册表目录快照（{registryDetail}）；地点与电脑的写回仍需可用的 veyon-cli。";
+    }
+
+    private static bool IsCrtReinitializationFailure(string text) =>
+        text.Contains("R6031", StringComparison.Ordinal) ||
+        text.Contains("initialize the CRT more than once", StringComparison.OrdinalIgnoreCase);
 
     public static IReadOnlyList<VeyonNetworkObject> ParseConfigurationDirectory(string json)
     {
@@ -1218,6 +1417,9 @@ public static class VeyonNetworkObjectDirectory
         var detail = runner.Stderr.Trim();
         detail = new string(detail.Where(character => !char.IsControl(character) ||
             character is '\r' or '\n' or '\t').ToArray());
+        if (IsCrtReinitializationFailure(detail))
+            detail = "Veyon 命令行无法启动（R6031：CRT 重复初始化，通常是安全或管控软件向子进程注入 DLL 所致）。" +
+                     "请在这台电脑上修复安装 Veyon，或让安全软件不再干扰 veyon-cli 后重试。原始输出：" + detail;
         return detail.Length > 1000 ? detail[..1000] : detail;
     }
 
