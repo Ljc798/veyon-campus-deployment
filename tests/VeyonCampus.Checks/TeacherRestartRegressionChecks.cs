@@ -31,6 +31,14 @@ internal static class TeacherRestartRegressionChecks
                 classroomTaskProgressStore: new ClassroomTaskProgressStore(Path.Combine(root, "tasks.json")),
                 roomSelectionStore: new TeacherRoomSelectionStore(Path.Combine(root, "selection.json")),
                 websitePolicyDraftDirectory: Path.Combine(root, "drafts"));
+            var locationsProperty = typeof(TeacherViewModel).GetProperty(nameof(TeacherViewModel.WebsiteLocations))!;
+            locationsProperty.SetValue(model, new[]
+            {
+                new VeyonNetworkLocation(room.DisplayName, room.GetComputerNames()),
+                new VeyonNetworkLocation(other.DisplayName, other.GetComputerNames())
+            });
+            model.WebsiteLocationIndex = 0;
+            model.FillWebsiteTargetsFromSelectedLocation();
             Expect(model.WebsitePolicyTargetChoices.Select(item => item.Target).SequenceEqual(room.GetComputerNames()),
                 "Restoring the selected room must populate the shared policy roster without visiting another page.");
             Expect(model.WebsitePolicyTargetChoices.Select(item => item.StudentName)
