@@ -898,7 +898,11 @@ Check("Veyon 地点导入预览复用地点、跳过重复项并拒绝内部冲�
     var duplicateDisplay = computers[1] with { StudentName = "张三" };
     Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateDisplay], []).
         All(message => !message.Contains("显示名称", StringComparison.Ordinal)));
-    var duplicateHost = computers[1] with { Host = computers[0].Host };
+    var duplicateHost = computers[1] with
+    {
+        ComputerName = computers[0].ComputerName,
+        Host = computers[0].Host
+    };
     Expect(VeyonNetworkObjectDirectory.FindImportConflicts("新机房", [computers[0], duplicateHost], []).
         Any(message => message.Contains("主机名/IP", StringComparison.Ordinal)));
     var repeatedRoomPrefix = new VeyonNetworkComputer("PC-01", "PC-01", "");
