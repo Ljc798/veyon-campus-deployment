@@ -384,11 +384,20 @@ internal static class StudentApplicationUpdateChecks
         Reject(() => WebsitePolicyStatusCryptography.VerifyRequest(signed,
             campusKey.ExportSubjectPublicKeyInfoPem(), "OtherCampus", now));
 
+        var operationId = Guid.NewGuid();
         var row = new StudentApplicationUpdateTargetProgressItem("PC-01", "学生 01");
+        row.SetMaintenanceOperation(operationId);
         row.SetTransportProgress("已发送签名更新命令，正在连接学生 Agent", commandId);
         row.SetTransportProgress("学生端更新处理中；已等待 5 秒", commandId);
         Expect(row.CommandId == commandId && row.StatusText.Contains("正在读取签名阶段", StringComparison.Ordinal));
         row.SetResult(false, needsReview: true, detail: "更新请求超时；需要重新查询。");
+        Expect(!row.CanRequery);
+        row.SetMaintenanceFacts(current: null, target: null, updateTransactionState: "needsReview",
+            authenticatedChannelConnected: false, verifiedUtc: null, capabilityVerifiedUtc: null,
+            connectionCheckedUtc: null, finalStatusReadback: false, operationId: operationId,
+            agentCommandId: commandId, operationKind: MaintenanceOperationKind.SoftwareUpdate,
+            channel: MaintenanceReleaseChannel.Stable, hasSnapshot: true, canResume: true,
+            channelDiagnostics: null, statusProtocolVersion: 5);
         Expect(row.CanRequery);
         row.BeginRequery();
         Expect(!row.CanRequery && row.StatusText == "正在重新核对终态");
