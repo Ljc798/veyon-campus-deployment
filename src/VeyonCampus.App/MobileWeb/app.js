@@ -52,10 +52,13 @@ let statusReadGeneration = 0;
 const latestStatusByTarget = new Map();
 let activeClassroomTargets = [];
 let activeClassroomSessionId = null;
+let mobileClassroomSessionBusy = false;
 let classroomQuickControlSnapshot = null;
 let classroomQuickControlUnavailable = false;
 let classroomQuickControlBusy = false;
 let classroomQuickControlSnapshotRequestId = 0;
+let classroomTargetDirectoryRefreshVersion = 0;
+let classroomTargetDirectoryRefreshing = false;
 let classroomStatePollTimer = 0;
 let classroomStatePollVersion = 0;
 let classroomStatePollInFlight = false;
@@ -1493,7 +1496,7 @@ function setPolicyPageMode(mode) {
   $("bulk-policy-header").classList.toggle("hidden", mode !== "bulk");
   $("student-policy-controls").classList.toggle("hidden", mode === "directory");
   if (mode === "single") $("target-picker").open = false;
-  if (mode === "bulk") $("target-picker").open = true;
+  if (mode === "bulk") $("target-picker").open = classroomTargetDefaultState !== "matched";
   updateSelectionCount();
   if (mode === "directory" && $("policy-tab-button").getAttribute("aria-selected") === "true")
     startDirectoryStatusPolling();
@@ -1540,27 +1543,35 @@ function updateSelectionCount() {
     ? "当前范围 · " + count + " 台学生电脑"
     : count ? "已选择 " + count + " 台电脑" : "未选择电脑";
   const scopeStatus = $("target-scope-status");
-  if (policyPageMode === "single" && targets.length === 1) {
+  if (activeClassroomSessionId && directoryLoadError) {
+    scopeStatus.textContent = "无法核对最新 Veyon 电脑名单；课堂策略写入已暂停。刷新名单成功后再推送。";
+  } else if (classroomTargetDefaultState === "checking") {
+    scopeStatus.textContent = "正在重新读取 Veyon 电脑名单；核对完成前课堂范围策略推送暂不可用。";
+  } else if (policyPageMode === "single" && targets.length === 1) {
     scopeStatus.textContent = "本页限制仅作用于 " + targetDisplayName(targets[0]) + "。";
   } else if (classroomTargetDefaultState === "mismatch") {
     scopeStatus.textContent = count
       ? "学生电脑未能与名单完整匹配；请核对选择范围。"
       : "学生电脑未能与名单完整匹配，未自动选择。请展开确认范围。";
   } else if (classroomTargetDefaultState === "unavailable") {
-    scopeStatus.textContent = count
-      ? "课堂模式尚未就绪，请在教师端核对教室范围。"
-      : "请先选择学生电脑范围，再查看或切换限制。";
+    scopeStatus.textContent = directoryLoadError && activeClassroomTargets.length
+      ? "无法刷新 Veyon 目录；未自动选择本堂电脑。刷新电脑名单后再推送。"
+      : count
+        ? "课堂模式尚未就绪，请在教师端核对教室范围。"
+        : "请先选择学生电脑范围，再查看或切换限制。";
   } else if (count && !websiteStatusReady) {
     scopeStatus.textContent = policyStatusRequirementMessage(targets);
   } else {
     scopeStatus.textContent = "";
   }
   scopeStatus.classList.toggle("hidden", !scopeStatus.textContent);
-  $("refresh-status").disabled = !count;
+  const directoryRefreshPending = Boolean(activeClassroomSessionId) &&
+    (classroomTargetDirectoryRefreshing || Boolean(directoryLoadError));
+  $("refresh-status").disabled = directoryRefreshPending || !count;
   const operationDisabled = policyOperationInFlight;
-  $("apply-custom-website-policy").disabled = !count || !websiteStatusReady ||
+  $("apply-custom-website-policy").disabled = directoryRefreshPending || !count || !websiteStatusReady ||
     !customWebsitePolicyInput().valid || operationDisabled || !websiteListsAvailable;
-  $("disable-custom-website-policy").disabled = !count || !websiteStatusReady || operationDisabled;
+  $("disable-custom-website-policy").disabled = directoryRefreshPending || !count || !websiteStatusReady || operationDisabled;
   updateCustomWebsiteModeGuidance(targets, websiteStatusReady);
   updateSavedPolicyProfileControls(targets);
 }
@@ -1719,15 +1730,18 @@ function updateSavedPolicyProfileControls(targets = selectedTargets()) {
   const profile = selectedSavedPolicyProfile();
   const statusReady = savedPolicyProfileStatusReady(targets, profile);
   const actionBlocked = policyOperationInFlight || pendingSavedPolicyReview !== null;
+  const directoryRefreshPending = Boolean(activeClassroomSessionId) &&
+    (classroomTargetDirectoryRefreshing || Boolean(directoryLoadError));
   select.disabled = !savedPolicyProfilesAvailable || savedPolicyProfiles.length === 0 || actionBlocked;
   refresh.disabled = savedPolicyProfilesLoading || actionBlocked;
-  apply.disabled = !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
-  disable.disabled = !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
+  apply.disabled = directoryRefreshPending || !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
+  disable.disabled = directoryRefreshPending || !savedPolicyProfilesAvailable || !profile || !targets.length || !statusReady || actionBlocked;
   summary.textContent = savedPolicyProfileDescription(profile);
-  readiness.textContent = statusReady && !actionBlocked
-    ? savedPolicyProfileReadinessMessage(targets, profile)
-    : actionBlocked ? pendingSavedPolicyReview ? "应用影响预览待确认；其他策略操作暂时停用。" : "正在发送策略预设…"
-      : savedPolicyProfileReadinessMessage(targets, profile);
+  readiness.textContent = directoryRefreshPending
+    ? "正在核对课堂电脑名单；名单读回前不能发送或解除策略。"
+    : statusReady && !actionBlocked ? savedPolicyProfileReadinessMessage(targets, profile)
+      : actionBlocked ? pendingSavedPolicyReview ? "应用影响预览待确认；其他策略操作暂时停用。" : "正在发送策略预设…"
+        : savedPolicyProfileReadinessMessage(targets, profile);
   renderSavedPolicyProfileCountdown(targets, profile);
 }
 
@@ -1974,7 +1988,7 @@ function targetConfirmationSummary(targets) {
 }
 
 function sameTargets(left, right) {
-  const normalize = values => [...values].sort((a, b) => a.localeCompare(b, "en", { sensitivity: "base" }));
+  const normalize = values => values.map(normalizeTarget).sort();
   return JSON.stringify(normalize(left)) === JSON.stringify(normalize(right));
 }
 
@@ -2050,7 +2064,21 @@ function renderRooms(preserveSelection = false) {
 function applyActiveClassroomTargetDefaults() {
   const targetPicker = $("target-picker");
   const requested = activeClassroomTargets.map(normalizeTarget);
+  const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
+  for (const input of inputs) input.checked = false;
+  if (classroomTargetDirectoryRefreshing) {
+    classroomTargetDefaultState = "checking";
+    targetPicker.open = true;
+    updateSelectionCount();
+    return;
+  }
   if (!requested.length) {
+    classroomTargetDefaultState = "unavailable";
+    targetPicker.open = true;
+    updateSelectionCount();
+    return;
+  }
+  if (directoryLoadError) {
     classroomTargetDefaultState = "unavailable";
     targetPicker.open = true;
     updateSelectionCount();
@@ -2058,7 +2086,6 @@ function applyActiveClassroomTargetDefaults() {
   }
 
   const uniqueRequested = new Set(requested);
-  const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));
   const matched = inputs.filter(input => uniqueRequested.has(normalizeTarget(input.dataset.target)));
   const matchedUnique = new Set(matched.map(input => normalizeTarget(input.dataset.target)));
   if (uniqueRequested.size !== requested.length || matched.length !== uniqueRequested.size || matched.some(input => input.disabled) ||
@@ -2073,6 +2100,47 @@ function applyActiveClassroomTargetDefaults() {
   classroomTargetDefaultState = "matched";
   targetPicker.open = false;
   updateSelectionCount();
+}
+
+async function refreshClassroomTargetDirectory(sessionId, targets) {
+  const refreshVersion = ++classroomTargetDirectoryRefreshVersion;
+  const expectedTargets = [...targets];
+  classroomTargetDirectoryRefreshing = true;
+  classroomTargetDefaultState = "checking";
+  for (const input of roomList.querySelectorAll("input[data-target]")) input.checked = false;
+  $("target-picker").open = true;
+  updateSelectionCount();
+  renderMobileClassroomSessionControls();
+  try {
+    const currentRooms = await api("/api/rooms");
+    if (!Array.isArray(currentRooms)) throw new Error("电脑名单格式无效。");
+    if (refreshVersion !== classroomTargetDirectoryRefreshVersion ||
+        activeClassroomSessionId !== sessionId || !sameTargets(activeClassroomTargets, expectedTargets)) return;
+    rooms = currentRooms;
+    directoryLoadError = "";
+    latestStatusByTarget.clear();
+    renderRooms(false);
+    classroomTargetDirectoryRefreshing = false;
+    applyActiveClassroomTargetDefaults();
+    if (policyPageMode !== "directory" &&
+        $("policy-tab-button").getAttribute("aria-selected") === "true")
+      void refreshStatusIfSelected();
+  } catch {
+    if (refreshVersion !== classroomTargetDirectoryRefreshVersion ||
+        activeClassroomSessionId !== sessionId || !sameTargets(activeClassroomTargets, expectedTargets)) return;
+    classroomTargetDirectoryRefreshing = false;
+    classroomTargetDefaultState = "unavailable";
+    directoryLoadError = "课堂范围目录刷新失败，未自动选择电脑。";
+    for (const input of roomList.querySelectorAll("input[data-target]")) input.checked = false;
+    $("target-picker").open = true;
+    renderDirectoryHealth();
+    updateSelectionCount();
+  } finally {
+    if (refreshVersion === classroomTargetDirectoryRefreshVersion) {
+      classroomTargetDirectoryRefreshing = false;
+      renderMobileClassroomSessionControls();
+    }
+  }
 }
 
 async function refreshCustomWebsiteLists(showToast = true) {
@@ -2531,13 +2599,31 @@ function applyClassroomSession(session) {
     ? session.activeClassroomSessionId
     : null;
   const sessionChanged = activeClassroomSessionId !== nextSessionId;
-  if (sessionChanged) {
+  const classroomScopeChanged = sessionChanged || !sameTargets(activeClassroomTargets, nextTargets);
+  if (classroomScopeChanged) {
+    $("mobile-classroom-session-result").classList.add("hidden");
+  }
+  if (classroomScopeChanged) {
     classroomQuickControlSnapshot = null;
     $("classroom-quick-control-result").replaceChildren();
   }
   activeClassroomTargets = nextTargets;
   activeClassroomSessionId = nextSessionId;
   $("mobile-messages-open").disabled = !activeClassroomSessionId;
+  if (classroomScopeChanged) {
+    if (policyPageMode !== "directory") {
+      selectedComputerTarget = null;
+      setPolicyPageMode("directory");
+    }
+    if (activeClassroomSessionId && activeClassroomTargets.length)
+      void refreshClassroomTargetDirectory(activeClassroomSessionId, activeClassroomTargets);
+    else {
+      classroomTargetDirectoryRefreshVersion++;
+      classroomTargetDirectoryRefreshing = false;
+      applyActiveClassroomTargetDefaults();
+      renderMobileClassroomSessionControls();
+    }
+  }
   activeClassroomSeatLocations = new Map();
   const rawLocations = session?.activeClassroomSeatLocations;
   if (Array.isArray(rawLocations) && rawLocations.length <= 150) {
@@ -2672,7 +2758,91 @@ function renderClassroomMode(setDefaults = false) {
   $("classroom-mode-description").textContent = active
     ? "查看学生状态、发送消息，随时管理课堂。"
     : "教师端配置好地点和学生名单后，课堂范围会持续生效。";
+  renderMobileClassroomSessionControls(active);
   renderClassroomQuickControl();
+}
+
+function renderMobileClassroomSessionControls(active = Boolean(activeClassroomSessionId && activeClassroomTargets.length)) {
+  const toggle = $("mobile-classroom-session-toggle");
+  const chat = $("mobile-open-classroom-chat");
+  const policy = $("mobile-open-classroom-policy");
+  const status = $("mobile-classroom-session-status");
+  toggle.disabled = !accessToken || mobileClassroomSessionBusy;
+  toggle.textContent = mobileClassroomSessionBusy
+    ? "正在切换课堂…"
+    : active ? "结束课堂" : "一键开启课堂";
+  chat.disabled = !accessToken || !active || mobileClassroomSessionBusy;
+  policy.disabled = !accessToken || mobileClassroomSessionBusy || classroomTargetDirectoryRefreshing;
+  policy.textContent = active ? "本堂课网站推送" : "网站策略推送";
+  status.textContent = active
+    ? `课堂已开启 · ${activeClassroomTargets.length} 台学生电脑。开启课堂不会自动修改网站、应用或系统限制。`
+    : "开课使用教师电脑当前地点和学生电脑范围；开课本身不会启用网站、应用或系统限制。";
+}
+
+async function toggleMobileClassroomSession() {
+  if (!accessToken || mobileClassroomSessionBusy) return;
+  const active = Boolean(activeClassroomSessionId && activeClassroomTargets.length);
+  const desiredActive = !active;
+  if (!desiredActive && !window.confirm("结束当前课堂？未解除的快捷管控、倒计时或未完成课堂任务会阻止结束。"))
+    return;
+
+  mobileClassroomSessionBusy = true;
+  $("mobile-classroom-session-result").classList.add("hidden");
+  renderMobileClassroomSessionControls(active);
+  try {
+    const result = await api("/api/classroom/session", {
+      method: "POST", body: { active: desiredActive }
+    });
+    if (result?.active !== desiredActive || !Array.isArray(result.targets) ||
+        result.targets.some(target => typeof target !== "string" || !target.trim()) ||
+        new Set(result.targets.map(normalizeTarget)).size !== result.targets.length ||
+        (desiredActive && (!result.targets.length || typeof result.sessionId !== "string")) ||
+        (!desiredActive && (result.targets.length || result.sessionId != null)))
+      throw new Error("教师电脑返回的课堂状态无法核对；请刷新后确认。");
+    const sessionReadback = await api("/api/session");
+    const readbackTargets = sessionReadback?.activeClassroomTargets;
+    const readbackTargetsValid = Array.isArray(readbackTargets) &&
+      readbackTargets.every(target => typeof target === "string" && target.trim()) &&
+      new Set(readbackTargets.map(normalizeTarget)).size === readbackTargets.length;
+    const readbackSessionId = typeof sessionReadback?.activeClassroomSessionId === "string"
+      ? sessionReadback.activeClassroomSessionId : null;
+    const exactReadback = desiredActive
+      ? Boolean(readbackTargetsValid && readbackSessionId &&
+        result.sessionId.toLowerCase() === readbackSessionId.toLowerCase() &&
+        readbackTargets.length === result.targets.length && sameTargets(result.targets, readbackTargets))
+      : Boolean(readbackTargetsValid && !readbackSessionId && readbackTargets.length === 0);
+    applyClassroomSession(sessionReadback);
+    if (!exactReadback)
+      throw new Error("课堂会话 ID 或电脑范围与操作回执不一致；已显示教师端当前读回状态，请核对后再操作。");
+    if (desiredActive) applyActiveClassroomTargetDefaults();
+    else await loadClassroomRestores().catch(() => {});
+    const status = $("mobile-classroom-session-result");
+    status.textContent = desiredActive
+      ? `课堂已开启，范围为 ${activeClassroomTargets.length} 台学生电脑。可在学生聊天中查看当前可联系的学生；网站限制需单独推送。`
+      : "课堂已结束。尚未完成的恢复项仍可在课堂页面查看。";
+    status.classList.remove("hidden");
+  } catch (error) {
+    await refreshMobileClassroomState().catch(() => {});
+    const status = $("mobile-classroom-session-result");
+    status.textContent = error?.message || "课堂状态没有确认，请刷新后重试。";
+    status.classList.remove("hidden");
+  } finally {
+    mobileClassroomSessionBusy = false;
+    renderClassroomMode();
+  }
+}
+
+function openClassroomWebsitePolicy() {
+  if (classroomTargetDirectoryRefreshing) return;
+  selectedComputerTarget = null;
+  computerDirectoryScrollY = window.scrollY;
+  if (activeClassroomSessionId && activeClassroomTargets.length)
+    void refreshClassroomTargetDirectory(activeClassroomSessionId, activeClassroomTargets);
+  else applyActiveClassroomTargetDefaults();
+  setActiveControlTab("policy");
+  setPolicyPageMode("bulk");
+  void refreshStatusIfSelected();
+  $("advanced-controls").scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function renderClassroomQuickControl() {
@@ -3008,11 +3178,16 @@ function stopClassroomEventPolling() {
   classroomEventSessionId = null;
   classroomEventCursor = 0;
   classroomEventItems = [];
+  classroomTargetDirectoryRefreshVersion++;
+  classroomTargetDirectoryRefreshing = false;
   activeClassroomSessionId = null;
   activeClassroomTargets = [];
   activeClassroomSeatLocations = new Map();
   activeClassroomScreenTargets = [];
   activeClassroomChatTargets = [];
+  classroomQuickControlSnapshot = null;
+  $("classroom-quick-control-result").replaceChildren();
+  $("mobile-classroom-session-result").classList.add("hidden");
   resetClassroomChatState("");
   $("mobile-messages-open").disabled = true;
   renderClassroomEvents();
@@ -3035,18 +3210,9 @@ async function pollClassroomEvents(version) {
       if (!nextSessionId) {
         classroomEventCursor = 0;
         $("classroom-events-panel").classList.add("hidden");
-        activeClassroomSessionId = null;
-        activeClassroomTargets = [];
-        activeClassroomSeatLocations = new Map();
-        activeClassroomScreenTargets = [];
-        activeClassroomChatTargets = [];
+        applyClassroomSession({ activeClassroomTargets: [], activeClassroomSessionId: null });
         resetClassroomChatState("课堂已结束，聊天记录已清除。");
         if (classroomScreenPreviewLease) void stopClassroomScreenPreview(false);
-        activeClassroomTargets = [];
-        activeClassroomSeatLocations = new Map();
-        activeClassroomScreenTargets = [];
-        renderMonitorTargets();
-        renderClassroomMode();
         await loadClassroomRestores();
       } else {
         $("classroom-events-panel").classList.remove("hidden");
@@ -3971,7 +4137,12 @@ $("refresh-rooms").addEventListener("click", async () => {
     latestStatusByTarget.clear();
     await refreshStatusIfSelected();
     toast("学生电脑名单已刷新。");
-  } catch { directoryLoadError = "最近一次刷新失败，请重试或查看教师电脑的目录诊断。"; toast("暂时无法刷新学生电脑名单，请稍后重试。"); }
+  } catch {
+    directoryLoadError = "最近一次刷新失败，请重试或查看教师电脑的目录诊断。";
+    renderDirectoryHealth();
+    updateSelectionCount();
+    toast("暂时无法刷新学生电脑名单，请稍后重试。");
+  }
 });
 $("refresh-computer-directory").addEventListener("click", async () => {
   const button = $("refresh-computer-directory");
@@ -4009,6 +4180,7 @@ $("refresh-computer-directory").addEventListener("click", async () => {
   } catch {
     directoryLoadError = "最近一次刷新失败，下面显示的是上次读到的名单。";
     renderComputerDirectory();
+    updateSelectionCount();
     toast("暂时无法刷新电脑名单，请稍后重试。");
   }
   finally { button.disabled = false; button.textContent = originalLabel; }
@@ -4034,6 +4206,7 @@ $("back-to-computer-directory-from-bulk").addEventListener("click", returnToComp
 $("target-picker").addEventListener("toggle", () => {
   if (policyPageMode === "single" && $("target-picker").open) {
     selectedComputerTarget = null;
+    classroomTargetDefaultState = "manual";
     setPolicyPageMode("bulk");
   }
 });
@@ -4074,6 +4247,9 @@ $("reconnect-button").addEventListener("click", () => void connectDashboard());
 $("classroom-tab-button").addEventListener("click", () => setActiveControlTab("classroom"));
 $("policy-tab-button").addEventListener("click", () => setActiveControlTab("policy"));
 $("monitor-tab-button").addEventListener("click", () => setActiveControlTab("monitor"));
+$("mobile-classroom-session-toggle").addEventListener("click", () => void toggleMobileClassroomSession());
+$("mobile-open-classroom-chat").addEventListener("click", openMobileMessages);
+$("mobile-open-classroom-policy").addEventListener("click", openClassroomWebsitePolicy);
 for (const id of ["classroom-tab-button", "policy-tab-button", "monitor-tab-button", "settings-tab-button"])
   $(id).addEventListener("keydown", handleControlTabKeydown);
 function openMobileMessages() {

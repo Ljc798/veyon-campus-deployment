@@ -8,8 +8,8 @@
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Veyon Campus 教师控制</title>
   <link rel="manifest" href="/manifest.webmanifest">
-  <link rel="stylesheet" href="/styles.css?v=57">
-  <script src="/app.js?v=57" defer></script>
+  <link rel="stylesheet" href="/styles.css?v=58">
+  <script src="/app.js?v=58" defer></script>
 </head>
 <body>
   <header class="topbar">
@@ -78,6 +78,15 @@
             <p id="classroom-mode-description" class="muted">课堂模式会跟随教师端确认的教室范围持续开启。</p>
           </div>
         </div>
+        <div class="mobile-classroom-actions">
+          <button id="mobile-classroom-session-toggle" class="primary-button" type="button" disabled>一键开启课堂</button>
+          <button id="mobile-open-classroom-chat" class="secondary-button" type="button" disabled>学生聊天</button>
+          <button id="mobile-open-classroom-policy" class="text-button" type="button">网站策略推送</button>
+        </div>
+        <p id="mobile-classroom-session-status" class="fine-print" role="status" aria-live="polite">
+          开课使用教师电脑当前地点和学生电脑范围；开课本身不会启用网站、应用或系统限制。
+        </p>
+        <p id="mobile-classroom-session-result" class="fine-print hidden" role="status" aria-live="polite"></p>
 
         <p id="dashboard-load-warning" class="fine-print hidden" role="status" aria-live="polite"></p>
       </section>

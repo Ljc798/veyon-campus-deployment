@@ -196,12 +196,13 @@
                             Classes.newSeat="{Binding IsNewlyAdded}"
                             ToolTip.Tip="{Binding TooltipText}"
                             Click="RequestSeatCellClicked"
+                            PointerPressed="SeatCellPointerPressed"
                             Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
                       <Button.ContextMenu>
                         <ContextMenu x:CompileBindings="False" Opening="SeatCellContextMenuOpening">
-                          <MenuItem Header="删除此座位" IsEnabled="{Binding CanDelete}"
+                          <MenuItem Header="删除此座位" IsVisible="{Binding CanDelete}"
                                     Click="RequestDeleteSeat" />
-                          <MenuItem Header="解除本机电脑关联" IsEnabled="{Binding CanClearVeyonTarget}"
+                          <MenuItem Header="解除本机电脑关联" IsVisible="{Binding CanClearVeyonTarget}"
                                     Click="RequestClearSeatVeyonTarget" />
                           <MenuItem Header="{Binding DeleteSeatComputerMenuLabel}"
                                     IsEnabled="{Binding CanDeleteSeatComputer}"

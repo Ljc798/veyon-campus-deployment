@@ -28,6 +28,10 @@ public partial class TeacherRoomView : UserControl
     public event EventHandler<SeatGridSeatEventArgs>? ClearSeatVeyonTargetRequested;
     public event EventHandler<RoutedEventArgs>? OpenInitialSeatGridConflictLocationRequested;
 
+    // 右键按下时记住座位。ContextMenu 在独立弹出树中打开，某些路径下 Opening 触发时
+    // PlacementTarget 尚未赋值，只依赖它会导致整块菜单被取消（表现为右键没有反应）。
+    private TeacherSeatCell? _contextMenuSeat;
+
     private void RequestPrepareRoomSeatGrid(object? sender, RoutedEventArgs e) =>
         PrepareRoomSeatGridRequested?.Invoke(sender, e);
 
@@ -116,10 +120,18 @@ public partial class TeacherRoomView : UserControl
             DeleteSeatComputerRequested?.Invoke(this, new SeatGridSeatEventArgs(cell));
     }
 
+    private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
+    {
+        if (sender is Control { DataContext: TeacherSeatCell cell } control &&
+            e.GetCurrentPoint(control).Properties.IsRightButtonPressed)
+            _contextMenuSeat = cell;
+    }
+
     private void SeatCellContextMenuOpening(object? sender, CancelEventArgs e)
     {
-        if (sender is not ContextMenu menu ||
-            menu.PlacementTarget?.DataContext is not TeacherSeatCell { IsSeat: true } cell)
+        var cell = (sender as ContextMenu)?.PlacementTarget?.DataContext as TeacherSeatCell
+                   ?? _contextMenuSeat;
+        if (sender is not ContextMenu menu || cell is not { IsSeat: true })
         {
             e.Cancel = true;
             return;

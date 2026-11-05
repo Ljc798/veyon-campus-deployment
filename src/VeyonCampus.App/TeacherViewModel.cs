@@ -5602,6 +5602,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 Changed(nameof(HasPendingMaintenanceIdentityRotations));
                 MaintenanceConfigurationItems.Clear();
                 Changed(nameof(HasMaintenanceConfigurationItems));
+                MaintenanceIssueItems.Clear();
+                Changed(nameof(HasMaintenanceIssueItems));
                 MaintenanceOverviewSummary = "尚未设置当前校区；没有读取维护记录。";
                 Changed(nameof(MaintenanceOverviewSummary));
                 MaintenanceConfigurationOverviewSummary = "尚未设置当前校区；没有读取配置对账记录。";
@@ -5636,6 +5638,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(group => group.Key, group => group.First().StudentName,
                     StringComparer.OrdinalIgnoreCase);
+            var agentIdentityTrust = new StudentAgentIdentityTrustStore();
             MaintenanceConfigurationItems.Clear();
             foreach (var run in latestRuns)
             {
@@ -5669,9 +5672,26 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 var displayName = currentTargets.GetValueOrDefault(NormalizeTargetKey(target), target);
                 var detail = run.Transitions.LastOrDefault()?.Reason ?? "该设备的最近维护事务尚未完成。";
                 var versions = run.VerifiedCurrentVersions ?? run.CurrentVersions;
+                var identityIsCurrentlyPinned = false;
+                try
+                {
+                    var currentPinnedKey = agentIdentityTrust.FindTrustedPublicKey(campusId, target);
+                    identityIsCurrentlyPinned = currentPinnedKey is not null &&
+                        string.Equals(StudentAgentResponseCryptography.GetFingerprint(currentPinnedKey),
+                            run.Device.PinnedIdentityFingerprint, StringComparison.OrdinalIgnoreCase);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or System.Security.SecurityException or
+                                                  CryptographicException or ArgumentException or
+                                                  System.Text.Json.JsonException)
+                {
+                    // An unreadable trust store must appear as unverified; it must not hide other journal rows.
+                }
                 MaintenanceIssueItems.Add(new TeacherMaintenanceIssueItem(target, displayName, run.State,
                     detail, run.UpdatedUtc, versions, run.Capabilities is not null, run.IsTerminal,
-                    currentTargets.ContainsKey(NormalizeTargetKey(target))));
+                    currentTargets.ContainsKey(NormalizeTargetKey(target)), identityIsCurrentlyPinned,
+                    run.OperationId, run.AgentCommandId, run.VerifiedUpdateTransactionState,
+                    run.VerifiedStatusUtc));
             }
             Changed(nameof(HasMaintenanceIssueItems));
         }
@@ -5683,6 +5703,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(HasPendingMaintenanceIdentityRotations));
             MaintenanceConfigurationItems.Clear();
             Changed(nameof(HasMaintenanceConfigurationItems));
+            MaintenanceIssueItems.Clear();
+            Changed(nameof(HasMaintenanceIssueItems));
             MaintenanceOverviewSummary = "无法读取本机 Maintenance 概览；原维护记录未修改。";
             Changed(nameof(MaintenanceOverviewSummary));
             MaintenanceConfigurationOverviewSummary = "无法读取本机配置对账记录；原维护记录未修改。";
@@ -9976,7 +9998,9 @@ public sealed class StudentConfigurationSyncTargetProgressItem(string target, st
 
 public sealed class TeacherMaintenanceIssueItem(string target, string displayName, MaintenanceRunState state,
     string detail, DateTimeOffset updatedUtc, MaintenanceComponentVersions? versions,
-    bool hasVerifiedCapabilities, bool isTerminal, bool targetIsCurrent) : INotifyPropertyChanged
+    bool hasVerifiedCapabilities, bool isTerminal, bool targetIsCurrent, bool identityIsCurrentlyPinned,
+    Guid operationId, Guid? agentCommandId, string? updateTransactionState,
+    DateTimeOffset? verifiedStatusUtc) : INotifyPropertyChanged
 {
     private bool _isBusy;
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -9984,6 +10008,23 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
     public string DisplayName { get; } = displayName;
     public MaintenanceRunState State { get; } = state;
     public string Detail { get; } = detail;
+    public string IdentityTrustText => identityIsCurrentlyPinned
+        ? "Agent 身份：与当前固定指纹一致"
+        : "Agent 身份：未能与当前固定指纹核对";
+    public string OperationText => "维护操作 " + operationId.ToString("N")[..8] +
+        (agentCommandId is { } commandId ? " · 命令 " + commandId.ToString("N")[..8] : "");
+    public string TransactionStageText => updateTransactionState switch
+    {
+        "inProgress" => "Agent 更新事务：正在执行",
+        "needsReview" => "Agent 更新事务：需要核对",
+        "committed" => "Agent 更新事务：已提交",
+        "rolledBack" => "Agent 更新事务：已回滚",
+        "superseded" => "Agent 更新事务：已被后续事务替代",
+        _ => "Agent 更新事务：没有签名读回"
+    };
+    public string SignedStatusReadbackText => verifiedStatusUtc is { } checkedUtc
+        ? "签名状态读回 " + checkedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.CurrentCulture)
+        : "没有当前签名版本读回";
     public bool IsTargetUnavailable => !targetIsCurrent;
     public DateTimeOffset UpdatedUtc { get; } = updatedUtc;
     public string UpdatedText => "最近记录 " + UpdatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss",
@@ -9995,17 +10036,26 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
         MaintenanceRunState.ManualRequired => "需现场维护",
         MaintenanceRunState.RolledBack => "已回滚",
         MaintenanceRunState.Failed => "失败",
-        MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
-            MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing => "事务待核对",
+        MaintenanceRunState.Discovered => "已发现设备",
+        MaintenanceRunState.IdentityVerified => "身份已核验",
+        MaintenanceRunState.CapabilitiesVerified => "能力已核验",
+        MaintenanceRunState.PlanReady => "维护计划就绪",
+        MaintenanceRunState.UpdateOffered => "已发送更新，待核对",
+        MaintenanceRunState.Updating => "更新中",
+        MaintenanceRunState.WaitingForCommit => "等待设备提交",
+        MaintenanceRunState.AgentHealthVerified => "Agent 已核验",
+        MaintenanceRunState.ConfigurationSyncing => "配置同步中",
         MaintenanceRunState.MaintenanceServiceHealthVerified => "Maintenance 已核验，待继续软件阶段",
-        _ => State.ToString()
+        MaintenanceRunState.NoChanges => "没有变化",
+        MaintenanceRunState.Completed => "已完成",
+        _ => "状态未知"
     };
     public string RecoveryAdviceText => State switch
     {
         MaintenanceRunState.PendingVerification =>
             "建议：使用原 operation/commandId 继续核对签名事务；不要为同一设备另发更新。",
         MaintenanceRunState.RecoveryRequired =>
-            "建议：暂停新命令，先核对原事务与恢复材料；读回仍不一致时转现场恢复。",
+            "建议：暂停该设备的新命令，先核对原事务和恢复材料；本机自动读回仍不一致时转现场恢复。",
         MaintenanceRunState.ManualRequired =>
             "建议：暂停自动处理，先核对设备身份、签名发行与通道能力，再决定人工修复方式。",
         MaintenanceRunState.RolledBack =>
@@ -10035,7 +10085,13 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
         (State is MaintenanceRunState.Failed or MaintenanceRunState.RolledBack);
     private bool CanRecheck => !isTerminal;
     public bool CanAct => !_isBusy && targetIsCurrent && (CanRetry || CanRecheck);
-    public string ActionText => CanRetry ? "重试此设备" : "继续核对事务";
+    public string ActionText => CanRetry ? "重试此设备" : State switch
+    {
+        MaintenanceRunState.RecoveryRequired => "核对恢复状态",
+        MaintenanceRunState.PendingVerification => "继续核对原事务",
+        MaintenanceRunState.ManualRequired => "需现场处理",
+        _ => "继续核对事务"
+    };
     public bool IsBusy => _isBusy;
 
     public void SetBusy(bool busy)

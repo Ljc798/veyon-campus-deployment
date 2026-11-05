@@ -762,6 +762,11 @@ button:disabled { opacity: .48; }
 .classroom-overview-mark svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .classroom-overview strong { font-size: 15px; }
 .classroom-overview .muted { font-size: 12px; }
+.mobile-classroom-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.mobile-classroom-actions #mobile-classroom-session-toggle { grid-column: 1 / -1; min-height: 48px; }
+.mobile-classroom-actions .text-button { min-height: 44px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 11px; background: #fff; color: var(--teal-dark); }
+#mobile-classroom-session-status, #mobile-classroom-session-result { padding-left: 2px; }
+#mobile-classroom-session-result:not(.hidden) { padding: 10px 12px; border-radius: 10px; background: var(--green-bg); color: var(--green); }
 #classroom-quick-control-panel { gap: 16px; }
 #classroom-quick-control-panel > .classroom-mode-heading .eyebrow { display: none; }
 .classroom-mode-heading { min-width: 0; align-items: center; gap: 8px; }

@@ -819,24 +819,48 @@ public partial class TeacherWindow : Window
     private Task<MobileClassroomSessionActionResponse> SetClassroomSessionFromMobileAsync(bool desiredActive,
         CancellationToken cancellationToken)
     {
-        if (!desiredActive)
-            throw new InvalidOperationException("课堂持续保持进行；请在教师电脑更改地点或学生电脑名单。");
         var completion = new TaskCompletionSource<MobileClassroomSessionActionResponse>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         Dispatcher.UIThread.Post(async () =>
         {
             try
             {
-                if (!_model.HasActiveClassroomSession)
-                    throw new InvalidOperationException("课堂范围尚未配置；请在教师电脑选择本机地点并添加学生电脑。");
+                if (desiredActive)
+                {
+                    if (!_model.HasActiveClassroomSession)
+                    {
+                        if (!_model.CanToggleClassroomSession)
+                            throw new InvalidOperationException("教师电脑当前无法切换课堂状态；请稍后刷新重试。");
+                        await _model.EnsureClassroomSessionAsync();
+                    }
+                    if (!_model.HasActiveClassroomSession)
+                        throw new InvalidOperationException("课堂范围尚未就绪；请在教师电脑选择地点并核对学生电脑名单。");
+                }
+                else if (_model.ActiveClassroomSessionId is { } sessionId)
+                {
+                    if (SupportsTeacherClassroomPolicyState)
+                    {
+                        var snapshot = await Task.Run(() =>
+                            _mobileControl.ReadClassroomQuickControlSnapshot(sessionId), cancellationToken);
+                        if (_model.ActiveClassroomSessionId == sessionId)
+                            _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                        if (!IsQuickControlLifecycleIdle(snapshot, sessionId, _model.ActiveClassroomTargetCount))
+                            throw new InvalidOperationException(
+                                "仍有课堂快捷管控未确认解除；先恢复所有学生电脑，再结束课堂。");
+                    }
+
+                    if (!await _model.EndClassroomSessionAsync(sessionId))
+                        throw new InvalidOperationException(
+                            "课堂仍有未解除的策略、运行中的倒计时或未完成的课堂任务；请先处理后再结束。");
+                }
 
                 await SyncClassroomEventChannelAsync();
 
                 var context = _model.GetActiveClassroomEventContext();
-                if (context is null)
+                if (desiredActive && context is null)
                     throw new InvalidOperationException("课堂已开启，但无法确认课堂电脑范围；请检查教师电脑上的 Veyon 机房名单。");
-                completion.TrySetResult(new MobileClassroomSessionActionResponse(true,
-                    _model.ClassroomDeliveryStatus,
+                completion.TrySetResult(new MobileClassroomSessionActionResponse(context is not null,
+                    context is null ? "课堂已结束。" : _model.ClassroomDeliveryStatus,
                     context?.Targets ?? Array.Empty<string>(), context?.SessionId));
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
