@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -469,9 +470,68 @@ public sealed class StudentAgentChannelHttpMessageHandler : DelegatingHandler
 
     public StudentAgentChannelHttpMessageHandler(string campusId, bool allowLegacyDirectFallback = false,
         bool allowDirectFallbackWhenChannelOffline = false)
-        : base(new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false }) =>
+        : base(CreateDirectHandler()) =>
         (_campusId, _allowLegacyDirectFallback, _allowDirectFallbackWhenChannelOffline) =
         (ValidateCampus(campusId), allowLegacyDirectFallback, allowDirectFallbackWhenChannelOffline);
+
+    /// <summary>
+    /// Windows resolves a plain host name to its IPv6 link-local address (fe80::/10) first. Dialling a
+    /// link-local address without an interface scope does not fail fast: the connect attempt stalls until
+    /// the request timeout. A student that only has a routable IPv4 address therefore produced
+    /// "连接学生 Agent 超时" even though the agent was running and reachable over IPv4, which in turn
+    /// kept the device on cached status and forced every maintenance run to manual review.
+    /// </summary>
+    private static SocketsHttpHandler CreateDirectHandler() => new()
+    {
+        UseProxy = false,
+        AllowAutoRedirect = false,
+        ConnectCallback = ConnectRoutableAddressAsync
+    };
+
+    private static async ValueTask<Stream> ConnectRoutableAddressAsync(
+        SocketsHttpConnectionContext context, CancellationToken cancellationToken)
+    {
+        var host = context.DnsEndPoint.Host;
+        var port = context.DnsEndPoint.Port;
+        IPAddress[] resolved;
+        if (IPAddress.TryParse(host, out var literal))
+            resolved = [literal];
+        else
+            resolved = await Dns.GetHostAddressesAsync(host, cancellationToken).ConfigureAwait(false);
+        var candidates = OrderConnectCandidates(resolved);
+
+        Exception? failure = null;
+        foreach (var candidate in candidates)
+        {
+            var socket = new Socket(candidate.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+            try
+            {
+                await socket.ConnectAsync(new IPEndPoint(candidate, port), cancellationToken).ConfigureAwait(false);
+                return new NetworkStream(socket, ownsSocket: true);
+            }
+            catch (OperationCanceledException)
+            {
+                socket.Dispose();
+                throw;
+            }
+            catch (SocketException exception)
+            {
+                socket.Dispose();
+                failure = exception;
+            }
+        }
+        throw new HttpRequestException($"无法连接 {host}:{port}；已尝试 {candidates.Length} 个解析地址。", failure);
+    }
+
+    /// <summary>Routable IPv4 first, then routable IPv6, then link-local/loopback as a last resort.</summary>
+    internal static IPAddress[] OrderConnectCandidates(IReadOnlyList<IPAddress> resolved) =>
+        resolved
+            .OrderBy(address => IsUnusableFirstHop(address) ? 1 : 0)
+            .ThenBy(address => address.AddressFamily == AddressFamily.InterNetwork ? 0 : 1)
+            .ToArray();
+
+    private static bool IsUnusableFirstHop(IPAddress address) =>
+        address.IsIPv6LinkLocal || address.IsIPv6SiteLocal || IPAddress.IsLoopback(address);
 
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
         CancellationToken cancellationToken)

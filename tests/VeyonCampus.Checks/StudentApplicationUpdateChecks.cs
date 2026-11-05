@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -528,6 +529,25 @@ internal static class StudentApplicationUpdateChecks
             allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: false));
         Expect(StudentAgentChannelHttpMessageHandler.ShouldUseDirectFallback(false,
             allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: false));
+
+        // A Windows host name resolves to its IPv6 link-local address first; dialling that without an
+        // interface scope stalls until the timeout, so routable IPv4 must be the first connect candidate
+        // and link-local/loopback the last. Regression guard for the field bug where a reachable student
+        // agent was reported as "连接学生 Agent 超时".
+        var ordered = StudentAgentChannelHttpMessageHandler.OrderConnectCandidates(
+        [
+            IPAddress.Parse("fe80::6482:7dcc:900f:9843"),
+            IPAddress.IPv6Loopback,
+            IPAddress.Parse("172.19.143.125"),
+            IPAddress.Parse("2001:db8::5")
+        ]);
+        Expect(ordered.Length == 4 &&
+               ordered[0].Equals(IPAddress.Parse("172.19.143.125")) &&
+               ordered[1].Equals(IPAddress.Parse("2001:db8::5")) &&
+               ordered[2].IsIPv6LinkLocal && ordered[3].Equals(IPAddress.IPv6Loopback));
+        var ipv4Only = StudentAgentChannelHttpMessageHandler.OrderConnectCandidates(
+            [IPAddress.Parse("172.19.143.125")]);
+        Expect(ipv4Only.Length == 1 && ipv4Only[0].Equals(IPAddress.Parse("172.19.143.125")));
     }
 
     private static void CheckStudentMaintenancePlanner()
