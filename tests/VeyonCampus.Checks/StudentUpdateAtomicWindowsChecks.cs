@@ -76,6 +76,11 @@ internal static class StudentUpdateAtomicWindowsChecks
         var installDirectoryCreated = false;
         var commandId = Guid.NewGuid();
         var recoveryDirectory = Path.Combine(recoveryRoot, commandId.ToString("N"));
+        var previousSetupVersion = WorkerInstallationGuard.GetAssemblyProductVersion(
+            typeof(StudentUpdateAtomicWindowsChecks).Assembly.Location);
+        var previousVersionParts = Version.Parse(previousSetupVersion);
+        var targetSetupVersion = new Version(previousVersionParts.Major, previousVersionParts.Minor,
+            checked(previousVersionParts.Build + 1)).ToString(3);
         try
         {
             evidence.FailedStage = "journal-create-and-acl-readback";
@@ -87,12 +92,12 @@ internal static class StudentUpdateAtomicWindowsChecks
 
             Directory.CreateDirectory(installDirectory);
             installDirectoryCreated = true;
-            WriteSetupMarker(installDirectory, "1.0.0", "previous setup fixture");
+            WriteSetupMarker(installDirectory, previousSetupVersion, "previous setup fixture");
 
             var now = DateTimeOffset.UtcNow;
             var transaction = StudentUpdateAtomicTransaction.Create(configurationPath, commandId,
-                "1.0.0", "1.1.0", "1.0.0", "1.1.0",
-                "VeyonCampus-Student-Setup-1.1.0-win-x64.exe", new string('b', 64), new string('c', 64));
+                previousSetupVersion, targetSetupVersion, "1.0.0", "1.1.0",
+                $"VeyonCampus-Student-Setup-{targetSetupVersion}-win-x64.exe", new string('b', 64), new string('c', 64));
             if (transaction.State != StudentUpdateTransactionState.Prepared ||
                 StudentUpdateAtomicTransaction.Read(configurationPath) != transaction)
                 throw new InvalidDataException("Student update journal did not read back the exact prepared record.");
@@ -114,7 +119,7 @@ internal static class StudentUpdateAtomicWindowsChecks
             evidence.FailedStage = "same-volume-previous-setup-preserve";
             StudentUpdateAtomicTransaction.PreservePreviousInstallation(configurationPath, preserved);
             if (Directory.Exists(installDirectory) ||
-                ReadSetupVersion(StudentUpdateAtomicTransaction.GetPreviousInstallationDirectory(preserved)) != "1.0.0" ||
+                ReadSetupVersion(StudentUpdateAtomicTransaction.GetPreviousInstallationDirectory(preserved)) != previousSetupVersion ||
                 !Path.GetPathRoot(installDirectory)!.Equals(
                     Path.GetPathRoot(StudentUpdateAtomicTransaction.GetPreviousInstallationDirectory(preserved)),
                     StringComparison.OrdinalIgnoreCase))
@@ -126,10 +131,10 @@ internal static class StudentUpdateAtomicWindowsChecks
                 StudentUpdateTransactionState.SetupInstallationPending);
             Directory.CreateDirectory(installDirectory);
             installDirectoryCreated = true;
-            WriteSetupMarker(installDirectory, "1.1.0", "candidate setup fixture");
+            WriteSetupMarker(installDirectory, targetSetupVersion, "candidate setup fixture");
             StudentUpdateAtomicTransaction.RestorePreviousInstallation(configurationPath, setupPending);
-            if (ReadSetupVersion(installDirectory) != "1.0.0" ||
-                ReadSetupVersion(StudentUpdateAtomicTransaction.GetFailedInstallationDirectory(setupPending)) != "1.1.0")
+            if (ReadSetupVersion(installDirectory) != previousSetupVersion ||
+                ReadSetupVersion(StudentUpdateAtomicTransaction.GetFailedInstallationDirectory(setupPending)) != targetSetupVersion)
                 throw new InvalidDataException("StudentSetup rollback did not restore the old tree and isolate the candidate.");
             evidence.Checks["candidateIsolatedAndPreviousSetupRestored"] = true;
 
@@ -149,7 +154,7 @@ internal static class StudentUpdateAtomicWindowsChecks
             }
             catch (InvalidDataException) { }
             evidence.Checks["unknownJournalStateRejected"] = true;
-            if (ReadSetupVersion(installDirectory) != "1.0.0" ||
+            if (ReadSetupVersion(installDirectory) != previousSetupVersion ||
                 !File.Exists(Path.Combine(StudentUpdateAtomicTransaction.GetFailedInstallationDirectory(setupPending),
                     "VeyonCampus.StudentSetup.exe")))
                 throw new InvalidDataException("Malformed journal handling removed the restored installation or candidate evidence.");
@@ -191,6 +196,8 @@ internal static class StudentUpdateAtomicWindowsChecks
         }), new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(directory, "VeyonCampus.StudentSetup.exe"), executableContents,
             new UTF8Encoding(false));
+        File.Copy(typeof(StudentUpdateAtomicWindowsChecks).Assembly.Location,
+            Path.Combine(directory, "VeyonCampus.StudentSetup.dll"));
     }
 
     private static string ReadSetupVersion(string directory)
