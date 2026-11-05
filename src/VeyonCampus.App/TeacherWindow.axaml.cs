@@ -1425,7 +1425,10 @@ public partial class TeacherWindow : Window
             {
                 var refreshed = await _model.RefreshDeviceListsAfterSeatMapSaveAsync();
                 if (refreshed) _model.ReportSeatMapSyncSuccess();
-                else _model.ReportSeatMapSyncFailure("本机资料已保存，但 Veyon 设备名单未能刷新；请检查读取权限后重试。");
+                else _model.ReportSeatMapSyncFailure("本机资料已保存，但 Veyon 设备名单未能刷新。原因：" +
+                    (_model.ClassroomDirectoryError.Length > 0
+                        ? _model.ClassroomDirectoryError
+                        : "请查看「地点与学生名单」页诊断后重试。"));
                 return;
             }
 
@@ -1447,12 +1450,21 @@ public partial class TeacherWindow : Window
 
     private async Task ReportSeatMapSyncFailureWithDirectoryRefreshAsync(string message)
     {
+        // A verified write whose view refresh already failed carries the concrete reason from the
+        // view model. Refreshing a second time only doubles the Veyon CLI work and prints the same
+        // paragraph twice, so report the original message as-is.
+        if (message.Contains("本机策略与课堂设备名单未能刷新", StringComparison.Ordinal))
+        {
+            _model.ReportSeatMapSyncFailure(message);
+            return;
+        }
+
         var refreshed = false;
         try { refreshed = await _model.RefreshDeviceListsAfterSeatMapSaveAsync(); }
         catch { /* Preserve the original sync error; the VM refresh method records its own read error. */ }
         _model.ReportSeatMapSyncFailure(refreshed
             ? message
-            : message + "\n当前 Veyon 名单未能通过完整读取与身份核对；请查看页面诊断并在目录恢复后重试。");
+            : message + "\n当前 Veyon 名单未能通过完整读取与身份核对；请查看「地点与学生名单」页诊断，修复后点「重试 Veyon 同步」。");
     }
     private async void PrintSeatChart(object? sender, RoutedEventArgs e)
     {

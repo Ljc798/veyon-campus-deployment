@@ -1,8 +1,8 @@
 # Veyon Campus Deployment
 
-Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。已发布稳定版为 1.0.12；TeacherConsole/StudentSetup 1.0.13 安装器已在本机生成，尚未上传或发布。Worker 为 0.4.63、Student Companion 为 0.4.64、Student Agent 为 0.4.50、Core 为 0.4.48；这些源码版本不代表设备安装版本或实机验收结果。手机控制代码已加入按 Veyon 地点浏览、两列电脑名卡片、单机详情、签名状态预检与 Agent 原子版本冲突检查；手机策略写入需要部署带版本比较能力的新 Agent，详见[手机控制规格](specs/mobile-teacher-control/requirements.md)。2026-10-16 之前的 macOS 检查记录为 **78/78**；本机安装有 .NET SDK 10.0.401 x64，但默认命令优先调用 x86 dotnet，需使用 `C:\Program Files\dotnet\dotnet.exe` 构建。Windows Release 构建已通过；Windows、Android/iOS 实机验收仍开放。发行包签名及更新可用状态以[发布执行清单](docs/发布执行清单.md)为准。
+Veyon Campus 为学校提供 Windows 教师控制台和学生部署工具，支持 Veyon 校区配置、学生机网站限制、AppLocker 应用限制、长期系统策略及教师手机局域网控制。TeacherConsole/StudentSetup 当前源码版本为 `1.1.46`。签名安装包、各渠道正式发布状态和设备验收记录以[发布执行清单](docs/发布执行清单.md)为准；源码版本不代表设备已安装的版本或现场验收结果。
 
-项目处于功能集成和验收阶段。限制与双端更新代码已经实现并通过可移植检查；浏览器/系统策略在受支持 Windows 设备上的实际效果、手机证书和 LAN 行为、更新安装与恢复仍需设备验收。v1.0.12 的 Teacher/Student 安装器已上传 GitCode，CloudBase Teacher/Student 签名版本元数据已发布；1.0.13 安装器已本机构建，实机更新回归与发布仍待完成。完整状态见[发布执行清单](docs/发布执行清单.md)。
+项目持续迭代并通过真实设备验收。自动构建、签名和发行包校验记录不替代校园网络、策略效果、手机连接及更新恢复的现场验证。完整发布状态见[发布执行清单](docs/发布执行清单.md)。
 
 - **项目现状和文档入口：**[文档导航与当前概览](docs/README.md)
 - **稳定版发行与生产门槛：**[稳定版发布执行清单](docs/发布执行清单.md)
@@ -43,6 +43,6 @@ Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Stu
 
 ## 安全与发布边界
 
-- v1.0.12 Teacher/Student 安装器已上传至 GitCode，CloudBase 签名版本元数据已发布。本仓库许可证与 Veyon 等第三方再分发事项仍需负责人确认。公开仓库并不等同于获得再分发授权。
+- 本仓库许可证与 Veyon 等第三方再分发事项需以[发布依赖与第三方许可清单](docs/发布依赖与第三方许可清单.md)中的结论为准。公开仓库并不等同于获得再分发授权。
 - 学生机限制和更新依赖已安装并信任的教师/发布者密钥；一台已连接学生电脑的更新已由用户报告成功，更新安装与恢复仍需更多设备验收。
 - 原 PowerShell v1.0 工具与当前 App 是两套独立工具。旧学生脚本会修改计算机名和 Veyon 配置，并可能覆盖运行脚本的本地管理员密码；失败时不会自动撤销已完成操作。旧脚本使用说明见[归档脚本指南](docs/archive/legacy/脚本使用指南.md)。

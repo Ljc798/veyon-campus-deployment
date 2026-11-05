@@ -3718,8 +3718,18 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     {
         if (SeatGridNumberPendingCount > 0)
         {
-            RoomCreateError = $"有 {SeatGridNumberPendingCount} 个已填写姓名的座位还没有电脑编号。请在座位图中给它们设置自定义编号，或点击“给待编号座位分配新号”；现有编号不会改变。";
-            return;
+            // A computer number is only the local label used when this app creates a Veyon
+            // computer; Veyon itself identifies devices by Host + UUID. Named seats without a
+            // number are therefore numbered automatically here instead of blocking the write.
+            var pending = SeatGridNumberPendingCount;
+            AssignMissingSeatComputerNumbers();
+            if (SeatGridNumberPendingCount > 0)
+            {
+                RoomCreateError =
+                    $"有 {SeatGridNumberPendingCount} 个已填写姓名的座位还没有电脑编号，自动编号也未成功；请在座位图中手动设置编号后再写入。";
+                return;
+            }
+            RoomCreateResult = $"已自动为 {pending} 个待编号座位分配电脑编号；编号只是本机标签，Veyon 以 Host 和 UUID 识别设备。";
         }
         if (!CanStartRoomCreation)
         {
@@ -3849,7 +3859,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 {
                     var viewsRefreshed = await RefreshDirectoryViewsAfterVeyonWriteAsync(writtenLocationName);
                     if (!viewsRefreshed && RoomCreateError.Length == 0)
-                        RoomCreateError = "Veyon 写入已读回确认，但策略与课堂设备名单刷新失败；本机座位资料已保存。请检查目录读取权限后重试。";
+                        RoomCreateError = "Veyon 写入已读回确认，但本机策略与课堂设备名单未能刷新；本机座位资料已保存。原因：" +
+                                          (ClassroomDirectoryError.Length > 0
+                                              ? ClassroomDirectoryError
+                                              : WebsiteDirectoryError.Length > 0
+                                                  ? WebsiteDirectoryError
+                                                  : VeyonDeviceDirectorySummary);
                 }
             }
             finally { EndExclusiveTask(); }
@@ -4646,6 +4661,34 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 Changed(nameof(HasMultipleClassroomLocations));
                 return;
             }
+            // A room that already exists owns its computer numbering: the local seat map is the
+            // source of truth and Veyon only supplies the live target set. Re-deriving numbers
+            // from host names here rejects an already-verified location as soon as one computer
+            // does not follow the PC-nn plan, and a student computer that keeps its factory
+            // Windows name (`desktop-fgvqhia`) is the normal case. That made every post-write
+            // refresh report a fake read failure even though Veyon had been written and read back
+            // successfully.
+            var existingRoom = campus?.Rooms.FirstOrDefault(room =>
+                string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase));
+            if (existingRoom is not null)
+            {
+                var boundSeats = _seatGrid?.Seats.Count(seat => seat.VeyonObjectId is not null) ?? 0;
+                _classroomDirectorySelectionPending = false;
+                _seatMapProfileSelectionRequired = false;
+                ClassroomDirectoryError = "";
+                ClassroomDirectoryStatus = boundSeats == location.Targets.Count
+                    ? $"已核对 Veyon 地点「{location.Name}」：{location.Targets.Count} 台电脑与座位图一致；没有修改本机档案或 Veyon。"
+                    : $"已核对 Veyon 地点「{location.Name}」：Veyon {location.Targets.Count} 台，座位图已绑定 {boundSeats} 台；需要时请重新同步。";
+                Changed(nameof(HasMultipleClassroomLocations));
+                Changed(nameof(CanUseSelectedClassroomLocation));
+                Changed(nameof(CanSyncSeatGridWithVeyon));
+                Changed(nameof(SeatGridVeyonSyncButtonLabel));
+                Changed(nameof(CanToggleClassroomSession));
+                Changed(nameof(CanSwitchClassroomScope));
+                Changed(nameof(ShowRoomLocationSettings));
+                return;
+            }
+
             var firstInstall = campus is null;
             var mergedCampus = TeacherCampusProfileFromVeyon.MergeLocation(campus, campusName, location);
             var selectedRoom = mergedCampus.Rooms.Single(room =>
@@ -8123,11 +8166,14 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
     public bool CanEditComputerNumber => !HasVeyonTarget;
     public bool IsSeatWithoutVeyonTarget => IsSeat && !HasVeyonTarget;
     public bool HasVeyonComputerObject => IsSeat && VeyonObjectId is { } id && id != Guid.Empty;
-    // Right-click deletion must never be a silent no-op. When the seat has no Veyon UUID we
-    // still offer a local-only removal with an explicit confirmation instead of a dead menu.
-    public bool CanDeleteSeatComputer => IsSeat;
+    // Exactly one delete entry per seat:
+    // - bound: "删除学生电脑（含 Veyon）" in both preview and edit mode;
+    // - unbound in edit mode: the existing draft "删除此座位" (undoable before save);
+    // - unbound in preview: a persisted local-only "删除此座位".
+    public bool ShowDeleteLocalSeat => IsSeat && CanDelete && !HasVeyonComputerObject;
+    public bool CanDeleteSeatComputer => IsSeat && (HasVeyonComputerObject || !CanDelete);
     public string DeleteSeatComputerMenuLabel => HasVeyonComputerObject
-        ? "删除学生电脑（含 Veyon）" : "删除此座位（仅本机）";
+        ? "删除学生电脑（含 Veyon）" : "删除此座位";
     public string ComputerStatusLabel => "填写姓名后自动关联电脑编号";
     public string PrimaryLabel => IsSeat
         ? $"{(SeatNumber is { } number ? $"电脑编号 {number}" : "电脑编号待设置")} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"

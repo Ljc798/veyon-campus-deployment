@@ -75,24 +75,30 @@ public static class TeacherCampusProfileFromVeyon
         var prefix = existing is { ComputerCount: > 0 } ? existing.Prefix : "PC-";
         var usedNumbers = rooms.Where((_, index) => index != existingIndex)
             .SelectMany(room => room.GetComputerNumbers()).ToHashSet();
-        var targetNumbers = new int[targets.Length];
+        var numbers = new List<int>(targets.Length);
         var knownNumberTargets = new HashSet<int>();
-        for (var index = 0; index < targets.Length; index++)
+        foreach (var target in targets)
         {
-            var target = targets[index];
-            if (Uri.CheckHostName(target) != UriHostNameType.Dns ||
-                !MachineNaming.TryParseNumber(prefix, target, out var number))
-                throw new InvalidDataException($"Veyon Host“{target}”不是该地点固定 Windows 电脑名（{prefix}编号）；不支持 IP 或 Host 映射。");
+            // A student computer may legitimately keep its factory Windows name (for example
+            // `desktop-fgvqhia`). Veyon identity is UUID + Host; the PC-nn number is only a local
+            // planning label for computers this app creates. Such a target therefore stays
+            // unnumbered instead of rejecting the whole location, while IP addresses and other
+            // non-DNS targets are still refused because they cannot be a stable device identity.
+            if (Uri.CheckHostName(target) != UriHostNameType.Dns)
+                throw new InvalidDataException(
+                    $"Veyon Host“{target}”不是固定 Windows 电脑名；不支持 IP 或 Host 映射。");
+            if (!MachineNaming.TryParseNumber(prefix, target, out var number)) continue;
             if (!knownNumberTargets.Add(number))
                 throw new InvalidDataException($"Veyon 地点中存在重复固定电脑编号 {number}；请先核对名单。");
             if (usedNumbers.Contains(number))
                 throw new InvalidDataException($"固定电脑编号 {number} 已分配给本校区其他地点；请先核对名单。");
-            targetNumbers[index] = number;
+            numbers.Add(number);
         }
 
-        var numbers = targetNumbers.ToList();
+        numbers.Sort();
         var mergedRoom = new TeacherRoomProfile(existing?.RoomId ?? Guid.NewGuid(), displayName,
-            prefix, numbers.Min(), targets.Length, HostOverrides: null, ComputerNumbers: numbers);
+            prefix, numbers.Count > 0 ? numbers[0] : existing?.StartNumber ?? 1, numbers.Count,
+            HostOverrides: null, ComputerNumbers: numbers);
         if (existingIndex >= 0) rooms[existingIndex] = mergedRoom;
         else rooms.Add(mergedRoom);
 

@@ -553,17 +553,29 @@ public sealed class ClassroomSeatGridStore
             return binding with { HostAddress = host };
         }).ToArray();
 
-        if (normalizedBindings.Select(binding => binding.SeatId).Distinct().Count() != normalizedBindings.Length ||
-            normalizedBindings.Select(binding => binding.HostAddress)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedBindings.Length ||
-            normalizedBindings.Select(binding => binding.ComputerName)
-                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != normalizedBindings.Length ||
-            normalizedBindings.Select(binding => binding.ObjectId).Distinct().Count() != normalizedBindings.Length ||
-            normalizedBindings.Select(binding => binding.LocationObjectId).Distinct().Count() != 1 ||
-            normalizedBindings.Where(binding => binding.ComputerNumber is not null)
-                .Select(binding => binding.ComputerNumber).Distinct().Count() !=
-            normalizedBindings.Count(binding => binding.ComputerNumber is not null))
-            throw new InvalidDataException("电脑清单有重复目标，或不属于同一个 Veyon 地点。");
+        // Display names are not identity. Veyon legitimately allows two computers named "333"
+        // (for example PC-07 and PC-12); seat binding is by Host + object UUID, so a duplicate
+        // display name must not block an otherwise valid assignment. Validate each real key
+        // separately so the UI can point at the exact conflict instead of a generic message.
+        if (normalizedBindings.Select(binding => binding.SeatId).Distinct().Count() != normalizedBindings.Length)
+            throw new InvalidDataException("电脑关联清单里有重复座位；没有保存任何关联。");
+        var duplicateHost = normalizedBindings
+            .GroupBy(binding => binding.HostAddress, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateHost is not null)
+            throw new InvalidDataException($"电脑关联清单里 Host“{duplicateHost.Key}”重复；没有保存任何关联。");
+        var duplicateObject = normalizedBindings
+            .GroupBy(binding => binding.ObjectId)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateObject is not null)
+            throw new InvalidDataException("电脑关联清单里同一个 Veyon UUID 被多个座位引用；没有保存任何关联。");
+        if (normalizedBindings.Select(binding => binding.LocationObjectId).Distinct().Count() != 1)
+            throw new InvalidDataException("电脑关联清单包含多个 Veyon 地点 UUID；没有保存任何关联。请先核对当前地点。");
+        var duplicateNumber = normalizedBindings.Where(binding => binding.ComputerNumber is not null)
+            .GroupBy(binding => binding.ComputerNumber!.Value)
+            .FirstOrDefault(group => group.Count() > 1);
+        if (duplicateNumber is not null)
+            throw new InvalidDataException($"电脑编号 {duplicateNumber.Key} 在关联清单里重复；没有保存任何关联。");
 
         var bindingsBySeat = normalizedBindings.ToDictionary(binding => binding.SeatId);
         return Update(campusProfileId, roomId, layout =>

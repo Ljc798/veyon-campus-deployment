@@ -227,7 +227,7 @@ public sealed partial class TeacherViewModel
         !IsPreparingSeatSwapPlan && !SeatSwapMode;
     public bool CanStartRoomCreation => OperatingSystem.IsWindows() && !IsExecuting &&
         !IsCheckingRoomConflicts && !IsPreparingSeatSwapPlan && HasSeatMap && IsSeatMapEditing && SeatGridSeatCount > 0 &&
-        SeatGridUnboundComputerCount > 0 && SeatGridNumberPendingCount == 0 &&
+        SeatGridUnboundComputerCount > 0 &&
         !string.IsNullOrWhiteSpace(RoomCampusName) &&
         !string.IsNullOrWhiteSpace(RoomLocationName);
     public IReadOnlyList<TeacherVeyonTargetChoice> SeatVeyonTargetChoices

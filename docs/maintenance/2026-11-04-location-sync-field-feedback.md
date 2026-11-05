@@ -307,9 +307,78 @@
 - 右键删除：菜单项改为动态标题（`删除学生电脑（含 Veyon）` / `删除此座位（仅本机）`）且对任何座位可用；无 UUID 时明确提示并只删本机座位；有 UUID 时按 UUID 删 Veyon 对象；两种结果都弹窗显示。`DeleteSeatComputerFromVeyonAsync` 改为**立即持久化**座位图（预览模式没有保存按钮，且 Veyon 删除不可撤销），`RemoveComputer` 加 `VeyonDirectoryMutationGate`。
 - 地点对应可见：`TeacherViewModel.VeyonRoomBindingStatus` 读取座位绑定的 `VeyonLocationObjectId`，在档案下拉下直接显示「已对应 Veyon 地点「X」（UUID …）；本机已绑定 N 台电脑」或「尚未绑定…」，避免只靠显示名判断。
 
-**预期现场行为**：装 1.1.68 并重启后，档案下拉只有「测试校区」，座位图恢复 6 个有姓名的电脑座位；页面显示 UUID 对应；右键任一学生座位可删除；点「重试 Veyon 同步」时，2 台现有电脑按 UUID 核对通过，另 4 台不存在的旧 UUID 被清理后按固定 Host（PC-07 / PC-08 / PC-12 / PC-13）重新写入同一个地点 UUID，不再新建重复地点。
+**预期现场行为**：装 1.1.69 并重启后，档案下拉只有「测试校区」，座位图恢复 6 个有姓名的电脑座位；页面显示 UUID 对应；右键任一学生座位可删除；点「重试 Veyon 同步」时，2 台现有电脑按 UUID 核对通过，另 4 台不存在的旧 UUID 被清理后按固定 Host（PC-07 / PC-08 / PC-12 / PC-13）重新写入同一个地点 UUID，不再新建重复地点。
+
+> **版本说明**：1.1.68 是本轮修复的第一次打包（2026-11-04 22:59）。之后 `9b07fd2 important bug fixed`（23:09）提交了同一批桌面端修复，`dee7405 bug: phone fixed`（2026-11-05 08:37）又提交了手机端课堂开关 / 学生聊天 / 网站策略入口与手机端布局修复。**1.1.69 基于 `dee7405` 重新构建，包含以上全部内容**；安装包 `artifacts/VeyonCampus-TeacherConsole-1.1.69-Maintenance-Test.exe`，70,980,081 B，SHA-256 `1C557DF568F701A812225A8DD59C200B3536C36139FBBC3F8A59729C51FBD91F`，0 错误；内嵌手机端资源为 `veyon-campus-mobile-v58`。
 
 **边界**：`tests/VeyonCampus.Checks` 工程在 HEAD 就有既存编译错误（`MaintenanceRun.VerifyCapabilities` 签名不匹配、`MaintenanceFaultInjectionChecks.cs` 顶层本地函数不可见），与本轮改动无关，本轮用 TeacherConsole Release 发布构建校验；自动化测试 / Windows VM 完整回归仍未运行。
+
+---
+
+## K. 08:48 复核：两个删除菜单项、删 13 加 14 后不同步
+
+**用户反馈**：右键菜单同时出现「删除此座位」和「删除此座位（仅本机）」；删掉编号 13 的座位、新增一个座位自动编号 14 后，Veyon 里 13 仍在、14 没加，报错「电脑清单有重复目标，或不属于同一个 Veyon 地点」。
+
+**两个菜单项原本的含义**
+
+| 菜单项 | 出现条件 | 行为 |
+| ------ | -------- | ---- |
+| 删除此座位 | 编辑模式 | 只改本机草稿，保存前可 Ctrl+Z；**不删 Veyon** |
+| 删除此座位（仅本机） | 预览模式且座位没有 Veyon UUID | 立即保存本机删除；**不删 Veyon** |
+| 删除学生电脑（含 Veyon） | 座位有 Veyon UUID | 按 UUID 删 Veyon 并删本机座位 |
+
+截图里两项同时出现，是因为该座位没有 UUID、页面又在编辑模式：旧的编辑态项和新加的无 UUID 项同时可见，语义几乎相同。**本轮改为每个座位只出现一个删除项**：绑定座位只显示「删除学生电脑（含 Veyon）」；未绑定座位在编辑模式显示草稿「删除此座位」，预览模式显示立即保存的「删除此座位」。
+
+**「13 没删、14 没加」的根因**
+
+- 用户用的是「删除此座位」而不是「删除学生电脑（含 Veyon）」，所以 Veyon 的 PC-13 被有意保留；这是旧菜单没有把语义讲清。
+- 新增座位自动编号 14 后，同步在 `ClassroomSeatGridStore.AssignVeyonTargets` 失败：该校验要求关联清单里的 **电脑显示名唯一**，而 Veyon 当前有两台都叫「333」（PC-07 / PC-12）。显示名不是设备身份，绑定实际按 Host + UUID，因此这个校验过严，把整个绑定写入和后续新增 14 都挡住了。
+- 现已移除「显示名唯一」校验，并把原来一句笼统报错拆成：重复座位 / Host 重复 / UUID 重复 / 多个地点 UUID / 编号重复，分别给出具体原因。
+- 现场残留：按 UUID `c2fe597e-b463-55f5-8a29-ea345da155b0` 删除 PC-13（删除前已导出 `artifacts/veyon-evidence-20261105-0850/veyon-config.json`，删除后读回确认 Veyon 剩 1 个地点 + 5 台电脑）。
+
+**1.1.70 预期行为**：装 1.1.70 后点「重试 Veyon 同步」，应把编号 7/8/12 三个座位按 Host 绑定到现有 PC-07/PC-08/PC-12（允许两台都叫「333」），再把编号 14 的「111」写回同一个地点 UUID；Veyon 变成 6 台，不再出现重复地点。
+
+**交付**：`artifacts/VeyonCampus-TeacherConsole-1.1.70-Maintenance-Test.exe`，70,980,837 B，SHA-256 `CE3AE03E6F24523487D10BE1C4B77E4E4ACD26DB9BB3CE63C57B69901586909A`，0 错误。
+
+---
+
+## L. 09:00 复核：最后一个错误 —— 写回成功但「名单刷新失败」
+
+**用户反馈**（1.1.70）：Veyon 已确认写入，页面仍显示
+
+> 本机座位资料已保存；Veyon 同步未完成。可查看原因并重试。
+> Veyon 写入已读回确认，但策略与课堂设备名单刷新失败；本机座位资料已保存。请检查目录读取权限后重试。
+> 当前 Veyon 名单未能通过完整读取与身份核对；请查看页面诊断并在目录恢复后重试。
+
+**先排除的嫌疑**（用实机数据跑真实代码，`.tmp-build/live-fp`）
+
+| 检查 | 结果 |
+| --- | --- |
+| `networkobjects export` → 地点指纹 | `de61db00…` |
+| `networkobjects dump` → 对象地点指纹 | `de61db00…`，**完全一致** |
+| `ParseNetworkObjectsDump` 对象数 | 7（1 个地点 + 6 台电脑），无重复 UUID |
+| 座位绑定 → `VeyonDeviceDirectoryStore.Reconcile` | 成功，6 台设备，0 冲突 |
+
+也就是说 Veyon 侧、指纹核对、设备投影全部正常，报错与「读取权限」无关——那句提示是误导。
+
+**真正根因**：刷新路径 `RefreshDirectoryViewsAfterVeyonWriteAsync` → `ApplyClassroomVeyonLocation` → `TeacherCampusProfileFromVeyon.MergeLocation`，后者要求**每台电脑的 Host 必须能解析成 `前缀+编号`（PC-nn）**。该地点里有一台学生机用的是 Windows 出厂名 `desktop-fgvqhia`（座位「小子」），解析失败直接抛 `InvalidDataException`，整个刷新被判为失败。只要机房里有一台不按 PC-nn 命名的学生机，**每次**写回后的刷新都会假失败。
+
+**为什么定位绕了一圈**：错误文案写的是「请检查目录读取权限」，把真实原因（地点合并校验）盖掉了。
+
+**修复（1.1.72）**
+
+1. `ApplyClassroomVeyonLocation`：**已存在的机房以本机座位图为准**，不再按 Host 反推编号。机房已存在时只核对台数并给状态，不重写 `campus-directory.json`（读路径不写盘）。只有首次从 Veyon 建档才走严格合并。
+2. `TeacherCampusProfileFromVeyon.MergeLocation`：允许任意**固定 DNS 名**的学生机（如 `desktop-fgvqhia`），这类目标保持"无编号"，不再让整份地点失败；IP 与非 DNS 目标仍然拒绝（设备身份必须可稳定解析）。编号列表改为排序后取最小值为起始号。
+3. 电脑编号彻底改为**可选项**：`CanStartRoomCreation` 不再要求「待编号座位为 0」；写入 Veyon 前若有"已填姓名但无编号"的座位，自动按现有最大号续编（原「给待编号座位分配新号」的同一套逻辑），并在结果里说明"编号只是本机标签，Veyon 以 Host + UUID 识别设备"。
+4. 错误文案不再甩锅权限：写回成功但刷新失败时，直接带出 `ClassroomDirectoryError` / `WebsiteDirectoryError` / 设备目录摘要中的真实原因；并且不再对同一次失败做第二次刷新 + 重复打印同一段话。
+
+**1.1.72 预期行为**
+
+- 装 1.1.72 后点「重试 Veyon 同步」或再次保存：应直接提示成功，不再出现「名单刷新失败」。
+- 「地点与学生名单」页状态变为「已核对 Veyon 地点「测试校区」：6 台电脑与座位图一致；没有修改本机档案或 Veyon。」
+- `desktop-fgvqhia` 这类出厂名学生机可以正常保留、绑定、上课，不需要改成 PC-nn。
+
+**交付**：`artifacts/VeyonCampus-TeacherConsole-1.1.72-Maintenance-Test.exe`。
 
 ---
 
