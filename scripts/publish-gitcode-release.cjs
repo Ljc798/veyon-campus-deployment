@@ -266,21 +266,31 @@ function uploadWithHttps(url, headers, filePath, expectedSize, expectedSha256,
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let sourceClosed = false;
+    let outcome = null;
     let timeout;
     let uploadedBytes = 0;
     const hash = crypto.createHash('sha256');
     const source = createReadStream(filePath);
-    const failUpload = (error) => {
-      finish(error);
-      source.destroy();
-    };
-    const finish = (error, statusCode) => {
+    const settle = (error, statusCode) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       if (error) reject(error);
       else resolve(statusCode);
     };
+    const finish = (error, statusCode) => {
+      if (settled || outcome) return;
+      outcome = { error, statusCode };
+      clearTimeout(timeout);
+      if (error && !source.destroyed) source.destroy();
+      if (sourceClosed) settle(error, statusCode);
+    };
+    const failUpload = error => finish(error);
+    source.once('close', () => {
+      sourceClosed = true;
+      if (outcome) settle(outcome.error, outcome.statusCode);
+    });
 
     source.on('data', (chunk) => {
       uploadedBytes += chunk.length;
