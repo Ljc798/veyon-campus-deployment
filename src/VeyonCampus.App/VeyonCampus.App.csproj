@@ -4,7 +4,7 @@
     <OutputType Condition="!$([MSBuild]::IsOSPlatform('Windows'))">Exe</OutputType>
     <VeyonCampusRole Condition="'$(VeyonCampusRole)' == ''">StudentSetup</VeyonCampusRole>
     <VeyonCampusEnableLocalTestUpdateUi Condition="'$(VeyonCampusEnableLocalTestUpdateUi)' == ''">false</VeyonCampusEnableLocalTestUpdateUi>
-    <VeyonCampusClassroomQuickControlPilot Condition="'$(VeyonCampusClassroomQuickControlPilot)' == ''">false</VeyonCampusClassroomQuickControlPilot>
+    <VeyonCampusClassroomQuickControlPilot Condition="'$(VeyonCampusClassroomQuickControlPilot)' == ''">true</VeyonCampusClassroomQuickControlPilot>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</AssemblyName>
     <AssemblyName Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">VeyonCampus.Teacher</AssemblyName>
     <VeyonCampusProduct Condition="'$(VeyonCampusRole)' == 'StudentSetup'">VeyonCampus.StudentSetup</VeyonCampusProduct>
@@ -15,7 +15,7 @@
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusClassroomQuickControlPilot)' == 'true'">$(DefineConstants);VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimeGatePassed)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_GATE_PASSED</DefineConstants>
     <DefineConstants Condition="'$(VeyonCampusRole)' == 'TeacherConsole' and '$(VeyonCampusEdgeRealtimePilot)' == 'true' and '$(VeyonCampusEdgeExtensionId)' != ''">$(DefineConstants);VEYONCAMPUS_EDGE_REALTIME_PILOT</DefineConstants>
-    <Version>1.1.60</Version>
+    <Version>1.1.61</Version>
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'StudentSetup'">win-x64</RuntimeIdentifiers>
     <RuntimeIdentifiers Condition="'$(VeyonCampusRole)' == 'TeacherConsole'">win-x64;osx-arm64</RuntimeIdentifiers>
     <NuGetLockFilePath Condition="'$(VeyonCampusRole)' == 'StudentSetup'">$(MSBuildProjectDirectory)/packages.StudentSetup.lock.json</NuGetLockFilePath>
@@ -117,7 +117,10 @@
 
   <Target Name="ValidateClassroomQuickControlPilot" BeforeTargets="PrepareForBuild"
           Condition="'$(VeyonCampusClassroomQuickControlPilot)' == 'true' and '$(VeyonCampusRole)' != 'TeacherConsole'">
-    <Error Text="Classroom quick-control pilot is available only in a TeacherConsole pilot build." />
+    <!-- Classroom quick control is a teacher-only capability. Student builds simply do not get the
+         VEYONCAMPUS_CLASSROOM_QUICK_CONTROL_PILOT constant, so a shared default of true must not fail them. -->
+    <Message Importance="low"
+             Text="Classroom quick control is teacher-only; this $(VeyonCampusRole) build ignores it." />
   </Target>
 
   <Target Name="ValidateEdgeRealtimeBuildGate" BeforeTargets="PrepareForBuild"
