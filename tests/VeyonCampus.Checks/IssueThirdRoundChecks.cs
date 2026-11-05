@@ -64,6 +64,7 @@ internal static class IssueThirdRoundChecks
         app.IsSelected = false;
         Expect(vm.ApplicationRules.Length == 0 && !vm.HasMatchingApplicationAudit && !vm.ApplicationEnforcementReviewed, "changing selection invalidates previous audit");
         vm.WebsiteTargets = "PC-03";
+        vm.SelectAllWebsitePolicyTargets(true);
         Expect(vm.StudentAccountChoices.Count == 0 && vm.ApplicationInventoryChoices.Count == 0, "target change discards old device data");
         vm.UseManualApplicationInputs = true;
         vm.ApplicationStudentSids = sid1;
