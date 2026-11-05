@@ -391,3 +391,18 @@
 - **修复流程**：在故障学生机上以管理员身份运行学生端安装包，然后删除残留事务记录
   `C://ProgramData//VeyonCampus//StudentUpdateTransactions//<hash>//student-update-transaction.json`，
   否则该机会一直报“已有未结束的更新事务”。
+
+## 静默更新的自举约束（必须记住）
+
+- **执行者是学生机上已安装的旧 Agent**，不是教师端，也不是目标包里的新代码。
+  因此任何针对更新流程本身的修复（目录重命名重试、占用进程诊断、超时、回滚策略），
+  只有在学生机**已经升到含该修复的版本**之后才生效。
+- 推论：老机器第一次升级永远跑的是老代码。若老代码在某个环境里做不成（例如无法重命名
+  `C://Program Files\Veyon Campus\Student`），这台机器只能先手动装一次新版作为引导，
+  之后的版本迭代才能靠一键静默更新。
+- 推论：验证「修好之后的链路」必须有一个比故障机当前版本更高的更新目标；
+  而 `-TestVersionOverride` 打出的是**引导包**（无 `.exe.release.json`），
+  教师端会明确拒绝把它当远程更新目标。本地测试包需用
+  `scripts/sign-local-student-update-stable.cjs` 配合仓库外的 Developer Release 私钥签出清单。
+- **现场 A/B 方法**：VM 学生端回滚到干净快照后，先不动任何文件直接点一键更新——
+  成功说明此前是反复失败把目录弄坏了；仍 `Access denied` 说明老代码在该机确定搬不动目录。
