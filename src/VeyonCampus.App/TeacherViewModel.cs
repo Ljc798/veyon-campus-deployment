@@ -664,6 +664,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanSyncStudentConfiguration));
             Changed(nameof(CanMaintainStudentDevices));
+            Changed(nameof(CanOneClickUpdateAllStudentDevices));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanRetryClassroomRestores));
             Changed(nameof(CanReadSeatVeyonTargets));
@@ -1859,6 +1860,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanOneClickUpdateAllStudentDevices));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanSyncStudentConfiguration));
@@ -1944,6 +1946,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanPushStudentSystemPolicy));
             Changed(nameof(CanDisableStudentSystemPolicy));
             Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanOneClickUpdateAllStudentDevices));
             Changed(nameof(CanDeployStudentUpdate));
             Changed(nameof(CanReadApplicationInventory));
             _studentAccountChoices = [];
@@ -2012,6 +2015,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
             Changed(nameof(CanTrustStudentAgentIdentities));
+            Changed(nameof(CanOneClickUpdateAllStudentDevices));
             Changed(nameof(CanMigrateEdgeRealtime));
             Changed(nameof(CanRestoreEdgeLegacy));
             Changed(nameof(WebsitePolicyConfirmationSummary));
@@ -5981,6 +5985,71 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         await MaintainStudentDevicesAsync(null, null);
     }
 
+    /// <summary>教师端一键：对当前地点全部学生电脑自动核对身份并执行静默维护/更新。</summary>
+    public async Task OneClickUpdateAllStudentDevicesAsync()
+    {
+        if (!CanOneClickUpdateAllStudentDevices)
+        {
+            StudentMaintenanceStatus = "暂无可更新的学生电脑，或当前操作尚未结束。";
+            return;
+        }
+        StudentMaintenanceStatus = "正在自动核对全部学生电脑身份……";
+        SelectAllWebsitePolicyTargets(true);
+        await AutoApproveMaintenanceKeyRotationsAsync();
+        await MaintainStudentDevicesAsync();
+    }
+
+    /// <summary>Maintenance 服务密钥变化也由一键流程批准，避免教师再去找隐藏的审批入口。</summary>
+    private async Task AutoApproveMaintenanceKeyRotationsAsync()
+    {
+        try
+        {
+            await RefreshMaintenanceOverviewAsync();
+            foreach (var rotation in PendingMaintenanceIdentityRotations.Where(item => item.CanAct).ToArray())
+                await ApproveMaintenanceIdentityRotationAsync(rotation,
+                    MaintenanceServiceKeyRotationMode.TemporaryRollbackTrust);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException)
+        {
+            StudentMaintenanceStatus = "自动批准 Maintenance 密钥变化未完成：" + exception.Message;
+        }
+    }
+
+    /// <summary>
+    /// 教师无法人工比对指纹：首次身份由核心层的首次信任策略自动固定，
+    /// 这里对教师明确选中的设备额外自动批准密钥变化，并给出可见结果。
+    /// </summary>
+    private async Task<(int Confirmed, int Rotated, int Unreachable)> AutoTrustMaintenanceTargetsAsync(
+        string campus, IReadOnlyList<string> targets)
+    {
+        if (targets.Count == 0) return (0, 0, 0);
+        try
+        {
+            using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+            var discoveries = await WebsitePolicyStatusTransport.DiscoverIdentitiesAsync(
+                targets, campus, signingKey.PrivateKey).ConfigureAwait(false);
+            var confirmed = 0;
+            var rotated = 0;
+            foreach (var item in discoveries)
+            {
+                if (item.Candidate is null) continue;
+                confirmed++;
+                if (item.MatchesPinnedKey) continue;
+                if (StudentAgentIdentityAutoTrust.TryApproveRotation(campus, item.Target,
+                        item.Candidate.PublicKeyPem, item.Candidate.Fingerprint, out var changed) && changed)
+                    rotated++;
+            }
+            return (confirmed, rotated, discoveries.Count - confirmed);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or
+            HttpRequestException or SocketException or PlatformNotSupportedException or ArgumentException)
+        {
+            return (0, 0, targets.Count);
+        }
+    }
+
     private async Task MaintainStudentDevicesAsync(MaintenanceOperationKind? requestedOperation,
         IReadOnlyCollection<string>? targetOverride)
     {
@@ -6011,6 +6080,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ClearStudentUpdateTargetRows();
             var displayNames = await ResolveTargetDisplayNamesAsync(selectedTargets);
             await PrepareStudentUpdateTargetRowsAsync(selectedTargets, displayNames);
+            var trust = await AutoTrustMaintenanceTargetsAsync(CampusId.Trim(), selectedTargets);
+            StudentMaintenanceStatus = $"身份已自动核对 {trust.Confirmed}/{selectedTargets.Count} 台" +
+                (trust.Rotated > 0 ? $" · 密钥变化已批准 {trust.Rotated} 台" : "") +
+                (trust.Unreachable > 0 ? $" · 未响应 {trust.Unreachable} 台" : "");
+            StudentAgentIdentityStatus = StudentMaintenanceStatus;
+            Changed(nameof(StudentAgentIdentityStatus));
             if (requestedOperation == MaintenanceOperationKind.ConfigurationSync)
             {
                 _studentConfigurationSyncTargetProgressItems.Clear();
@@ -6223,6 +6298,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             }
             EndExclusiveTask();
             Changed(nameof(CanMaintainStudentDevices));
+            Changed(nameof(CanOneClickUpdateAllStudentDevices));
             await RefreshMaintenanceOverviewAsync();
         }
     }

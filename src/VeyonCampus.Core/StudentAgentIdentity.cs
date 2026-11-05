@@ -175,6 +175,26 @@ public static class StudentAgentResponseCryptography
         }
     }
 
+    /// <summary>
+    /// Verifies a signed reply and, when the desktop Teacher Console opted in to
+    /// trust-on-first-use, pins a valid but previously unknown Agent identity.
+    /// A changed key is never replaced here; the one-click maintenance flow handles
+    /// that for the devices the teacher explicitly targeted.
+    /// </summary>
+    public static VerifiedStudentAgentResponse<T> VerifyForTeacher<T>(string signedJson,
+        string campusId, string target, string? pinnedPublicKeyPem = null,
+        int maximumEnvelopeBytes = MaximumEnvelopeBytes,
+        StudentAgentIdentityTrustStore? trustStore = null)
+    {
+        var verified = Verify<T>(signedJson, pinnedPublicKeyPem, maximumEnvelopeBytes);
+        if (verified.MatchesPinnedKey || pinnedPublicKeyPem is not null ||
+            !StudentAgentIdentityAutoTrust.IsEnabled ||
+            !StudentAgentIdentityAutoTrust.TryPinFirstUse(campusId, target,
+                verified.PublicKeyPem, verified.Fingerprint, trustStore))
+            return verified;
+        return Verify<T>(signedJson, verified.PublicKeyPem, maximumEnvelopeBytes);
+    }
+
     private static byte[] DecodeCanonicalBase64(string value, string description)
     {
         try
@@ -238,6 +258,79 @@ public static class StudentAgentCommandAcknowledgementCryptography
             throw new InvalidDataException("学生 Agent 命令回执与本次请求、校区、HTTP 状态或时间不匹配。");
         return verified;
     }
+
+    /// <summary>Same as <see cref="Verify"/> plus teacher-console trust-on-first-use.</summary>
+    public static VerifiedStudentAgentResponse<StudentAgentCommandAcknowledgement> VerifyForTeacher(
+        string signedJson, string campusId, string target, Guid nonce, string requestBody,
+        int httpStatusCode, string? pinnedPublicKeyPem, DateTimeOffset nowUtc, int maximumBodyBytes,
+        StudentAgentIdentityTrustStore? trustStore = null)
+    {
+        var verified = Verify(signedJson, campusId, nonce, requestBody, httpStatusCode,
+            pinnedPublicKeyPem, nowUtc, maximumBodyBytes);
+        if (verified.MatchesPinnedKey || pinnedPublicKeyPem is not null ||
+            !StudentAgentIdentityAutoTrust.IsEnabled ||
+            !StudentAgentIdentityAutoTrust.TryPinFirstUse(campusId, target,
+                verified.PublicKeyPem, verified.Fingerprint, trustStore))
+            return verified;
+        return Verify(signedJson, campusId, nonce, requestBody, httpStatusCode,
+            verified.PublicKeyPem, nowUtc, maximumBodyBytes);
+    }
+}
+
+/// <summary>
+/// Teacher-console trust-on-first-use policy for Student Agent identity keys.
+/// Library consumers and headless checks keep the strict "explicit teacher approval"
+/// behaviour by default; the desktop Teacher Console opts in at startup so the first
+/// valid signed reply is pinned automatically instead of blocking every command.
+/// A changed key is never replaced here - the one-click maintenance flow approves it
+/// for the devices the teacher explicitly targeted.
+/// </summary>
+public static class StudentAgentIdentityAutoTrust
+{
+    private static int _enabled;
+    private static readonly object Gate = new();
+
+    public static bool IsEnabled => Volatile.Read(ref _enabled) == 1;
+    public static void Enable() => Volatile.Write(ref _enabled, 1);
+    public static void Disable() => Volatile.Write(ref _enabled, 0);
+
+    public static bool TryPinFirstUse(string campusId, string target, string publicKeyPem,
+        string fingerprint, StudentAgentIdentityTrustStore? trustStore = null) => IsEnabled &&
+        TryPin(campusId, target, publicKeyPem, fingerprint, replaceChangedKey: false, out _, trustStore);
+
+    public static bool TryApproveRotation(string campusId, string target, string publicKeyPem,
+        string fingerprint, out bool rotated, StudentAgentIdentityTrustStore? trustStore = null) =>
+        TryPin(campusId, target, publicKeyPem, fingerprint, replaceChangedKey: true, out rotated, trustStore);
+
+    private static bool TryPin(string campusId, string target, string publicKeyPem, string fingerprint,
+        bool replaceChangedKey, out bool rotated, StudentAgentIdentityTrustStore? trustStore)
+    {
+        rotated = false;
+        try
+        {
+            lock (Gate)
+            {
+                var store = trustStore ?? new StudentAgentIdentityTrustStore();
+                var existing = store.FindTrustedPublicKey(campusId, target);
+                if (existing is not null)
+                {
+                    var existingFingerprint = StudentAgentResponseCryptography.GetFingerprint(existing);
+                    if (string.Equals(existingFingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                    if (!replaceChangedKey) return false;
+                    rotated = true;
+                }
+                store.Pin(new StudentAgentIdentityTrustCandidate(target, campusId, publicKeyPem, fingerprint),
+                    replaceChangedKey: rotated);
+                return true;
+            }
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException or ArgumentException)
+        {
+            return false;
+        }
+    }
 }
 
 /// <summary>Teacher-side trust pins; a changed key is surfaced and never accepted implicitly.</summary>
@@ -249,6 +342,7 @@ public sealed class StudentAgentIdentityTrustStore
         PropertyNameCaseInsensitive = false,
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
+    private static readonly object PinGate = new();
     private readonly string _path;
 
     public StudentAgentIdentityTrustStore(string? path = null) => _path = path ?? DefaultPath;
@@ -282,23 +376,26 @@ public sealed class StudentAgentIdentityTrustStore
         if (!string.Equals(candidate.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("待信任的学生 Agent 指纹与公钥不匹配。");
 
-        var pins = ReadPins().ToList();
-        var existingIndex = pins.FindIndex(item => item.CampusId == candidate.CampusId &&
-            string.Equals(item.Target, target, StringComparison.OrdinalIgnoreCase));
-        if (existingIndex >= 0)
+        lock (PinGate)
         {
-            if (string.Equals(pins[existingIndex].Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
-                return pins[existingIndex];
-            if (!replaceChangedKey)
-                throw new InvalidDataException("该学生电脑的 Agent 身份密钥已变化；须先核对新旧指纹并明确批准轮换。");
-            pins.RemoveAt(existingIndex);
-        }
+            var pins = ReadPins().ToList();
+            var existingIndex = pins.FindIndex(item => item.CampusId == candidate.CampusId &&
+                string.Equals(item.Target, target, StringComparison.OrdinalIgnoreCase));
+            if (existingIndex >= 0)
+            {
+                if (string.Equals(pins[existingIndex].Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+                    return pins[existingIndex];
+                if (!replaceChangedKey)
+                    throw new InvalidDataException("该学生电脑的 Agent 身份密钥已变化；须先核对新旧指纹并明确批准轮换。");
+                pins.RemoveAt(existingIndex);
+            }
 
-        var pin = new StudentAgentIdentityTrustPin(target, candidate.CampusId, canonicalPem, fingerprint,
-            DateTimeOffset.UtcNow);
-        pins.Add(pin);
-        WritePins(pins);
-        return pin;
+            var pin = new StudentAgentIdentityTrustPin(target, candidate.CampusId, canonicalPem, fingerprint,
+                DateTimeOffset.UtcNow);
+            pins.Add(pin);
+            WritePins(pins);
+            return pin;
+        }
     }
 
     public bool Remove(string campusId, string target, string expectedFingerprint)
@@ -307,14 +404,17 @@ public sealed class StudentAgentIdentityTrustStore
         if (!Regex.IsMatch(expectedFingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
             throw new InvalidDataException("确认移除的学生 Agent 指纹无效。");
         var normalizedTarget = NormalizeTarget(target);
-        var pins = ReadPins().ToList();
-        var index = pins.FindIndex(item => item.CampusId == campusId &&
-            string.Equals(item.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase));
-        if (index < 0 || !string.Equals(pins[index].Fingerprint, expectedFingerprint, StringComparison.OrdinalIgnoreCase))
-            return false;
-        pins.RemoveAt(index);
-        WritePins(pins);
-        return true;
+        lock (PinGate)
+        {
+            var pins = ReadPins().ToList();
+            var index = pins.FindIndex(item => item.CampusId == campusId &&
+                string.Equals(item.Target, normalizedTarget, StringComparison.OrdinalIgnoreCase));
+            if (index < 0 || !string.Equals(pins[index].Fingerprint, expectedFingerprint, StringComparison.OrdinalIgnoreCase))
+                return false;
+            pins.RemoveAt(index);
+            WritePins(pins);
+            return true;
+        }
     }
 
     private IReadOnlyList<StudentAgentIdentityTrustPin> ReadPins()

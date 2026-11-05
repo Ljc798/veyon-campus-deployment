@@ -555,6 +555,14 @@ public sealed partial class TeacherViewModel
         (!_useLocalTestStudentUpdateSource || IsLocalTestStudentUpdateSourceAvailable &&
             !string.IsNullOrWhiteSpace(_localTestStudentSetupInstallerPath));
 
+    // 「一键静默更新」自动作用于当前地点全部学生电脑，不依赖教师事先勾选。
+    public bool CanOneClickUpdateAllStudentDevices => OperatingSystem.IsWindows() && !IsExecuting &&
+        _maintenanceWorkflow is not null && IsCampusIdValid() && WebsitePolicyTargetChoices.Count > 0 &&
+        AreWebsiteTargetsTrustedForActions() &&
+        AreTargetsConflictFree(WebsitePolicyTargetChoices.Select(item => item.Target)) &&
+        (!_useLocalTestStudentUpdateSource || IsLocalTestStudentUpdateSourceAvailable &&
+            !string.IsNullOrWhiteSpace(_localTestStudentSetupInstallerPath));
+
     public bool CanUpdateMaintenanceService => CanStartMaintenanceOnSelectedTargets &&
         (!_useLocalTestStudentUpdateSource || IsLocalTestStudentUpdateSourceAvailable &&
             !string.IsNullOrWhiteSpace(_localTestMaintenanceInstallerPath));

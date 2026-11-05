@@ -20,6 +20,9 @@ public partial class App : Application
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
 #if TEACHER_CONSOLE
+            // 教师端采用首次使用时自动固定学生 Agent 身份：教师无法人工比对指纹，
+            // 首次签名回执有效即可信任；密钥变化仍由一键维护流程单独处理。
+            VeyonCampus.Core.StudentAgentIdentityAutoTrust.Enable();
             var teacherWindow = new TeacherWindow();
             desktop.MainWindow = teacherWindow;
             if (OperatingSystem.IsWindows())

@@ -80,12 +80,12 @@ public static class StudentSystemPolicyTransport
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(body, campusId,
-                        nonce, signedPolicy, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
+                    var verified = StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher(body, campusId,
+                        target, nonce, signedPolicy, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
                         maximumBodyBytes: 16 * 1024);
                     if (!verified.MatchesPinnedKey)
                         return new StudentSystemPolicyDeliveryResult(target, false,
-                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。",
+                            $"学生端身份已变化；请在「学生端维护」点一次一键更新。指纹 {verified.Fingerprint}",
                             NeedsReview: true);
                     return new StudentSystemPolicyDeliveryResult(target, true, verified.Payload.Body,
                         Partial: verified.Payload.Body.StartsWith("system policy partially accepted;",

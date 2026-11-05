@@ -83,8 +83,8 @@ public static class EdgeWebsitePolicyModeTransport
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseText,
-                        campusId, nonce, signedCommand, (int)response.StatusCode, pinnedKey,
+                    var verified = StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher(responseText,
+                        campusId, target, nonce, signedCommand, (int)response.StatusCode, pinnedKey,
                         DateTimeOffset.UtcNow, maximumBodyBytes: 8192);
                     if (!verified.MatchesPinnedKey)
                         return new EdgeWebsitePolicyMigrationResult(target, false, true,

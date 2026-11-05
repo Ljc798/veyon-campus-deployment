@@ -2241,6 +2241,7 @@ public sealed partial class TeacherViewModel
         Changed(nameof(CanDeployStudentUpdate));
         Changed(nameof(CanSyncStudentConfiguration));
         Changed(nameof(CanMaintainStudentDevices));
+        Changed(nameof(CanOneClickUpdateAllStudentDevices));
         Changed(nameof(CanTrustStudentAgentIdentities));
     }
 
@@ -2263,6 +2264,7 @@ public sealed partial class TeacherViewModel
         Changed(nameof(CanReadDeviceHealth));
         NotifyDeviceHealthBatchProperties();
         Changed(nameof(CanTrustStudentAgentIdentities));
+        Changed(nameof(CanOneClickUpdateAllStudentDevices));
         Changed(nameof(CanMigrateEdgeRealtime));
         Changed(nameof(CanRestoreEdgeLegacy));
         Changed(nameof(WebsitePolicyConfirmationSummary));

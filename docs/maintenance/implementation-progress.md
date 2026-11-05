@@ -329,3 +329,15 @@
 - **现场数据操作（均已备份）**：两轮 `config import` 去重，最终 Veyon 1 个 Location + 6 台电脑（PC-12 / PC-13 等全部保留）；本机 `campus-directory.json` 删除冗余「测试校区」档案及其 10 座位 layout，保留用户当前编辑的「测试」档案（3 座位）。备份与前后导出在 `artifacts/veyon-evidence-20261104-2200/`。Veyon 电脑对象未被删除。
 - **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.67-Maintenance-Test.exe`，70,977,027 B，SHA-256 `8E5747C7E168B1B90D3B6A35E0C8604CBB5818DE4020EDF282395E995EA896F4`；日志 `artifacts/maintenance-package-20261104-1.1.67.log`；0 错误、102 个唯一警告。**必须用 1.1.67**（1.1.66 不含 import 修复）。
 - **边界**：自动化测试 / Windows VM 验收仍未运行；用户当前运行 1.1.65，需重启到 1.1.67 才加载新档案数据。未写 production / CloudBase，未创建或激活真实信任根。
+
+## 2026-11-05 15:50 身份自动核对 + 一键静默更新（1.1.50 测试包）
+
+用户反馈：找不到「核对并固定身份」、点「核对首次或变化的设备身份」无反应、「高级维护操作」不会用；目标只有一个动作——教师端点一下，学生端全部静默更新。
+
+- **根因**：`TeacherMaintenanceWorkflow.MaintainAsync` 要求每台设备已有教师端固定的 Agent 公钥，缺失即 `ManualRequired`（截图里的「人工核对 1」）；网站策略推送同样在 `WebsitePolicyRuntime.PushAsync` 因无固定公钥拒绝。旧 UI 把唯一解除手段藏在「设备概览」展开行或折叠区里，且该按钮只在出现 `IdentityCandidate` 时才可见，状态读取超时则完全无响应。
+- **自动核对**：Core 新增 `StudentAgentIdentityAutoTrust`（默认关闭，`App.OnFrameworkInitializationCompleted` 仅在 `TEACHER_CONSOLE` 下 `Enable()`）。`StudentAgentResponseCryptography.VerifyForTeacher` / `StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher` 在首次收到有效签名回执时自动固定身份；已接入状态读取、网站/应用/系统策略、Edge 迁移、健康修复、轻量状态摘要等回执路径。密钥**变化**不会被首次信任悄悄替换，只由教师明确触发的一键流程批准。`StudentAgentIdentityTrustStore.Pin/Remove` 增加进程内锁，避免并发状态读取写坏信任清单。
+- **一键流程**：`TeacherViewModel.OneClickUpdateAllStudentDevicesAsync()` 自动全选当前地点全部学生电脑 → 自动批准 Maintenance 服务密钥轮换 → `MaintainStudentDevicesAsync` 内先 `AutoTrustMaintenanceTargetsAsync`（逐台发现身份、批准轮换）→ 统一维护事务。旧版 Agent 仍走 Legacy HTTP 通道，WebSocket 监听启动失败不阻断。新增 `CanOneClickUpdateAllStudentDevices` 绑定，点击必有可见状态行。
+- **UI 收敛**：`TeacherUpdatesView` 主按钮改「一键静默更新全部学生端」；删除整个「高级维护操作」折叠区、两处「在此核对身份」、身份指纹文本框与冗长说明；`TeacherHealthView` 删除「核对并固定身份」/指纹展开/复制按钮。`WebsitePolicyRuntime` 中指向已删除按钮的提示改为引导一键更新。
+- **验证**：TeacherConsole 与 Checks 项目编译 0 错误（仅历史 CA1416/可空性警告）；`--student-application-update-fixtures`、`--student-agent-channel-fixtures` PASS，新增 `CheckAutoTrustFirstUse` 覆盖「默认严格 / 首次自动固定 / 密钥变化不隐式替换 / 一键批准后可验证」。`--teacher-workflow-fixtures` 与 `--maintenance-fault-injection-fixtures` 在**未改动的基线**上同样失败，属本地环境既有问题，与本轮无关。
+- **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.50-OneClick-Test.exe`，70,984,086 B，SHA-256 `A6B83820B54F9BF7C8945359C740DEE076F85382DB67DB013E5E9EED48387BBB`；带 `artifacts/veyon-campus-release-public.pem` 发布公钥；发布目录 `artifacts/windows-x64-v1.1.50-teacher-console-oneclick-test/`；日志 `artifacts/one-click-package-20261105.log`（Inno `Successful compile`）。已核验 DLL 内含新按钮文案且不含被删除的旧按钮。用户需**先退出教师端**再安装（既有安装器不强关应用）。
+- **边界**：未做真机静默更新验收；未写 production / CloudBase；未创建或激活真实信任根。自动首次信任属 TOFU，密钥变化仍需教师主动点一次一键更新。

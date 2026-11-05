@@ -33,6 +33,7 @@ internal static class StudentApplicationUpdateChecks
         CheckLegacyV140ConfigFingerprintMigration();
         CheckSignedCommandAcknowledgements();
         CheckAgentIdentityTrustStore();
+        CheckAutoTrustFirstUse();
         CheckPushFailureIsolation();
         CheckAtomicTransactionTerminalStates();
         CheckAtomicJournalRejectsStaleRecords();
@@ -929,6 +930,55 @@ internal static class StudentApplicationUpdateChecks
         }
         finally
         {
+            if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
+        }
+    }
+
+    private static void CheckAutoTrustFirstUse()
+    {
+        using var firstKey = RSA.Create(2048);
+        using var replacementKey = RSA.Create(2048);
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-auto-trust-" + Guid.NewGuid().ToString("N"));
+        var store = new StudentAgentIdentityTrustStore(Path.Combine(root, "agents.json"));
+        const string campus = "ExampleCampus";
+        const string target = "PC-07";
+        var firstPem = firstKey.ExportSubjectPublicKeyInfoPem();
+        var replacementPem = replacementKey.ExportSubjectPublicKeyInfoPem();
+        var replacementFingerprint = StudentAgentResponseCryptography.GetFingerprint(replacementPem);
+        var response = new StudentApplicationUpdateResponse(1,
+            StudentApplicationUpdateResponseCryptography.Purpose, campus, Guid.NewGuid(),
+            DateTimeOffset.UtcNow, "1.1.49", "0.4.57", false, "自动核对夹具。");
+        var signed = StudentAgentResponseCryptography.Sign(response, firstKey);
+        var signedReplacement = StudentAgentResponseCryptography.Sign(response, replacementKey);
+        try
+        {
+            // 默认严格模式：库调用与无界面检查不得隐式信任。
+            StudentAgentIdentityAutoTrust.Disable();
+            var strict = StudentAgentResponseCryptography.VerifyForTeacher<StudentApplicationUpdateResponse>(
+                signed, campus, target, trustStore: store);
+            Expect(!strict.MatchesPinnedKey && store.FindTrustedPublicKey(campus, target) is null);
+
+            StudentAgentIdentityAutoTrust.Enable();
+            var first = StudentAgentResponseCryptography.VerifyForTeacher<StudentApplicationUpdateResponse>(
+                signed, campus, target, trustStore: store);
+            Expect(first.MatchesPinnedKey && store.FindTrustedPublicKey(campus, target) == firstPem);
+
+            // 密钥变化不会被首次信任悄悄替换。
+            var changed = StudentAgentResponseCryptography.VerifyForTeacher<StudentApplicationUpdateResponse>(
+                signedReplacement, campus, target, trustStore: store);
+            Expect(!changed.MatchesPinnedKey && store.FindTrustedPublicKey(campus, target) == firstPem);
+
+            // 教师一键流程明确批准后才替换。
+            Expect(StudentAgentIdentityAutoTrust.TryApproveRotation(campus, target, replacementPem,
+                replacementFingerprint, out var rotated, store) && rotated);
+            Expect(store.FindTrustedPublicKey(campus, target) == replacementPem);
+            var approved = StudentAgentResponseCryptography.VerifyForTeacher<StudentApplicationUpdateResponse>(
+                signedReplacement, campus, target, trustStore: store);
+            Expect(approved.MatchesPinnedKey);
+        }
+        finally
+        {
+            StudentAgentIdentityAutoTrust.Disable();
             if (Directory.Exists(root)) Directory.Delete(root, recursive: true);
         }
     }

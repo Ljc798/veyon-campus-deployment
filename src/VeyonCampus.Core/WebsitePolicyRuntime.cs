@@ -4222,12 +4222,12 @@ public static class WebsitePolicyTransport
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(resultText, campusId,
-                        nonce, signedPolicyJson, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
-                        maximumBodyBytes: 8192);
+                    var verified = StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher(resultText,
+                        campusId, target, nonce, signedPolicyJson, (int)response.StatusCode, pinnedKey,
+                        DateTimeOffset.UtcNow, maximumBodyBytes: 8192);
                     if (!verified.MatchesPinnedKey)
                         return new WebsitePolicyPushResult(target, false,
-                            $"学生身份未核对。到「设备概览」展开这台电脑，点「核对并固定身份」后重新推送。指纹 {verified.Fingerprint}",
+                            $"学生端身份已变化；请在「学生端维护」点一次一键更新，系统会自动重新核对。指纹 {verified.Fingerprint}",
                             NeedsReview: true, ReportedApplied: verified.Payload.Body is
                                 WebsitePolicyAgent.PolicyAppliedAcknowledgement or
                                 WebsitePolicyAgent.PolicyAppliedWithoutEdgeChangeAcknowledgement or

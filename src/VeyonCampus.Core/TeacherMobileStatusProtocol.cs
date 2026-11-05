@@ -340,7 +340,8 @@ public static class WebsitePolicyStatusTransport
                 PolicyJson.RejectDuplicateFields(reply.Body);
                 var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId,
                     outgoingRequest.Target);
-                var verified = StudentAgentResponseCryptography.Verify<StudentAgentStatusResponse>(body, pinnedKey);
+                var verified = StudentAgentResponseCryptography.VerifyForTeacher<StudentAgentStatusResponse>(
+                    body, campusId, outgoingRequest.Target, pinnedKey);
                 var status = verified.Payload;
                 WebsitePolicyStatusCryptography.ValidateResponse(status, request, DateTimeOffset.UtcNow);
                 var candidate = new StudentAgentIdentityTrustCandidate(outgoingRequest.Target, campusId,

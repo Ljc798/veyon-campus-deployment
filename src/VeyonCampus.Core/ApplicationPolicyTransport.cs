@@ -272,12 +272,12 @@ public static class ApplicationPolicyTransport
                 try
                 {
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                    var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseBody, campusId,
-                        nonce, body, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
+                    var verified = StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher(responseBody,
+                        campusId, target, nonce, body, (int)response.StatusCode, pinnedKey, DateTimeOffset.UtcNow,
                         maximumResponseBytes);
                     if (!verified.MatchesPinnedKey)
                         return new ApplicationPolicyDeliveryResult(target, false,
-                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请在教师端读取并固定此电脑身份后重试。",
+                            $"学生端身份已变化；请在「学生端维护」点一次一键更新。指纹 {verified.Fingerprint}",
                             NeedsReview: true);
                     return new ApplicationPolicyDeliveryResult(target, true, verified.Payload.Body);
                 }

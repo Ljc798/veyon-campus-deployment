@@ -208,7 +208,8 @@ public static class StudentAgentRuntimeSummaryTransport
                     PolicyJson.RejectDuplicateFields(bytes);
                     var body = Encoding.UTF8.GetString(bytes);
                     var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, target);
-                    var verified = StudentAgentResponseCryptography.Verify<StudentAgentRuntimeSummary>(body, pinnedKey);
+                    var verified = StudentAgentResponseCryptography.VerifyForTeacher<StudentAgentRuntimeSummary>(
+                        body, campusId, target, pinnedKey);
                     StudentAgentRuntimeSummaryCryptography.Validate(verified.Payload, request, DateTimeOffset.UtcNow);
                     var candidate = new StudentAgentIdentityTrustCandidate(target, campusId, verified.PublicKeyPem,
                         verified.Fingerprint, pinnedKey is null ? null :

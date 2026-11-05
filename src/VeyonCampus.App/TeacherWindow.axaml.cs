@@ -2654,11 +2654,10 @@ public partial class TeacherWindow : Window
 
     private async void MaintainStudentDevices(object? sender, RoutedEventArgs e)
     {
-        // The trusted legacy HTTP path can update older Agents even if the new teacher
-        // WebSocket listener cannot start. Continue the signed maintenance flow; connection
-        // verification will remain pending until the listener is available.
+        // 一键静默更新：自动全选当前地点学生电脑、自动核对身份、执行统一维护事务。
+        // 旧版学生 Agent 走受信任的 Legacy HTTP 通道，即使新的 WebSocket 监听未启动也继续。
         await EnsureTeacherAgentChannelStartedAsync();
-        await _model.MaintainStudentDevicesAsync();
+        await _model.OneClickUpdateAllStudentDevicesAsync();
     }
 
     private async void RetryMaintenanceIssue(object? sender, RoutedEventArgs e)

@@ -410,8 +410,8 @@ public static class StudentAgentHealthRepairTransport
             if (responseText is null) break;
             if (receipt is not null || ++phaseCount > 3)
                 throw new InvalidDataException("Agent 健康修复进度流有多余状态帧。");
-            var verified = StudentAgentCommandAcknowledgementCryptography.Verify(responseText, campusId,
-                command.Nonce, signedCommand, 200, pinnedKey, DateTimeOffset.UtcNow,
+            var verified = StudentAgentCommandAcknowledgementCryptography.VerifyForTeacher(responseText,
+                campusId, target, command.Nonce, signedCommand, 200, pinnedKey, DateTimeOffset.UtcNow,
                 maximumBodyBytes: 8192);
             if (!verified.MatchesPinnedKey)
                 throw new InvalidDataException("Agent 身份未固定或已变化；修复回执未接受。");
