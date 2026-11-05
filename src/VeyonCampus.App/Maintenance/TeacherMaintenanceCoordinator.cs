@@ -633,14 +633,24 @@ public sealed class TeacherMaintenanceCoordinator
                 await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
                 break;
             case MaintenanceAdapterDisposition.ManualRequired:
+                // A manual conclusion is the only actionable answer the teacher has. Never demote it to
+                // "pending verification": that state cannot resolve itself and hides the instruction.
+                run = run.State is MaintenanceRunState.Updating or MaintenanceRunState.UpdateOffered or
+                        MaintenanceRunState.WaitingForCommit
+                    ? run.TransitionTo(MaintenanceRunState.RecoveryRequired, FormatAdapterResultDetail(result),
+                            result.Evidence, DateTimeOffset.UtcNow)
+                        .TransitionTo(MaintenanceRunState.ManualRequired, FormatAdapterResultDetail(result),
+                            result.Evidence, DateTimeOffset.UtcNow)
+                    : run.TransitionTo(MaintenanceRunState.ManualRequired, FormatAdapterResultDetail(result),
+                        result.Evidence, DateTimeOffset.UtcNow);
+                await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
+                break;
             case MaintenanceAdapterDisposition.Failed:
                 if ((run.AgentCommandId is null && run.State == MaintenanceRunState.PlanReady) ||
                     (run.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
                      run.LastUpdateCommandIsMaintenanceService))
                 {
-                    var failed = run.TransitionTo(result.Disposition == MaintenanceAdapterDisposition.ManualRequired
-                            ? MaintenanceRunState.ManualRequired
-                            : MaintenanceRunState.Failed,
+                    var failed = run.TransitionTo(MaintenanceRunState.Failed,
                         FormatAdapterResultDetail(result), result.Evidence, DateTimeOffset.UtcNow);
                     await _store.UpdateAsync(failed, cancellationToken).ConfigureAwait(false);
                 }
