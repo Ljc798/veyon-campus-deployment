@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using VeyonCampus.App;
 using VeyonCampus.Core;
 
@@ -17,6 +18,7 @@ internal static class StudentApplicationUpdateChecks
     {
         MaintenanceModelChecks.Run();
         CheckSignedCommand();
+        CheckHistoricalAgentEnvelope();
         CheckSignedAgentResponses();
         CheckCommandBoundStatusRequeryAndProgress();
         CheckDownloadCapabilityResponse();
@@ -45,6 +47,7 @@ internal static class StudentApplicationUpdateChecks
 
     public static void RunCompatibilityFixtures()
     {
+        CheckHistoricalAgentEnvelope();
         CheckCommandBoundStatusRequeryAndProgress();
         CheckDownloadCapabilityResponse();
         CheckAgentUpdateCompatibilityMatrix();
@@ -270,8 +273,67 @@ internal static class StudentApplicationUpdateChecks
             campusKey.ExportSubjectPublicKeyInfoPem(), "ExampleCampus", apiBase, apiPublicPem, now));
     }
 
-    private static void CheckReplayStore()
+    private static void CheckHistoricalAgentEnvelope()
     {
+        using var campusKey = RSA.Create(2048);
+        using var developerKey = RSA.Create(2048);
+        var apiBase = new Uri("https://release-fixture.invalid/");
+        var now = DateTimeOffset.UtcNow;
+        var releaseId = Guid.NewGuid();
+        var manifest = new ApplicationReleaseManifest(3, "VeyonCampus.StudentSetup", "StudentSetup",
+            "2.0.0", "win-x64", "VeyonCampus-Student-Setup-2.0.0-win-x64.exe", 512, new string('A', 64),
+            new Uri(apiBase, $"v1/releases/{releaseId:D}/artifact").AbsoluteUri,
+            new ApplicationReleasePolicyCapabilities(1, 1));
+        var developerSignature = developerKey.SignData(ApplicationReleaseClient.CreateCanonicalPayload(manifest),
+            HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
+        var release = new ApplicationReleaseEnvelope(manifest, "RSA-PSS-SHA256",
+            Convert.ToBase64String(developerSignature), now);
+        var command = new StudentApplicationUpdateCommand(1, "ExampleCampus", Guid.NewGuid(), now,
+            now.AddMinutes(8), release,
+            "http://192.168.4.10:39175/v1/student-updates/" + new string('b', 64));
+        var apiPublicPem = developerKey.ExportSubjectPublicKeyInfoPem();
+        var campusPublicPem = campusKey.ExportSubjectPublicKeyInfoPem();
+
+        Expect(StudentApplicationUpdateCryptography.RequiresLegacyAgentEnvelope("0.4.56"));
+        Expect(StudentApplicationUpdateCryptography.RequiresLegacyAgentEnvelope("0.4.55"));
+        Expect(!StudentApplicationUpdateCryptography.RequiresLegacyAgentEnvelope("0.4.57"));
+        Expect(!StudentApplicationUpdateCryptography.RequiresLegacyAgentEnvelope(null));
+
+        var legacySigned = StudentApplicationUpdateCryptography.Sign(command, campusKey, apiBase, apiPublicPem,
+            legacyAgentEnvelope: true);
+        var legacyPayload = ReadSignedPayload(legacySigned);
+        Expect(!legacyPayload.Contains("studentAgentVersion", StringComparison.Ordinal) &&
+               !legacyPayload.Contains("releaseChannel", StringComparison.Ordinal) &&
+               !legacyPayload.Contains("maintenanceProtocolVersion", StringComparison.Ordinal));
+        var historical = JsonSerializer.Deserialize<HistoricalUpdateCommand>(legacyPayload, StrictOptions)!;
+        Expect(historical.Release.Manifest.Version == "2.0.0" && historical.CommandId == command.CommandId);
+        Expect(Encoding.UTF8.GetBytes(legacyPayload).AsSpan()
+            .SequenceEqual(JsonSerializer.SerializeToUtf8Bytes(historical, StrictOptions)));
+        _ = StudentApplicationUpdateCryptography.Verify(legacySigned, campusPublicPem, "ExampleCampus", apiBase,
+            apiPublicPem, now);
+
+        var modernSigned = StudentApplicationUpdateCryptography.Sign(command, campusKey, apiBase, apiPublicPem);
+        var modernPayload = ReadSignedPayload(modernSigned);
+        Expect(modernPayload.Contains("\"studentAgentVersion\":null", StringComparison.Ordinal) &&
+               modernPayload.Contains("\"maintenanceProtocolVersion\":null", StringComparison.Ordinal));
+        _ = StudentApplicationUpdateCryptography.Verify(modernSigned, campusPublicPem, "ExampleCampus", apiBase,
+            apiPublicPem, now);
+    }
+
+    private static string ReadSignedPayload(string signedJson)
+    {
+        var envelope = JsonSerializer.Deserialize<SignedStudentApplicationUpdate>(signedJson)!;
+        return Encoding.UTF8.GetString(Convert.FromBase64String(envelope.Payload));
+    }
+
+    private static readonly JsonSerializerOptions StrictOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = false,
+        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
+    };
+
+    private static void CheckReplayStore()    {
         var temporaryDirectory = Path.Combine(TestPath.CanonicalTempRoot(), "veyon-update-replay-" + Guid.NewGuid().ToString("N"));
         var statePath = Path.Combine(temporaryDirectory, "replay.json");
         var commandId = Guid.NewGuid();
@@ -1078,3 +1140,37 @@ internal static class StudentApplicationUpdateChecks
         throw new InvalidOperationException("Invalid Student application update input was accepted.");
     }
 }
+
+// Byte-for-byte copy of the 1.1.44 / Agent 0.4.56 command model. Historical Agents reject any
+// unmapped member, so this replica proves the projected payload stays parseable (and canonical).
+internal sealed record HistoricalUpdateCommand(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("campusId")] string CampusId,
+    [property: JsonPropertyName("commandId")] Guid CommandId,
+    [property: JsonPropertyName("issuedUtc")] DateTimeOffset IssuedUtc,
+    [property: JsonPropertyName("expiresUtc")] DateTimeOffset ExpiresUtc,
+    [property: JsonPropertyName("release")] HistoricalReleaseEnvelope Release,
+    [property: JsonPropertyName("localDownloadUrl")] string LocalDownloadUrl);
+
+internal sealed record HistoricalReleaseEnvelope(
+    [property: JsonPropertyName("manifest")] HistoricalReleaseManifest Manifest,
+    [property: JsonPropertyName("signatureAlgorithm")] string SignatureAlgorithm,
+    [property: JsonPropertyName("signature")] string Signature,
+    [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt);
+
+internal sealed record HistoricalReleaseManifest(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("product")] string Product,
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("architecture")] string Architecture,
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("sizeBytes")] long SizeBytes,
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("downloadUrl")] string DownloadUrl,
+    [property: JsonPropertyName("policyCapabilities")] HistoricalReleasePolicyCapabilities? PolicyCapabilities = null);
+
+internal sealed record HistoricalReleasePolicyCapabilities(
+    [property: JsonPropertyName("studentSystemPolicy")] int StudentSystemPolicy,
+    [property: JsonPropertyName("applicationPolicy")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int ApplicationPolicy = 0);

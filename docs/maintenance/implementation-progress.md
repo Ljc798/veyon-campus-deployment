@@ -352,3 +352,14 @@
 - **验证**：Core / App / Checks 编译 0 错误；`--student-application-update-fixtures` PASS（含新增回归）；`--student-agent-channel-fixtures` PASS。`--teacher-workflow-fixtures`、`--maintenance-fault-injection-fixtures` 在基线上同样失败，属本地既有问题。
 - **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.51-MaintFix-Test.exe`，70,983,620 B，SHA-256 `E7D569782C9A42FB6D45C1A1CFA46D0735B9D7E9DF90B1CC29EC58A249D113A5`；带发布公钥；发布目录 `artifacts/windows-x64-v1.1.51-teacher-console-maintfix-test/`；日志 `artifacts/maintfix-package-20261105.log`。安装前仍需退出教师端。
 - **边界**：未做真机静默更新验收；本机 journal 中 `8b1f526d` 事务保持原样，供 1.1.51 续跑验证。
+
+## 2026-11-05 旧版 Agent 更新命令信封兼容（1.1.52）
+
+- **现象**：1.1.51 一键静默更新到 `pendingVerification` 后失败，事务转换记录 `updating → pendingVerification | HTTP 409：学生更新命令正文格式无效。`；性能汇总里只有 `TeacherReceipt` 阶段，没有下载/安装阶段。
+- **根因**：学生端 1.1.44 的 Agent 0.4.56 用 `JsonUnmappedMemberHandling.Disallow` 解析更新命令，而教师端签名命令里的发布清单已含后来新增的 `studentAgentVersion` / `releaseChannel` / `maintenanceProtocolVersion`（值都是 `null`，但键存在）。旧 Agent 视作未知成员 → 整条命令报「正文格式无效」→ HTTP 409。旧 Agent 还会用自身模型重新序列化并与收到的 payload 做字节比较，因此仅去键还不够，必须投影成旧版精确形状。
+- **修复**：`StudentApplicationUpdateCryptography` 增加 `legacyAgentEnvelope` 签名选项与 `RequiresLegacyAgentEnvelope(agentVersion)`；对受信任历史 Agent（0.4.55 / 0.4.56）改按 1.1.44 的精确 JSON 形状（7 字段命令 / 4 字段信封 / 10 字段清单）签名。`Verify` 同时接受现代与历史两种规范编码。教师端仅在 Legacy 签名 HTTP 通道向下发此形状，新 Agent 仍收现代信封。
+- **回归**：`StudentApplicationUpdateChecks.CheckHistoricalAgentEnvelope` —— 用严格（Disallow）历史模型副本反序列化历史信封必须成功、必须能字节级重新序列化一致、教师端验签必须通过；现代信封仍须带可空成员。
+- **验证**：Core / App / Checks 编译 0 错误；`--student-application-update-fixtures`、`--student-agent-channel-fixtures` PASS。全量检查仍在本地 `sc.exe` 被沙箱拦截处中断（既有环境限制）。
+- **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.52-LegacyEnvelope-Test.exe`，70,985,120 B，SHA-256 `149FAC7098B81AF7A9E7CDCBBE0C7C2F7187078CDF06C4594DFC91AEC849B3C4`；带发布公钥；发布目录 `artifacts/windows-x64-v1.1.52-teacher-console-legacyenv-test/`；日志 `artifacts/legacyenv-package-20261105.log`（0 错误）。安装前退出教师端。
+- **现场证据**：性能汇总 `artifacts/veyon-campus-student-update-performance-20261105-081633.json` —— `attemptedCount 1 / needsReviewCount 1`，阶段只有 `TeacherReceipt 101 ms`，`timeToStudentInstalled` 全空，说明从未进入下载与安装。
+- **边界**：仍未做真机端到端验收；旧 Agent 下载与安装阶段（局域网下载授权、静默安装）尚未在本轮验证。

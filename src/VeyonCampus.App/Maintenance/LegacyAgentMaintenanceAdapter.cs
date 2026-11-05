@@ -379,10 +379,13 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
                         commandId, expiresUtc, downloadRequestKey, token).ConfigureAwait(false);
                     var command = new StudentApplicationUpdateCommand(1, plan.Device.CampusId, commandId,
                         issuedUtc, expiresUtc, release, downloadUri.AbsoluteUri);
+                    var legacyAgentEnvelope =
+                        StudentApplicationUpdateCryptography.RequiresLegacyAgentEnvelope(
+                            plan.CurrentVersions.AgentRuntimeVersion);
                     string signedCommand;
                     lock (signingKey.PrivateKey)
                         signedCommand = StudentApplicationUpdateCryptography.Sign(command, signingKey.PrivateKey,
-                            artifact.ApiBaseAddress, developerPublicKey);
+                            artifact.ApiBaseAddress, developerPublicKey, legacyAgentEnvelope);
                     var signedCommandSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(signedCommand)));
                     await beforeCommandSend(new MaintenanceUpdateCommandPrepared(plan.OperationId, commandId,
                         signedCommandSha256), token).ConfigureAwait(false);

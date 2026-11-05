@@ -26,6 +26,41 @@ public sealed record SignedStudentApplicationUpdate(
     [property: JsonPropertyName("payload")] string Payload,
     [property: JsonPropertyName("signature")] string Signature);
 
+// Exact pre-1.1.45 wire shape. Historical Agents reject unknown members outright, so the signed
+// payload for those Agents must not carry the optional members added later.
+internal sealed record LegacyStudentApplicationUpdateCommand(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("campusId")] string CampusId,
+    [property: JsonPropertyName("commandId")] Guid CommandId,
+    [property: JsonPropertyName("issuedUtc")] DateTimeOffset IssuedUtc,
+    [property: JsonPropertyName("expiresUtc")] DateTimeOffset ExpiresUtc,
+    [property: JsonPropertyName("release")] LegacyApplicationReleaseEnvelope Release,
+    [property: JsonPropertyName("localDownloadUrl")] string LocalDownloadUrl);
+
+internal sealed record LegacyApplicationReleaseEnvelope(
+    [property: JsonPropertyName("manifest")] LegacyApplicationReleaseManifest Manifest,
+    [property: JsonPropertyName("signatureAlgorithm")] string SignatureAlgorithm,
+    [property: JsonPropertyName("signature")] string Signature,
+    [property: JsonPropertyName("publishedAt")] DateTimeOffset PublishedAt);
+
+internal sealed record LegacyApplicationReleaseManifest(
+    [property: JsonPropertyName("schemaVersion")] int SchemaVersion,
+    [property: JsonPropertyName("product")] string Product,
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("version")] string Version,
+    [property: JsonPropertyName("architecture")] string Architecture,
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("sizeBytes")] long SizeBytes,
+    [property: JsonPropertyName("sha256")] string Sha256,
+    [property: JsonPropertyName("downloadUrl")] string DownloadUrl,
+    [property: JsonPropertyName("policyCapabilities")]
+    LegacyApplicationReleasePolicyCapabilities? PolicyCapabilities = null);
+
+internal sealed record LegacyApplicationReleasePolicyCapabilities(
+    [property: JsonPropertyName("studentSystemPolicy")] int StudentSystemPolicy,
+    [property: JsonPropertyName("applicationPolicy")]
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int ApplicationPolicy = 0);
+
 public sealed record StudentApplicationUpdateDownloadRequest(
     int SchemaVersion,
     string Purpose,
@@ -321,7 +356,7 @@ public static class StudentApplicationUpdateCryptography
     };
 
     public static string Sign(StudentApplicationUpdateCommand command, RSA campusPrivateKey,
-        Uri apiBaseAddress, string developerPublicKeyPem)
+        Uri apiBaseAddress, string developerPublicKeyPem, bool legacyAgentEnvelope = false)
     {
         ArgumentNullException.ThrowIfNull(command);
         ArgumentNullException.ThrowIfNull(campusPrivateKey);
@@ -333,7 +368,7 @@ public static class StudentApplicationUpdateCryptography
         Validate(normalized, apiBaseAddress, developerPublicKeyPem, DateTimeOffset.UtcNow);
         if (campusPrivateKey.KeySize is < 2048 or > 4096)
             throw new InvalidDataException("校区更新签名密钥位长不受支持。");
-        var payload = Serialize(normalized);
+        var payload = legacyAgentEnvelope ? SerializeLegacy(normalized) : Serialize(normalized);
         var signature = campusPrivateKey.SignData(payload, HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
         var envelope = new SignedStudentApplicationUpdate(Convert.ToBase64String(payload),
             Convert.ToBase64String(signature));
@@ -342,6 +377,15 @@ public static class StudentApplicationUpdateCryptography
             throw new InvalidDataException("学生更新命令超过大小限制。");
         return json;
     }
+
+    /// <summary>
+    /// Historical Agents (0.4.55/0.4.56) deserialize the command with unmapped members disallowed and
+    /// predate the newer optional manifest members, so the signed payload must be projected onto the
+    /// exact historical schema. Otherwise the whole command is rejected as malformed.
+    /// </summary>
+    public static bool RequiresLegacyAgentEnvelope(string? agentRuntimeVersion) =>
+        !string.IsNullOrWhiteSpace(agentRuntimeVersion) &&
+        StudentAgentUpdateCompatibility.IsTrustedHistoricalAgentVersion(agentRuntimeVersion);
 
     public static StudentApplicationUpdateCommand Verify(string envelopeJson, string campusPublicKeyPem,
         string expectedCampusId, Uri apiBaseAddress, string developerPublicKeyPem,
@@ -385,7 +429,8 @@ public static class StudentApplicationUpdateCryptography
         {
             throw new InvalidDataException("学生更新命令正文格式无效。", exception);
         }
-        if (!payload.AsSpan().SequenceEqual(Serialize(command)))
+        if (!payload.AsSpan().SequenceEqual(Serialize(command)) &&
+            !payload.AsSpan().SequenceEqual(SerializeLegacy(command)))
             throw new InvalidDataException("学生更新命令正文不是规范编码。");
         Validate(command, apiBaseAddress, developerPublicKeyPem, now ?? DateTimeOffset.UtcNow);
         if (!string.Equals(command.CampusId, expectedCampusId, StringComparison.Ordinal))
@@ -428,6 +473,25 @@ public static class StudentApplicationUpdateCryptography
 
     private static byte[] Serialize(StudentApplicationUpdateCommand command) =>
         JsonSerializer.SerializeToUtf8Bytes(command, JsonOptions);
+
+    /// <summary>Serializes onto the pre-1.1.45 command shape that historical Agents can parse.</summary>
+    private static byte[] SerializeLegacy(StudentApplicationUpdateCommand command) =>
+        JsonSerializer.SerializeToUtf8Bytes(ToLegacyCommand(command), JsonOptions);
+
+    private static LegacyStudentApplicationUpdateCommand ToLegacyCommand(StudentApplicationUpdateCommand command) =>
+        new(command.SchemaVersion, command.CampusId, command.CommandId, command.IssuedUtc, command.ExpiresUtc,
+            new LegacyApplicationReleaseEnvelope(ToLegacyManifest(command.Release.Manifest),
+                command.Release.SignatureAlgorithm, command.Release.Signature, command.Release.PublishedAt),
+            command.LocalDownloadUrl);
+
+    private static LegacyApplicationReleaseManifest ToLegacyManifest(ApplicationReleaseManifest manifest) =>
+        new(manifest.SchemaVersion, manifest.Product, manifest.Role, manifest.Version, manifest.Architecture,
+            manifest.FileName, manifest.SizeBytes, manifest.Sha256, manifest.DownloadUrl,
+            manifest.PolicyCapabilities is null
+                ? null
+                : new LegacyApplicationReleasePolicyCapabilities(
+                    manifest.PolicyCapabilities.StudentSystemPolicy,
+                    manifest.PolicyCapabilities.ApplicationPolicy));
 
     private static byte[] DecodeCanonicalBase64(string value, string label)
     {
