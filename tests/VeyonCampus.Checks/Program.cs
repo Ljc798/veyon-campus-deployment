@@ -21,6 +21,20 @@ if (args is ["--veyon-registry-snapshot"])
     Console.WriteLine("PASS Veyon 注册表目录快照：" + registryDetail +
                       $"，地点 {registryObjects.Count(item => item.Type == "location")} 个、" +
                       $"电脑 {registryObjects.Count(item => item.Type == "computer")} 台");
+
+    // The whole point of the fallback: a CLI that cannot start must still yield a COMPLETE read,
+    // otherwise the classroom session, seat binding and policy actions stay locked.
+    var missingCli = Path.Combine(Path.GetTempPath(),
+        "veyon-cli-missing-" + Guid.NewGuid().ToString("N") + ".exe");
+    var fallbackRead = VeyonNetworkObjectDirectory.SafeReadNetworkObjects(missingCli,
+        Path.GetTempPath());
+    if (fallbackRead.Result is not { Count: > 0 })
+        throw new InvalidOperationException("命令行不可用时注册表回退没有返回目录：" +
+                                            fallbackRead.Diagnostic.Message);
+    if (fallbackRead.PartialRead)
+        throw new InvalidOperationException("命令行不可用时的注册表回退被标成部分读取；课堂与写回仍会被锁。");
+    Console.WriteLine($"PASS 命令行不可用时按完整读取回退：{fallbackRead.Result.Count} 个对象，" +
+                      $"阶段 {fallbackRead.Diagnostic.FailureStage}");
     return;
 }
 

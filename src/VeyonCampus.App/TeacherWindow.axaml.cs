@@ -1380,12 +1380,37 @@ public partial class TeacherWindow : Window
     private async Task RunSeatMapVeyonSyncAsync()
     {
         _model.BeginSeatMapVeyonSync();
+        var classroomPaused = false;
         try
         {
             if (!OperatingSystem.IsWindows())
             {
                 _model.ReportSeatMapSyncFailure("当前系统不支持 Veyon 目录写回；本机资料已保存。请在 Windows 教师端重试。");
                 return;
+            }
+
+            // A live lesson must not have its roster rewritten underneath it, and the write path
+            // already refuses while a session is active. Probe the CLI first: if it cannot start,
+            // interrupting the lesson buys nothing and the teacher would lose the session for a
+            // write that cannot happen.
+            if (_model.HasActiveClassroomSession && !VeyonNetworkObjectDirectory.IsCliWritable())
+            {
+                _model.ReportSeatMapSyncFailure(
+                    "这台电脑的 Veyon 命令行（veyon-cli）无法启动，不能写入地点和电脑；课堂保持进行中，本机座位资料已保存。" +
+                    "请先修复 Veyon 安装（或让安全软件不再干扰 veyon-cli），再点「重试 Veyon 同步」。");
+                return;
+            }
+
+            if (_model.HasActiveClassroomSession)
+            {
+                var pause = await _model.PauseClassroomForVeyonWriteAsync();
+                if (pause.Error is { Length: > 0 } pauseError)
+                {
+                    _model.ReportSeatMapSyncFailure(
+                        "本机资料已保存；写入 Veyon 需要先暂停课堂，但课堂未能自动结束：" + pauseError);
+                    return;
+                }
+                classroomPaused = pause.Paused;
             }
 
             var bindingError = await _model.ReconcileSeatVeyonBindingsByHostAsync();
@@ -1443,6 +1468,7 @@ public partial class TeacherWindow : Window
         }
         finally
         {
+            if (classroomPaused) await _model.ResumeClassroomAfterVeyonWriteAsync();
             _model.FinishSeatMapEditingAfterSave();
             _model.EndSeatMapVeyonSync();
         }

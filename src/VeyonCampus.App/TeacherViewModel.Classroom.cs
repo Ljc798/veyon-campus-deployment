@@ -4350,6 +4350,39 @@ public sealed partial class TeacherViewModel
         }
     }
 
+    /// <summary>
+    /// Ends the running classroom so the Veyon directory can be rewritten. Writing Veyon while a
+    /// lesson is live would change the roster under the students' feet, so the caller pauses the
+    /// lesson, writes, and resumes it. Returns a concrete reason instead of failing silently.
+    /// </summary>
+    public async Task<(bool Paused, string? Error)> PauseClassroomForVeyonWriteAsync()
+    {
+        if (_activeClassroomSession is not { } active) return (false, null);
+        if (IsClassroomCountdownRunning) return (false, "课堂倒计时正在运行，先结束倒计时。");
+        if (ClassroomTaskProgressCompletedCount < ClassroomTaskProgressTotalCount)
+            return (false, "课堂任务尚未全部完成，先结束课堂任务。");
+        if (await EndClassroomSessionAsync(active.SessionId)) return (true, null);
+        return (false, "课堂仍有未解除的快捷管控或未完成的课堂状态；先在课堂页恢复全部学生电脑。");
+    }
+
+    /// <summary>Restarts the lesson that <see cref="PauseClassroomForVeyonWriteAsync"/> ended.</summary>
+    public async Task ResumeClassroomAfterVeyonWriteAsync()
+    {
+        try
+        {
+            await EnsureClassroomSessionAsync();
+            if (!HasActiveClassroomSession)
+                SetClassroomQuickControlSessionNotice("Veyon 写入已结束，但课堂未能自动重新开始；请手动点「开始课堂」。");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or InvalidOperationException or
+                                           CryptographicException or PlatformNotSupportedException)
+        {
+            SetClassroomQuickControlSessionNotice(
+                "Veyon 写入已结束，但课堂未能自动重新开始；请手动点「开始课堂」。" + exception.Message);
+        }
+    }
+
     public async Task EnsureClassroomSessionAsync()
     {
         if (HasActiveClassroomSession || !CanToggleClassroomSession) return;
