@@ -1045,7 +1045,10 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
     newer.EnsureCompatible("0.4.99", VeyonInstallerTrust.Version, "0.4.42");
     newer.EnsureCompatible("0.4.55", VeyonInstallerTrust.Version, "0.4.43");
     Reject(() => newer.EnsureCompatible("0.4.53", VeyonInstallerTrust.Version, "0.4.42"));
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.57");
+  // Keep this in sync with src/VeyonCampus.Agent/VeyonCampus.Agent.csproj. It is asserted explicitly
+  // so a version bump cannot silently ship a StudentSetup that reports a different agent version than
+  // the one it actually bundles.
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.58");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {
