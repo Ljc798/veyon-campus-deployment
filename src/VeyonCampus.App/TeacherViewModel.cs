@@ -4041,13 +4041,18 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         if (SelectedCampusProfile?.ProfileId != campusId || SelectedRoomProfile?.RoomId != roomId)
             return "读取期间当前地点已切换。";
 
-        var locationObjects = objects.Where(item =>
-            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
-            item.ObjectId != Guid.Empty &&
-            string.Equals(item.Name, locationName, StringComparison.Ordinal)).ToArray();
-        if (locationObjects.Length != 1)
+        // A verified write already told us the parent location UUID; prefer it over the display
+        // name so a second same-named Veyon location cannot capture the seat bindings (R21).
+        var verifiedLocationIds = (verifiedAddedTargets ?? [])
+            .Select(target => target.ParentObjectId)
+            .Where(id => id != Guid.Empty)
+            .Distinct()
+            .ToArray();
+        var locationObject = verifiedLocationIds.Length == 1
+            ? VeyonNetworkObjectDirectory.SelectLocationObject(objects, verifiedLocationIds[0], locationName)
+            : VeyonNetworkObjectDirectory.SelectLocationObject(objects, null, locationName);
+        if (locationObject is null)
             return "Veyon 中找不到唯一对应的地点对象。";
-        var locationObject = locationObjects[0];
 
         var bindings = new List<ClassroomSeatGridTargetBinding>(plannedSeats.Count);
         var currentById = objects.Where(item => item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase))
@@ -4282,6 +4287,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         try
         {
             var objects = await Task.Run(VeyonNetworkObjectDirectory.ReadNetworkObjects);
+            // The CSV projection merges same-named locations, so the duplicate guard cannot see
+            // two distinct UUIDs. Check the UUID snapshot before writing any derived state.
+            var identityLocations = VeyonNetworkObjectDirectory.BuildLocationsById(objects);
+            if (RejectDuplicateVeyonLocations(identityLocations, out _)) return;
             // Capture the fingerprint from this read's payload. The directory helper also exposes
             // a process-wide last-read value; another page can refresh it while this task resumes.
             var fingerprint = VeyonNetworkObjectDirectory.FingerprintObjects(objects);

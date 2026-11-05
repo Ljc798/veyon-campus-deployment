@@ -440,6 +440,100 @@ public static class VeyonNetworkObjectDirectory
         return locations;
     }
 
+    /// <summary>
+    /// UUID-addressed projection of a complete object snapshot. Unlike ParseLocationsFromObjects
+    /// (which merges by display name and is used for fingerprint comparison), same-named
+    /// locations stay separate and empty locations are kept. Name-only backends fall back to
+    /// name grouping with ObjectId = null. Read-only: callers still own validation and writes.
+    /// </summary>
+    public static IReadOnlyList<VeyonNetworkLocation> BuildLocationsById(
+        IReadOnlyList<VeyonNetworkObject> objects)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        var locationObjects = objects.Where(IsLocationObject).ToArray();
+        var computerObjects = objects.Where(IsComputerObject).ToArray();
+        var identified = locationObjects.Where(item => item.ObjectId != Guid.Empty).ToArray();
+        var identifiedIds = identified.Select(item => item.ObjectId).ToHashSet();
+
+        var built = new List<VeyonNetworkLocation>(identified.Length + 1);
+        foreach (var group in identified.GroupBy(item => item.ObjectId))
+        {
+            var members = computerObjects.Where(item => item.ParentObjectId == group.Key).ToArray();
+            built.Add(ProjectLocation(group.First().Name, members) with { ObjectId = group.Key });
+        }
+
+        if (identified.Length == 0)
+        {
+            // Name-only backends (e.g. the native macOS directory) have no UUID at all.
+            foreach (var group in locationObjects.GroupBy(item => item.Name,
+                         StringComparer.OrdinalIgnoreCase))
+            {
+                var members = computerObjects.Where(item =>
+                    string.Equals(item.Location, group.Key, StringComparison.OrdinalIgnoreCase))
+                    .ToArray();
+                built.Add(ProjectLocation(group.Key, members));
+            }
+        }
+
+        // Never silently drop a computer whose parent is not a known location object.
+        var orphans = computerObjects.Where(item => !identifiedIds.Contains(item.ParentObjectId) &&
+            (identified.Length > 0 || !locationObjects.Any(candidate =>
+                string.Equals(candidate.Name, item.Location, StringComparison.OrdinalIgnoreCase))))
+            .ToArray();
+        if (orphans.Length > 0)
+            built.Add(ProjectLocation("未分组电脑", orphans));
+
+        return Array.AsReadOnly(built
+            .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.ObjectId?.ToString("D") ?? "", StringComparer.Ordinal)
+            .ToArray());
+    }
+
+    private static VeyonNetworkLocation ProjectLocation(string name,
+        IReadOnlyList<VeyonNetworkObject> computers)
+    {
+        var targets = new List<string>(computers.Count);
+        var names = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var computer in computers)
+        {
+            var target = computer.Host.Length > 0 ? computer.Host : computer.Name.Trim();
+            if (target.Length == 0) continue;
+            targets.Add(target);
+            var displayName = computer.Name.Trim();
+            if (displayName.Length > 0) names[target] = displayName;
+        }
+        return new VeyonNetworkLocation(name, Array.AsReadOnly(targets.ToArray()),
+            new ReadOnlyDictionary<string, string>(names));
+    }
+
+    private static bool IsLocationObject(VeyonNetworkObject item) =>
+        item.Type.Equals("location", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsComputerObject(VeyonNetworkObject item) =>
+        item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// Selects exactly one location object, preferring the UUID confirmed by a verified write.
+    /// Falls back to the legacy unique-name rule when no UUID is available; returns null for
+    /// zero or multiple matches so callers refuse to bind instead of guessing.
+    /// </summary>
+    public static VeyonNetworkObject? SelectLocationObject(
+        IReadOnlyList<VeyonNetworkObject> objects, Guid? expectedLocationId, string locationName)
+    {
+        ArgumentNullException.ThrowIfNull(objects);
+        ArgumentNullException.ThrowIfNull(locationName);
+        var candidates = objects.Where(item => IsLocationObject(item) && item.ObjectId != Guid.Empty)
+            .ToArray();
+        if (expectedLocationId is { } expected && expected != Guid.Empty)
+        {
+            var byId = candidates.Where(item => item.ObjectId == expected).ToArray();
+            return byId.Length == 1 ? byId[0] : null;
+        }
+        var byName = candidates.Where(item =>
+            string.Equals(item.Name, locationName, StringComparison.Ordinal)).ToArray();
+        return byName.Length == 1 ? byName[0] : null;
+    }
+
     /// <summary>Reads stable object IDs through Veyon's directory command, without exporting full configuration.</summary>
     public static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects()
     {

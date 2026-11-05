@@ -45,6 +45,13 @@ if (args is ["--veyon-networkobjects-dump-fixtures"])
     return;
 }
 
+if (args is ["--veyon-location-identity-fixtures"])
+{
+    CheckLocationIdentityProjection();
+    Console.WriteLine("PASS Veyon 地点 UUID 投影、同名不同身份、空地点与按 UUID 选择（R19/R20/R21）");
+    return;
+}
+
 if (args is ["--teacher-restart-regression-fixtures"])
 {
     await TeacherRestartRegressionChecks.RunAsync();
@@ -394,6 +401,58 @@ void Reject(Action action)
     try { action(); } catch (Exception ex) when (ex is InvalidDataException or IOException) { return; }
     throw new Exception("Invalid input was accepted");
 }
+void CheckLocationIdentityProjection()
+{
+    var aId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa");
+    var bId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
+    var cId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc");
+    var firstComputerId = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var secondComputerId = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    const string sharedName = "三楼机房";
+    var objects = new[]
+    {
+        new VeyonNetworkObject("location", sharedName, "", "", "", aId),
+        new VeyonNetworkObject("location", sharedName, "", "", "", bId),
+        new VeyonNetworkObject("location", "四楼机房", "", "", "", cId),
+        new VeyonNetworkObject("computer", "PC-01", "pc-01", "", sharedName,
+            firstComputerId, aId),
+        new VeyonNetworkObject("computer", "PC-02", "pc-02", "", "四楼机房",
+            secondComputerId, cId),
+    };
+
+    var byId = VeyonNetworkObjectDirectory.BuildLocationsById(objects);
+    // R19: two same-named locations with different UUIDs must not be merged.
+    var sameNamed = byId.Where(item => item.Name == sharedName).ToArray();
+    Expect(sameNamed.Length == 2 &&
+           sameNamed.Select(item => item.ObjectId).Distinct().Count() == 2);
+    Expect(sameNamed.Single(item => item.ObjectId == aId).Targets.SequenceEqual(new[] { "pc-01" }));
+    // R20: a location with zero computers is still readable and bindable.
+    Expect(sameNamed.Single(item => item.ObjectId == bId).Targets.Count == 0);
+    Expect(byId.Single(item => item.ObjectId == cId).Targets.SequenceEqual(new[] { "pc-02" }));
+
+    // R21: the UUID confirmed by the verified write wins over the display name.
+    Expect(VeyonNetworkObjectDirectory.SelectLocationObject(objects, aId, sharedName)?.ObjectId == aId);
+    Expect(VeyonNetworkObjectDirectory.SelectLocationObject(objects, bId, sharedName)?.ObjectId == bId);
+    // Without a UUID, ambiguous names refuse to bind; unique names keep the legacy rule.
+    Expect(VeyonNetworkObjectDirectory.SelectLocationObject(objects, null, sharedName) is null);
+    Expect(VeyonNetworkObjectDirectory.SelectLocationObject(objects, null, "四楼机房")?.ObjectId == cId);
+    Expect(VeyonNetworkObjectDirectory.SelectLocationObject(objects,
+        Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"), sharedName) is null);
+
+    // The legacy name-merged projection used for fingerprint comparison is unchanged.
+    var legacy = VeyonNetworkObjectDirectory.ParseLocationsFromObjects(objects);
+    Expect(legacy.Count == 2 && legacy.All(item => item.ObjectId is null) &&
+           legacy.Single(item => item.Name == sharedName).Targets.SequenceEqual(new[] { "pc-01" }));
+
+    // Name-only backends have no UUID at all: group by name and leave ObjectId null.
+    var nameOnly = VeyonNetworkObjectDirectory.BuildLocationsById(new[]
+    {
+        new VeyonNetworkObject("location", sharedName, "", "", ""),
+        new VeyonNetworkObject("computer", "PC-01", "pc-01", "", sharedName),
+    });
+    Expect(nameOnly.Count == 1 && nameOnly[0].ObjectId is null &&
+           nameOnly[0].Targets.SequenceEqual(new[] { "pc-01" }));
+}
 void CheckNetworkObjectsDumpParsing()
 {
     var widths = new[] { 36, 36, 12, 24, 24, 18 };
@@ -693,6 +752,8 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
     Expect(WindowsServiceState.Parse("SERVICE_NAME: VeyonService\n        TYPE               : 10  WIN32_OWN_PROCESS") is null);
     CheckNetworkObjectsDumpParsing();
 });
+Check("Veyon 地点 UUID 投影、同名不同身份与按 UUID 选择（R19/R20/R21）",
+    CheckLocationIdentityProjection);
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
 await CheckAsync("教师端名单恢复、重启倒计时、稳定重试状态和更新服务错误提示", TeacherRestartRegressionChecks.RunAsync);

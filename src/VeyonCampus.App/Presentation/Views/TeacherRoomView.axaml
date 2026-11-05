@@ -123,6 +123,7 @@
             <Button Content="重试读取 Veyon 学生名单" Click="RequestRetryInitialSeatGridImport"
                     IsVisible="{Binding CanRetryInitialSeatGridImport}"
                     IsEnabled="{Binding !IsImportingInitialSeatGridFromVeyon}"
+                    ToolTip.Tip="只读读取当前 Veyon 地点与电脑名单；不会修改 Veyon 或本机座位图。"
                     HorizontalAlignment="Left" />
             <Button Content="打开已有的冲突座位图" Click="RequestOpenInitialSeatGridConflictLocation"
                     IsVisible="{Binding CanOpenInitialSeatGridConflictLocation}"
@@ -134,7 +135,8 @@
             <TextBlock Text="{Binding RoomCreateResult}" Foreground="{DynamicResource Teacher.Color.Success}"
                        IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
             <Button Content="重试 Veyon 同步" Click="RequestRetrySeatMapSync"
-                    IsVisible="{Binding CanRetrySeatMapSync}" HorizontalAlignment="Left" />
+                    IsVisible="{Binding CanRetrySeatMapSync}" HorizontalAlignment="Left"
+                    ToolTip.Tip="按 Host 核对座位与 Veyon 电脑；必要时会向 Veyon 写入学生姓名或新增电脑。" />
             <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto"
                   HorizontalAlignment="Left" Margin="0,4,0,0">
               <Border Grid.Row="0" Grid.Column="0" Width="24" Height="24" />
