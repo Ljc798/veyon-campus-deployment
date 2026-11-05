@@ -320,16 +320,43 @@ begin
   Result := RunMaintenanceServiceControl('--start-service', ResultCode) and (ResultCode = 0);
 end;
 
+function IsMaintenanceServiceRunning(var StateCode: Integer): Boolean;
+begin
+  // --verify-running returns 0 running, 4 installed but stopped, 3 not installed.
+  Result := RunMaintenanceServiceControl('--verify-running', StateCode) and (StateCode = 0);
+end;
+
 function InstallAndStartMaintenanceService(): Boolean;
 var
   ResultCode: Integer;
+  StateCode: Integer;
 begin
   MaintenanceServiceTouched := True;
   if MaintenanceServiceInitiallyInstalled and MaintenanceServiceExternallyManaged and
      not IsMaintenanceServiceSelfUpdate() then
-    Result := RunMaintenanceServiceControl('--start-service', ResultCode) and (ResultCode = 0)
+  begin
+    // The independent service keeps its own version directory. Start it only when it is not
+    // already running, so a healthy service is never reported as a failed install.
+    if IsMaintenanceServiceRunning(StateCode) then
+      Result := True
+    else
+    begin
+      Result := RunMaintenanceServiceControl('--start-service', ResultCode) and (ResultCode = 0) and
+                IsMaintenanceServiceRunning(StateCode);
+      if not Result then
+        Log('Starting the existing Maintenance service failed (control=' + IntToStr(ResultCode) +
+            ', state=' + IntToStr(StateCode) + ').');
+    end;
+  end
   else
+  begin
     Result := RunMaintenanceServiceControl('--install-and-start-service', ResultCode) and (ResultCode = 0);
+    if Result then
+      Result := IsMaintenanceServiceRunning(StateCode);
+    if not Result then
+      Log('Installing the Maintenance service failed (control=' + IntToStr(ResultCode) +
+          ', state=' + IntToStr(StateCode) + ').');
+  end;
   if Result then
   begin
     MaintenanceServiceSetupCompleted := True;
