@@ -31,7 +31,7 @@ internal static class AgentReconfigurationChecks
             using var applicationPolicyKey = RSA.Create(3072);
             using var studentSystemPolicyKey = RSA.Create(3072);
             using var teacherChannelKey = RSA.Create(2048);
-            var certificateRequest = new CertificateRequest("CN=Veyon Campus Reconfiguration Test CA",
+            var certificateRequest = new CertificateRequest("CN=Veyon Campus Mobile Control CA",
                 teacherChannelKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
             certificateRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
             certificateRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, true));
