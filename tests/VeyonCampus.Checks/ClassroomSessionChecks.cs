@@ -73,6 +73,7 @@ internal static class ClassroomSessionChecks
             {
                 DisplayName = "机房 A 新名",
                 ComputerCount = 3,
+                ComputerNumbers = [1, 3, 4],
                 HostOverrides = ["10.0.0.1", "10.0.0.22", "10.0.0.3"]
             };
             var editedCampus = originalCampus with { Rooms = [editedRoom] };
