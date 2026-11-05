@@ -1774,7 +1774,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = "将交换所选座位中的学生姓名。已绑定的 Veyon 电脑会按各自 UUID 同步对应显示名；允许一个座位为空或未绑定。电脑编号、固定连接地址、UUID 和设备座位绑定保持不变；若绑定状态或名称存在冲突，会先要求核对。",
+            Text = "将交换所选座位的学生姓名及其 Veyon 显示名（允许一个座位为空）。电脑编号、连接地址、UUID 和座位绑定不变；有冲突会先要求核对。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         layout.Children.Add(new ListBox
