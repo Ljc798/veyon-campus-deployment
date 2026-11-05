@@ -131,9 +131,10 @@ internal static class TeacherRestartRegressionChecks
     private static void CheckSavedSeatMapRecovery(string root)
     {
         Directory.CreateDirectory(root);
-        var hosts = new List<string> { "192.0.2.81", "192.0.2.82" };
-        var originalRoom = new TeacherRoomProfile(Guid.NewGuid(), "原机房", "PC-", 1, 2, hosts, [1, 2]);
-        var duplicateRoom = originalRoom with { RoomId = Guid.NewGuid(), ComputerNumbers = [3, 2] };
+        var originalRoom = new TeacherRoomProfile(Guid.NewGuid(), "原机房", "PC-", 1, 2,
+            ComputerNumbers: [1, 2]);
+        var hosts = originalRoom.GetComputerNames().ToList();
+        var duplicateRoom = originalRoom with { RoomId = Guid.NewGuid(), ComputerNumbers = [1, 2] };
         var original = new TeacherCampusProfile(Guid.NewGuid(), "原校区", [originalRoom]);
         var duplicate = new TeacherCampusProfile(Guid.NewGuid(), "新校区", [duplicateRoom]);
         var campuses = new TeacherCampusDirectoryStore(Path.Combine(root, "campuses.json"));
@@ -191,7 +192,7 @@ internal static class TeacherRestartRegressionChecks
             "An active session pinned to an empty duplicate profile must still label quick-control targets from the matching saved map.");
         model.SelectedCampusProfile = duplicate;
         model.ApplyClassroomVeyonLocation(new VeyonNetworkLocation(originalRoom.DisplayName,
-            ["192.0.2.91", "192.0.2.92"]));
+            ["PC-91", "PC-92"]));
         Expect(model.SelectedCampusProfile?.ProfileId == duplicate.ProfileId && model.SeatGridSeatCount == 0,
             "A same-named room with different hosts must not borrow another room's student map.");
         campuses.Save([duplicate, original]);
