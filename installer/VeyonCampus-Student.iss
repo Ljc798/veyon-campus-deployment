@@ -117,7 +117,6 @@ var
   MaintenanceServiceWasStopped: Boolean;
   MaintenanceServiceTouched: Boolean;
   MaintenanceServiceSetupCompleted: Boolean;
-  MaintenanceServiceDegraded: Boolean;
   MaintenanceServiceExternallyManaged: Boolean;
   MaintenanceServiceRegisteredExecutable: String;
 
@@ -335,9 +334,7 @@ begin
   begin
     MaintenanceServiceSetupCompleted := True;
     MaintenanceServiceWasStopped := False;
-  end
-  else
-    Log('Maintenance service control did not succeed (exit code ' + IntToStr(ResultCode) + ').');
+  end;
 end;
 
 function UninstallMaintenanceService(): Boolean;
@@ -382,9 +379,6 @@ procedure RestoreMaintenanceServiceAfterSetupFailure;
 var
   ServiceExecutable: String;
 begin
-  // A degraded install already decided to carry on without the independent service; running the
-  // rollback here would delete the service files that were just laid down.
-  if MaintenanceServiceDegraded then Exit;
   if not MaintenanceServiceTouched or MaintenanceServiceSetupCompleted then Exit;
   if IsMaintenanceServiceSelfUpdate() and MaintenanceServiceInitiallyInstalled then
   begin
@@ -410,7 +404,6 @@ begin
   MaintenanceServiceWasStopped := MaintenanceServiceInitiallyInstalled;
   MaintenanceServiceTouched := MaintenanceServiceInitiallyInstalled;
   MaintenanceServiceSetupCompleted := False;
-  MaintenanceServiceDegraded := False;
   MaintenanceServiceExternallyManaged := False;
   MaintenanceServiceRegisteredExecutable := '';
   Result := AcquireInstallUpdateLease();
@@ -821,27 +814,15 @@ begin
         RemoveOwnedEdgeExtensionPolicy();
     end;
     if not InstallAndStartMaintenanceService() then
-    begin
-      // The independent Maintenance service is an optional transport. Without it the student keeps
-      // working through the signed legacy student agent channel, which is what ships and updates the
-      // machine anyway, so aborting the whole install here only produces a false failure: files are
-      // already written and the Administrator-visible state says the install was stopped.
-      MaintenanceServiceDegraded := True;
-      Log('Independent Maintenance service is unavailable; continuing with the signed student agent channel.');
-    end;
+      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
   end;
 end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
   if CurPageID = wpFinished then
-  begin
     WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10 + #13#10 +
       '如果网站实时策略推送尚未生效，请注销当前 Windows 用户并重新登录；无需重启电脑。';
-    if MaintenanceServiceDegraded then
-      WizardForm.FinishedLabel.Caption := WizardForm.FinishedLabel.Caption + #13#10 + #13#10 +
-        '独立 Maintenance 服务未就绪；学生端仍可通过签名 Agent 通道正常接收更新。';
-  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
