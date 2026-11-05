@@ -400,6 +400,7 @@ test('Student inventory keeps Agent payload and versioned runtime as separately 
   writeTree(app, {
     'VeyonCampus.StudentSetup.exe': 'setup',
     'Worker/VeyonCampus.Worker.exe': 'worker',
+    'MaintenanceService/VeyonCampus.MaintenanceService.exe': 'maintenance-service',
     'WebsitePolicyAgent/VeyonCampus.Agent.exe': 'same-agent-bytes',
     'StudentCompanion/VeyonCampus.StudentCompanion.exe': 'companion',
     'EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.exe': 'executor',

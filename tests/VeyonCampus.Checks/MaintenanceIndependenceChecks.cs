@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using VeyonCampus.Checks;
@@ -61,7 +60,7 @@ internal static class MaintenanceIndependenceChecks
             var stoppedSigned = Sign(stoppedRequest, teacher, now.AddMinutes(-1), now.AddMinutes(4));
             var stoppedVerified = MaintenanceProtocolV1.VerifyRequest(stoppedSigned, teacherPublicKey,
                 campusId, deviceFingerprint, now);
-            Assert(stoppedVerified.Command == MaintenanceProtocolV1Command.GetInstalledVersions &&
+            Expect(stoppedVerified.Command == MaintenanceProtocolV1Command.GetInstalledVersions &&
                    stoppedVerified.CampusId == campusId &&
                    stoppedVerified.DeviceIdentityFingerprint == deviceFingerprint,
                "Agent 停止后，已签名的只读状态命令必须通过独立校验进入 Maintenance 通道。");
@@ -80,7 +79,7 @@ internal static class MaintenanceIndependenceChecks
             var offerSigned = Sign(offerRequest, teacher, now.AddMinutes(-1), now.AddMinutes(4));
             var offerVerified = MaintenanceProtocolV1.VerifyRequest(offerSigned, teacherPublicKey,
                 campusId, deviceFingerprint, now);
-            Assert(offerVerified.Command == MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate &&
+            Expect(offerVerified.Command == MaintenanceProtocolV1Command.OfferSignedMaintenanceServiceUpdate &&
                    offerVerified.ReleaseSha256 == releaseSha256,
                 "Agent 停止时，受信任 Maintenance 升级 offer 的签名/摘要/角色绑定必须独立于业务 Agent 通过。");
             Console.WriteLine("PASS 1：Student Agent 停止后，Maintenance 独立读状态并完成受信任升级/修复 offer 验证");
@@ -103,7 +102,7 @@ internal static class MaintenanceIndependenceChecks
             var classlessResponseSigned = MaintenanceProtocolV1.SignResponse(readbackResponse, device);
             var classlessResponseVerified = MaintenanceProtocolV1.VerifyResponse(classlessResponseSigned,
                 devicePublicKey, classlessVerified, now);
-            Assert(classlessResponseVerified.ResultCode == "succeeded" &&
+            Expect(classlessResponseVerified.ResultCode == "succeeded" &&
                    classlessResponseVerified.Nonce == classlessVerified.Nonce,
                 "课堂通信协议版本变化不影响 Maintenance 通道的命令与签名响应验证（协议解耦）。");
             Console.WriteLine("PASS 2：课堂协议新旧不兼容场景下，Maintenance 通道仍可独立读状态与维护");
@@ -114,13 +113,11 @@ internal static class MaintenanceIndependenceChecks
             ExpectRejectedWith(() => MaintenanceProtocolV1.VerifyRequest(wrongKeySigned,
                 teacherPublicKey, campusId, deviceFingerprint, now), "错误签名");
             var wrongEnvelope = Sign(wrongKeyRequest, teacher, now.AddMinutes(-1), now.AddMinutes(4));
-            var tampered = System.Text.Encoding.UTF8.GetString(wrongEnvelope)
-                .Replace("\"signature\"", "\"Signature\"", StringComparison.Ordinal);
+            var tampered = wrongEnvelope.Replace("\"signature\"", "\"Signature\"", StringComparison.Ordinal);
             ExpectRejectedWith(() => MaintenanceProtocolV1.VerifyRequest(tampered, teacherPublicKey,
                 campusId, deviceFingerprint, now), "非规范 JSON 签名信封");
-            var forgedPayload = System.Text.Encoding.UTF8.GetString(wrongEnvelope)
-                .Replace(campusId, "campus-forge", StringComparison.Ordinal);
-            ExpectRejectedWith(() => MaintenanceProtocolV1.VerifyRequest(forgedPayload, teacherPublicKey,
+            var forgedRequestJson = wrongEnvelope.Replace(campusId, "campus-forge", StringComparison.Ordinal);
+            ExpectRejectedWith(() => MaintenanceProtocolV1.VerifyRequest(forgedRequestJson, teacherPublicKey,
                 campusId, deviceFingerprint, now), "载荷被篡改后签名不匹配");
             Console.WriteLine("PASS 3：错误签名（错误私钥 / 非规范信封）的维护命令被拒绝并带原因");
 
@@ -157,7 +154,7 @@ internal static class MaintenanceIndependenceChecks
             }
             catch (InvalidDataException exception) when (exception.Message.Contains("已过期"))
             { expiredRejected = true; }
-            Assert(expiredRejected, "重放窗口对已过期时间戳必须拒绝并带原因。");
+            Expect(expiredRejected, "重放窗口对已过期时间戳必须拒绝并带原因。");
 
             // 新鲜 nonce 可以进入窗口；同一 nonce 重放必须被拒绝（防重复副作用）。
             var windowPath = Path.Combine(fixtureRoot, "replay.json");
@@ -165,7 +162,7 @@ internal static class MaintenanceIndependenceChecks
             var nonce = Guid.NewGuid();
             var expires = now.AddMinutes(5);
             var firstAccept = await window.TryAcceptAsync(nonce, expires, now).ConfigureAwait(false);
-            Assert(firstAccept, "首次通过重放窗口签名的新命令必须被接受。");
+            Expect(firstAccept, "首次通过重放窗口签名的新命令必须被接受。");
             var replayRejected = false;
             try
             {
@@ -174,7 +171,7 @@ internal static class MaintenanceIndependenceChecks
             }
             catch (Exception exception) when (exception is InvalidDataException or IOException)
             { replayRejected = true; }
-            Assert(replayRejected, "同一 nonce 的重放必须在重放窗口被拒绝。");
+            Expect(replayRejected, "同一 nonce 的重放必须在重放窗口被拒绝。");
             Console.WriteLine("PASS 5：过期命令与 nonce 重放均被拒绝并带原因（InvalidDataException）");
 
             // ── 验收 6：错误摘要（payload hash 不匹配）必须被拒绝 ─────────────────────────
@@ -220,7 +217,7 @@ internal static class MaintenanceIndependenceChecks
         catch (Exception exception) when (exception is InvalidDataException or CryptographicException)
         {
             // 拒绝必须带可诊断原因。
-            Assert(exception.Message.Length > 0, "拒绝路径没有返回原因信息。");
+            Expect(exception.Message.Length > 0, "拒绝路径没有返回原因信息。");
         }
     }
 }

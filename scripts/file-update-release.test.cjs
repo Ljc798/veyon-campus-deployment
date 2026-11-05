@@ -113,6 +113,7 @@ function createWindowsInventoryFixture(t) {
   writeTree(studentApp, {
     'VeyonCampus.StudentSetup.exe': 'student-setup-bytes',
     'Worker/VeyonCampus.Worker.exe': 'shared-worker-bytes',
+    'MaintenanceService/VeyonCampus.MaintenanceService.exe': 'maintenance-service-bytes',
     'WebsitePolicyAgent/VeyonCampus.Agent.exe': 'agent-bytes',
     'StudentCompanion/VeyonCampus.StudentCompanion.exe': 'companion-bytes',
     'EdgePolicyExecutor/VeyonCampus.EdgePolicyExecutor.exe': 'executor-bytes',
@@ -138,6 +139,7 @@ function createWindowsInventoryFixture(t) {
       dependencies: new Map([
         ['StudentSetup', []],
         ['StudentWorker', ['StudentSetup']],
+        ['MaintenanceService', ['StudentSetup']],
         ['StudentAgentPayload', []],
         ['StudentAgentRuntime', []],
         ['StudentCompanion', ['StudentSetup']],
