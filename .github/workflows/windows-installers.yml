@@ -415,7 +415,14 @@ jobs:
         with:
           name: windows-installers-${{ github.run_id }}
           path: artifacts
+      # Authenticode signing is opt-in. Without the VEYONCAMPUS_SIGN_RELEASES repository variable set to
+      # "true" (and the PFX secrets/variables configured) the release is published unsigned: the installers
+      # and their SHA-256 checksums are still produced, but Windows SmartScreen will warn about an unknown
+      # publisher and no Authenticode-signatures.json is generated. The artifact name keeps its historical
+      # "signed-windows-installers" label only so downstream jobs keep working; check for the manifest to
+      # know whether a build was actually signed.
       - name: Sign and verify public release installers
+        if: vars.VEYONCAMPUS_SIGN_RELEASES == 'true'
         env:
           VEYONCAMPUS_AUTHENTICODE_PFX_BASE64: ${{ secrets.VEYONCAMPUS_AUTHENTICODE_PFX_BASE64 }}
           VEYONCAMPUS_AUTHENTICODE_PFX_PASSWORD: ${{ secrets.VEYONCAMPUS_AUTHENTICODE_PFX_PASSWORD }}
@@ -440,7 +447,39 @@ jobs:
           & ./scripts/sign-windows-release-installers.ps1 `
             -InstallerPaths @($student, $teacher) `
             -SignatureManifestPath 'artifacts/Authenticode-signatures.json'
-          $checksumLines = @($student, $teacher) | ForEach-Object {
+      - name: Record unsigned release state
+        if: vars.VEYONCAMPUS_SIGN_RELEASES != 'true'
+        shell: pwsh
+        run: |
+          Write-Host 'Authenticode signing is disabled because VEYONCAMPUS_SIGN_RELEASES is not "true".'
+          Write-Host 'Publishing the installers without a Windows code-signing signature; SHA-256 checksums are still produced.'
+      - name: Compute release installer SHA-256 checksums
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -match '^(?:beta-)?v((0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*))$') {
+            $version = $Matches[1]
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -eq 'refs/heads/develop') {
+            $appProjectPath = Join-Path $env:GITHUB_WORKSPACE 'src/VeyonCampus.App/VeyonCampus.App.csproj'
+            $appProject = [xml](Get-Content -LiteralPath $appProjectPath -Raw -Encoding UTF8)
+            $version = [string](@($appProject.Project.PropertyGroup | ForEach-Object { $_.Version } |
+              Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -First 1)[0])
+          } else {
+            throw 'SIGNED-RELEASE-BLOCKED: unsupported release ref.'
+          }
+          if ([string]::IsNullOrWhiteSpace($version)) { throw 'Could not determine the release installer version.' }
+          $student = "artifacts/VeyonCampus-Student-Setup-$version-win-x64.exe"
+          $teacher = "artifacts/VeyonCampus-Teacher-Setup-$version-win-x64.exe"
+          foreach ($installer in @($student, $teacher)) {
+            if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+              throw "Missing release installer: $installer"
+            }
+          }
+          $paths = @($student, $teacher)
+          if (Test-Path -LiteralPath 'artifacts/Authenticode-signatures.json' -PathType Leaf) {
+            $paths += 'artifacts/Authenticode-signatures.json'
+          }
+          $checksumLines = $paths | ForEach-Object {
             $hash = (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash.ToLowerInvariant()
             $name = [IO.Path]::GetFileName($_)
             "$hash *$name"
@@ -537,13 +576,16 @@ jobs:
           signature_manifest="artifacts/Authenticode-signatures.json"
           test -s "$student"
           test -s "$teacher"
-          test -s "$signature_manifest"
+          checksum_inputs=("$(basename "$student")" "$(basename "$teacher")")
+          if [[ -s "$signature_manifest" ]]; then
+            checksum_inputs+=("$(basename "$signature_manifest")")
+          else
+            echo 'No Authenticode manifest in this build; publishing unsigned installers.'
+            signature_manifest=''
+          fi
           (
             cd artifacts
-            sha256sum \
-              "$(basename "$student")" \
-              "$(basename "$teacher")" \
-              "$(basename "$signature_manifest")" > SHA256SUMS
+            sha256sum "${checksum_inputs[@]}" > SHA256SUMS
           )
           printf 'version=%s\nstudent=%s\nteacher=%s\nsignature_manifest=%s\nchecksums=artifacts/SHA256SUMS\n' \
             "$version" "$student" "$teacher" "$signature_manifest" >> "$GITHUB_OUTPUT"
@@ -577,13 +619,18 @@ jobs:
         run: |
           set -euo pipefail
           tag="$RELEASE_TAG"
-          node scripts/publish-github-release.cjs \
-            "$tag" "${{ steps.assets.outputs.version }}" \
-            "${{ steps.assets.outputs.student }}" \
-            "${{ steps.assets.outputs.teacher }}" \
-            "${{ steps.assets.outputs.checksums }}" \
-            "${{ steps.assets.outputs.signature_manifest }}" \
-            "$RUNNER_TEMP/release-notes.md"
+          args=(
+            "$tag"
+            "${{ steps.assets.outputs.version }}"
+            "${{ steps.assets.outputs.student }}"
+            "${{ steps.assets.outputs.teacher }}"
+            "${{ steps.assets.outputs.checksums }}"
+          )
+          if [[ -n "${{ steps.assets.outputs.signature_manifest }}" ]]; then
+            args+=( "${{ steps.assets.outputs.signature_manifest }}" )
+          fi
+          args+=( "$RUNNER_TEMP/release-notes.md" )
+          node scripts/publish-github-release.cjs "${args[@]}"
       - name: Publish signed version metadata to CloudBase after GitHub assets are verified
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
@@ -658,13 +705,13 @@ jobs:
           signature_manifest="artifacts/Authenticode-signatures.json"
           test -s "$student"
           test -s "$teacher"
-          test -s "$signature_manifest"
+          beta_checksum_inputs=("$(basename "$student")" "$(basename "$teacher")")
+          if [[ -s "$signature_manifest" ]]; then
+            beta_checksum_inputs+=("$(basename "$signature_manifest")")
+          fi
           (
             cd artifacts
-            sha256sum \
-              "$(basename "$student")" \
-              "$(basename "$teacher")" \
-              "$(basename "$signature_manifest")" > SHA256SUMS
+            sha256sum "${beta_checksum_inputs[@]}" > SHA256SUMS
           )
           cat > "$RUNNER_TEMP/beta-release-notes.md" <<EOF
           ## Veyon Campus ${version} Beta
@@ -679,7 +726,7 @@ jobs:
 
           GitCode/AtomGit 附件由维护者在本机上传：https://gitcode.com/ljc_1126/veyon-campus-deployment/releases
 
-          Student/Teacher 安装器已通过 Authenticode 验证；Authenticode-signatures.json 记录发布者证书指纹与最终文件 SHA-256。请先核对签名与校验值，再在可恢复的测试电脑验证，不要首次在正式课堂设备或真实学生账户上测试。
+          安装器附带 SHA-256 校验值。若本次构建包含 Authenticode-signatures.json，则该文件记录发布者证书指纹与最终文件 SHA-256；若未包含，表示本次构建未做 Windows 代码签名，SmartScreen 可能提示“未知发布者”，属预期行为。请先核对校验值，再在可恢复的测试电脑验证，不要首次在正式课堂设备或真实学生账户上测试。
           EOF
       - name: Publish or verify GitHub Beta Release first
         shell: bash
@@ -687,9 +734,14 @@ jobs:
           set -euo pipefail
           tag="${GITHUB_REF_NAME%-retry*}"
           version="${tag#beta-v}"
-          node scripts/publish-github-release.cjs \
-            "$tag" "$version" \
-            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe" \
-            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe" \
-            artifacts/SHA256SUMS artifacts/Authenticode-signatures.json \
-            "$RUNNER_TEMP/beta-release-notes.md"
+          beta_args=(
+            "$tag" "$version"
+            "artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
+            "artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+            artifacts/SHA256SUMS
+          )
+          if [[ -s artifacts/Authenticode-signatures.json ]]; then
+            beta_args+=( artifacts/Authenticode-signatures.json )
+          fi
+          beta_args+=( "$RUNNER_TEMP/beta-release-notes.md" )
+          node scripts/publish-github-release.cjs "${beta_args[@]}"
