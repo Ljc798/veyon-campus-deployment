@@ -191,9 +191,14 @@ if ([string]::IsNullOrWhiteSpace($fileVersion) -or $fileVersion.Split('+')[0] -c
 }
 $runtimeConfig = Get-Content -LiteralPath $runtimeConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $runtimeOptions = $runtimeConfig.runtimeOptions
+$runtimeFrameworksProperty = $runtimeOptions.PSObject.Properties['frameworks']
+if ($null -eq $runtimeFrameworksProperty) {
+    $runtimeFrameworksProperty = $runtimeOptions.PSObject.Properties['framework']
+}
 $runtimeFrameworks = @()
-if ($null -ne $runtimeOptions.framework) { $runtimeFrameworks += $runtimeOptions.framework }
-if ($null -ne $runtimeOptions.frameworks) { $runtimeFrameworks += @($runtimeOptions.frameworks) }
+if ($null -ne $runtimeFrameworksProperty) {
+    $runtimeFrameworks = @($runtimeFrameworksProperty.Value)
+}
 if ($runtimeFrameworks.Count -ne 1 -or $runtimeFrameworks[0].name -cne 'Microsoft.NETCore.App') {
     throw 'Maintenance Service 必须使用统一安装的 Microsoft.NETCore.App runtime。'
 }
