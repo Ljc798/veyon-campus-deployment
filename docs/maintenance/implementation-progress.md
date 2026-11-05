@@ -406,3 +406,15 @@
   `scripts/sign-local-student-update-stable.cjs` 配合仓库外的 Developer Release 私钥签出清单。
 - **现场 A/B 方法**：VM 学生端回滚到干净快照后，先不动任何文件直接点一键更新——
   成功说明此前是反复失败把目录弄坏了；仍 `Access denied` 说明老代码在该机确定搬不动目录。
+
+## 2026-11-05 正式发布 v1.1.55
+
+- 内容：一键静默更新、身份自动核对、维护事务证据按值比较、旧版 Agent 信封投影、被拒命令可重试、
+  更新前停止已安装角色进程、`ManualRequired` 不再降级为待验证。
+- 流程：tag `v1.1.55` → CI 构建/签名 → `publish-release` 因 gitcode 缺资产在 CloudBase 步骤 404 失败 →
+  本机下载 GitHub Release 资产、校验、上传 gitcode → `rerun-failed-jobs` → success。
+- 线上 `/v5/releases/latest` 的 `TeacherConsole` 与 `StudentSetup` 均为 `1.1.55`
+  （Teacher 70,986,060 B / Student 68,572,128 B）。
+- 升级策略：1.1.44 及更早的学生机需手动装一次含进程清理的版本（建议 1.1.54 引导包，
+  以便留出一次 1.1.54 → 1.1.55 的真机静默更新验证），完成后删除
+  `C://ProgramData//VeyonCampus//StudentUpdateTransactions//` 残留事务。
