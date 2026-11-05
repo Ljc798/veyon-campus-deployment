@@ -36,7 +36,7 @@ internal static class MaintenanceModelChecks
             "维护目标和发行摘要已绑定", now.AddSeconds(3));
 
         var commandId = Guid.NewGuid();
-        var offerEvidence = Evidence(identityFingerprint, "signed-update-offer", now.AddSeconds(4),
+        var offerEvidence = Evidence(identityFingerprint, "signed-update-command", now.AddSeconds(4),
             releaseDigest, commandId);
         run = run.OfferUpdate(commandId, offerEvidence, "已发送签名更新命令", now.AddSeconds(4));
         Assert(ReferenceEquals(run, run.OfferUpdate(commandId, offerEvidence, "重复点击", now.AddSeconds(5))),
