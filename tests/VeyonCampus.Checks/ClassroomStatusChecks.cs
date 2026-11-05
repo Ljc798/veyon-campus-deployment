@@ -109,17 +109,17 @@ internal static class ClassroomStatusChecks
             ["10.40.0.31", "10.40.0.32"]);
         var restoreCampus = new TeacherCampusProfile(Guid.NewGuid(), "示范校区", [restoreRoom]);
         var endedSession = ClassroomSession.Start(restoreCampus, restoreRoom.RoomId, now).End(now.AddMinutes(40));
-        var currentLocation = new VeyonNetworkLocation("机房 B", ["10.40.0.31", "10.40.0.32"]);
+        var currentLocation = new VeyonNetworkLocation("机房 B", restoreRoom.GetComputerNames());
         var mapped = ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
             [currentLocation]);
         Expect(mapped.Count == 2 && mapped[0].DeviceLabel == "LAB-03" &&
-               mapped[0].TargetId == endedSession.Targets[0].TargetId && mapped[0].Target == "10.40.0.31");
+               mapped[0].TargetId == endedSession.Targets[0].TargetId && mapped[0].Target == "LAB-03");
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom with
             { ComputerCount = 3 }, [currentLocation]).Count == 0);
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
             [currentLocation, currentLocation]).Count == 0);
         Expect(ClassroomRestoreLedger.MatchCurrentTargets(endedSession, restoreCampus, restoreRoom,
-            [new VeyonNetworkLocation("机房 B", ["10.40.0.31"])]).Count == 1);
+            [new VeyonNetworkLocation("机房 B", ["LAB-03"])]).Count == 1);
 
         var pendingState = new ClassroomModeSessionState(1, endedSession.SessionId, ClassroomMode.Normal, false,
             now.AddMinutes(40), [new ClassroomPolicyOwnership(endedSession.Targets[0].TargetId,
