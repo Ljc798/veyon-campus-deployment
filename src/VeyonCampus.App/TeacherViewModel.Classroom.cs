@@ -438,7 +438,9 @@ public sealed partial class TeacherViewModel
         }
     }
     public string SeatGridContext => SelectedCampusProfile is { } campus && SelectedRoomProfile is { } room
-        ? $"{campus.DisplayName} · {room.DisplayName}"
+        ? string.Equals(campus.DisplayName?.Trim(), room.DisplayName?.Trim(), StringComparison.Ordinal)
+            ? room.DisplayName
+            : $"{campus.DisplayName} · {room.DisplayName}"
         : "尚未选择地点";
 
     /// <summary>
@@ -458,8 +460,7 @@ public sealed partial class TeacherViewModel
             var locationIds = bound.Select(seat => seat.VeyonLocationObjectId!.Value).Distinct().ToArray();
             if (locationIds.Length != 1)
                 return $"本机座位绑定了 {locationIds.Length} 个不同 Veyon 地点 UUID；请先核对目录，不要直接同步。";
-            return $"已对应 Veyon 地点「{SelectedRoomProfile.DisplayName}」（UUID {locationIds[0]:D}）；" +
-                   $"本机已绑定 {bound.Length} 台电脑。";
+            return $"已对应 Veyon 地点「{SelectedRoomProfile.DisplayName}」· 已绑定 {bound.Length} 台电脑";
         }
     }
     public bool HasVeyonRoomBindingStatus => VeyonRoomBindingStatus.Length > 0;

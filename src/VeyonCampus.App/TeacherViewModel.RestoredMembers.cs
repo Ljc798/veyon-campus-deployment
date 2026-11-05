@@ -963,7 +963,7 @@ public sealed partial class TeacherViewModel
     public IReadOnlyList<TeacherCampusProfile> CampusProfiles
     {
         get => _campusProfiles;
-        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); Changed(nameof(ShowRoomLocationSettings)); }
+        private set { _campusProfiles = value; Changed(); Changed(nameof(HasCampusProfiles)); Changed(nameof(HasMultipleCampusProfiles)); Changed(nameof(ShowRoomLocationSettings)); }
     }
 
     public bool ShowRoomLocationSettings => _seatMapProfileSelectionRequired || (WebsiteLocations.Count > 0
@@ -1730,6 +1730,7 @@ private bool IsCurrentClassroomLocation(VeyonNetworkLocation location) => Operat
         : string.Equals(location.Name, SelectedRoomProfile?.DisplayName, StringComparison.OrdinalIgnoreCase);
 
 public bool HasCampusProfiles => CampusProfiles.Count > 0;
+public bool HasMultipleCampusProfiles => CampusProfiles.Count > 1;
 
 private bool _seatMapProfileSelectionRequired;
 

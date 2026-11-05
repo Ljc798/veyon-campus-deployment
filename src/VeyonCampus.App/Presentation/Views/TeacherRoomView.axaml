@@ -8,34 +8,30 @@
     <StackPanel IsVisible="{Binding IsRoomPage}" Spacing="20">
       <Border Classes="card" IsVisible="{Binding HasCampusProfiles}">
         <StackPanel Spacing="10">
-          <Grid ColumnDefinitions="*,16,*" ColumnSpacing="0">
-            <StackPanel Spacing="6">
-              <TextBlock Text="本机校区档案" FontWeight="SemiBold" />
-              <ComboBox ItemsSource="{Binding CampusProfiles}"
-                        SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
-                        IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择校区档案">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="core:TeacherCampusProfile">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-            </StackPanel>
-            <StackPanel Grid.Column="2" Spacing="6">
-              <TextBlock Text="已保存的地点" FontWeight="SemiBold" />
-              <ComboBox ItemsSource="{Binding RoomProfiles}"
-                        SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
-                        IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择地点">
-                <ComboBox.ItemTemplate>
-                  <DataTemplate x:DataType="core:TeacherRoomProfile">
-                    <TextBlock Text="{Binding DisplayName}" />
-                  </DataTemplate>
-                </ComboBox.ItemTemplate>
-              </ComboBox>
-            </StackPanel>
-          </Grid>
-          <TextBlock Text="校区档案与地点保存在教师电脑。从 Veyon 读取地点不会自动新建档案；删除校区档案会同时删除其下所有地点，但不会修改 Veyon。"
-                     Classes="muted" TextWrapping="Wrap" />
+          <StackPanel Spacing="6" IsVisible="{Binding HasMultipleCampusProfiles}">
+            <TextBlock Text="本机校区档案" FontWeight="SemiBold" />
+            <ComboBox ItemsSource="{Binding CampusProfiles}"
+                      SelectedItem="{Binding SelectedCampusProfile, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择校区档案">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:TeacherCampusProfile">
+                  <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
+          <StackPanel Spacing="6" IsVisible="{Binding HasMultipleRoomProfiles}">
+            <TextBlock Text="已保存的地点" FontWeight="SemiBold" />
+            <ComboBox ItemsSource="{Binding RoomProfiles}"
+                      SelectedItem="{Binding SelectedRoomProfile, Mode=TwoWay}"
+                      IsEnabled="{Binding CanEditRoomPlan}" PlaceholderText="选择地点">
+              <ComboBox.ItemTemplate>
+                <DataTemplate x:DataType="core:TeacherRoomProfile">
+                  <TextBlock Text="{Binding DisplayName}" />
+                </DataTemplate>
+              </ComboBox.ItemTemplate>
+            </ComboBox>
+          </StackPanel>
           <TextBlock Text="{Binding VeyonRoomBindingStatus}" Classes="muted" TextWrapping="Wrap"
                      IsVisible="{Binding HasVeyonRoomBindingStatus}" />
           <TextBlock Text="{Binding CampusDirectoryStatus}" Classes="muted" TextWrapping="Wrap"

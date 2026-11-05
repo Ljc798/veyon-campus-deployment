@@ -4227,7 +4227,7 @@ public static class WebsitePolicyTransport
                         maximumBodyBytes: 8192);
                     if (!verified.MatchesPinnedKey)
                         return new WebsitePolicyPushResult(target, false,
-                            $"Agent 身份需先核对；指纹 {verified.Fingerprint}。请点击“核对学生电脑身份”，核对后重新推送。{verified.Payload.Body}",
+                            $"学生身份未核对。到「设备概览」展开这台电脑，点「核对并固定身份」后重新推送。指纹 {verified.Fingerprint}",
                             NeedsReview: true, ReportedApplied: verified.Payload.Body is
                                 WebsitePolicyAgent.PolicyAppliedAcknowledgement or
                                 WebsitePolicyAgent.PolicyAppliedWithoutEdgeChangeAcknowledgement or

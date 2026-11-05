@@ -38,8 +38,6 @@
       <Border x:Name="StudentUpdateSection" Classes="section-card">
         <StackPanel Spacing="12">
           <TextBlock Text="学生端维护" Classes="section-title" />
-          <TextBlock Text="一次检查并维护：先按签名状态判断是否需要更新 StudentSetup，再核验并同步教师地址与 TLS 证书。设备身份、校区策略密钥和校区配置包不会被重置。"
-                     Classes="supporting-copy" TextWrapping="Wrap" />
           <Border Classes="subtle-panel" Padding="12"
                   IsVisible="{Binding IsLocalTestStudentUpdateSourceAvailable}">
             <StackPanel Spacing="8">
@@ -69,11 +67,7 @@
           <WrapPanel Orientation="Horizontal">
             <Button Classes="primary" Content="检查并维护所选学生端" Click="RequestMaintainStudentDevices" IsEnabled="{Binding CanMaintainStudentDevices}" Margin="0,0,8,6" />
           </WrapPanel>
-          <TextBlock Text="已是最新的软件会跳过安装；支持的旧 Agent 使用已验证的兼容通道。没有可信原子更新协议的设备会明确要求人工引导，不会跳过签名或身份校验。"
-                     Classes="supporting-copy" TextWrapping="Wrap" />
           <TextBlock Text="{Binding StudentMaintenanceStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
-          <TextBlock Text="维护范围使用“设备概览”中当前选中的学生电脑；修改选择后，健康状态和策略操作也会使用同一范围。"
-                     Classes="muted" TextWrapping="Wrap" />
           <Expander Header="高级维护操作" Theme="{StaticResource App.DetailExpander}" IsExpanded="False">
             <StackPanel Spacing="8" Margin="0,8,0,0">
               <TextBlock Text="通常使用上方的统一维护入口；需要单独排查时，可分别执行以下操作。"
@@ -117,8 +111,7 @@
           <Border x:Name="ConfigurationSyncSection" Classes="subtle-panel">
             <StackPanel Spacing="9">
               <TextBlock Text="批量同步校区配置" Classes="component-title" />
-              <TextBlock Text="只将此教师端当前的校园网地址和 TLS 证书同步到已选学生机；不安装软件、不更改校区身份或策略密钥，原配置包无需重做。早期 Agent 不支持此命令，需先通过一次性引导升级接入。"
-                         Classes="muted" TextWrapping="Wrap" />
+              <TextBlock Text="只同步校园网地址与 TLS 证书，不安装软件。" Classes="muted" TextWrapping="Wrap" />
               <TextBlock Text="{Binding StudentConfigurationSyncStatus}"
                          Classes="supporting-copy" TextWrapping="Wrap" />
               <ProgressBar Minimum="0" Maximum="100"
