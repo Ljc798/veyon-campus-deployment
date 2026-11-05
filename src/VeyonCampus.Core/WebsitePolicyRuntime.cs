@@ -1941,8 +1941,11 @@ public static class WebsitePolicyAgentInstaller
         if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(config), expectedConfigFingerprint,
                 StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("当前受信任校区配置与事务恢复指纹不一致；未移动 StudentSetup。");
+        // This runs immediately after the student UI and worker processes were stopped, so the machine
+        // is at its busiest moment (terminating processes, releasing file handles). A 2 s loopback
+        // handshake is not a reliable budget there; the equivalent post-install check allows 20 s.
         if (!string.Equals(WebsitePolicyAgent.GetRuntimeVersion(), expectedAgentVersion, StringComparison.Ordinal) ||
-            !WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2), expectedConfigFingerprint, expectedAgentVersion))
+            !WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(20), expectedConfigFingerprint, expectedAgentVersion))
             throw new InvalidDataException("旧 SYSTEM Agent 未通过移动 StudentSetup 前的版本、配置指纹与健康检查。");
     }
 

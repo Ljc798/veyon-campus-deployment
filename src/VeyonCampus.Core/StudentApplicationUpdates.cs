@@ -807,8 +807,14 @@ public static class StudentApplicationUpdateProcessor
                 // Runs inside the SYSTEM agent, before the journal exists, so a rejected rollback
                 // material leaves no half-prepared transaction behind. The directory move itself is
                 // storage-only and stays free of agent-state checks.
-                WebsitePolicyAgentInstaller.ValidatePreviousAgentRecoveryMaterial(configPath,
-                    currentAgentVersion, configFingerprint);
+                // Only a release that actually replaces the SYSTEM agent needs the previous agent to be
+                // provably healthy and restorable. When the agent version is unchanged there is no
+                // rollback material to vouch for, and demanding a live /health handshake here (a 2 s
+                // window with exact config fingerprint and version headers) would fail an otherwise
+                // perfectly valid update.
+                if (!string.Equals(targetAgentVersion, currentAgentVersion, StringComparison.Ordinal))
+                    WebsitePolicyAgentInstaller.ValidatePreviousAgentRecoveryMaterial(configPath,
+                        currentAgentVersion, configFingerprint);
                 transaction = StudentUpdateAtomicTransaction.Create(configPath, command.CommandId, currentVersion,
                     manifest.Version, currentAgentVersion, targetAgentVersion, manifest.FileName, configFingerprint,
                     manifest.Sha256);
