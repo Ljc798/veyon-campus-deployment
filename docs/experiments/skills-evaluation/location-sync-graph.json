@@ -1,0 +1,594 @@
+{
+  "schema": "graphify-location-sync/1",
+  "source_ref": "0f67214a8ae9e279c6d6f868909fd30e17226d6e",
+  "scope": "Veyon 地点 / 电脑 / 设备目录同步链路",
+  "method": "静态符号锚定 + 人工核对的调用/数据流边；非完整 AST 语义分析",
+  "nodes": [
+    {
+      "id": "ui.retry",
+      "label": "重试 Veyon 同步（座位图）",
+      "kind": "ui",
+      "file": "src/VeyonCampus.App/Presentation/Views/TeacherRoomView.axaml",
+      "symbol": "RequestRetrySeatMapSync",
+      "line": 136,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "ui.sync",
+      "label": "RunSeatMapVeyonSyncAsync",
+      "kind": "ui",
+      "file": "src/VeyonCampus.App/TeacherWindow.axaml.cs",
+      "symbol": "RunSeatMapVeyonSyncAsync",
+      "line": 1292,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.addroom",
+      "label": "AddRoomToVeyonAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "AddRoomToVeyonAsync",
+      "line": 3721,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.bind",
+      "label": "TryBindRoomComputersToSeatGridAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "TryBindRoomComputersToSeatGridAsync",
+      "line": 3812,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.refresh",
+      "label": "RefreshDirectoryViewsAfterVeyonWriteAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "RefreshDirectoryViewsAfterVeyonWriteAsync",
+      "line": 3864,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.summary",
+      "label": "RefreshVeyonDeviceDirectorySummaryAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "RefreshVeyonDeviceDirectorySummaryAsync",
+      "line": 3920,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.dupguard",
+      "label": "RejectDuplicateVeyonLocations",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "RejectDuplicateVeyonLocations",
+      "line": 4236,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.apply",
+      "label": "ApplyClassroomVeyonLocation",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "symbol": "ApplyClassroomVeyonLocation",
+      "line": 4592,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.reconcilehost",
+      "label": "ReconcileSeatVeyonBindingsByHostAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+      "symbol": "ReconcileSeatVeyonBindingsByHostAsync",
+      "line": 1335,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.delete",
+      "label": "DeleteSeatComputerFromVeyonAsync",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+      "symbol": "DeleteSeatComputerFromVeyonAsync",
+      "line": 1625,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "vm.bindingstatus",
+      "label": "VeyonRoomBindingStatus",
+      "kind": "viewmodel",
+      "file": "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+      "symbol": "VeyonRoomBindingStatus",
+      "line": 450,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.readlocations",
+      "label": "ReadLocations (networkobjects export, 无 UUID)",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "public static IReadOnlyList<VeyonNetworkLocation> ReadLocations()",
+      "line": 96,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.readobjects",
+      "label": "ReadNetworkObjects (networkobjects dump, 有 UUID)",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "public static IReadOnlyList<VeyonNetworkObject> ReadNetworkObjects()",
+      "line": 399,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.snapshot",
+      "label": "ReadDirectorySnapshot (config export + 指纹)",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "ReadDirectorySnapshot",
+      "line": 326,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.parseobjects",
+      "label": "ParseLocationsFromObjects (按名称合并)",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "ParseLocationsFromObjects",
+      "line": 389,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.saferead",
+      "label": "SafeReadNetworkObjects (dump 失败回退)",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "SafeReadNetworkObjects",
+      "line": 212,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.configparse",
+      "label": "ParseConfigurationDirectory",
+      "kind": "read",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "ParseConfigurationDirectory",
+      "line": 368,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.preview",
+      "label": "BuildImportPreview (纯冲突检查)",
+      "kind": "pure",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "BuildImportPreview",
+      "line": 584,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.addlocation",
+      "label": "AddLocation (逐台 add computer)",
+      "kind": "write",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "public static VeyonLocationImportResult AddLocation",
+      "line": 708,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.remove",
+      "label": "RemoveComputer (按 UUID 删)",
+      "kind": "write",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "public static VeyonComputerRemovalResult RemoveComputer",
+      "line": 314,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "model.location",
+      "label": "VeyonNetworkLocation (Name/Targets，无 UUID)",
+      "kind": "model",
+      "file": "src/VeyonCampus.Core/VeyonNetworkLocation.cs",
+      "symbol": "public sealed record VeyonNetworkLocation",
+      "line": 3,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "model.room",
+      "label": "TeacherRoomProfile (本机 Room，无地点 UUID)",
+      "kind": "model",
+      "file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "symbol": "public sealed record TeacherRoomProfile",
+      "line": 14,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "store.campus",
+      "label": "campus-directory.json (schema 2)",
+      "kind": "store",
+      "file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "symbol": "CurrentSchemaVersion = 2",
+      "line": 122,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "store.seatgrid",
+      "label": "classroom-seat-grid.json (schema 5)",
+      "kind": "store",
+      "file": "src/VeyonCampus.Core/ClassroomSeatGridStore.cs",
+      "symbol": "CurrentSchemaVersion = 5",
+      "line": 68,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "store.devdir",
+      "label": "veyon-device-directory.json (schema 1)",
+      "kind": "store",
+      "file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "symbol": "CurrentSchemaVersion = 1",
+      "line": 39,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.assign",
+      "label": "ClassroomSeatGridStore.AssignVeyonTargets",
+      "kind": "write",
+      "file": "src/VeyonCampus.Core/ClassroomSeatGridStore.cs",
+      "symbol": "AssignVeyonTargets",
+      "line": 533,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.reconcile",
+      "label": "VeyonDeviceDirectoryStore.Reconcile (含锁与写盘)",
+      "kind": "write",
+      "file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "symbol": "public VeyonDeviceDirectorySnapshot Reconcile",
+      "line": 69,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "core.locationbyid",
+      "label": "BuildLocationsById (本实验新增，按 UUID 投影)",
+      "kind": "pure",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "BuildLocationsById",
+      "added_in_experiment": true,
+      "line": null,
+      "verified": false,
+      "external": false
+    },
+    {
+      "id": "core.selectlocation",
+      "label": "SelectLocationObject (本实验新增，按 UUID 选择)",
+      "kind": "pure",
+      "file": "src/VeyonCampus.Core/VeyonNetworkObjectDirectory.cs",
+      "symbol": "SelectLocationObject",
+      "added_in_experiment": true,
+      "line": null,
+      "verified": false,
+      "external": false
+    },
+    {
+      "id": "checks.fixture",
+      "label": "VeyonCampus.Checks 自建断言 runner",
+      "kind": "test",
+      "file": "tests/VeyonCampus.Checks/Program.cs",
+      "symbol": "void Expect(bool condition)",
+      "line": 377,
+      "verified": true,
+      "external": false
+    },
+    {
+      "id": "external.cli",
+      "label": "veyon-cli networkobjects / config",
+      "kind": "external",
+      "file": null,
+      "symbol": null,
+      "line": null,
+      "verified": true,
+      "external": true
+    },
+    {
+      "id": "external.veyon",
+      "label": "Veyon BuiltinDirectory / 注册表",
+      "kind": "external",
+      "file": null,
+      "symbol": null,
+      "line": null,
+      "verified": true,
+      "external": true
+    }
+  ],
+  "edges": [
+    {
+      "source": "ui.retry",
+      "target": "ui.sync",
+      "relation": "calls",
+      "evidence": "Click 事件 → TeacherWindow.RetrySeatMapSync"
+    },
+    {
+      "source": "ui.sync",
+      "target": "vm.reconcilehost",
+      "relation": "calls",
+      "evidence": "RunSeatMapVeyonSyncAsync 第一步按 Host 对账"
+    },
+    {
+      "source": "ui.sync",
+      "target": "vm.addroom",
+      "relation": "calls",
+      "evidence": "仍有未绑定座位时走建档"
+    },
+    {
+      "source": "vm.reconcilehost",
+      "target": "core.snapshot",
+      "relation": "reads",
+      "evidence": "config export 读当前目录"
+    },
+    {
+      "source": "vm.reconcilehost",
+      "target": "core.assign",
+      "relation": "writes",
+      "evidence": "ClearMissingVeyonTargets + AssignVeyonTargets"
+    },
+    {
+      "source": "vm.addroom",
+      "target": "core.preview",
+      "relation": "reads",
+      "evidence": "InspectRoomConflictsAsync → ReadImportPreview"
+    },
+    {
+      "source": "vm.addroom",
+      "target": "core.addlocation",
+      "relation": "calls",
+      "evidence": "提权 Worker → VeyonNetworkObjectDirectory.AddLocation"
+    },
+    {
+      "source": "vm.addroom",
+      "target": "store.campus",
+      "relation": "writes",
+      "evidence": "TrySaveCurrentRoomProfile"
+    },
+    {
+      "source": "vm.addroom",
+      "target": "vm.bind",
+      "relation": "calls",
+      "evidence": "写回成功后绑定座位"
+    },
+    {
+      "source": "vm.addroom",
+      "target": "vm.refresh",
+      "relation": "calls",
+      "evidence": "finally 刷新三份名单"
+    },
+    {
+      "source": "vm.bind",
+      "target": "core.readobjects",
+      "relation": "reads",
+      "evidence": "写入后读回 UUID 核对"
+    },
+    {
+      "source": "vm.bind",
+      "target": "core.assign",
+      "relation": "writes",
+      "evidence": "AssignVeyonTargets 写座位绑定"
+    },
+    {
+      "source": "vm.bind",
+      "target": "core.selectlocation",
+      "relation": "uses",
+      "evidence": "本实验：优先按写回 UUID 选地点"
+    },
+    {
+      "source": "vm.refresh",
+      "target": "core.readlocations",
+      "relation": "reads",
+      "evidence": "策略/课堂页名单来自 CSV"
+    },
+    {
+      "source": "vm.refresh",
+      "target": "vm.summary",
+      "relation": "calls",
+      "evidence": "刷新 UUID 设备目录摘要"
+    },
+    {
+      "source": "vm.refresh",
+      "target": "vm.dupguard",
+      "relation": "calls",
+      "evidence": "同名地点阻断（现状只作用于已合并的 CSV）"
+    },
+    {
+      "source": "vm.summary",
+      "target": "core.readobjects",
+      "relation": "reads",
+      "evidence": "dump 取 UUID 快照"
+    },
+    {
+      "source": "vm.summary",
+      "target": "core.parseobjects",
+      "relation": "reads",
+      "evidence": "与 CSV 指纹交叉比对"
+    },
+    {
+      "source": "vm.summary",
+      "target": "core.reconcile",
+      "relation": "writes",
+      "evidence": "Reconcile 内部持锁并写盘"
+    },
+    {
+      "source": "vm.summary",
+      "target": "core.locationbyid",
+      "relation": "uses",
+      "evidence": "本实验：按 UUID 检测同名不同身份"
+    },
+    {
+      "source": "vm.apply",
+      "target": "model.location",
+      "relation": "uses",
+      "evidence": "按 room.DisplayName 匹配地点（名称键）"
+    },
+    {
+      "source": "vm.bindingstatus",
+      "target": "store.seatgrid",
+      "relation": "reads",
+      "evidence": "从座位级 UUID 反推地点绑定"
+    },
+    {
+      "source": "vm.delete",
+      "target": "core.remove",
+      "relation": "calls",
+      "evidence": "先删 Veyon 对象"
+    },
+    {
+      "source": "vm.delete",
+      "target": "store.seatgrid",
+      "relation": "writes",
+      "evidence": "随后 RestoreLayout 立即落盘"
+    },
+    {
+      "source": "core.readlocations",
+      "target": "external.cli",
+      "relation": "runs",
+      "evidence": "networkobjects export（三列，无 UUID）"
+    },
+    {
+      "source": "core.readobjects",
+      "target": "external.cli",
+      "relation": "runs",
+      "evidence": "networkobjects dump（带 ObjectId/ParentObjectId）"
+    },
+    {
+      "source": "core.snapshot",
+      "target": "external.cli",
+      "relation": "runs",
+      "evidence": "config export（完整配置 + 指纹）"
+    },
+    {
+      "source": "core.saferead",
+      "target": "core.snapshot",
+      "relation": "fallback",
+      "evidence": "dump 失败 → PartialRead 只读回退"
+    },
+    {
+      "source": "core.snapshot",
+      "target": "core.configparse",
+      "relation": "uses",
+      "evidence": "解析 JsonStoreArray"
+    },
+    {
+      "source": "core.addlocation",
+      "target": "external.cli",
+      "relation": "runs",
+      "evidence": "逐台 add computer <父地点 UUID>"
+    },
+    {
+      "source": "core.remove",
+      "target": "external.cli",
+      "relation": "runs",
+      "evidence": "networkobjects remove <UUID>"
+    },
+    {
+      "source": "core.addlocation",
+      "target": "core.readobjects",
+      "relation": "reads",
+      "evidence": "写前/写后读回校验"
+    },
+    {
+      "source": "core.remove",
+      "target": "core.snapshot",
+      "relation": "reads",
+      "evidence": "删前/删后读回校验"
+    },
+    {
+      "source": "core.preview",
+      "target": "model.location",
+      "relation": "uses",
+      "evidence": "按地点名比对"
+    },
+    {
+      "source": "core.assign",
+      "target": "store.seatgrid",
+      "relation": "writes",
+      "evidence": "座位 UUID / 地点 UUID / Host"
+    },
+    {
+      "source": "core.reconcile",
+      "target": "store.devdir",
+      "relation": "writes",
+      "evidence": "设备目录快照"
+    },
+    {
+      "source": "core.readlocations",
+      "target": "model.location",
+      "relation": "produces",
+      "evidence": "按名称合并后的地点列表"
+    },
+    {
+      "source": "model.room",
+      "target": "store.campus",
+      "relation": "stored_in",
+      "evidence": "Room 无地点 UUID"
+    },
+    {
+      "source": "external.cli",
+      "target": "external.veyon",
+      "relation": "mutates",
+      "evidence": "BuiltinDirectory 配置"
+    },
+    {
+      "source": "core.configparse",
+      "target": "external.veyon",
+      "relation": "reads",
+      "evidence": "注册表快照回退（0f67214）"
+    },
+    {
+      "source": "checks.fixture",
+      "target": "core.locationbyid",
+      "relation": "asserts",
+      "evidence": "R19/R20 回归"
+    },
+    {
+      "source": "checks.fixture",
+      "target": "core.selectlocation",
+      "relation": "asserts",
+      "evidence": "R21 回归"
+    }
+  ],
+  "summary": {
+    "nodes": 32,
+    "edges": 42,
+    "unverified_nodes": [
+      "core.locationbyid",
+      "core.selectlocation"
+    ],
+    "read_sources": 3,
+    "persistent_stores": 3
+  }
+}
