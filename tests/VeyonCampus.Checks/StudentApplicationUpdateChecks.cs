@@ -395,8 +395,10 @@ internal static class StudentApplicationUpdateChecks
         row.SetMaintenanceFacts(current: null, target: null, updateTransactionState: "needsReview",
             authenticatedChannelConnected: false, verifiedUtc: null, capabilityVerifiedUtc: null,
             connectionCheckedUtc: null, finalStatusReadback: false, operationId: operationId,
-            agentCommandId: commandId, operationKind: MaintenanceOperationKind.SoftwareUpdate,
-            channel: MaintenanceReleaseChannel.Stable, hasSnapshot: true, canResume: true,
+            agentCommandId: commandId,
+            operationKind: VeyonCampus.Core.Maintenance.MaintenanceOperationKind.SoftwareUpdate,
+            channel: VeyonCampus.Core.Maintenance.MaintenanceReleaseChannel.Stable,
+            hasSnapshot: true, canResume: true,
             channelDiagnostics: null, statusProtocolVersion: 5);
         Expect(row.CanRequery);
         row.BeginRequery();
