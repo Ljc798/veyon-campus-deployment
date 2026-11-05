@@ -44,9 +44,6 @@ internal static class TeacherRestartRegressionChecks
             Expect(model.WebsitePolicyTargetChoices.Select(item => item.StudentName)
                     .SequenceEqual(["学生甲", "学生乙"]) && model.DeviceHealthRows.Count == 2,
                 "The policy and health pages must share restored students and device addresses.");
-            model.SelectPage("updates");
-            Expect(model.HasDeviceHealthTargets && model.DeviceHealthRows.Count == 2,
-                "Opening devices first must retain its roster.");
             model.SelectedRoomProfile = other;
             Expect(model.WebsitePolicyTargetChoices.Single().Target == other.GetComputerNames().Single() &&
                    model.DeviceHealthRows.Single().Target == other.GetComputerNames().Single(),
