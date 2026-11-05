@@ -35,8 +35,9 @@ internal static class ClassroomSessionChecks
                session.Targets.Select(target => target.TargetId)
                    .Intersect(anotherSession.Targets.Select(target => target.TargetId)).Any() == false);
         var json = System.Text.Json.JsonSerializer.Serialize(session);
-        Assert(json.Contains("192.168.10.8", StringComparison.Ordinal) &&
-               json.Contains("teacher-pc.school.test", StringComparison.Ordinal) &&
+        Assert(session.Room.HostOverrides is null &&
+               !json.Contains("192.168.10.8", StringComparison.Ordinal) &&
+               !json.Contains("teacher-pc.school.test", StringComparison.Ordinal) &&
                !json.Contains("studentName", StringComparison.OrdinalIgnoreCase) &&
                !json.Contains("张三", StringComparison.Ordinal));
 
