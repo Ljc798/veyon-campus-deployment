@@ -1730,14 +1730,16 @@ public static class StudentApplicationUpdateTransport
                                 "StudentSetup 与 Student Agent 的本次签名事务已确认提交。");
                     }
                     if (failedReadback is { State: "needsReview" } ||
-                        failedReadback is { State: "inProgress" } || failedReadback is null ||
+                        failedReadback is { State: "inProgress" } ||
                         failedReadback is { State: "committed" } ||
                         (int)response.StatusCode >= 500)
                         return new StudentApplicationUpdatePushResult(target, false,
                             $"{httpFailure}；且未读取到本次命令对应的提交或回滚终态，需人工核对恢复状态。",
                             NeedsReview: true, IdentityCandidate: failedReadback?.IdentityCandidate);
+                    // A 4xx without any transaction record means the Agent rejected the command outright:
+                    // nothing was installed and nothing needs recovery, so a fresh attempt is safe.
                     return new StudentApplicationUpdatePushResult(target, false,
-                        httpFailure);
+                        $"{httpFailure}（学生端未开始本次更新，可重新下发）");
                 }
                 var restartPending = response.StatusCode == HttpStatusCode.Accepted;
                 var verifiedUpdate = StudentAgentResponseCryptography.Verify<StudentApplicationUpdateResponse>(resultText,

@@ -149,9 +149,10 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
                         Sanitize(exception.Message)));
             }
         }
-        var inspections = await _coordinator.InspectAsync(devices, cancellationToken).ConfigureAwait(false);
+        var inspections = (await _coordinator.InspectAsync(devices, cancellationToken).ConfigureAwait(false))
+            .ToList();
         var executableOperationIds = new List<Guid>();
-        var snapshotsByOperation = inspections.ToDictionary(item => item.OperationId);
+        var retryableDevices = new List<MaintenanceDeviceIdentity>();
 
         foreach (var snapshot in inspections)
         {
@@ -172,14 +173,28 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
                 if (resumed.State == MaintenanceRunState.MaintenanceServiceHealthVerified &&
                     resumed.Plan?.OperationKind == MaintenanceOperationKind.FullMaintenance &&
                     (resumed.Plan.TargetSetupVersion is not null || resumed.Plan.TargetAgentVersion is not null))
+                {
                     executableOperationIds.Add(resumed.OperationId);
-                else
-                    outcomes.Add(ToOutcome(resumed, resumed.Transitions.LastOrDefault()?.Reason ??
-                        "原维护事务仍在等待可信读回。", snapshot.AuthenticatedChannelConnected,
-                        snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
-                        snapshot.TeacherChannelDiagnostics));
+                    continue;
+                }
+                // The Agent has no record of the previous command, so that attempt never started.
+                // Re-inspect and plan again in this same click instead of leaving the device stuck.
+                if (resumed.State == MaintenanceRunState.Failed && resumed.AgentCommandId is not null)
+                {
+                    retryableDevices.Add(snapshot.Device);
+                    continue;
+                }
+                outcomes.Add(ToOutcome(resumed, resumed.Transitions.LastOrDefault()?.Reason ??
+                    "原维护事务仍在等待可信读回。", snapshot.AuthenticatedChannelConnected,
+                    snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
+                    snapshot.TeacherChannelDiagnostics));
             }
         }
+
+        if (retryableDevices.Count > 0)
+            inspections.AddRange(await _coordinator.InspectAsync(retryableDevices, cancellationToken)
+                .ConfigureAwait(false));
+        var snapshotsByOperation = inspections.ToDictionary(item => item.OperationId);
 
         var planableInspections = inspections.Where(item => item.State == MaintenanceRunState.CapabilitiesVerified)
             .ToArray();

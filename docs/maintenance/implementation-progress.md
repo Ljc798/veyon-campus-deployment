@@ -363,3 +363,15 @@
 - **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.52-LegacyEnvelope-Test.exe`，70,985,120 B，SHA-256 `149FAC7098B81AF7A9E7CDCBBE0C7C2F7187078CDF06C4594DFC91AEC849B3C4`；带发布公钥；发布目录 `artifacts/windows-x64-v1.1.52-teacher-console-legacyenv-test/`；日志 `artifacts/legacyenv-package-20261105.log`（0 错误）。安装前退出教师端。
 - **现场证据**：性能汇总 `artifacts/veyon-campus-student-update-performance-20261105-081633.json` —— `attemptedCount 1 / needsReviewCount 1`，阶段只有 `TeacherReceipt 101 ms`，`timeToStudentInstalled` 全空，说明从未进入下载与安装。
 - **边界**：仍未做真机端到端验收；旧 Agent 下载与安装阶段（局域网下载授权、静默安装）尚未在本轮验证。
+
+## 2026-11-05 被拒绝的更新命令不再永久占用事务（1.1.53）
+
+- **现场复核**：直接向 `PC-01:39174/v1/update` 发探针（错误校区，不落任何事务）—— 旧信封返回「学生更新命令属于其他校区。」，现代信封返回「正文格式无效」。证明 1.1.52 的旧信封投影已被旧 Agent 正确解析。
+- **第二个问题**：08:16 那次 409 之后事务停在 `pendingVerification`，之后每次点击只是 `ResumeAsync` 重新读状态，不会再下发命令，所以界面没有逐台结果、错误文案也一直是旧的。
+- **修复**：
+  1. `StudentApplicationUpdateTransport.PushAsync`：4xx 且读不到本次命令的事务记录时，判为「本次未开始，可重新下发」，不再标记 `NeedsReview`。
+  2. `LegacyAgentMaintenanceAdapter`：显式失败的投递结果直接映射为 `Failed`；对账时若签名状态没有本 commandId 的事务（含 `notFound`），同样判 `Failed`，而不是无限 `PendingVerification`。
+  3. `TeacherMaintenanceWorkflow.MaintainAsync`：恢复阶段发现设备被判 `Failed` 且曾有 commandId 时，在同一次点击内重新检查并重新规划，不需要用户点第二次。
+- **验证**：Core / App / Checks 编译 0 错误；`--student-application-update-fixtures`、`--student-agent-channel-fixtures` PASS。
+- **交付包**：`artifacts/VeyonCampus-TeacherConsole-1.1.53-RetryFix-Test.exe`，70,986,805 B，SHA-256 `1D47A9F9B16B9B7A83C35CBDDE9F6CDD6ECABC9DED34E247F48D7B23F7BC5ADB`；带发布公钥；安装前退出教师端。
+- **现场证据（探针）**：`PC-01:39174/v1/update` 对旧信封返回「属于其他校区」，对现代信封返回「正文格式无效」，证明 1.1.52 的投影有效，问题转为「旧事务卡在待验证无法重试」。

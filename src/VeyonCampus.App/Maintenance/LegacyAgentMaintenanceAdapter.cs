@@ -807,7 +807,8 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             run.Device.PinnedIdentityFingerprint, status.ResponseSha256, run.AgentCommandId,
             status.Status.CollectedUtc);
         return ClassifyStatus(plan, run.AgentCommandId.Value, status.Status, evidence,
-            "已重新读取学生事务状态。", agentAssemblyVersion: status.AgentAssemblyVersion);
+            "已重新读取学生事务状态。", agentAssemblyVersion: status.AgentAssemblyVersion,
+            treatMissingTransactionAsFailure: true);
     }
 
     public static string? ReadCurrentTeacherChannelFingerprint(string campusId) =>
@@ -1256,6 +1257,11 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
     private static MaintenanceAdapterResult ClassifyUpdateResult(MaintenancePlan plan,
         StudentApplicationUpdatePushResult delivery, LegacyStatusReadback readback, Guid commandId)
     {
+        // The Agent rejected the command outright (for example HTTP 409): nothing was installed,
+        // so this attempt is a plain failure that may be re-sent instead of an open transaction.
+        if (!delivery.Succeeded && !delivery.NeedsReview && !delivery.RolledBack && !delivery.PendingVerification)
+            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.Failed,
+                delivery.Detail, null);
         if (readback.Status is null || readback.ResponseSha256 is null)
             return new MaintenanceAdapterResult(plan.OperationId,
                 MaintenanceAdapterDisposition.PendingVerification,
@@ -1269,18 +1275,25 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
 
     private static MaintenanceAdapterResult ClassifyStatus(MaintenancePlan plan, Guid commandId,
         StudentAgentStatusResponse status, MaintenanceEvidence evidence, string detail,
-        StudentApplicationUpdatePushResult? delivery = null, string? agentAssemblyVersion = null)
+        StudentApplicationUpdatePushResult? delivery = null, string? agentAssemblyVersion = null,
+        bool treatMissingTransactionAsFailure = false)
     {
         var transaction = status.UpdateTransaction;
         if (transaction?.CommandId != commandId)
-            return new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
-                "签名状态未绑定本 operation 的 Agent commandId。", null);
+            return treatMissingTransactionAsFailure
+                ? new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.Failed,
+                    "学生端没有本次更新命令的事务记录；本次更新未开始，可重新下发。", null)
+                : new MaintenanceAdapterResult(plan.OperationId, MaintenanceAdapterDisposition.PendingVerification,
+                    "签名状态未绑定本 operation 的 Agent commandId。", null);
         var state = transaction.State;
         MaintenanceAdapterResult Observed(MaintenanceAdapterDisposition disposition, string summary) =>
             new(plan.OperationId, disposition, summary, evidence,
                 new MaintenanceComponentVersions(status.StudentSetupVersion, status.AgentVersion,
                     agentAssemblyVersion, null),
                 state, status.CollectedUtc);
+        if (treatMissingTransactionAsFailure && state == "notFound")
+            return Observed(MaintenanceAdapterDisposition.Failed,
+                "学生端没有本次更新命令的事务记录；本次更新未开始，可重新下发。");
         if (state == "committed")
         {
             var setupMatches = plan.TargetSetupVersion is { } targetSetup &&
