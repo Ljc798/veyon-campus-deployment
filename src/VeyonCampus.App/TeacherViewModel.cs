@@ -4672,6 +4672,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 string.Equals(room.DisplayName, location.Name, StringComparison.OrdinalIgnoreCase));
             if (existingRoom is not null)
             {
+                if (SelectedCampusProfile?.ProfileId != campus?.ProfileId)
+                {
+                    SelectedCampusProfile = campus;
+                    SelectedRoomProfile = existingRoom;
+                }
                 var boundSeats = _seatGrid?.Seats.Count(seat => seat.VeyonObjectId is not null) ?? 0;
                 _classroomDirectorySelectionPending = false;
                 _seatMapProfileSelectionRequired = false;
