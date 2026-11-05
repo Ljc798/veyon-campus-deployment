@@ -138,7 +138,9 @@ jobs:
             FileUpdateHelperDirectory = 'artifacts/file-update-inventory/payloads/teacher/TeacherUpdateHelperVersioned'
           }
           if ($env:GITHUB_REF -like 'refs/tags/beta-v*' -or $env:GITHUB_REF -like 'refs/heads/beta-v*') { $packageArguments['EdgeRealtimeManualTest'] = $true }
-          if ($env:RELEASE_TAG -in @('v1.1.33', 'v1.1.34', 'v1.1.35', 'v1.1.36', 'v1.1.37', 'v1.1.38', 'v1.1.39', 'v1.1.40', 'v1.1.41', 'v1.1.42', 'v1.1.43', 'v1.1.44', 'v1.1.45')) { $packageArguments['ClassroomQuickControlManualTest'] = $true }
+          # Classroom quick control ships in every TeacherConsole build by default
+          # (VeyonCampusClassroomQuickControlPilot defaults to true in VeyonCampus.App.csproj);
+          # -ClassroomQuickControlManualTest stays available as an explicit opt-in for local builds.
           if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
             $packageArguments['ReleasePublicKeyPath'] = $env:VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH
           }

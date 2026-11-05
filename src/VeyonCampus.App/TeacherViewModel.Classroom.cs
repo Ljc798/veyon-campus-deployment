@@ -4283,6 +4283,39 @@ public sealed partial class TeacherViewModel
         }
     }
 
+    /// <summary>
+    /// Clears the blockers that can be cleared without asking. A running countdown must not keep a
+    /// lesson open; task progress and un-released policies stay with the operator.
+    /// </summary>
+    public void PrepareClassroomForEnd()
+    {
+        if (IsClassroomCountdownRunning) EndClassroomCountdown();
+    }
+
+    /// <summary>Explains, in the operator's words, why the running lesson still cannot be closed.</summary>
+    public string DescribeClassroomEndBlocker()
+    {
+        if (_activeClassroomSession is not { } active) return "当前没有进行中的课堂。";
+        if (_isClassroomTransitioning) return "课堂范围正在更新，请等几秒再点结束。";
+        if (IsClassroomCountdownRunning) return "课堂倒计时仍在运行。";
+        if (ClassroomTaskProgressCompletedCount < ClassroomTaskProgressTotalCount)
+            return $"课堂任务还有 {ClassroomTaskProgressTotalCount - ClassroomTaskProgressCompletedCount} 项未完成；" +
+                   "先在课堂页完成或取消这些任务。";
+        try
+        {
+            var state = _classroomModeStateStore.Read(active.SessionId);
+            if (state?.OwnedPolicies.Count > 0)
+                return $"还有 {state.OwnedPolicies.Count} 台电脑的课堂策略（网站限制或键鼠锁定）未解除；" +
+                       "先在课堂页点「恢复全部学生电脑」，再结束课堂。";
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException)
+        {
+            // The store failure is not the teacher's problem; fall through to the generic reason.
+        }
+        return "课堂状态还没有同步完成；先刷新课堂状态，再试一次。";
+    }
+
     public async Task<bool> EndClassroomSessionAsync(Guid expectedSessionId)
     {
         if (expectedSessionId == Guid.Empty || _activeClassroomSession is not { } active ||
@@ -4347,6 +4380,39 @@ public sealed partial class TeacherViewModel
             RefreshClassroomRestoreLedger();
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
+        }
+    }
+
+    /// <summary>
+    /// Ends the running classroom so the Veyon directory can be rewritten. Writing Veyon while a
+    /// lesson is live would change the roster under the students' feet, so the caller pauses the
+    /// lesson, writes, and resumes it. Returns a concrete reason instead of failing silently.
+    /// </summary>
+    public async Task<(bool Paused, string? Error)> PauseClassroomForVeyonWriteAsync()
+    {
+        if (_activeClassroomSession is not { } active) return (false, null);
+        if (IsClassroomCountdownRunning) return (false, "课堂倒计时正在运行，先结束倒计时。");
+        if (ClassroomTaskProgressCompletedCount < ClassroomTaskProgressTotalCount)
+            return (false, "课堂任务尚未全部完成，先结束课堂任务。");
+        if (await EndClassroomSessionAsync(active.SessionId)) return (true, null);
+        return (false, "课堂仍有未解除的快捷管控或未完成的课堂状态；先在课堂页恢复全部学生电脑。");
+    }
+
+    /// <summary>Restarts the lesson that <see cref="PauseClassroomForVeyonWriteAsync"/> ended.</summary>
+    public async Task ResumeClassroomAfterVeyonWriteAsync()
+    {
+        try
+        {
+            await EnsureClassroomSessionAsync();
+            if (!HasActiveClassroomSession)
+                SetClassroomQuickControlSessionNotice("Veyon 写入已结束，但课堂未能自动重新开始；请手动点「开始课堂」。");
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                           InvalidDataException or InvalidOperationException or
+                                           CryptographicException or PlatformNotSupportedException)
+        {
+            SetClassroomQuickControlSessionNotice(
+                "Veyon 写入已结束，但课堂未能自动重新开始；请手动点「开始课堂」。" + exception.Message);
         }
     }
 

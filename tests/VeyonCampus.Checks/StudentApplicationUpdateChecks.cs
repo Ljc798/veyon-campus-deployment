@@ -89,6 +89,9 @@ internal static class StudentApplicationUpdateChecks
         Expect(IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending));
         Expect(IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Superseded));
         Expect(!IsAllowed(StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Committed));
+        // A journal left behind by an older StudentSetup can only be retired once the live installation is newer.
+        Expect(IsAllowed(StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.Superseded));
+        Expect(!IsAllowed(StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.Committed));
     }
 
     private static void CheckSupersededRecoveryFacts()

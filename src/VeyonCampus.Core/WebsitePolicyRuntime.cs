@@ -1145,8 +1145,64 @@ public static class WebsitePolicyAgentInstaller
 
         var remaining = StudentUpdateAtomicTransaction.Read(fullConfigPath);
         var state = remaining?.State.ToString() ?? "状态未知";
+        var details = DescribeStudentUpdateRecoveryFailure(fullConfigPath, remaining);
         throw new IOException(
-            $"已启动 SYSTEM 恢复任务，但学生更新仍处于 {state}；没有删除 Agent、策略或旧版安装文件。请稍后重试。");
+            $"已启动 SYSTEM 恢复任务，但学生更新仍处于 {state}；没有删除 Agent、策略或旧版安装文件。" +
+            (details is null
+                ? " 恢复任务没有留下错误记录，通常是上一轮安装器或更新助手仍占用更新锁；请重启这台电脑后重新执行。"
+                : " 恢复任务报告：" + details + "。据此修正后可重试。"));
+    }
+
+    /// <summary>
+    /// Reads the reason the SYSTEM recovery task stopped without moving the journal. The task runs
+    /// detached, so its exit code is invisible to this caller; the journal and the agent log are the
+    /// only evidence an administrator can act on.
+    /// </summary>
+    private static string? DescribeStudentUpdateRecoveryFailure(string configPath,
+        StudentUpdateTransactionRecord? record)
+    {
+        var details = new List<string>();
+        if (record?.LastError is { } lastError && !string.IsNullOrWhiteSpace(lastError))
+            details.Add("事务记录：" + SummarizeRecoveryText(lastError, 300));
+        if (TryReadAgentStartupFailureReason(configPath) is { } logReason)
+            details.Add("Agent 日志：" + logReason);
+        return details.Count == 0 ? null : string.Join("；", details);
+    }
+
+    private static string? TryReadAgentStartupFailureReason(string configPath)
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(Path.GetFullPath(configPath));
+            if (directory is null) return null;
+            var logPath = Path.Combine(directory, "agent-startup.log");
+            if (!File.Exists(logPath)) return null;
+            using var stream = new FileStream(logPath, FileMode.Open, FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete);
+            var size = (int)Math.Min(8192, stream.Length);
+            if (size == 0) return null;
+            stream.Seek(-size, SeekOrigin.End);
+            var buffer = new byte[size];
+            var read = stream.Read(buffer, 0, size);
+            var text = Encoding.UTF8.GetString(buffer, 0, read);
+            var lines = text.Split('\n', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            var reason = lines.LastOrDefault(line => !line.StartsWith("at ", StringComparison.Ordinal) &&
+                                                     !line.StartsWith("---", StringComparison.Ordinal) &&
+                                                     !line.Contains("agent-startup-failed", StringComparison.Ordinal));
+            return reason is null ? null : SummarizeRecoveryText(reason, 400);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          ArgumentException or DecoderFallbackException)
+        {
+            return null;
+        }
+    }
+
+    private static string SummarizeRecoveryText(string text, int maximumLength)
+    {
+        var single = string.Join(' ', text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim()).Where(line => line.Length > 0));
+        return single.Length <= maximumLength ? single : single[..maximumLength] + "…";
     }
 
     public static int GetInstalledAgentConfigurationCount()
@@ -1206,6 +1262,14 @@ public static class WebsitePolicyAgentInstaller
             var pendingTransaction = StudentUpdateAtomicTransaction.Read(configPath);
             var installedAgentVersion = ReadInstalledAgentVersion();
             var installedStudentSetupVersion = StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion();
+            if (pendingTransaction is { State: StudentUpdateTransactionState.PreviousSetupPreserved } &&
+                StudentUpdateAtomicTransaction.TryDiscardStalePreservedTransaction(configPath, installedAgentVersion))
+            {
+                // The interrupted update belongs to an older StudentSetup than the one installed now, so
+                // its rollback can never apply. Retire the journal instead of replaying it forever.
+                stage = "结束已被更高版本取代的旧更新事务";
+                pendingTransaction = StudentUpdateAtomicTransaction.Read(configPath);
+            }
             string? recoveryBootstrapRefusalReason = null;
             if (pendingTransaction is { State: StudentUpdateTransactionState.PreviousSetupPreserved } transaction &&
                 string.Equals(transaction.PreviousSetupVersion, installedStudentSetupVersion, StringComparison.Ordinal) &&

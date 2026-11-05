@@ -606,6 +606,79 @@ public static class StudentUpdateAtomicTransaction
             throw new IOException("更新事务已由更高版本接管，但恢复材料仍未清理；请稍后重试。");
     }
 
+    /// <summary>
+    /// Retires a "previous setup preserved" journal that no longer describes this computer: a newer
+    /// StudentSetup and Agent were installed afterwards, so the interrupted update can no longer be
+    /// rolled back to its original version. Left in place, that journal keeps the pinned legacy
+    /// recovery task replaying an impossible transition forever, which blocks every Agent update.
+    /// Only the verified live installation is kept; nothing is uninstalled or downgraded.
+    /// </summary>
+    public static bool TryDiscardStalePreservedTransaction(string configPath, string? installedAgentVersion)
+    {
+        var record = Read(configPath);
+        if (record is null || record.State != StudentUpdateTransactionState.PreviousSetupPreserved) return false;
+        return TrySupersedeStalePreserved(configPath, record, installedAgentVersion);
+    }
+
+    private static bool TrySupersedeStalePreserved(string configPath, StudentUpdateTransactionRecord record,
+        string? installedAgentVersion)
+    {
+        try
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+            var installedSetupVersion = ReadVerifiedInstalledSetupVersion();
+            if (ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.PreviousSetupVersion) <= 0 ||
+                ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.TargetSetupVersion) <= 0)
+                return false;
+
+            var currentAgentPath = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);
+            var agentVersion = installedAgentVersion ?? Path.GetFileName(Path.GetDirectoryName(currentAgentPath));
+            if (string.IsNullOrWhiteSpace(agentVersion) || !IsVersionText(agentVersion) ||
+                ApplicationReleaseClient.CompareVersions(agentVersion, record.PreviousAgentVersion) < 0)
+                return false;
+
+            var expectedAgentPath = GetAgentExecutablePath(agentVersion);
+            if (!PathEquals(currentAgentPath, expectedAgentPath)) return false;
+            PathLinkSecurity.RejectLinks(expectedAgentPath);
+            if (!File.Exists(expectedAgentPath) ||
+                !WorkerInstallationGuard.ProductVersionMatches(expectedAgentPath, agentVersion))
+                return false;
+
+            var expectedFingerprint = GetExpectedConfigurationFingerprintForAgent(configPath, record, agentVersion);
+            if (!string.Equals(WebsitePolicyAgent.ConfigFingerprint(
+                    WebsitePolicyAgentInstaller.ReadVerifiedManagedAgentConfiguration(configPath)),
+                    expectedFingerprint, StringComparison.OrdinalIgnoreCase) ||
+                !WebsitePolicyAgentInstaller.WaitForUpdatedAgentHealth(TimeSpan.FromSeconds(2),
+                    expectedFingerprint, agentVersion))
+                return false;
+
+            VerifyOrRepairOptionalPrivateDirectory(GetRecoveryDirectory(record));
+            var superseded = Advance(configPath, record, StudentUpdateTransactionState.Superseded,
+                $"保留并核验了较新的 StudentSetup {installedSetupVersion} 与健康 Agent {agentVersion}；" +
+                $"中断于 {record.State} 的旧更新已无法回滚到 {record.PreviousSetupVersion}，已安全结束旧事务。");
+            if (!TryCleanupSupersededTransaction(configPath, superseded))
+                throw new IOException("旧更新事务已结束，但恢复材料尚未清理。");
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or JsonException or ArgumentException or
+                                          System.Security.SecurityException or TimeoutException or
+                                          System.Security.Cryptography.CryptographicException)
+        { return false; }
+    }
+
+    private static bool IsVersionText(string value)
+    {
+        try
+        {
+            _ = ApplicationReleaseClient.CompareVersions(value, value);
+            return true;
+        }
+        catch (Exception exception) when (exception is InvalidDataException or ArgumentException or
+                                          FormatException)
+        { return false; }
+    }
+
     private static bool TrySupersedeVerifiedRecovery(string configPath, StudentUpdateTransactionRecord record)
     {
         try
@@ -823,7 +896,10 @@ public static class StudentUpdateAtomicTransaction
         try { updateLock = AcquireMachineLock(TimeSpan.Zero); }
         catch (IOException exception) when (exception.Message.StartsWith("另一项学生端更新或恢复正在进行",
                    StringComparison.Ordinal))
-        { return 0; }
+        {
+            ReportRecoveryLockBusy(configPath, exception);
+            return 0;
+        }
         using (updateLock)
         {
             try
@@ -855,7 +931,10 @@ public static class StudentUpdateAtomicTransaction
         try { updateLock = AcquireMachineLock(TimeSpan.Zero); }
         catch (IOException exception) when (exception.Message.StartsWith("另一项学生端更新或恢复正在进行",
                    StringComparison.Ordinal))
-        { return 0; }
+        {
+            ReportRecoveryLockBusy(configPath, exception);
+            return 0;
+        }
 
         using (updateLock)
         {
@@ -871,6 +950,24 @@ public static class StudentUpdateAtomicTransaction
                 WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath, exception);
                 return 1;
             }
+        }
+    }
+
+    /// <summary>
+    /// A detached recovery run that cannot take the machine lock used to return silently, leaving the
+    /// journal at its old state with no trace. Record the reason so the administrator sees why the
+    /// "recovery task ran but nothing changed" message appeared.
+    /// </summary>
+    private static void ReportRecoveryLockBusy(string configPath, Exception cause)
+    {
+        try
+        {
+            WebsitePolicyAgentInstaller.ReportAgentStartupFailure(configPath,
+                new IOException("学生更新恢复任务没有获得机器更新锁：另一项更新或恢复进程仍在运行，本次未执行恢复。", cause));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          ArgumentException or System.Security.SecurityException)
+        {
         }
     }
 
@@ -901,6 +998,12 @@ public static class StudentUpdateAtomicTransaction
 
         if (record.State == StudentUpdateTransactionState.RecoveryRequired &&
             TrySupersedeVerifiedRecovery(configPath, record))
+            return;
+
+        // A machine that was reinstalled or upgraded after the interrupted update still carries the old
+        // journal. Retire it before falling through to a rollback the current installation can no longer take.
+        if (record.State == StudentUpdateTransactionState.PreviousSetupPreserved &&
+            TrySupersedeStalePreserved(configPath, record, null))
             return;
 
         if (record.State == StudentUpdateTransactionState.ActivationPending && IsHandoffHelperRunning(record))
@@ -1330,6 +1433,9 @@ public static class StudentUpdateAtomicTransaction
             (StudentUpdateTransactionState.RollbackPending, StudentUpdateTransactionState.RolledBack) => true,
             (StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.RollbackPending) => true,
             (StudentUpdateTransactionState.RecoveryRequired, StudentUpdateTransactionState.Superseded) => true,
+            // A "previous setup preserved" journal is only retired after the live installation has been
+            // verified as strictly newer; see TrySupersedeStalePreserved.
+            (StudentUpdateTransactionState.PreviousSetupPreserved, StudentUpdateTransactionState.Superseded) => true,
             _ => false
         };
     }

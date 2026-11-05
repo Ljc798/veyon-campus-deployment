@@ -93,6 +93,31 @@ public static class VeyonNetworkObjectDirectory
     public static IReadOnlyList<string> ParseExportRecord(string line, int expectedFieldCount = 3) =>
         Array.AsReadOnly(ParseExportRow(line, expectedFieldCount));
 
+    /// <summary>
+    /// True when <c>veyon-cli</c> can actually start and list the directory. Reading falls back to
+    /// the registry snapshot when the CLI is broken, but every write still needs the CLI - callers
+    /// must probe this before pausing a lesson or promising a write.
+    /// </summary>
+    public static bool IsCliWritable()
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        try
+        {
+            var cliPath = ResolveCliPathOrThrow("cli probe");
+            var runner = new ProcessRunner();
+            runner.Run(cliPath, ["networkobjects", "dump"], Path.GetDirectoryName(cliPath)!,
+                TimeSpan.FromSeconds(30), outputLimitChars: 4096, redirectedOutputEncoding: Encoding.UTF8);
+            return runner.ExitCode is 0;
+        }
+        catch (Exception exception) when (exception is TimeoutException or UnauthorizedAccessException or
+                                          System.ComponentModel.Win32Exception or IOException or
+                                          InvalidOperationException or PlatformNotSupportedException or
+                                          ArgumentException)
+        {
+            return false;
+        }
+    }
+
     public static IReadOnlyList<VeyonNetworkLocation> ReadLocations() =>
         ReadLocations(TimeSpan.FromSeconds(45));
 
@@ -156,7 +181,12 @@ public static class VeyonNetworkObjectDirectory
                     Path.GetDirectoryName(cliPath)!);
                 if (fallback.Locations is { } fallbackLocations)
                 {
-                    LastTrustedDirectoryFingerprint = null;
+                    // Only a partial fallback is untrusted for write-back; a complete registry
+                    // snapshot carries the same UUIDs, so keep its fingerprint.
+                    LastTrustedDirectoryFingerprint =
+                        fallback.Diagnostic.FailureStage is VeyonDirectoryReadDiagnostic.None
+                            ? ComputeLocationFingerprint(fallbackLocations)
+                            : null;
                     LastReadDiagnostic = CreateFallbackSuccessDiagnostic(exportFailure, fallback.Diagnostic);
                     return fallbackLocations;
                 }
@@ -173,7 +203,10 @@ public static class VeyonNetworkObjectDirectory
                     Path.GetDirectoryName(cliPath)!);
                 if (fallback.Locations is { } fallbackLocations)
                 {
-                    LastTrustedDirectoryFingerprint = null;
+                    LastTrustedDirectoryFingerprint =
+                        fallback.Diagnostic.FailureStage is VeyonDirectoryReadDiagnostic.None
+                            ? ComputeLocationFingerprint(fallbackLocations)
+                            : null;
                     LastReadDiagnostic = CreateFallbackSuccessDiagnostic(exportFailure, fallback.Diagnostic);
                     return fallbackLocations;
                 }
@@ -239,6 +272,18 @@ public static class VeyonNetworkObjectDirectory
         var detail = string.Join(" | ", new[] { original.Detail, fallback.Detail }
             .Where(value => !string.IsNullOrWhiteSpace(value)));
         if (detail.Length > 2000) detail = detail[..2000];
+        if (fallback.FailureStage is VeyonDirectoryReadDiagnostic.None)
+        {
+            // The fallback produced a complete directory (the registry snapshot is Veyon's own
+            // store), so keep the read trustworthy instead of flagging it as partial.
+            return VeyonDirectoryReadDiagnostic.For(VeyonDirectoryReadDiagnostic.None, "",
+                original.CliPath, 0, detail,
+                original.SubCommand + " → " + fallback.SubCommand, false,
+                fallback.TrustedSnapshotFingerprint) with
+            {
+                LastSuccessfulReadUtc = LastSuccessfulReadUtc
+            };
+        }
         return VeyonDirectoryReadDiagnostic.For(
             VeyonDirectoryReadDiagnostic.PartialRead,
             original.Message + " 已使用只读目录回退结果；写入操作仍要求完整 UUID 读回。",
@@ -983,14 +1028,26 @@ public static class VeyonNetworkObjectDirectory
             {
                 var export = ExportConfiguration(cliPath, workingDirectory);
                 var snapshot = ReadDirectorySnapshot(export);
-                var registryNote = LastRegistrySnapshotDetail is { Length: > 0 } note ? " " + note : "";
+                if (LastRegistrySnapshotDetail is { Length: > 0 })
+                {
+                    // The registry snapshot IS Veyon's own directory store: the same objects,
+                    // UUIDs and parent links `config export` returns. Only the CLI is unusable,
+                    // so this is a complete read, not a partial one - otherwise the teacher loses
+                    // the classroom session, seat binding and policy actions too. Write-back still
+                    // goes through the CLI and reports its own failure.
+                    var registryDiagnostic = VeyonDirectoryReadDiagnostic.Success(cliPath,
+                        "config export → 注册表目录快照");
+                    LastTrustedDirectoryFingerprint = ComputeLocationFingerprint(snapshot.Objects);
+                    LastReadDiagnostic = registryDiagnostic;
+                    return (snapshot.Objects, registryDiagnostic, false);
+                }
                 var diagnostic = VeyonDirectoryReadDiagnostic.For(
                        VeyonDirectoryReadDiagnostic.PartialRead,
                        "Veyon 电脑目录清单读取失败，已改用可信配置快照（" +
                        SnapshotFingerprintLabel(snapshot.ConfigFingerprint) +
                        "）；该快照只用于只读核对，不能作为按 UUID 写回的身份依据。" +
-                       dumpDiagnostic.Detail + registryNote,
-                       cliPath, null, dumpDiagnostic.Detail + registryNote,
+                       dumpDiagnostic.Detail,
+                       cliPath, null, dumpDiagnostic.Detail,
                        "networkobjects dump → config export",
                        dumpDiagnostic.TimedOut, snapshot.ConfigFingerprint) with
                 {

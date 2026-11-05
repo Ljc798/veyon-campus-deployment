@@ -777,6 +777,9 @@ public partial class TeacherWindow : Window
         {
             if (_model.ActiveClassroomSessionId is { } sessionId)
             {
+                // A finished countdown must not keep the lesson open; clear it before asking.
+                _model.PrepareClassroomForEnd();
+
                 if (SupportsTeacherClassroomPolicyState)
                 {
                     var snapshot = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
@@ -784,16 +787,19 @@ public partial class TeacherWindow : Window
                         _model.UpdateClassroomQuickControlSnapshot(snapshot);
                     if (!IsQuickControlLifecycleIdle(snapshot, sessionId, _model.ActiveClassroomTargetCount))
                     {
-                        _model.SetClassroomQuickControlSessionNotice(
-                            "尚有快捷管控未确认解除；先恢复全部学生电脑，再结束课堂。");
+                        var busyNotice = "尚有快捷管控未确认解除；先恢复全部学生电脑，再结束课堂。";
+                        _model.SetClassroomQuickControlSessionNotice(busyNotice);
+                        await ShowNoticeAsync("无法结束课堂", busyNotice);
                         return;
                     }
                 }
 
                 if (!await _model.EndClassroomSessionAsync(sessionId))
                 {
-                    _model.SetClassroomQuickControlSessionNotice(
-                        "课堂仍有未解除的策略、运行中的倒计时或未完成的课堂任务；请先处理后再结束。");
+                    // This used to write into a property no view bound to, so the button looked dead.
+                    var blocker = _model.DescribeClassroomEndBlocker();
+                    _model.SetClassroomQuickControlSessionNotice(blocker);
+                    await ShowNoticeAsync("无法结束课堂", blocker);
                     return;
                 }
             }
@@ -1380,12 +1386,37 @@ public partial class TeacherWindow : Window
     private async Task RunSeatMapVeyonSyncAsync()
     {
         _model.BeginSeatMapVeyonSync();
+        var classroomPaused = false;
         try
         {
             if (!OperatingSystem.IsWindows())
             {
                 _model.ReportSeatMapSyncFailure("当前系统不支持 Veyon 目录写回；本机资料已保存。请在 Windows 教师端重试。");
                 return;
+            }
+
+            // A live lesson must not have its roster rewritten underneath it, and the write path
+            // already refuses while a session is active. Probe the CLI first: if it cannot start,
+            // interrupting the lesson buys nothing and the teacher would lose the session for a
+            // write that cannot happen.
+            if (_model.HasActiveClassroomSession && !VeyonNetworkObjectDirectory.IsCliWritable())
+            {
+                _model.ReportSeatMapSyncFailure(
+                    "这台电脑的 Veyon 命令行（veyon-cli）无法启动，不能写入地点和电脑；课堂保持进行中，本机座位资料已保存。" +
+                    "请先修复 Veyon 安装（或让安全软件不再干扰 veyon-cli），再点「重试 Veyon 同步」。");
+                return;
+            }
+
+            if (_model.HasActiveClassroomSession)
+            {
+                var pause = await _model.PauseClassroomForVeyonWriteAsync();
+                if (pause.Error is { Length: > 0 } pauseError)
+                {
+                    _model.ReportSeatMapSyncFailure(
+                        "本机资料已保存；写入 Veyon 需要先暂停课堂，但课堂未能自动结束：" + pauseError);
+                    return;
+                }
+                classroomPaused = pause.Paused;
             }
 
             var bindingError = await _model.ReconcileSeatVeyonBindingsByHostAsync();
@@ -1443,6 +1474,7 @@ public partial class TeacherWindow : Window
         }
         finally
         {
+            if (classroomPaused) await _model.ResumeClassroomAfterVeyonWriteAsync();
             _model.FinishSeatMapEditingAfterSave();
             _model.EndSeatMapVeyonSync();
         }
@@ -1808,6 +1840,33 @@ public partial class TeacherWindow : Window
             _model.DeleteSelectedRoomProfile();
     }
     private void LoadRoomProfile(object? sender, RoutedEventArgs e) => _model.LoadSelectedRoomProfileIntoBuilder();
+
+    /// <summary>Single-button notice. Used where a silent failure would look like a dead control.</summary>
+    private async Task ShowNoticeAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var layout = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right
+        };
+        var ok = new Button { Content = "知道了", IsDefault = true, MinWidth = 96 };
+        ok.Click += (_, _) => dialog.Close();
+        actions.Children.Add(ok);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        await dialog.ShowDialog(this);
+    }
 
     private async Task<bool> ConfirmProfileActionAsync(string title, string message, string confirmText)
     {

@@ -4330,6 +4330,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 : "同一地点名单与 UUID 设备目录已核对。";
             VeyonDeviceDirectorySummary =
                 $"UUID 设备目录：{current.Length} 台 · 座位绑定 {bound} · 新发现 {discovered} · 名称/Host/地点变化 {changed} · 冲突 {conflicts} · Veyon 缺失 {missing}；{mismatchNotice}";
+            if (VeyonNetworkObjectDirectory.LastRegistrySnapshotDetail is { Length: > 0 })
+                VeyonDeviceDirectorySummary +=
+                    " 当前从 Veyon 注册表快照读取（veyon-cli 无法启动）；新增地点或电脑仍需可用的 veyon-cli。";
             Changed(nameof(CanPushWebsitePolicy));
             Changed(nameof(CanDisableWebsitePolicy));
             Changed(nameof(CanReadWebsitePolicyStatus));
