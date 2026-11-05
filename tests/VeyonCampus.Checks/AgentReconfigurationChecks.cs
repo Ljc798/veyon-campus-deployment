@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using System.Security.Principal;
 using System.Runtime.Versioning;
 using System.Xml.Linq;
@@ -27,6 +28,15 @@ internal static class AgentReconfigurationChecks
             using var veyonKey = RSA.Create(2048);
             using var websitePolicyKey = RSA.Create(3072);
             using var replacementWebsitePolicyKey = RSA.Create(3072);
+            using var applicationPolicyKey = RSA.Create(3072);
+            using var studentSystemPolicyKey = RSA.Create(3072);
+            using var teacherChannelKey = RSA.Create(2048);
+            var certificateRequest = new CertificateRequest("CN=Veyon Campus Reconfiguration Test CA",
+                teacherChannelKey, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            certificateRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, false, 0, true));
+            certificateRequest.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.KeyCertSign, true));
+            using var teacherChannelRoot = certificateRequest.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),
+                DateTimeOffset.UtcNow.AddYears(1));
             var veyonPublicKeyPath = Path.Combine(temporary, "veyon-public.pem");
             File.WriteAllText(veyonPublicKeyPath, veyonKey.ExportSubjectPublicKeyInfoPem());
 
@@ -43,8 +53,28 @@ internal static class AgentReconfigurationChecks
             if (firstPackage.DeploymentId is null || changedPackage.DeploymentId is null ||
                 firstPackage.DeploymentId == changedPackage.DeploymentId)
                 throw new InvalidDataException("Fixture packages must have distinct deployment IDs to exercise configuration reload.");
+            var rotationIssuedUtc = DateTimeOffset.UtcNow;
+            var rotationRetireUtc = rotationIssuedUtc.AddDays(30);
+            var rotationAuthorizations = new[]
+            {
+                PolicyTrustRotationCryptography.Create(firstCampus, PolicyTrustKeyRole.WebsitePolicy,
+                    websitePolicyKey, replacementWebsitePolicyKey, rotationIssuedUtc, rotationRetireUtc),
+                PolicyTrustRotationCryptography.Create(firstCampus, PolicyTrustKeyRole.ApplicationPolicy,
+                    websitePolicyKey, applicationPolicyKey, rotationIssuedUtc, rotationRetireUtc),
+                PolicyTrustRotationCryptography.Create(firstCampus, PolicyTrustKeyRole.StudentSystemPolicy,
+                    websitePolicyKey, studentSystemPolicyKey, rotationIssuedUtc, rotationRetireUtc)
+            };
             var rotatedTrustPackage = PackageContext.Load(
-                BuildPackage("package-rotated-trust", firstCampus, replacementWebsitePublicKey));
+                PackageBuilder.Build(Path.Combine(temporary, "package-rotated-trust"), firstCampus, "PC-",
+                    veyonPublicKeyPath, websitePolicyPublicKeyPem: replacementWebsitePublicKey,
+                    applicationPolicyPublicKeyPem: applicationPolicyKey.ExportSubjectPublicKeyInfoPem(),
+                    compatibility: PackageCompatibility.ForSystemPolicyVersions("1.1.48",
+                        VeyonInstallerTrust.Version, WebsitePolicyAgentInstaller.BuildVersion),
+                    studentSystemPolicyPublicKeyPem: studentSystemPolicyKey.ExportSubjectPublicKeyInfoPem(),
+                    teacherChannelEndpoints: [ClassroomEventCryptography.CreateTeacherEndpoint(
+                        System.Net.IPAddress.Parse("192.168.1.10"))],
+                    teacherChannelRootCertificate: teacherChannelRoot.Export(X509ContentType.Cert),
+                    policyTrustRotationAuthorizations: rotationAuthorizations));
             var switchedCampusPackage = PackageContext.Load(
                 BuildPackage("package-switched-campus", secondCampus, replacementWebsitePublicKey));
 
