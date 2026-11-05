@@ -777,6 +777,9 @@ public partial class TeacherWindow : Window
         {
             if (_model.ActiveClassroomSessionId is { } sessionId)
             {
+                // A finished countdown must not keep the lesson open; clear it before asking.
+                _model.PrepareClassroomForEnd();
+
                 if (SupportsTeacherClassroomPolicyState)
                 {
                     var snapshot = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
@@ -784,16 +787,19 @@ public partial class TeacherWindow : Window
                         _model.UpdateClassroomQuickControlSnapshot(snapshot);
                     if (!IsQuickControlLifecycleIdle(snapshot, sessionId, _model.ActiveClassroomTargetCount))
                     {
-                        _model.SetClassroomQuickControlSessionNotice(
-                            "尚有快捷管控未确认解除；先恢复全部学生电脑，再结束课堂。");
+                        var busyNotice = "尚有快捷管控未确认解除；先恢复全部学生电脑，再结束课堂。";
+                        _model.SetClassroomQuickControlSessionNotice(busyNotice);
+                        await ShowNoticeAsync("无法结束课堂", busyNotice);
                         return;
                     }
                 }
 
                 if (!await _model.EndClassroomSessionAsync(sessionId))
                 {
-                    _model.SetClassroomQuickControlSessionNotice(
-                        "课堂仍有未解除的策略、运行中的倒计时或未完成的课堂任务；请先处理后再结束。");
+                    // This used to write into a property no view bound to, so the button looked dead.
+                    var blocker = _model.DescribeClassroomEndBlocker();
+                    _model.SetClassroomQuickControlSessionNotice(blocker);
+                    await ShowNoticeAsync("无法结束课堂", blocker);
                     return;
                 }
             }
@@ -1834,6 +1840,33 @@ public partial class TeacherWindow : Window
             _model.DeleteSelectedRoomProfile();
     }
     private void LoadRoomProfile(object? sender, RoutedEventArgs e) => _model.LoadSelectedRoomProfileIntoBuilder();
+
+    /// <summary>Single-button notice. Used where a silent failure would look like a dead control.</summary>
+    private async Task ShowNoticeAsync(string title, string message)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var layout = new StackPanel { Spacing = 18, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock { Text = message, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right
+        };
+        var ok = new Button { Content = "知道了", IsDefault = true, MinWidth = 96 };
+        ok.Click += (_, _) => dialog.Close();
+        actions.Children.Add(ok);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        await dialog.ShowDialog(this);
+    }
 
     private async Task<bool> ConfirmProfileActionAsync(string title, string message, string confirmText)
     {
