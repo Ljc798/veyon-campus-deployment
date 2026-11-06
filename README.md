@@ -29,7 +29,7 @@ Tag 只指向一个源代码提交，因此 GitHub 为 Tag 提供的 ZIP/TAR 下
 
 **安装程序可从 [GitHub Releases](https://github.com/Ljc798/veyon-campus-deployment/releases) 或 [GitCode Releases](https://gitcode.com/ljc_1126/veyon-campus-deployment/releases) 下载对应角色的 Setup EXE，并核对同一 Release 附带的 `SHA256SUMS`**。GitCode 附件由维护者在本机上传；若某版本尚未镜像，请从 GitHub 下载。学生电脑使用 Student 版，教师电脑使用 Teacher 版。不要下载页面中的“Code → Download ZIP”或 “Source code (zip)”，它们是源代码，不是安装程序。
 
-Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student EXE，再创建仅供手动下载的 GitHub 预发布并附 SHA-256 清单。GitCode 附件需在本机运行 `scripts/upload-gitcode-release.ps1 -Tag <标签>` 上传。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签；Windows installers 工作流会构建并发布两个角色 EXE 和 SHA256SUMS 到 GitHub，再校验 GitCode 公共附件并发布签名版本目录；GitCode 上传由维护者在本机完成。若首次 CloudBase 步骤在本机上传前遇到 404，上传完成后重跑失败的 publish-release job。应用内更新先由 CloudBase 校验签名，再跳转到已校验的 GitCode Release 下载 EXE。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定版和待发布版本、凭据、签名、许可状态见[稳定版发布执行清单](docs/发布执行清单.md)。
+Beta 使用 `beta-vX.Y.Z` 标签；推送后会构建并冒烟测试 Teacher/Student EXE，再创建仅供手动下载的 GitHub 预发布并附 SHA-256 清单。GitCode 附件需在本机运行 `scripts/upload-gitcode-release.ps1 -Tag <标签>`（Windows）或 `./scripts/upload-gitcode-release.sh <标签>`（macOS/Linux）上传。正式发布只接受与项目版本一致的稳定 `vX.Y.Z` 标签；Windows installers 工作流会构建并发布两个角色 EXE 和 SHA256SUMS 到 GitHub，再校验 GitCode 公共附件并发布签名版本目录；GitCode 上传由维护者在本机完成。若首次 CloudBase 步骤在本机上传前遇到 404，上传完成后重跑失败的 publish-release job。应用内更新先由 CloudBase 校验签名，再跳转到已校验的 GitCode Release 下载 EXE。现有 `v0.4.56` 标签指向提交 `961242e`，不要移动或复用它。当前稳定版和待发布版本、凭据、签名、许可状态见[稳定版发布执行清单](docs/发布执行清单.md)。
 
 ## 在线站点
 
