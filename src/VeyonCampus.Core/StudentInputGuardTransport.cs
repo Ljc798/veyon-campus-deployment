@@ -22,12 +22,12 @@ public static class StudentInputGuardTransport
             return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
                 "已拒绝把教师电脑作为 InputGuard 目标。", NeedsReview: true);
 
+        // An unknown Agent is pinned on first use (same policy as the website status read); without it a
+        // brand-new classroom could never lock input, because the pin is only ever created by a status read.
         var pinnedKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(campusId, normalizedTarget);
-        if (pinnedKey is null)
-            return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
-                "Student Agent 身份尚未固定；请先在设备健康页完成身份核对。", NeedsReview: true);
 
-        using var handler = new StudentAgentChannelHttpMessageHandler(campusId);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         var request = new WebsitePolicyStatusRequest(4, WebsitePolicyStatusCryptography.RequestPurposeV4,
             campusId, Guid.NewGuid(), DateTimeOffset.UtcNow);
@@ -48,9 +48,9 @@ public static class StudentInputGuardTransport
 
             var body = await ReadBoundedAsync(response.Content, StudentAgentResponseCryptography.MaximumEnvelopeBytes,
                 timeout.Token).ConfigureAwait(false);
-            var verified = StudentAgentResponseCryptography.Verify<StudentInputGuardStatusResponse>(
-                Encoding.UTF8.GetString(body), pinnedKey);
-            var expectedFingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedKey);
+            var verified = StudentAgentResponseCryptography.VerifyForTeacher<StudentInputGuardStatusResponse>(
+                Encoding.UTF8.GetString(body), campusId, normalizedTarget, pinnedKey);
+            var expectedFingerprint = verified.Fingerprint;
             StudentInputGuardCommandCryptography.ValidateStatus(verified.Payload, request,
                 expectedFingerprint, DateTimeOffset.UtcNow);
             if (!verified.MatchesPinnedKey)
@@ -135,7 +135,8 @@ public static class StudentInputGuardTransport
         if (pinnedKey is null)
             return new StudentInputGuardDeliveryResult(statusResult.Target, false, true,
                 null, null, "Student Agent 身份固定已变化；没有发送 InputGuard 命令。");
-        using var handler = new StudentAgentChannelHttpMessageHandler(campusId);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = Timeout.InfiniteTimeSpan };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(CommandTimeout);

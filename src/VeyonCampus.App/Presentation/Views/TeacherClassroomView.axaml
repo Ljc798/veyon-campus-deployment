@@ -39,6 +39,10 @@
                   </StackPanel>
                 </Border>
               </Grid>
+              <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="10,8"
+                      IsVisible="{Binding HasClassroomDeliveryStatus}">
+                <TextBlock Text="{Binding ClassroomDeliveryStatus}" Classes="muted" TextWrapping="Wrap" />
+              </Border>
             </StackPanel>
           </Border>
 

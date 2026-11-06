@@ -139,6 +139,25 @@ public static class ClassroomStatusCryptography
         return verified;
     }
 
+    /// <summary>
+    /// Verifies the classroom acknowledgement and, when the teacher console opted in, pins an unknown
+    /// Agent identity on first use. Without this the very first lesson never reaches "已回执": the
+    /// student has already accepted the command, but the teacher discards the proof because no pin
+    /// exists yet.
+    /// </summary>
+    public static VerifiedStudentAgentResponse<ClassroomStatusAcknowledgement> VerifyAcknowledgementForTeacher(
+        string signedAcknowledgement, ClassroomStatusCommand command, string signedCommand, string target,
+        string? pinnedAgentPublicKeyPem, DateTimeOffset nowUtc,
+        StudentAgentIdentityTrustStore? trustStore = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(signedCommand);
+        ArgumentException.ThrowIfNullOrWhiteSpace(target);
+        var verified = StudentAgentResponseCryptography.VerifyForTeacher<ClassroomStatusAcknowledgement>(
+            signedAcknowledgement, command.CampusId, target, pinnedAgentPublicKeyPem, trustStore: trustStore);
+        ValidateAcknowledgement(verified.Payload, command, signedCommand, nowUtc);
+        return verified;
+    }
+
     public static ClassroomStatusSnapshot ToSnapshot(ClassroomStatusCommand command,
         DateTimeOffset receivedUtc, DateTimeOffset nowUtc)
     {
@@ -261,7 +280,11 @@ public static class ClassroomStatusTransport
         var signedCommand = ClassroomStatusCryptography.Sign(command, teacherPrivateKey);
         trustStore ??= new StudentAgentIdentityTrustStore();
 
-        using var handler = new StudentAgentChannelHttpMessageHandler(command.CampusId);
+        // Explicit classroom operations fall back to the authenticated direct channel when the
+        // long-lived teacher channel is not (or no longer) connected: the request signature and
+        // the agent's signed acknowledgement carry the trust, so the relay is only an optimisation.
+        using var handler = new StudentAgentChannelHttpMessageHandler(command.CampusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = normalizedTargets.Select(async target =>
@@ -285,8 +308,8 @@ public static class ClassroomStatusTransport
                 }
 
                 var pinnedKey = trustStore.FindTrustedPublicKey(command.CampusId, target);
-                var verified = ClassroomStatusCryptography.VerifyAcknowledgement(body, command, signedCommand,
-                    pinnedKey, DateTimeOffset.UtcNow);
+                var verified = ClassroomStatusCryptography.VerifyAcknowledgementForTeacher(body, command,
+                    signedCommand, target, pinnedKey, DateTimeOffset.UtcNow, trustStore);
                 if (!verified.MatchesPinnedKey)
                 {
                     var changed = pinnedKey is not null;

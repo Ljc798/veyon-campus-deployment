@@ -63,7 +63,8 @@ public static class ClassroomEventGrantTransport
             throw new InvalidDataException("课堂事件授权目标重复或超过本机课堂容量。");
         trustStore ??= new StudentAgentIdentityTrustStore();
 
-        using var handler = new StudentAgentChannelHttpMessageHandler(campusId);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = requests.Select(async item =>

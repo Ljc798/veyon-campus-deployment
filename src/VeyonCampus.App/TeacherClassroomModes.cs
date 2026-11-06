@@ -241,7 +241,8 @@ internal sealed partial class TeacherMobileControlService
 
         using var key = _openTeacherSigningKey(campusId);
         var status = await WebsitePolicyStatusTransport.ReadAsync(targets, campusId,
-            key.PrivateKey, cancellationToken).ConfigureAwait(false);
+            key.PrivateKey, cancellationToken, allowLegacyDirectFallback: true,
+            allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
         var statusByTarget = status.ToDictionary(item => item.Target, StringComparer.OrdinalIgnoreCase);
         var results = targets.ToDictionary(target => target, _ => new List<MobilePolicyTargetResult>(),
             StringComparer.OrdinalIgnoreCase);
@@ -336,7 +337,8 @@ internal sealed partial class TeacherMobileControlService
     {
         if (revision is null) return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var statuses = await WebsitePolicyStatusTransport.ReadAsync(targets, campusId, signingKey,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken, allowLegacyDirectFallback: true,
+            allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
         return statuses.Where(item => item.Succeeded && item.Status is not null &&
                 (kind == ClassroomPolicyKind.Website
                     ? item.Status.Website.Revision == revision && item.Status.Website.Mode == expectedWebsiteMode

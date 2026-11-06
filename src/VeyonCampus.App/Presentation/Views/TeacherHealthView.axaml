@@ -256,6 +256,8 @@
                         </StackPanel>
                       </Expander>
                       <WrapPanel>
+                        <Button Classes="secondary" Content="核对并固定身份" Click="RequestReviewDeviceHealthIdentity"
+                                IsVisible="{Binding CanReviewIdentity}" IsEnabled="{Binding CanReviewIdentity}" Margin="0,0,8,4" />
                         <Button Classes="secondary" Content="启动 Veyon 服务" Click="RequestEnsureVeyonServiceRunning"
                                 IsVisible="{Binding CanEnsureVeyonServiceRunning}" IsEnabled="{Binding CanEnsureVeyonServiceRunning}" Margin="0,0,8,4" />
                         <Button Classes="secondary" Content="同步网站策略" Click="RequestRefreshLegacyEdgePolicy"

@@ -301,7 +301,8 @@ public static class StudentAgentHealthRepairTransport
         var batchId = batchIdOverride is { } requestedBatchId && requestedBatchId != Guid.Empty
             ? requestedBatchId
             : Guid.NewGuid();
-        using var handler = new StudentAgentChannelHttpMessageHandler(campusId);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = System.Threading.Timeout.InfiniteTimeSpan };
         using var limit = new SemaphoreSlim(8, 8);
         var tasks = validated.Select(async target =>

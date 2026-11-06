@@ -4267,7 +4267,8 @@ public static class WebsitePolicyTransport
         if (validated.Any(target => !policies.ContainsKey(target)) || policies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台网站策略信封必须完整匹配每一台目标电脑。");
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
-        using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback: true);
+        using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
+            allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
         using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
         using var limit = new SemaphoreSlim(16, 16);
         var tasks = validated.Select(async target =>

@@ -1471,7 +1471,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         string target, RSA privateKey, CancellationToken cancellationToken)
     {
         var result = await WebsitePolicyStatusTransport.ReadAsync([target], campusId, privateKey,
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken, allowLegacyDirectFallback: true,
+            allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
         return result.Single();
     }
 
