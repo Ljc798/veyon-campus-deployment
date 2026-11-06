@@ -1510,8 +1510,27 @@ public static class StudentApplicationUpdateTransport
         using var response = await client.PostAsync(uri, content, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         if (response.StatusCode != HttpStatusCode.OK)
-            throw new HttpRequestException(
-                $"读取学生更新能力返回 HTTP {(int)response.StatusCode}。", null, response.StatusCode);
+        {
+            // The Agent answers a failed verification with 409 and explains why in the body
+            // ("student rejects repeated status read", trust-root mismatch, clock skew...). Dropping
+            // that body left the operator with a bare status code, so keep a short sanitized excerpt.
+            var failureText = "";
+            try
+            {
+                failureText = Regex.Replace(await ReadBoundedTextAsync(response.Content, cancellationToken)
+                    .ConfigureAwait(false), @"[\p{Cc}\s]+", " ", RegexOptions.CultureInvariant).Trim();
+            }
+            catch (Exception exception) when (exception is IOException or HttpRequestException or
+                                              OperationCanceledException or InvalidDataException)
+            {
+                failureText = "";
+            }
+            if (failureText.Length > 200) failureText = failureText[..200] + "…";
+            throw new HttpRequestException(string.IsNullOrEmpty(failureText)
+                    ? $"读取学生更新能力返回 HTTP {(int)response.StatusCode}。"
+                    : $"读取学生更新能力返回 HTTP {(int)response.StatusCode}：{failureText}",
+                null, response.StatusCode);
+        }
         var signedResponse = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(signedResponse))
             throw new InvalidDataException("学生更新能力接口返回空签名回执。");

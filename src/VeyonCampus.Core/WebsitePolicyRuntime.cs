@@ -5843,7 +5843,23 @@ public sealed class WebsitePolicyAgent
         }
         catch (InvalidDataException exception)
         {
-            await RespondAsync(response, 409, exception.Message, CancellationToken.None).ConfigureAwait(false);
+            // A rejected signed request used to leave no trace here: the reason only travelled in the
+            // 409 body, so when the caller dropped the body the operator saw a bare status code. Record
+            // it with a diagnostic id and return the id alongside the reason.
+            var operation = AgentOperationName(context.Request.Url?.AbsolutePath);
+            var diagnosticId = Guid.NewGuid().ToString("N")[..12];
+            try
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationFailure(configPath, operation, diagnosticId, exception);
+            }
+            catch (Exception reportFailure) when (reportFailure is IOException or UnauthorizedAccessException or
+                                                  InvalidOperationException or PlatformNotSupportedException)
+            {
+                // Diagnostic reporting must never change the rejection itself.
+            }
+            await RespondAsync(response, 409,
+                $"{FormatAgentDiagnostic(exception.Message)}；诊断编号 {diagnosticId}。",
+                CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                           System.Security.SecurityException or InvalidOperationException or
@@ -5968,6 +5984,7 @@ public sealed class WebsitePolicyAgent
     {
         ConfigurationSyncPath => "教师连接配置同步",
         StudentUpdatePath => "更新",
+        StudentUpdateDownloadCapabilityPath => "更新能力读取",
         ApplicationInventoryPath => "软件清单读取",
         StudentAccountsPath => "学生账户读取",
         ApplicationCatalogPath => "快速软件目录读取",
