@@ -8,10 +8,53 @@ internal static class ClassroomSessionChecks
     public static void Run()
     {
         CheckSnapshotAndLifecycle();
+        CheckVerifiedDirectoryDefinesSessionTargets();
         CheckContinuousScopeUpdates();
         CheckStoreRetentionAndCorruptionHandling();
         CheckLinksAndConcurrentStarts();
         CheckSigningContextStore();
+    }
+
+    private static void CheckVerifiedDirectoryDefinesSessionTargets()
+    {
+        var profileId = Guid.NewGuid();
+        var roomId = Guid.NewGuid();
+        var locationId = Guid.NewGuid();
+        var computerId = Guid.NewGuid();
+        var room = new TeacherRoomProfile(roomId, "机房 A", "PC-", 1, 11);
+        var campus = new TeacherCampusProfile(profileId, "校区 A", [room]);
+        var observed = new DateTimeOffset(2026, 11, 6, 1, 0, 0, TimeSpan.Zero);
+        var verifiedOneComputer = new VeyonDeviceDirectoryEntry(Guid.NewGuid(), computerId, locationId,
+            "机房 A", "学生电脑", "PC-01", "", VeyonDeviceDirectoryState.InSync, null, observed, null);
+
+        var session = ClassroomSession.StartFromVerifiedDirectory(campus, roomId,
+            [verifiedOneComputer], observed);
+
+        Assert(session.Targets.Length == 1 && session.Targets[0].TargetId == computerId &&
+               string.Equals(session.Targets[0].DeviceLabel, "PC-01", StringComparison.OrdinalIgnoreCase) &&
+               session.Room.ComputerCount == 1);
+        Reject(() => ClassroomSession.StartFromVerifiedDirectory(campus, roomId,
+            [verifiedOneComputer with { State = VeyonDeviceDirectoryState.Conflict }], observed));
+        Reject(() => ClassroomSession.StartFromVerifiedDirectory(campus, roomId,
+            [verifiedOneComputer, verifiedOneComputer with { DeviceId = Guid.NewGuid() }], observed));
+
+        var root = Path.Combine(TestPath.CanonicalTempRoot(), "classroom-verified-scope-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        try
+        {
+            var allDevices = Enumerable.Range(1, 11).Select(number => new VeyonDeviceDirectoryEntry(
+                Guid.NewGuid(), number == 1 ? computerId : Guid.NewGuid(), locationId, "机房 A", "学生电脑",
+                $"PC-{number:00}", "", VeyonDeviceDirectoryState.InSync, null, observed, null)).ToArray();
+            var store = new ClassroomSessionStore(Path.Combine(root, "sessions.json"));
+            var active = store.StartSession(campus, roomId, allDevices, observed);
+            var reduced = store.UpdateActiveSession(active.SessionId, campus, roomId, [allDevices[0]]);
+            Assert(reduced.SessionId == active.SessionId && reduced.Targets.Length == 1 &&
+                   reduced.Targets[0].TargetId == computerId && reduced.Room.ComputerCount == 1 &&
+                   active.Targets.Length == 11 &&
+                   !reduced.Targets.Select(item => item.TargetId).Intersect(
+                       active.Targets.Skip(1).Select(item => item.TargetId)).Any());
+        }
+        finally { Directory.Delete(root, recursive: true); }
     }
 
     private static void CheckSnapshotAndLifecycle()

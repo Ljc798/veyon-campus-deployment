@@ -136,7 +136,8 @@
                        IsVisible="{Binding HasRoomCreateResult}" TextWrapping="Wrap" />
             <Button Content="重试 Veyon 同步" Click="RequestRetrySeatMapSync"
                     IsVisible="{Binding CanRetrySeatMapSync}" HorizontalAlignment="Left"
-                    ToolTip.Tip="按 Host 核对座位与 Veyon 电脑；必要时会向 Veyon 写入学生姓名或新增电脑。" />
+                    ToolTip.Tip="按固定 Host 核对座位与 Veyon UUID 关联；不会因学生姓名变化而改写现有电脑名称。" />
+            <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
             <Grid ColumnDefinitions="Auto,Auto,Auto" RowDefinitions="Auto,Auto,Auto"
                   HorizontalAlignment="Left" Margin="0,4,0,0">
               <Border Grid.Row="0" Grid.Column="0" Width="24" Height="24" />
@@ -150,7 +151,7 @@
                             IsEnabled="{Binding CanEdit}"
                             PointerEntered="AxisHeaderPointerEntered" PointerExited="AxisHeaderPointerExited"
                             Click="RequestDeleteSeatAxis"
-                            Margin="1" Width="24" Height="24" Padding="0">
+                            Margin="2" Width="76" Height="24" Padding="0">
                       <Grid>
                         <TextBlock Text="{Binding Label}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         <TextBlock Text="−" IsVisible="False" FontSize="16" FontWeight="Bold"
@@ -171,7 +172,7 @@
                             IsEnabled="{Binding CanEdit}"
                             PointerEntered="AxisHeaderPointerEntered" PointerExited="AxisHeaderPointerExited"
                             Click="RequestDeleteSeatAxis"
-                            Margin="1" Width="24" Height="24" Padding="0">
+                            Margin="1" Width="24" Height="48" Padding="0">
                       <Grid>
                         <TextBlock Text="{Binding Label}" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         <TextBlock Text="−" IsVisible="False" FontSize="16" FontWeight="Bold"
@@ -195,7 +196,7 @@
                             ToolTip.Tip="{Binding TooltipText}"
                             Click="RequestSeatCellClicked"
                             PointerPressed="SeatCellPointerPressed"
-                            Margin="1" Width="24" Height="24" MinHeight="24" Padding="0">
+                            Margin="2" Width="76" Height="48" MinHeight="48" Padding="4,3">
                       <Button.ContextMenu>
                         <ContextMenu x:CompileBindings="False" Opening="SeatCellContextMenuOpening">
                           <MenuItem Header="删除此座位" IsVisible="{Binding ShowDeleteLocalSeat}"
@@ -207,8 +208,13 @@
                                     Click="RequestDeleteSeatComputer" />
                         </ContextMenu>
                       </Button.ContextMenu>
-                      <TextBlock Text="{Binding GridLabel}" FontSize="12" FontWeight="SemiBold"
-                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                      <StackPanel Spacing="2" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ComputerIdLabel}" FontSize="11" FontWeight="Bold"
+                                   HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding StudentNameLabel}" FontSize="11" FontWeight="Normal"
+                                   Classes.emptyName="{Binding IsStudentNameMissing}"
+                                   HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                      </StackPanel>
                     </Button>
                   </DataTemplate>
                 </ItemsControl.ItemTemplate>
@@ -220,6 +226,7 @@
                       IsVisible="{Binding IsSeatMapEditing}" IsEnabled="{Binding CanAddSeatGridRow}"
                       Click="RequestAddSeatGridRow" />
             </Grid>
+            </ScrollViewer>
             <TextBlock Text="{Binding SeatMapDragFeedback}" Classes="muted"
                        IsVisible="{Binding HasSeatMapDragFeedback}"
                        TextWrapping="Wrap" Margin="0,6,0,0" />

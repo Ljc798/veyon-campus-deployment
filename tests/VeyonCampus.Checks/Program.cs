@@ -266,6 +266,13 @@ if (args is ["--teacher-workflow-fixtures"])
     return;
 }
 
+if (args is ["--classroom-session-fixtures"])
+{
+    ClassroomSessionChecks.Run();
+    Console.WriteLine("PASS classroom session identity and scope fixtures");
+    return;
+}
+
 if (args is ["--teacher-heartbeat-fixtures"])
 {
     TeacherHeartbeatChecks.Run();

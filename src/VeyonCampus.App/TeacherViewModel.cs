@@ -712,9 +712,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     public bool HasPendingClassroomScopeChange => _activeClassroomSession is { } active &&
         (SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus ||
          room.RoomId != active.Room.RoomId || campus.ProfileId != active.Room.CampusProfileId ||
-         room.DisplayName != active.Room.RoomName || room.Prefix != active.Room.ComputerPrefix ||
-         room.StartNumber != active.Room.StartNumber || room.ComputerCount != active.Room.ComputerCount ||
-         !(room.ComputerNumbers ?? []).SequenceEqual(active.Room.ComputerNumbers ?? []));
+         !IsActiveClassroomTargetSetCurrent);
     public bool CanSwitchClassroomScope => HasPendingClassroomScopeChange &&
         !IsExecuting && !_isClassroomTransitioning && !_isRetryingClassroomRestores &&
         !IsReadingWebsiteLocations && !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
@@ -739,7 +737,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             ClassroomQuickControlPhase.Conflict or ClassroomQuickControlPhase.Failed or
             ClassroomQuickControlPhase.Unsupported) ?? 0).ToString(CultureInfo.CurrentCulture);
     public bool CanStartClassroomQuickControl => TeacherClassroomQuickControlBuildFeatures.PilotEnabled &&
-        IsClassroomDirectoryScopeVerified &&
+        IsClassroomDirectoryScopeVerified && !HasPendingClassroomScopeChange &&
         (HasActiveClassroomSession || CanToggleClassroomSession) && !_isClassroomQuickControlBusy &&
         HasValidClassroomQuickControlDeadline;
     public bool IsClassroomQuickControlPilotDisabled => HasActiveClassroomSession &&
@@ -1697,11 +1695,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             var seat = cell.IsSeat
                 ? _seatGrid.Seats.SingleOrDefault(item => item.Row == cell.Row && item.Column == cell.Column)
                 : null;
-            var computerLabel = !string.IsNullOrWhiteSpace(cell.VeyonHostAddress)
-                ? cell.VeyonHostAddress
-                : cell.SeatNumber is { } number && SelectedRoomProfile is { } room
-                    ? MachineNaming.CreateName(room.Prefix, number.ToString(CultureInfo.InvariantCulture))
-                    : "";
+            var computerLabel = cell.SeatNumber is { } number && SelectedRoomProfile is { } room
+                ? MachineNaming.CreateName(room.Prefix, number.ToString(CultureInfo.InvariantCulture))
+                : cell.VeyonHostAddress ?? "";
             return new TeacherSeatCell(cell.Row, cell.Column, cell.SeatNumber, cell.StudentName ?? "",
                 computerLabel, cell.IsSeat,
                 cell.VeyonObjectId is not null || !string.IsNullOrWhiteSpace(cell.VeyonHostAddress),
@@ -1733,18 +1729,18 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             return new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
-            var targets = active.Targets.Select(target => target.DeviceLabel).ToArray();
             var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId,
                 active.Room.StartNumber);
-            var targetByComputerNumber = (active.Room.ComputerNumbers ??
-                    Enumerable.Range(active.Room.StartNumber, active.Room.ComputerCount).ToArray())
-                .Select((number, index) => (number, index))
-                .Where(item => item.index < targets.Length)
-                .ToDictionary(item => item.number, item => targets[item.index]);
-            return ClassroomSeatGridStore.GetLocations(layout)
-                .Where(location => location.SeatNumber is { } number && targetByComputerNumber.ContainsKey(number))
-                .ToDictionary(location => targetByComputerNumber[location.SeatNumber!.Value],
-                    location => $"第 {location.Row} 排 · 第 {location.Column} 列", StringComparer.OrdinalIgnoreCase);
+            var locationsByDeviceId = ClassroomSeatGridStore.GetLocations(layout)
+                .Where(location => location.VeyonObjectId is not null)
+                .ToDictionary(location => location.VeyonObjectId!.Value);
+            return active.Targets
+                .Where(target => locationsByDeviceId.ContainsKey(target.TargetId))
+                .ToDictionary(target => target.DeviceLabel, target =>
+                {
+                    var location = locationsByDeviceId[target.TargetId];
+                    return $"第 {location.Row} 排 · 第 {location.Column} 列";
+                }, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {
@@ -8256,6 +8252,10 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
 {
     public bool IsAisle => !IsSeat;
     public bool HasStudentName => IsSeat && !string.IsNullOrWhiteSpace(StudentName);
+    public bool IsStudentNameMissing => IsSeat && !HasStudentName;
+    public string ComputerIdLabel => !IsSeat ? "" :
+        !string.IsNullOrWhiteSpace(ComputerLabel) ? ComputerLabel : "待编号";
+    public string StudentNameLabel => HasStudentName ? StudentName.Trim() : "未填写";
     public bool CanEditComputerNumber => !HasVeyonTarget;
     public bool IsSeatWithoutVeyonTarget => IsSeat && !HasVeyonTarget;
     public bool HasVeyonComputerObject => IsSeat && VeyonObjectId is { } id && id != Guid.Empty;
@@ -8272,8 +8272,7 @@ public sealed record TeacherSeatCell(int Row, int Column, int? SeatNumber, strin
         ? $"{(SeatNumber is { } number ? $"电脑编号 {number}" : "电脑编号待设置")} · {(!string.IsNullOrWhiteSpace(StudentName) ? StudentName : "未填写姓名")}"
         : "＋ 添加座位";
     public string SecondaryLabel => IsSeat ? "桌位" : $"第 {Row} 行 · 第 {Column} 列 · 空桌位区域";
-    public string GridLabel => !IsSeat ? "" : SeatNumber?.ToString(CultureInfo.InvariantCulture) ??
-        (HasStudentName ? "!" : "—");
+    public string GridLabel => ComputerIdLabel;
     public bool NeedsComputerNumber => HasStudentName && SeatNumber is null;
     public string TooltipText => IsSeat
         ? (IsNewlyAdded ? "本次新增座位\n" : "") +
