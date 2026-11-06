@@ -219,6 +219,18 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
                     retryableDevices.Add(snapshot.Device);
                     continue;
                 }
+                // A leftover configuration-sync operation from an earlier click finishes here. It says
+                // nothing about the software version, so reporting it as "completed" made a machine that
+                // is still on the old StudentSetup look updated. Re-inspect and plan the requested update
+                // in this same click instead.
+                if ((resumed.State is MaintenanceRunState.Completed or MaintenanceRunState.NoChanges) &&
+                    resumed.Plan?.OperationKind == MaintenanceOperationKind.ConfigurationSync &&
+                    (requestedOperation is null or MaintenanceOperationKind.FullMaintenance or
+                        MaintenanceOperationKind.SoftwareUpdate))
+                {
+                    retryableDevices.Add(snapshot.Device);
+                    continue;
+                }
                 outcomes.Add(ToOutcome(resumed, resumed.Transitions.LastOrDefault()?.Reason ??
                     "原维护事务仍在等待可信读回。", snapshot.AuthenticatedChannelConnected,
                     snapshot.UpdateTransactionState, snapshot.AuthenticatedChannelCheckedUtc,
@@ -363,7 +375,9 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
                 TargetSetupVersion: targetSetupVersion,
                 TargetAgentVersion: targetAgentVersion,
                 StudentUpdateProtocolVersion: capability.StudentUpdateProtocolVersion,
-                UpdateTransactionState: snapshot.UpdateTransactionState ?? "unknown",
+                // A device that cannot report a transaction state has nothing pending; feeding "unknown"
+                // made every such machine "需现场维护" with a message the operator cannot act on.
+                UpdateTransactionState: snapshot.UpdateTransactionState ?? "notFound",
                 TeacherChannelConfigurationMatches: capability.TeacherChannelFingerprint is { } reported
                     ? string.Equals(reported, desiredChannelFingerprint, StringComparison.OrdinalIgnoreCase)
                     : null,

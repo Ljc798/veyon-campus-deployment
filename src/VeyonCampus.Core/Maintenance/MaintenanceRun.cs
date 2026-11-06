@@ -158,7 +158,11 @@ public sealed class MaintenanceRun
         ArgumentNullException.ThrowIfNull(transitions);
         var created = MaintenanceValidation.Utc(createdUtc);
         var updated = MaintenanceValidation.Utc(updatedUtc);
-        if (updated < created) throw new InvalidDataException("Maintenance run 更新时间早于创建时间。");
+        // A clock adjustment between two writes produced updatedUtc < createdUtc and then failed every
+        // later read of that journal entry, stranding the device ("只读设备检查失败") until the file was
+        // deleted by hand. Clamping keeps the record readable; the transition history below still has to
+        // be continuous and monotonic.
+        if (updated < created) updated = created;
         if (capabilities is not null && !string.Equals(capabilities.AgentIdentityFingerprint,
                 device.PinnedIdentityFingerprint, StringComparison.Ordinal))
             throw new InvalidDataException("Maintenance run 能力集绑定了另一台设备。");

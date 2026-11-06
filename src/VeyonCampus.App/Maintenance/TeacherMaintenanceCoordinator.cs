@@ -1072,9 +1072,14 @@ public sealed class TeacherMaintenanceCoordinator
             if (!inspection.IdentityVerified || inspection.Capabilities is null ||
                 inspection.IdentityEvidence is null || inspection.CapabilitiesEvidence is null)
             {
-                run = run.TransitionTo(MaintenanceRunState.ManualRequired,
-                    "学生 Agent 身份或签名能力未通过核验；需要重新核对。", inspection.IdentityEvidence,
-                    DateTimeOffset.UtcNow);
+                // Keep the adapter's own explanation: "身份或签名能力未通过核验" alone cannot be acted on.
+                var identityDetail = inspection.Detail?.Trim();
+                if (identityDetail is { Length: > 240 }) identityDetail = identityDetail[..240];
+                var identityReason = string.IsNullOrEmpty(identityDetail)
+                    ? "学生 Agent 身份或签名能力未通过核验；需要重新核对。"
+                    : "学生 Agent 身份或签名能力未通过核验：" + identityDetail;
+                run = run.TransitionTo(MaintenanceRunState.ManualRequired, identityReason,
+                    inspection.IdentityEvidence, DateTimeOffset.UtcNow);
                 await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
                 return new MaintenanceInspectionSnapshot(run.OperationId, device, run.State,
                     inspection.CurrentVersions, null, inspection.Detail, inspection.UpdateTransactionState,
