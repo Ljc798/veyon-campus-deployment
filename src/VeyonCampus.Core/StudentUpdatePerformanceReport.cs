@@ -10,6 +10,21 @@ public sealed record StudentUpdatePerformanceSample(
     StudentUpdateEnvironmentCategories? Environment,
     IReadOnlyList<StudentUpdatePhaseTiming> Phases);
 
+/// <summary>
+/// One line of the optional per-device diagnostics block. Without it a failed rollout can only be
+/// described as "18 of 21 failed", which is impossible to act on: the teacher needs to know which
+/// address failed and why.
+/// </summary>
+public sealed record StudentUpdatePerformanceDevice(
+    [property: JsonPropertyName("target")] string Target,
+    [property: JsonPropertyName("state")] string State,
+    [property: JsonPropertyName("attempted")] bool Attempted,
+    [property: JsonPropertyName("reason")] string? Reason,
+    [property: JsonPropertyName("channel")] string? Channel,
+    [property: JsonPropertyName("studentSetupVersion")] string? StudentSetupVersion,
+    [property: JsonPropertyName("agentVersion")] string? AgentVersion,
+    [property: JsonPropertyName("updateTransactionState")] string? UpdateTransactionState);
+
 public sealed record StudentUpdatePerformancePreparation(
     [property: JsonPropertyName("releaseLookupMilliseconds")] long? ReleaseLookupMilliseconds,
     [property: JsonPropertyName("timeToTeacherCacheReadyMilliseconds")] long? TimeToTeacherCacheReadyMilliseconds,
@@ -101,11 +116,14 @@ public sealed record StudentUpdatePerformanceReport(
     [property: JsonPropertyName("classroomRolloutDuration")] StudentUpdatePerformanceMetric ClassroomRolloutDuration,
     [property: JsonPropertyName("groups")] IReadOnlyList<StudentUpdatePerformanceGroup> Groups,
     [property: JsonPropertyName("sourceVersions")] IReadOnlyList<StudentUpdatePerformanceSourceVersionGroup> SourceVersions,
-    [property: JsonPropertyName("batchSizeGroups")] IReadOnlyList<StudentUpdatePerformanceBatchSizeGroup> BatchSizeGroups);
+    [property: JsonPropertyName("batchSizeGroups")] IReadOnlyList<StudentUpdatePerformanceBatchSizeGroup> BatchSizeGroups,
+    [property: JsonPropertyName("devices"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<StudentUpdatePerformanceDevice>? Devices = null);
 
 /// <summary>
-/// Produces a compact, aggregate-only report. The input samples deliberately have no
-/// target name, address, campus identity, command ID, path, or download URL fields.
+/// Produces a compact report. The aggregate samples deliberately have no target name, address,
+/// campus identity, command ID, path, or download URL fields; the optional per-device block adds
+/// only the address, run state, and the teacher-facing reason, and is written to a local file.
 /// </summary>
 public static class StudentUpdatePerformanceReportBuilder
 {
@@ -137,7 +155,8 @@ public static class StudentUpdatePerformanceReportBuilder
         int unresolvedCount, bool teacherCachePreparationRequired,
         StudentUpdatePerformancePreparation teacherPreparation,
         IReadOnlyList<StudentUpdatePerformanceSample> samples,
-        IReadOnlyList<StudentUpdatePerformanceBatchObservation>? previousBatchObservations = null)
+        IReadOnlyList<StudentUpdatePerformanceBatchObservation>? previousBatchObservations = null,
+        IReadOnlyList<StudentUpdatePerformanceDevice>? devices = null)
     {
         ArgumentNullException.ThrowIfNull(teacherPreparation);
         ArgumentNullException.ThrowIfNull(samples);
@@ -200,7 +219,8 @@ public static class StudentUpdatePerformanceReportBuilder
             currentBatchGroup.ClassroomRolloutDuration,
             Array.AsReadOnly(groups),
             Array.AsReadOnly(sourceVersions),
-            Array.AsReadOnly(batchSizeGroups));
+            Array.AsReadOnly(batchSizeGroups),
+            devices is { Count: > 0 } ? Array.AsReadOnly(devices.Take(256).ToArray()) : null);
         if (Serialize(report).Length > MaximumReportBytes)
             throw new InvalidDataException("学生端更新性能报告超过大小限制。");
         return report;

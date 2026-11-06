@@ -64,14 +64,49 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
         var devicesByKey = new Dictionary<MaintenanceDeviceKey, MaintenanceDeviceIdentity>();
         var targetCountsByKey = new Dictionary<MaintenanceDeviceKey, int>();
 
+        // An address that has never been contacted (a new seat, a re-imaged machine, or the first click
+        // after installing) has no pinned Agent identity yet. Requiring the pin up front dead-ended the
+        // whole rollout: every such seat was reported as "需现场维护" without the teacher ever contacting
+        // it. One signed status read per address pins the Agent on first use - the same TOFU policy the
+        // website-policy channel already uses - so "一键静默更新" works from a single click.
+        var pinnedKeys = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var unpinnedTargets = new List<string>();
         foreach (var target in normalizedTargets)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var pinnedPublicKey = _trustStore.FindTrustedPublicKey(campusId, target);
-            if (pinnedPublicKey is null)
+            if (_trustStore.FindTrustedPublicKey(campusId, target) is { } knownKey)
+                pinnedKeys[target] = knownKey;
+            else
+                unpinnedTargets.Add(target);
+        }
+        if (unpinnedTargets.Count > 0)
+        {
+            try
+            {
+                using var signingKey = WebsitePolicySigningKeyStore.Open(campusId);
+                await WebsitePolicyStatusTransport.ReadAsync(unpinnedTargets, campusId, signingKey.PrivateKey,
+                    cancellationToken, includeHealthSnapshot: true, allowLegacyDirectFallback: true,
+                    allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                              IOException or UnauthorizedAccessException or InvalidDataException or
+                                              CryptographicException or InvalidOperationException or ArgumentException)
+            {
+                // The inspection below reports the concrete per-address reason.
+            }
+            foreach (var target in unpinnedTargets)
+                if (_trustStore.FindTrustedPublicKey(campusId, target) is { } pinnedKey)
+                    pinnedKeys[target] = pinnedKey;
+        }
+
+        foreach (var target in normalizedTargets)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!pinnedKeys.TryGetValue(target, out var pinnedPublicKey))
             {
                 outcomes.Add(new TeacherMaintenanceTargetResult(target, null, MaintenanceRunState.ManualRequired,
-                    "学生 Agent 身份尚未由教师核对固定；未发送维护命令。"));
+                    "该地址的学生 Agent 没有应答，无法核对身份；如果它只是 Veyon 目录里的历史电脑对象，请从地点中删除后再试。"));
                 continue;
             }
             var fingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedPublicKey);
@@ -598,6 +633,13 @@ public sealed record TeacherMaintenanceReportRow(
 
 public static class TeacherMaintenancePerformanceReportFactory
 {
+    private static string? Describe(string? summary)
+    {
+        if (string.IsNullOrWhiteSpace(summary)) return null;
+        var normalized = string.Concat(summary.Where(character => !char.IsControl(character))).Trim();
+        return normalized.Length > 240 ? normalized[..240] : normalized;
+    }
+
     public static StudentUpdatePerformanceReport Create(DateTimeOffset startedUtc,
         long rolloutDurationMilliseconds, IReadOnlyCollection<string> selectedTargets,
         IReadOnlyList<TeacherMaintenanceTargetResult> results,
@@ -650,10 +692,22 @@ public static class TeacherMaintenancePerformanceReportFactory
         if (completedUtc < startedUtc) completedUtc = startedUtc;
         var rolloutId = distinctResults.Select(item => item.RolloutId)
             .FirstOrDefault(id => id is not null) ?? Guid.NewGuid();
+        // Per-device block: the aggregate counts alone cannot tell a stale Veyon object from an
+        // unreachable student or a rollback, and the teacher needs the reason next to the address.
+        var devices = distinctResults.Select(item => new StudentUpdatePerformanceDevice(
+            item.Target,
+            item.State.ToString(),
+            item.Result?.StudentSetupUpdateAttempted == true,
+            Describe(item.Summary),
+            item.Channel?.ToString(),
+            item.Result?.VerifiedCurrentVersions?.StudentSetupVersion ?? item.CurrentVersions?.StudentSetupVersion,
+            item.Result?.VerifiedCurrentVersions?.AgentRuntimeVersion ?? item.CurrentVersions?.AgentRuntimeVersion,
+            item.UpdateTransactionState)).ToArray();
         return StudentUpdatePerformanceReportBuilder.Create(rolloutId, startedUtc, completedUtc,
             Math.Max(0, rolloutDurationMilliseconds), targetVersion, selectedTargets.Count,
             alreadyCurrent, preflightFailure, notStarted, unresolved,
             teacherCachePreparationRequired: true,
-            new StudentUpdatePerformancePreparation(null, null, null, null, null, null), samples);
+            new StudentUpdatePerformancePreparation(null, null, null, null, null, null), samples,
+            devices: devices);
     }
 }
