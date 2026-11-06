@@ -68,8 +68,13 @@
           </Border>
           <WrapPanel Orientation="Horizontal">
             <Button Classes="primary" Content="一键静默更新全部学生端" Click="RequestMaintainStudentDevices" IsEnabled="{Binding CanOneClickUpdateAllStudentDevices}" Margin="0,0,8,6" />
+            <Button Classes="secondary" Content="诊断学生端信任的校区" Click="RequestProbeStudentTrustedCampus"
+                    IsEnabled="{Binding CanProbeStudentTrustedCampus}" Margin="0,0,8,6"
+                    ToolTip.Tip="逐个用本机校区密钥试读学生端状态，找出学生端实际信任的校区标识。" />
           </WrapPanel>
           <TextBlock Text="{Binding StudentMaintenanceStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding StudentTrustedCampusStatus}" Classes="muted" TextWrapping="Wrap"
+                     IsVisible="{Binding HasStudentTrustedCampusStatus}" />
           <Border x:Name="ConfigurationSyncSection" Classes="subtle-panel">
             <StackPanel Spacing="9">
               <TextBlock Text="教师连接配置" Classes="component-title" />

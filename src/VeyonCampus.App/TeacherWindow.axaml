@@ -85,6 +85,7 @@
             InstallOfflineTeacherUpdateRequested="InstallOfflineTeacherUpdate"
             TrustStudentAgentIdentitiesRequested="TrustStudentAgentIdentities"
             MaintainStudentDevicesRequested="MaintainStudentDevices"
+            ProbeStudentTrustedCampusRequested="ProbeStudentTrustedCampus"
             DeployStudentUpdateRequested="DeployStudentUpdate"
             UpdateMaintenanceServiceRequested="UpdateMaintenanceService"
             SelectLocalStudentTestInstallerRequested="SelectLocalStudentTestInstaller"

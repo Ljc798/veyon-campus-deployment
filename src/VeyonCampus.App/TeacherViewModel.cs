@@ -404,6 +404,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private string? _teacherUpdateNotesVersion;
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
+    private bool _isProbingStudentTrustedCampus;
+    private string _studentTrustedCampusStatus = "";
     private string _studentAgentIdentityDetails = "";
     private bool _showStudentAgentIdentityDetails;
     private string _updateDiagnosticsStatus = "";

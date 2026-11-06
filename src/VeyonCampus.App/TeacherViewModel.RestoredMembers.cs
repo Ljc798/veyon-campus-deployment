@@ -573,6 +573,42 @@ public sealed partial class TeacherViewModel
         private set { if (_studentMaintenanceStatus == value) return; _studentMaintenanceStatus = value; Changed(); }
     }
 
+    /// <summary>
+    /// Student agents trust exactly one policy signing root per campus identifier. When the teacher
+    /// has several local campus keys (for example after renaming a campus), a signed request only
+    /// verifies against the key the student was enrolled with, so the teacher must be able to find
+    /// out which one that is instead of guessing.
+    /// </summary>
+    public bool IsProbingStudentTrustedCampus
+    {
+        get => _isProbingStudentTrustedCampus;
+        private set
+        {
+            if (_isProbingStudentTrustedCampus == value) return;
+            _isProbingStudentTrustedCampus = value;
+            Changed();
+            Changed(nameof(CanProbeStudentTrustedCampus));
+        }
+    }
+
+    public string StudentTrustedCampusStatus
+    {
+        get => _studentTrustedCampusStatus;
+        private set
+        {
+            if (_studentTrustedCampusStatus == value) return;
+            _studentTrustedCampusStatus = value;
+            Changed();
+            Changed(nameof(HasStudentTrustedCampusStatus));
+        }
+    }
+
+    public bool HasStudentTrustedCampusStatus => _studentTrustedCampusStatus.Length > 0;
+
+    public bool CanProbeStudentTrustedCampus => OperatingSystem.IsWindows() && !IsExecuting &&
+        !_isProbingStudentTrustedCampus && WebsiteSigningCampuses.Count > 1 && IsCampusIdValid() &&
+        WebsitePolicyTargetChoices.Count > 0;
+
     public string MaintenanceEventReportExportStatus { get; private set; } = "";
 
     public ObservableCollection<TeacherMaintenanceIssueItem> MaintenanceIssueItems { get; } = [];

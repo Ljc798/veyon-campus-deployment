@@ -3511,6 +3511,80 @@ public sealed partial class TeacherViewModel
             signingKey.PrivateKey, cancellationToken);
     }
 
+    /// <summary>
+    /// Signed student requests only verify against the campus key the student agent was enrolled with.
+    /// Tries every campus key pinned on this teacher machine against the selected students and points
+    /// the teacher at the one that actually answers, instead of leaving the operator to guess why the
+    /// agent replies 409.
+    /// </summary>
+    public async Task ProbeStudentTrustedCampusAsync()
+    {
+        if (!CanProbeStudentTrustedCampus || !TryBeginExclusiveTask()) return;
+        IsProbingStudentTrustedCampus = true;
+        var targets = WebsitePolicyTargetChoices.Select(item => item.Target)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var verified = new List<string>();
+        var attempted = new List<string>();
+        try
+        {
+            StudentTrustedCampusStatus =
+                $"正在用本机的 {WebsiteSigningCampuses.Count} 个校区密钥逐个试读学生端状态……";
+            foreach (var campus in WebsiteSigningCampuses)
+            {
+                try { WebsitePolicySigningKeyStore.ValidateCampusId(campus); }
+                catch (InvalidDataException) { continue; }
+                attempted.Add(campus);
+                try
+                {
+                    using var signingKey = WebsitePolicySigningKeyStore.Open(campus);
+                    var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
+                        signingKey.PrivateKey, includeHealthSnapshot: true, allowLegacyDirectFallback: true,
+                        allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(true);
+                    if (results.Any(result => result.Succeeded)) verified.Add(campus);
+                }
+                catch (Exception exception) when (exception is not OutOfMemoryException and
+                                                  not StackOverflowException and not AccessViolationException)
+                {
+                    // A campus without a usable key simply cannot be the one the student trusts.
+                }
+            }
+
+            if (verified.Count == 0)
+            {
+                StudentTrustedCampusStatus =
+                    $"本机的 {attempted.Count} 个校区密钥都读不回学生端签名状态：学生端很可能是用另一台教师机或另一个校区配置包装的，" +
+                    "也可能教师机与学生机时间相差超过 2 分钟。请用当前校区重新生成学生配置包，在学生机上载入后再更新。" +
+                    (attempted.Count == 0 ? "" : "（已试校区：" + string.Join("、", attempted) + "）");
+                return;
+            }
+
+            if (verified.Count == 1)
+            {
+                var campus = verified[0];
+                var switched = !string.Equals(campus, CampusId.Trim(), StringComparison.Ordinal);
+                if (switched) CampusId = campus;
+                StudentTrustedCampusStatus = switched
+                    ? $"学生端信任的校区是“{campus}”，教师端已切换；请再点一次“一键静默更新全部学生端”。"
+                    : $"学生端信任的校区就是当前的“{campus}”；如果更新仍返回 409，请核对两机时间差是否超过 2 分钟。";
+                return;
+            }
+
+            StudentTrustedCampusStatus =
+                "多个本机校区都能读回学生端状态：" + string.Join("、", verified) +
+                "。请确认学生端实际使用哪一个，并在“策略与预设”里固定在那个校区。";
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+                                          not StackOverflowException and not AccessViolationException)
+        {
+            StudentTrustedCampusStatus = "诊断学生端信任的校区失败：" + exception.Message;
+        }
+        finally
+        {
+            IsProbingStudentTrustedCampus = false;
+            EndExclusiveTask();
+        }
+    }
+
     public async Task ReadStudentDeviceHealthAsync()
     {
         if (!CanReadDeviceHealth || !TryBeginExclusiveTask()) return;

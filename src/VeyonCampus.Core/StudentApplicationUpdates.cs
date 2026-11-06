@@ -1526,10 +1526,17 @@ public static class StudentApplicationUpdateTransport
                 failureText = "";
             }
             if (failureText.Length > 200) failureText = failureText[..200] + "…";
-            throw new HttpRequestException(string.IsNullOrEmpty(failureText)
-                    ? $"读取学生更新能力返回 HTTP {(int)response.StatusCode}。"
-                    : $"读取学生更新能力返回 HTTP {(int)response.StatusCode}：{failureText}",
-                null, response.StatusCode);
+            var capabilityFailure = string.IsNullOrEmpty(failureText)
+                ? $"读取学生更新能力返回 HTTP {(int)response.StatusCode}。"
+                : $"读取学生更新能力返回 HTTP {(int)response.StatusCode}：{failureText}";
+            // A trust-root rejection is the one 409 an operator can act on: the agent only accepts the
+            // campus key it was enrolled with, so name the active campus and point at the probe action.
+            if (response.StatusCode == HttpStatusCode.Conflict &&
+                failureText.Contains("信任根", StringComparison.Ordinal))
+                capabilityFailure +=
+                    $" 当前校区标识为“{campusId}”；学生端只认给它配置的那个校区密钥。" +
+                    "请在“设备与更新”点“诊断学生端信任的校区”，切到该校区后重试。";
+            throw new HttpRequestException(capabilityFailure, null, response.StatusCode);
         }
         var signedResponse = await ReadBoundedTextAsync(response.Content, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(signedResponse))

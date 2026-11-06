@@ -2690,9 +2690,15 @@ public partial class TeacherWindow : Window
         await _model.UpdateMaintenanceServiceAsync();
     }
 
-    private async void MaintainStudentDevices(object? sender, RoutedEventArgs e)
+    private async void ProbeStudentTrustedCampus(object? sender, RoutedEventArgs e)
     {
-        // 一键静默更新：自动全选当前地点学生电脑、自动核对身份、执行统一维护事务。
+        // 学生端只认一个校区策略签名根；教师改过校区标识后，先找出学生端实际信任的那个。
+        await EnsureTeacherAgentChannelStartedAsync();
+        await _model.ProbeStudentTrustedCampusAsync();
+    }
+
+    private async void MaintainStudentDevices(object? sender, RoutedEventArgs e)
+    {        // 一键静默更新：自动全选当前地点学生电脑、自动核对身份、执行统一维护事务。
         // 旧版学生 Agent 走受信任的 Legacy HTTP 通道，即使新的 WebSocket 监听未启动也继续。
         await EnsureTeacherAgentChannelStartedAsync();
         await _model.OneClickUpdateAllStudentDevicesAsync();
