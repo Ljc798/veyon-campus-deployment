@@ -19,7 +19,8 @@ public sealed record StudentCompanionStatusSnapshot(
     int TargetCount = 0,
     Guid? SessionId = null,
     ClassroomMode? Mode = null,
-    string? AgentIdentityFingerprint = null);
+    string? AgentIdentityFingerprint = null,
+    string? StatusDetail = null);
 
 /// <summary>Maps a small, read-only classroom status snapshot to student-facing text.</summary>
 public sealed class StudentCompanionViewModel : INotifyPropertyChanged
@@ -92,6 +93,17 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
     public bool HasClassroomSummary =>
         _snapshot.ConnectionState is StudentCompanionConnectionState.ConnectedWithoutClass or
             StudentCompanionConnectionState.ClassroomActive;
+
+    /// <summary>
+    /// Why the companion is not showing a classroom, in the student's language. Every failure used to
+    /// collapse into the same "waiting for the teacher" title, which made an unreachable Agent, an
+    /// older Agent without the status endpoint, and a teacher that never pushed indistinguishable on
+    /// the machine that actually has the problem.
+    /// </summary>
+    public string StatusDetail => _snapshot.ConnectionState == StudentCompanionConnectionState.ClassroomActive
+        ? ""
+        : _snapshot.StatusDetail ?? "";
+    public bool HasStatusDetail => StatusDetail.Length > 0;
     public bool IsClassroomActive => _snapshot.ConnectionState == StudentCompanionConnectionState.ClassroomActive;
     public bool CanRequestHelp => IsClassroomActive && !_isSubmittingHelp && !_isResolvingHelp &&
                                   _pendingHelpEventId is null &&
@@ -210,6 +222,8 @@ public sealed class StudentCompanionViewModel : INotifyPropertyChanged
         }
         Changed(nameof(StatusTitle));
         Changed(nameof(ClassroomSummary));
+        Changed(nameof(StatusDetail));
+        Changed(nameof(HasStatusDetail));
         Changed(nameof(IdentityVerificationCode));
         Changed(nameof(HasIdentityVerificationCode));
         Changed(nameof(HasClassroomSummary));

@@ -29,6 +29,8 @@
         <TextBlock Text="{Binding StatusTitle}" FontSize="19" FontWeight="SemiBold"
                    Foreground="#172B4D" TextWrapping="Wrap" />
         <StackPanel Grid.Row="1" Margin="0,8,0,0" Spacing="7" VerticalAlignment="Center">
+          <TextBlock Text="{Binding StatusDetail}" FontSize="12" Foreground="#73839A"
+                     IsVisible="{Binding HasStatusDetail}" TextWrapping="Wrap" />
           <StackPanel Orientation="Horizontal" Spacing="5"
                       IsVisible="{Binding HasIdentityVerificationCode}">
             <TextBlock Text="设备配对核对码：" FontSize="13" FontWeight="SemiBold"
