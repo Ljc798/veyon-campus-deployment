@@ -163,10 +163,8 @@ public static class StudentMaintenancePlanner
                     ? "学生端已有未结束的原子更新事务；先重新查询该事务，不能并发下发新更新。"
                     : "学生端上次原子更新需要人工恢复核对；保留恢复材料，不下发新更新或配置。" );
 
-        // "unknown" is what an older Agent reports when it has no readable transaction journal; it is
-        // not a pending transaction, and blocking the whole rollout on it helped nobody.
         if (input.UpdateTransactionState is { } transactionState && transactionState is not
-            ("notFound" or "committed" or "rolledBack" or "superseded" or "unknown"))
+            ("notFound" or "committed" or "rolledBack" or "superseded"))
             return Manual($"学生端返回未知的原子更新状态“{transactionState}”；暂停配置同步并保留设备待核对。");
 
         if (string.IsNullOrWhiteSpace(input.CurrentSetupVersion) ||
