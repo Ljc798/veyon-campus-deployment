@@ -15,8 +15,8 @@ public static class DeploymentPackageStorageNaming
 
     public static string CreateObjectKey(string campusName, Guid packageId, int schemaVersion = 3)
     {
-        if (schemaVersion is not (3 or 4 or 5 or 6))
-            throw new ArgumentOutOfRangeException(nameof(schemaVersion), "配置包版本只允许 3、4、5 或 6。");
+        if (schemaVersion is not (3 or 4 or 5 or 6 or 7 or 8))
+            throw new ArgumentOutOfRangeException(nameof(schemaVersion), "配置包版本只允许 3 至 8。");
         return $"deployment-packages/v{schemaVersion}/{CreateFileName(campusName, packageId)}";
     }
 

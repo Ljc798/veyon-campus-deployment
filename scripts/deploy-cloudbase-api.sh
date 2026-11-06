@@ -27,14 +27,14 @@ fi
 
 if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED:-}" != "yes" ]]; then
   if [[ ! -t 0 ]]; then
-    printf '部署前请先轮换此前出现在工具输出中的 service API key，并更新 .env.cloudbase.local。\n' >&2
+    printf '部署前请先创建新的 service API key，并更新 .env.cloudbase.local。\n' >&2
     printf '轮换完成后，在交互终端运行脚本，或安全设置 CLOUDBASE_SERVICE_ROLE_KEY_ROTATED=yes。\n' >&2
     printf '脚本没有读取本地密钥文件，也没有修改云端资源。\n' >&2
     exit 2
   fi
-  read -r -p '确认已撤销旧 service API key 并更新本地密钥？输入 yes 继续: ' rotation_confirmed
+  read -r -p '确认已创建新 service API key 并更新本地密钥？输入 yes 继续: ' rotation_confirmed
   if [[ "$rotation_confirmed" != "yes" ]]; then
-    printf '请先轮换密钥。脚本没有读取本地密钥文件，也没有修改云端资源。\n' >&2
+    printf '请先创建新密钥并更新本地文件。脚本没有读取本地密钥文件，也没有修改云端资源。\n' >&2
     exit 2
   fi
 fi
@@ -109,7 +109,9 @@ for required_version in \
   20261008100000 \
   20261016120000 \
   20261021140000 \
-  20261102120000; do
+  20261102120000 \
+  20261103110000 \
+  20261106120000; do
   if ! printf '%s\n' "$remote_migrations" | grep -Eq '"version"[[:space:]]*:[[:space:]]*"'"$required_version"'"'; then
     printf '远端尚未确认应用迁移 %s，已停止部署。请先预览并按依赖顺序应用所需数据库迁移。\n' "$required_version" >&2
     unset remote_migrations CLOUDBASE_SERVICE_ROLE_KEY TELEMETRY_DAILY_HASH_KEY

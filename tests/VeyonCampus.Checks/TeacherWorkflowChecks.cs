@@ -4,14 +4,30 @@ using VeyonCampus.Core;
 
 internal static class TeacherWorkflowChecks
 {
+    internal static void RunFirstRunLaunch()
+    {
+        var fixtureDirectory = Path.GetFullPath(Path.Combine("artifacts", "test-fixtures", "teacher-first-run",
+            Guid.NewGuid().ToString("N")));
+        var vm = new TeacherViewModel(
+            campusDirectoryStore: new TeacherCampusDirectoryStore(Path.Combine(fixtureDirectory, "campus-directory.json")),
+            websitePolicyDraftDirectory: fixtureDirectory);
+        if (!vm.IsSetupPage || vm.IsClassroomExperiencePage ||
+            !vm.ClassroomInteractionNavigationLabel.StartsWith("课堂控制", StringComparison.Ordinal))
+            throw new Exception("Teacher should open the first-run setup wizard when no campus configuration exists.");
+        Console.WriteLine("PASS first-run teacher launch opens setup wizard without campus configuration");
+    }
+
     internal static void Run()
     {
         var fixtureDirectory = Path.GetFullPath(Path.Combine("artifacts", "test-fixtures", "teacher-workflow",
             Guid.NewGuid().ToString("N")));
-        var vm = new TeacherViewModel(websitePolicyDraftDirectory: fixtureDirectory);
-        if (!vm.IsClassroomExperiencePage || vm.IsSetupPage ||
+        var vm = new TeacherViewModel(
+            campusDirectoryStore: new TeacherCampusDirectoryStore(Path.Combine(fixtureDirectory, "campus-directory.json")),
+            websitePolicyDraftDirectory: fixtureDirectory);
+        if (!vm.IsSetupPage || vm.IsClassroomExperiencePage ||
             !vm.ClassroomInteractionNavigationLabel.StartsWith("课堂控制", StringComparison.Ordinal))
-            throw new Exception("Teacher should open the classroom control workspace by default.");
+            throw new Exception("Teacher should open the first-run setup wizard when no campus configuration exists.");
+        Console.WriteLine("PASS first-run teacher launch opens setup wizard without campus configuration");
         CheckClassroomEventFeed(vm);
         if (vm.SelectedWebsiteMode != WebsitePolicyMode.Blocklist) throw new Exception("Default mode changed.");
         if (vm.WebsiteDurationSummary != "限制时长：60 分钟")

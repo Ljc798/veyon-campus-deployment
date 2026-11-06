@@ -6,6 +6,38 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--first-deployment-fixtures"])
+{
+    TeacherWorkflowChecks.RunFirstRunLaunch();
+    WorkerProtocolChecks.Run();
+    Console.WriteLine("PASS first-run empty Veyon location request passes the privileged worker protocol");
+
+    var freshDirectory = VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{}");
+    var preview = VeyonNetworkObjectDirectory.BuildImportPreview("首次机房",
+        [new VeyonNetworkComputer("PC-01", "PC-01")], freshDirectory);
+    if (preview.LocationExists || preview.ComputersToAdd.Count != 1 || preview.Conflicts.Count != 0)
+        throw new InvalidDataException("Fresh Veyon directory did not plan the first room and computer for creation.");
+
+    var explicitBuiltinDirectory = VeyonNetworkObjectDirectory.ParseConfigurationDirectory(
+        "{\"NetworkObjectDirectory\":{\"Plugin\":\"{14bacaaa-ebe5-449c-b881-5b382f952571}\"}}");
+    if (explicitBuiltinDirectory.Count != 0)
+        throw new InvalidDataException("An empty BuiltinDirectory plugin was not recognized as an empty directory.");
+
+    var rejectedExternalDirectory = false;
+    try
+    {
+        VeyonNetworkObjectDirectory.ParseConfigurationDirectory(
+            "{\"NetworkObjectDirectory\":{\"Plugin\":\"{00000000-0000-0000-0000-000000000001}\"}," +
+            "\"BuiltinDirectory\":{\"NetworkObjects\":{\"JsonStoreArray\":[]}}}");
+    }
+    catch (InvalidDataException) { rejectedExternalDirectory = true; }
+    if (!rejectedExternalDirectory)
+        throw new InvalidDataException("An external directory backend was incorrectly treated as an empty local roster.");
+
+    Console.WriteLine("PASS fresh Veyon directory accepts the first room while rejecting external directory backends");
+    return;
+}
+
 if (args is ["--veyon-registry-snapshot"])
 {
     // Run this on a machine where veyon-cli aborts with R6031 (exit code 255): it proves the
@@ -819,9 +851,13 @@ Check("云端部署包文件名采用校区名称且不附加电脑名前缀", (
            "deployment-packages/v5/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 6) ==
            "deployment-packages/v6/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 7) ==
+           "deployment-packages/v7/智学前程-test11-00112233445566778899aabbccddeeff.zip");
+    Expect(DeploymentPackageStorageNaming.CreateObjectKey("智学前程-test11", packageId, 8) ==
+           "deployment-packages/v8/智学前程-test11-00112233445566778899aabbccddeeff.zip");
     try
     {
-        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 7);
+        DeploymentPackageStorageNaming.CreateObjectKey("校区", packageId, 9);
         throw new Exception("Unsupported package schema version was accepted");
     }
     catch (ArgumentOutOfRangeException) { }
@@ -1172,13 +1208,17 @@ Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID �
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("BuiltinDirectory", "LocalData")).Count == 3);
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222")));
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":\"invalid\"}}"));
-    // First run on a fresh Veyon: the built-in directory section exists but holds no objects yet.
-    // That must read as an empty directory so the teacher can create the first location, while a
-    // config with no directory section at all still has to be refused.
+    // First run on a fresh Veyon may have no BuiltinDirectory section until its first write. The
+    // default backend or its explicit plugin UUID proves this is empty; external backends remain
+    // refused so their live rosters are never mistaken for an empty local directory.
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{}}").Count == 0);
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":null}}").Count == 0);
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"LocalData\":{}}").Count == 0);
-    Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{}"));
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{}").Count == 0);
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(
+        "{\"NetworkObjectDirectory\":{\"Plugin\":\"{14bacaaa-ebe5-449c-b881-5b382f952571}\"}}").Count == 0);
+    Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory(
+        "{\"NetworkObjectDirectory\":{\"Plugin\":\"{00000000-0000-0000-0000-000000000001}\"},\"BuiltinDirectory\":{\"NetworkObjects\":{\"JsonStoreArray\":[]}}}"));
 });
 Check("Veyon 注册表目录快照可在 veyon-cli 无法启动时恢复名单", () =>
 {

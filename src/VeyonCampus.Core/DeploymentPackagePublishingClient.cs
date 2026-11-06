@@ -34,10 +34,10 @@ public sealed class DeploymentPackagePublishingClient
             throw new InvalidDataException("请选择学生校区配置包文件夹。");
 
         var package = PackageManifest.Load(packageDirectory);
-        if (package.SchemaVersion is not (3 or 4 or 5 or 6) || package.WebsitePolicyPublicKeyPath is null ||
+        if (package.SchemaVersion is not (3 or 4 or 5 or 6 or 7 or 8) || package.WebsitePolicyPublicKeyPath is null ||
             (package.SchemaVersion >= 4) != (package.ApplicationPolicyPublicKeyPath is not null) ||
             (package.SchemaVersion >= 5) != (package.StudentSystemPolicyPublicKeyPath is not null))
-            throw new InvalidDataException("云端目录只接受 schemaVersion=3/4/5/6 且文件清单完整的学生配置包。");
+            throw new InvalidDataException("云端目录只接受 schemaVersion=3 至 8 且文件清单完整的学生配置包。");
         var packageCampus = package.Campus.Normalize(System.Text.NormalizationForm.FormKC).Trim();
         if (!string.Equals(campusName, packageCampus, StringComparison.Ordinal))
             throw new InvalidDataException($"校区名称必须与配置包中的校区名称“{packageCampus}”一致；请使用同名配置包再发布。");
@@ -107,7 +107,7 @@ public sealed class DeploymentPackagePublishingClient
         if (response.StatusCode == HttpStatusCode.BadGateway &&
             detail.Contains("CloudBase rejected package publication", StringComparison.OrdinalIgnoreCase))
         {
-            detail = "CloudBase 数据库拒绝了发布事务（HTTP 502）。当前测试环境仍需部署迁移 20261001090000 和更新后的 veyon-api，再重试发布。";
+            detail = "CloudBase 数据库拒绝了发布事务（HTTP 502）。请确认已应用迁移 20261106120000，并部署支持 schemaVersion 7/8 的 veyon-api 后重试。";
         }
         return new HttpRequestException(detail, null, response.StatusCode);
     }

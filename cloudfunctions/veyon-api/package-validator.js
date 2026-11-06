@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const net = require('node:net');
 const zlib = require('node:zlib');
 const { TextDecoder } = require('node:util');
 
@@ -165,7 +166,7 @@ function readZipEntries(archive) {
   const directoryOffset = archive.readUInt32LE(eocd + 16);
   const commentBytes = archive.readUInt16LE(eocd + 20);
   if (disk || directoryDisk || diskEntries !== totalEntries || totalEntries < 3 ||
-      totalEntries > 7 || eocd + 22 + commentBytes !== archive.length ||
+      totalEntries > 8 || eocd + 22 + commentBytes !== archive.length ||
       directoryOffset + directoryBytes > eocd)
     throw new InvalidPackageError('ZIP 文件数量或目录结构不符合配置包格式。');
 
@@ -309,12 +310,12 @@ function nameKey(name) {
   return name.toLocaleLowerCase('en-US');
 }
 
-function validateFileName(name, field) {
+function validateFileName(name, field, extension = '.pem') {
     if (typeof name !== 'string' || name.length < 5 || name.length > 240 ||
       name !== name.split('/').pop() || /[\\/:]/.test(name) ||
-      /\p{Cc}/u.test(name) || !name.toLowerCase().endsWith('.pem') ||
+      /\p{Cc}/u.test(name) || !name.toLowerCase().endsWith(extension) ||
       /private|secret/i.test(name) || name.toLowerCase() === 'admin.txt')
-    throw new InvalidPackageError(field + ' 必须是普通的顶层 RSA 公钥 PEM 文件名。');
+    throw new InvalidPackageError(field + ' 必须是普通的顶层 ' + extension + ' 文件名。');
 }
 
 function validateRsaPublicKey(bytes, label) {
@@ -352,11 +353,11 @@ function parseGuid(value) {
   return normalized;
 }
 
-function verifyManifestFile(files, fileEntry, field) {
+function verifyManifestFile(files, fileEntry, field, extension = '.pem') {
   if (!fileEntry || typeof fileEntry !== 'object' || Array.isArray(fileEntry))
     throw new InvalidPackageError('校区清单缺少 ' + field + ' 文件清单。');
   const name = fileEntry.path;
-  validateFileName(name, field);
+  validateFileName(name, field, extension);
   const file = files.get(nameKey(name));
   if (!file || file.name !== name)
     throw new InvalidPackageError(field + ' 文件缺失或文件名与校区清单不一致。');
@@ -411,11 +412,13 @@ function validateCompatibility(value, schemaVersion) {
 }
 
 function verifyPayloadManifest(files, entries, schemaVersion) {
-  const expectedCount = schemaVersion >= 5 ? 6 : 5;
+  const expectedCount = 5 + (schemaVersion >= 5 ? 1 : 0) + (schemaVersion >= 7 ? 1 : 0);
   if (!Array.isArray(entries) || entries.length !== expectedCount)
-    throw new InvalidPackageError(schemaVersion >= 5
-      ? 'schemaVersion=5/6 files 必须完整列出六个载荷文件。'
-      : 'schemaVersion=4 files 必须完整列出五个载荷文件。');
+    throw new InvalidPackageError(schemaVersion >= 7
+      ? 'schemaVersion=7/8 files 必须完整列出七个载荷文件。'
+      : schemaVersion >= 5
+        ? 'schemaVersion=5/6 files 必须完整列出六个载荷文件。'
+        : 'schemaVersion=4 files 必须完整列出五个载荷文件。');
   const seen = new Set();
   const names = [];
   for (const entry of entries) {
@@ -442,12 +445,134 @@ function verifyPayloadManifest(files, entries, schemaVersion) {
   return names;
 }
 
+function hasCertificateSigningUsage(certificateBytes) {
+  const oid = Buffer.from([0x06, 0x03, 0x55, 0x1d, 0x0f]);
+  const oidOffset = certificateBytes.indexOf(oid);
+  if (oidOffset < 0) return false;
+  const readNode = (offset) => {
+    if (offset + 2 > certificateBytes.length) return null;
+    const tag = certificateBytes[offset];
+    let cursor = offset + 1;
+    let length = certificateBytes[cursor++];
+    if ((length & 0x80) !== 0) {
+      const count = length & 0x7f;
+      if (count === 0 || count > 4 || cursor + count > certificateBytes.length) return null;
+      length = 0;
+      for (let index = 0; index < count; index++) length = length * 256 + certificateBytes[cursor++];
+    }
+    const end = cursor + length;
+    if (end > certificateBytes.length) return null;
+    return { tag, contentStart: cursor, end };
+  };
+  let cursor = oidOffset + oid.length;
+  if (certificateBytes[cursor] === 0x01) {
+    const critical = readNode(cursor);
+    if (!critical) return false;
+    cursor = critical.end;
+  }
+  const extensionValue = readNode(cursor);
+  if (!extensionValue || extensionValue.tag !== 0x04) return false;
+  const bitString = readNode(extensionValue.contentStart);
+  if (!bitString || bitString.tag !== 0x03 || bitString.end - bitString.contentStart < 2) return false;
+  // X.509 KeyUsage bit 5 is keyCertSign (0x04 in the first content octet).
+  return (certificateBytes[bitString.contentStart + 1] & 0x04) !== 0;
+}
+
+function validateTeacherChannel(files, channel) {
+  if (!channel || typeof channel !== 'object' || Array.isArray(channel) ||
+      Object.keys(channel).sort().join(',') !== 'endpoints,rootCertificate' ||
+      !Array.isArray(channel.endpoints) || channel.endpoints.length < 1 || channel.endpoints.length > 16)
+    throw new InvalidPackageError('teacherChannel 必须包含 1 至 16 个连接地址和根证书。');
+  const uniqueEndpoints = new Set();
+  for (const endpoint of channel.endpoints) {
+    if (typeof endpoint !== 'string' || endpoint.length < 1 || endpoint.length > 256)
+      throw new InvalidPackageError('teacherChannel.endpoints 地址格式无效。');
+    let uri;
+    try { uri = new URL(endpoint); }
+    catch { throw new InvalidPackageError('teacherChannel.endpoints 地址格式无效。'); }
+    const address = uri.hostname.split('.').map(Number);
+    const privateIpv4 = net.isIPv4(uri.hostname) &&
+      (address[0] === 10 || address[0] === 172 && address[1] >= 16 && address[1] <= 31 ||
+       address[0] === 192 && address[1] === 168);
+    if (uri.protocol !== 'https:' || uri.port !== '39176' || uri.pathname !== '/' || uri.search || uri.hash ||
+        uri.username || uri.password || !privateIpv4 || uri.href !== endpoint || uniqueEndpoints.has(endpoint))
+      throw new InvalidPackageError('教师连接地址必须是唯一的私有 IPv4 HTTPS 地址。');
+    uniqueEndpoints.add(endpoint);
+  }
+
+  const rootCertificate = verifyManifestFile(files, channel.rootCertificate, 'teacherChannel.rootCertificate', '.cer');
+  let certificate;
+  try { certificate = new crypto.X509Certificate(rootCertificate.bytes); }
+  catch { throw new InvalidPackageError('教师 TLS 根证书无效。'); }
+  const validTo = Date.parse(certificate.validTo);
+  if (certificate.subject !== 'CN=Veyon Campus Mobile Control CA' || certificate.issuer !== certificate.subject ||
+      !certificate.ca || !hasCertificateSigningUsage(certificate.raw) ||
+      !Number.isFinite(validTo) || validTo <= Date.now() + 30 * 24 * 60 * 60 * 1000)
+    throw new InvalidPackageError('教师 TLS 根证书主题、用途或有效期无效。');
+  return rootCertificate;
+}
+
+function validatePolicyTrustRotations(files, campus, rotations, policyFiles) {
+  if (!Array.isArray(rotations) || rotations.length < 1 || rotations.length > 3)
+    throw new InvalidPackageError('schemaVersion=8 必须包含 1 至 3 个策略信任根轮换授权。');
+  const roles = new Set();
+  const roleKeys = [policyFiles.website, policyFiles.application, policyFiles.system];
+  for (const envelopeText of rotations) {
+    if (typeof envelopeText !== 'string' || Buffer.byteLength(envelopeText, 'utf8') < 1 ||
+        Buffer.byteLength(envelopeText, 'utf8') > 16 * 1024)
+      throw new InvalidPackageError('policyTrustRotations 项必须是 16 KiB 以内的签名授权 JSON 字符串。');
+    const envelope = parseJson(Buffer.from(envelopeText, 'utf8'), 'policyTrustRotations');
+    const expectedFields = 'campusId,issuedUtc,newFingerprint,newPublicKeyPem,newRootProofSignature,previousFingerprint,previousRootSignature,retirePreviousRootUtc,role,schemaVersion';
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) ||
+        Object.keys(envelope).sort().join(',') !== expectedFields || envelope.schemaVersion !== 1 ||
+        envelope.campusId !== campus || !Number.isInteger(envelope.role) || envelope.role < 0 || envelope.role > 2 ||
+        roles.has(envelope.role))
+      throw new InvalidPackageError('策略信任根轮换授权版本、校区、密钥用途或字段无效。');
+    roles.add(envelope.role);
+    if (typeof envelope.previousFingerprint !== 'string' || !/^[0-9a-f]{64}$/i.test(envelope.previousFingerprint) ||
+        typeof envelope.newFingerprint !== 'string' || !/^[0-9a-f]{64}$/i.test(envelope.newFingerprint) ||
+        envelope.previousFingerprint.toUpperCase() === envelope.newFingerprint.toUpperCase())
+      throw new InvalidPackageError('策略信任根轮换授权中的旧/新指纹无效。');
+    if (typeof envelope.newPublicKeyPem !== 'string' || /PRIVATE KEY/i.test(envelope.newPublicKeyPem))
+      throw new InvalidPackageError('策略信任根轮换只允许包含公钥。');
+    let newKey;
+    try { newKey = crypto.createPublicKey(envelope.newPublicKeyPem); }
+    catch { throw new InvalidPackageError('策略信任根轮换新公钥无效。'); }
+    const bits = newKey.asymmetricKeyDetails && newKey.asymmetricKeyDetails.modulusLength;
+    if (newKey.asymmetricKeyType !== 'rsa' || !bits || bits < 2048 || bits > 4096)
+      throw new InvalidPackageError('策略信任根 RSA 公钥长度必须为 2048 至 4096 位。');
+    const canonicalPem = newKey.export({ type: 'spki', format: 'pem' }).toString('ascii');
+    const fingerprint = crypto.createHash('sha256')
+      .update(newKey.export({ type: 'spki', format: 'der' })).digest('hex').toUpperCase();
+    const packagedKey = roleKeys[envelope.role];
+    if (fingerprint !== envelope.newFingerprint.toUpperCase() ||
+        !packagedKey || canonicalPem !== utf8(packagedKey.bytes, '策略公钥'))
+      throw new InvalidPackageError('策略轮换授权的新公钥与配置包对应策略公钥不一致。');
+    const issuedUtc = envelope.issuedUtc;
+    const retireUtc = envelope.retirePreviousRootUtc;
+    const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{7}(?:Z|[+-]\d{2}:\d{2})$/;
+    const issued = typeof issuedUtc === 'string' && timestampPattern.test(issuedUtc) ? Date.parse(issuedUtc) : NaN;
+    const retire = typeof retireUtc === 'string' && timestampPattern.test(retireUtc) ? Date.parse(retireUtc) : NaN;
+    if (!Number.isFinite(issued) || !Number.isFinite(retire) || retire <= issued ||
+        retire - issued > 90 * 24 * 60 * 60 * 1000)
+      throw new InvalidPackageError('策略信任根过渡期必须大于零且不超过 90 天。');
+    for (const field of ['previousRootSignature', 'newRootProofSignature']) {
+      const encoded = envelope[field];
+      if (typeof encoded !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))
+        throw new InvalidPackageError('策略信任根轮换签名编码无效。');
+      const signature = Buffer.from(encoded, 'base64');
+      if (signature.length < 256 || signature.length > 512)
+        throw new InvalidPackageError('策略信任根轮换签名长度不正确。');
+    }
+  }
+}
+
 function validatePackageFiles(files, allowReadme) {
   const manifestFile = files.get('manifest.json');
   const campusFile = files.get('campus.json');
   if (!manifestFile || !campusFile)
     throw new InvalidPackageError('校区配置包缺少 manifest.json 或 campus.json。');
-  if (files.size < 3 || files.size > 7)
+  if (files.size < 3 || files.size > 8)
     throw new InvalidPackageError('校区配置包文件数量不符合格式要求。');
 
   const manifest = parseJson(manifestFile.bytes, 'manifest.json');
@@ -456,16 +581,19 @@ function validatePackageFiles(files, allowReadme) {
   const allowedManifestFields = new Set([
     'schemaVersion', 'packageId', 'targetOs', 'architecture', 'campus',
     'computerPrefix', 'telemetryEndpoint', 'publicKey', 'websitePolicyPublicKey', 'applicationPolicyPublicKey', 'studentSystemPolicyPublicKey',
-    'compatibility', 'files', 'recommendedOperations'
+    'compatibility', 'files', 'recommendedOperations', 'teacherChannel', 'policyTrustRotations'
   ]);
   if (Object.keys(manifest).some((field) => !allowedManifestFields.has(field)) ||
-      ![3, 4, 5, 6].includes(manifest.schemaVersion) ||
+      ![3, 4, 5, 6, 7, 8].includes(manifest.schemaVersion) ||
       (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'applicationPolicyPublicKey') ||
       (manifest.schemaVersion >= 5) !== Object.hasOwn(manifest, 'studentSystemPolicyPublicKey') ||
       (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'compatibility') ||
       (manifest.schemaVersion >= 4) !== Object.hasOwn(manifest, 'files') ||
-      (manifest.schemaVersion === 6) !== Object.hasOwn(manifest, 'recommendedOperations'))
-    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3/4/5/6 校区清单。');
+      (manifest.schemaVersion === 6 && !Object.hasOwn(manifest, 'recommendedOperations')) ||
+      (manifest.schemaVersion < 6 && Object.hasOwn(manifest, 'recommendedOperations')) ||
+      (manifest.schemaVersion >= 7) !== Object.hasOwn(manifest, 'teacherChannel') ||
+      (manifest.schemaVersion === 8) !== Object.hasOwn(manifest, 'policyTrustRotations'))
+    throw new InvalidPackageError('当前只接受字段完整的 schemaVersion=3 至 8 校区清单。');
   const packageId = parseGuid(manifest.packageId);
   if (manifest.targetOs !== 'windows' || manifest.architecture !== 'x64')
     throw new InvalidPackageError('配置包目标必须是 Windows x64。');
@@ -487,6 +615,7 @@ function validatePackageFiles(files, allowReadme) {
   validateRsaPublicKey(policyKeyFile.bytes, '网站策略公钥');
   let applicationPolicyKeyFile = null;
   let studentSystemPolicyKeyFile = null;
+  let teacherChannelRootCertificate = null;
   if (manifest.schemaVersion >= 4) {
     validateCompatibility(manifest.compatibility, manifest.schemaVersion);
     applicationPolicyKeyFile = verifyManifestFile(files, manifest.applicationPolicyPublicKey, 'applicationPolicyPublicKey');
@@ -496,7 +625,7 @@ function validatePackageFiles(files, allowReadme) {
     studentSystemPolicyKeyFile = verifyManifestFile(files, manifest.studentSystemPolicyPublicKey, 'studentSystemPolicyPublicKey');
     validateRsaPublicKey(studentSystemPolicyKeyFile.bytes, '学生机系统策略公钥');
   }
-  if (manifest.schemaVersion === 6) {
+  if (Object.hasOwn(manifest, 'recommendedOperations')) {
     const recommendations = manifest.recommendedOperations;
     const expectedRecommendationFields = [
       'changeAdminPassword', 'createStudentAccount', 'installVeyon', 'renameComputer'
@@ -507,6 +636,14 @@ function validatePackageFiles(files, allowReadme) {
     if (Object.values(recommendations).some(value => typeof value !== 'boolean'))
       throw new InvalidPackageError('recommendedOperations 的四个字段必须是布尔值。');
   }
+  if (manifest.schemaVersion >= 7)
+    teacherChannelRootCertificate = validateTeacherChannel(files, manifest.teacherChannel);
+  if (manifest.schemaVersion >= 8)
+    validatePolicyTrustRotations(files, manifest.campus, manifest.policyTrustRotations, {
+      website: policyKeyFile,
+      application: applicationPolicyKeyFile,
+      system: studentSystemPolicyKeyFile
+    });
 
   const manifestPayloadNames = manifest.schemaVersion >= 4
     ? verifyPayloadManifest(files, manifest.files, manifest.schemaVersion) : null;
@@ -515,6 +652,7 @@ function validatePackageFiles(files, allowReadme) {
     'manifest.json', 'campus.json', publicKeyFile.name, policyKeyFile.name,
     ...(applicationPolicyKeyFile ? [applicationPolicyKeyFile.name] : []),
     ...(studentSystemPolicyKeyFile ? [studentSystemPolicyKeyFile.name] : []),
+    ...(teacherChannelRootCertificate ? [teacherChannelRootCertificate.name] : []),
     ...(manifest.schemaVersion >= 4 ? ['README.md'] : [])
   ];
   const uniqueNames = new Set(expectedNames.map(nameKey));
@@ -536,7 +674,8 @@ function validatePackageFiles(files, allowReadme) {
   if (manifest.schemaVersion >= 4) {
     const requiredPayloadNames = [
       'campus.json', publicKeyFile.name, policyKeyFile.name, applicationPolicyKeyFile.name,
-      ...(studentSystemPolicyKeyFile ? [studentSystemPolicyKeyFile.name] : []), 'README.md'
+      ...(studentSystemPolicyKeyFile ? [studentSystemPolicyKeyFile.name] : []),
+      ...(teacherChannelRootCertificate ? [teacherChannelRootCertificate.name] : []), 'README.md'
     ];
     if (manifestPayloadNames.length !== requiredPayloadNames.length ||
         requiredPayloadNames.some((name) => !manifestPayloadNames.includes(name)) ||
@@ -582,8 +721,8 @@ function canonicalizeArchive(archiveBytes) {
 }
 
 function canonicalizeFolderFiles(uploadedFiles) {
-  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 7)
-    throw new InvalidPackageError('配置文件夹必须包含 1 至 6 个文件。');
+  if (!Array.isArray(uploadedFiles) || uploadedFiles.length < 1 || uploadedFiles.length > 8)
+    throw new InvalidPackageError('配置文件夹必须包含 1 至 8 个文件。');
 
   let selectedFolder = null;
   let hasFlatName = false;

@@ -239,8 +239,8 @@ public static class PrivilegedWorkerProtocol
                 if (request.Caller.Role != VeyonCampusRole.TeacherConsole)
                     throw new InvalidDataException("Veyon room directory writes are teacher-only.");
                 ValidateText(request.LocationName, "Location name", maximum: 100);
-                if (request.Computers is not { Count: > 0 and <= 150 })
-                    throw new InvalidDataException("A Veyon room must contain 1–150 computers.");
+                if (request.Computers is not { Count: >= 0 and <= 150 })
+                    throw new InvalidDataException("A Veyon room may contain 0–150 computers.");
                 foreach (var computer in request.Computers)
                 {
                     if (computer is null) throw new InvalidDataException("Veyon room contains an empty computer record.");

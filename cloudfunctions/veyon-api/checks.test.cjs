@@ -65,6 +65,10 @@ test('campus package object names use the campus name without computer prefixes'
     'deployment-packages/v3/智学前程-test11-00112233445566778899aabbccddeeff.zip');
   assert.equal(createCampusPackageObjectKey('智学前程-test11', packageId, 6),
     'deployment-packages/v6/智学前程-test11-00112233445566778899aabbccddeeff.zip');
+  assert.equal(createCampusPackageObjectKey('智学前程-test11', packageId, 7),
+    'deployment-packages/v7/智学前程-test11-00112233445566778899aabbccddeeff.zip');
+  assert.equal(createCampusPackageObjectKey('智学前程-test11', packageId, 8),
+    'deployment-packages/v8/智学前程-test11-00112233445566778899aabbccddeeff.zip');
   assert.equal(createCampusPackageFileName('学校/东区', packageId),
     '学校-东区-00112233445566778899aabbccddeeff.zip');
   assert.equal(createCampusPackageFileName('...', packageId),
@@ -86,6 +90,8 @@ function createPackageFixture(schemaVersion = 3) {
   const studentSystemPolicyPublicKey = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 })
     .publicKey.export({ type: 'spki', format: 'pem' });
   const studentSystemPolicyBytes = Buffer.from(studentSystemPolicyPublicKey, 'ascii');
+  const teacherRootCertificateBytes = schemaVersion >= 7
+    ? fs.readFileSync(path.join(__dirname, 'fixtures', 'test-teacher-root.cer')) : null;
   const veyonPath = 'synthetic-campus-public.pem';
   const policyPath = 'website-policy-public.pem';
   const packageId = crypto.randomUUID();
@@ -126,13 +132,43 @@ function createPackageFixture(schemaVersion = 3) {
     };
     manifest.compatibility.studentAgent = { minInclusive: '0.4.38', maxExclusive: '0.5.0' };
   }
-  if (schemaVersion === 6) {
+  if (schemaVersion >= 6) {
     manifest.recommendedOperations = {
       installVeyon: true,
       renameComputer: false,
       createStudentAccount: false,
       changeAdminPassword: false
     };
+  }
+  if (schemaVersion >= 7) {
+    manifest.teacherChannel = {
+      endpoints: ['https://192.168.100.12:39176/'],
+      rootCertificate: {
+        path: 'teacher-channel-root.cer',
+        size: teacherRootCertificateBytes.length,
+        sha256: crypto.createHash('sha256').update(teacherRootCertificateBytes).digest('hex')
+      }
+    };
+  }
+  if (schemaVersion >= 8) {
+    const newPolicyKey = crypto.createPublicKey(policyPublicKey);
+    const newFingerprint = crypto.createHash('sha256')
+      .update(newPolicyKey.export({ type: 'spki', format: 'der' })).digest('hex').toUpperCase();
+    const previousFingerprint = (newFingerprint.startsWith('A') ? 'B' : 'A') + newFingerprint.slice(1);
+    const toDotNetUtc = (date) => date.toISOString().replace(/\.(\d{3})Z$/, '.$1' + '0000+00:00');
+    const issuedUtc = Date.now() - 60_000;
+    manifest.policyTrustRotations = [JSON.stringify({
+      schemaVersion: 1,
+      campusId: campusName,
+      role: 0,
+      previousFingerprint,
+      newFingerprint,
+      newPublicKeyPem: newPolicyKey.export({ type: 'spki', format: 'pem' }).toString('ascii'),
+      issuedUtc: toDotNetUtc(new Date(issuedUtc)),
+      retirePreviousRootUtc: toDotNetUtc(new Date(issuedUtc + 60 * 24 * 60 * 60 * 1000)),
+      previousRootSignature: Buffer.alloc(256, 1).toString('base64'),
+      newRootProofSignature: Buffer.alloc(256, 2).toString('base64')
+    })];
   }
   const campus = {
     campus: campusName,
@@ -151,6 +187,8 @@ function createPackageFixture(schemaVersion = 3) {
     payloadFiles.push({ fileName: manifest.applicationPolicyPublicKey.path, bytes: applicationPolicyBytes });
     if (schemaVersion >= 5)
       payloadFiles.push({ fileName: manifest.studentSystemPolicyPublicKey.path, bytes: studentSystemPolicyBytes });
+    if (schemaVersion >= 7)
+      payloadFiles.push({ fileName: manifest.teacherChannel.rootCertificate.path, bytes: teacherRootCertificateBytes });
     payloadFiles.push({ fileName: 'README.md', bytes: Buffer.from('# Synthetic package\n', 'utf8') });
     manifest.files = payloadFiles.map((file) => ({
       path: file.fileName,
@@ -1197,6 +1235,31 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
       createCampusPackageObjectKey(v6Package.campusName, v6Package.canonical.packageId, 6));
 
+    for (const schemaVersion of [7, 8]) {
+      const packageFixture = createPackageFixture(schemaVersion);
+      mockCloudBase.state.packageFixture = packageFixture;
+      const publication = await originalFetch(`${baseUrl}/v1/deployment-packages`, {
+        method: 'POST',
+        headers: { 'Content-Type': `multipart/form-data; boundary=${boundary}` },
+        body: createPublicationBody(packageFixture.campusName, packageFixture)
+      });
+      assert.equal(publication.status, 201);
+      const published = await publication.json();
+      assert.equal(published.schemaVersion, schemaVersion);
+      assert.equal(mockCloudBase.state.publishedPackage.p_schema_version, schemaVersion);
+      assert.equal(mockCloudBase.state.uploadedObjectKey,
+        createCampusPackageObjectKey(packageFixture.campusName, packageFixture.canonical.packageId, schemaVersion));
+      const download = await originalFetch(`${baseUrl}/v1/deployment-packages/${published.packageId}/download`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ teacherPhoneLast4: '2468' })
+      });
+      assert.equal(download.status, 200);
+      assert.deepEqual(Buffer.from(await download.arrayBuffer()), packageFixture.canonical.archiveBytes);
+      assert.equal(mockCloudBase.state.lastDownloadedObjectKey,
+        createCampusPackageObjectKey(packageFixture.campusName, packageFixture.canonical.packageId, schemaVersion));
+    }
+
     const uncertainPackage = createPackageFixture();
     mockCloudBase.state.packageFixture = uncertainPackage;
     mockCloudBase.state.publishResponseLost = true;
@@ -1290,7 +1353,7 @@ test('v4 application policy package requires a separate key, compatibility range
   const incompleteFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
     ? { ...file, bytes: Buffer.from(JSON.stringify(incompleteManifest), 'utf8') }
     : file);
-  assert.throws(() => canonicalizeFolderFiles(incompleteFiles), /schemaVersion=3\/4\/5\/6/);
+  assert.throws(() => canonicalizeFolderFiles(incompleteFiles), /schemaVersion=3 至 8/);
   const tamperedKey = fixture.packageFiles.map(file => file.fileName === 'application-policy-public.pem'
     ? { ...file, bytes: Buffer.from(file.bytes.toString('utf8').replace('BEGIN PUBLIC KEY', 'BEGIN PRIVATE KEY'), 'utf8') }
     : file);
@@ -1320,7 +1383,7 @@ test('v5 system policy package requires its dedicated key and Student Agent comp
   const missingKeyFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
     ? { ...file, bytes: Buffer.from(JSON.stringify(missingSystemKey), 'utf8') }
     : file);
-  assert.throws(() => canonicalizeFolderFiles(missingKeyFiles), /schemaVersion=3\/4\/5\/6/);
+  assert.throws(() => canonicalizeFolderFiles(missingKeyFiles), /schemaVersion=3 至 8/);
   const missingAgentRange = { ...fixture.manifest, compatibility: { ...fixture.manifest.compatibility } };
   delete missingAgentRange.compatibility.studentAgent;
   const missingAgentFiles = fixture.packageFiles.map(file => file.fileName === 'manifest.json'
@@ -1350,7 +1413,7 @@ test('v6 recommendation package strictly validates advisory fields and rejects d
     : file);
   const missing = { ...fixture.manifest };
   delete missing.recommendedOperations;
-  assert.throws(() => canonicalizeFolderFiles(replaceManifest(JSON.stringify(missing))), /schemaVersion=3\/4\/5\/6/);
+  assert.throws(() => canonicalizeFolderFiles(replaceManifest(JSON.stringify(missing))), /schemaVersion=3 至 8/);
   const extra = { ...fixture.manifest, recommendedOperations: {
     ...fixture.manifest.recommendedOperations, runWithoutConfirmation: true
   } };
@@ -1364,6 +1427,17 @@ test('v6 recommendation package strictly validates advisory fields and rejects d
     '"installVeyon":true', '"installVeyon":true,"installVeyon":false');
   assert.notEqual(duplicated, serialized);
   assert.throws(() => canonicalizeFolderFiles(replaceManifest(duplicated)), /duplicate JSON|重复 JSON/);
+});
+
+test('v7/v8 packages with the teacher channel fit the supported eight-entry ZIP format', () => {
+  for (const schemaVersion of [7, 8]) {
+    const fixture = createPackageFixture(schemaVersion);
+    assert.equal(fixture.packageFiles.length, 8);
+    const parsed = canonicalizeArchive(fixture.canonical.archiveBytes);
+    assert.equal(parsed.schemaVersion, schemaVersion);
+    assert.equal(parsed.packageId, fixture.packageId.replace(/-/g, ''));
+    assert.equal(parsed.campus, fixture.campusName);
+  }
 });
 
 test('live anonymous API check runs publish, download, and cleanup against a local HTTP double', async () => {
@@ -1696,6 +1770,18 @@ test('v6 migration adds its own package object namespace and keeps publish restr
   assert.match(migration, /existing v3\/v4\/v5 keys remain valid/);
 });
 
+test('v7/v8 package migration adds signed channel and policy-rotation schemas without changing older object keys', () => {
+  const migration = fs.readFileSync(
+    `${__dirname}/../../cloudbase/migrations/20261106120000_support_teacher_channel_and_policy_rotation_packages.sql`,
+    'utf8');
+  assert.match(migration, /schema_version IN \(3, 4, 5, 6, 7, 8\)/);
+  assert.match(migration, /deployment-packages\/v\[345678\]/);
+  assert.match(migration, /publish_deployment_package_public[\s\S]*?NOT IN \(3, 4, 5, 6, 7, 8\)/);
+  assert.match(migration, /FROM PUBLIC, anon, authenticated, service_role/);
+  assert.match(migration, /TO service_role/);
+  assert.match(migration, /v7 adds the signed teacher channel; v8 adds signed policy trust rotations/);
+});
+
 test('CloudBase function deployment requires package and release migrations while operations reporting stays disabled', () => {
   const deploymentScript = fs.readFileSync(`${__dirname}/../../scripts/deploy-cloudbase-api.sh`, 'utf8');
   const preflightStart = deploymentScript.indexOf('for required_version in');
@@ -1713,7 +1799,9 @@ test('CloudBase function deployment requires package and release migrations whil
     '20261008100000',
     '20261016120000',
     '20261021140000',
-    '20261102120000'
+    '20261102120000',
+    '20261103110000',
+    '20261106120000'
   ];
   let previousIndex = -1;
   for (const migration of requiredMigrations) {
@@ -1770,6 +1858,58 @@ test('API policy permits required paths while the handler authorizes admin datab
   assert.ok(api.includes("request.method === 'GET' && releaseArtifact"));
 });
 
+test('release notes endpoint normalizes the published release body and rejects bad versions', async () => {
+  const originalFetch = global.fetch;
+  const releaseCalls = [];
+  global.fetch = async (input, options = {}) => {
+    const url = typeof input === 'string' ? new URL(input) : input;
+    releaseCalls.push(url.href);
+    if (url.hostname === 'api.gitcode.com' && url.pathname.endsWith('/releases/tags/v1.1.71'))
+      return new Response(JSON.stringify({
+        tag_name: 'v1.1.71',
+        body: '# Veyon Campus 1.1.71\r\n\r\n- 修复 A\r\n\r\n\r\n**重点**：B\r\n'
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    return new Response('{}', { status: 404, headers: { 'content-type': 'application/json' } });
+  };
+  const config = loadConfig({
+    CloudBase__EnvId: 'fixture-env',
+    CloudBase__ApiKey: 'fixture-service-role-key',
+    Telemetry__DailyHashKey: Buffer.alloc(32, 0x66).toString('base64'),
+    CloudBase__ApplicationReleasePublicBaseUrl: 'https://fixture.example/'
+  });
+  const apiHandler = createRequestHandler(config);
+  const server = http.createServer((request, response) => void apiHandler(request, response));
+  await new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  const baseUrl = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const notesResponse = await originalFetch(`${baseUrl}/v1/releases/notes?version=1.1.71`);
+    assert.equal(notesResponse.status, 200);
+    const notesPayload = await notesResponse.json();
+    assert.equal(notesPayload.version, '1.1.71');
+    assert.match(notesPayload.notes, /Veyon Campus 1\.1\.71/);
+    assert.match(notesPayload.notes, /修复 A/);
+    assert.ok(!notesPayload.notes.includes('\r'), 'line endings are normalized');
+    assert.ok(!notesPayload.notes.includes('\n\n\n'), 'repeated blank lines are collapsed');
+    assert.equal(releaseCalls.length, 1);
+
+    const cachedResponse = await originalFetch(`${baseUrl}/v1/releases/notes?version=1.1.71`);
+    assert.equal(cachedResponse.status, 200);
+    assert.equal(releaseCalls.length, 1, 'a repeated read is served from the in-memory cache');
+
+    const missingResponse = await originalFetch(`${baseUrl}/v1/releases/notes?version=1.1.70`);
+    assert.equal(missingResponse.status, 404);
+
+    const invalidResponse = await originalFetch(`${baseUrl}/v1/releases/notes?version=1.1`);
+    assert.equal(invalidResponse.status, 400);
+  } finally {
+    global.fetch = originalFetch;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test('OpenAPI describes admin database access, public endpoints, and missing-package behavior', () => {
   const specification = fs.readFileSync(
     `${__dirname}/../../src/VeyonCampus.Telemetry.Server/openapi/deployment-packages.yaml`,
@@ -1798,6 +1938,7 @@ test('OpenAPI describes admin database access, public endpoints, and missing-pac
     '/v1/heartbeat/teacher',
     '/v1/file-updates/latest',
     '/v1/releases/latest',
+    '/v1/releases/notes',
     '/v1/releases/{releaseId}/artifact',
     '/v1/telemetry/teacher/operations',
     '/v2/releases/latest',

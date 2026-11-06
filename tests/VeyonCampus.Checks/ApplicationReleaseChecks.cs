@@ -9,6 +9,7 @@ internal static class ApplicationReleaseChecks
     public static void Run()
     {
         CheckSemVerOrdering();
+        CheckReleaseNotesPlainText();
         CheckSelfUpdateRollback();
         CheckSignedReleaseMetadataAndDownloadAsync().GetAwaiter().GetResult();
     }
@@ -110,6 +111,28 @@ internal static class ApplicationReleaseChecks
         Expect(ApplicationReleaseClient.CompareVersions("1.2.3-rc.2", "1.2.3-rc.10") < 0);
         Expect(ApplicationReleaseClient.CompareVersions("1.2.3", "1.2.3-rc.10") > 0);
         Reject(() => ApplicationReleaseClient.CompareVersions("01.2.3", "1.2.3"));
+    }
+
+    private static void CheckReleaseNotesPlainText()
+    {
+        var markdown = "# Veyon Campus 1.1.72\r\n\r\n- 修复 A\r\n\r\n\r\n**重点**：B\r\n\r\n```\r\nraw block\r\n```\r\n" +
+                       "[发布页](https://example.invalid/releases)\r\n";
+        var plain = ReleaseNotesText.ToPlainText(markdown);
+        Expect(!plain.Contains('#'));
+        Expect(!plain.Contains('*'));
+        Expect(!plain.Contains("]("));
+        Expect(!plain.Contains("```"));
+        Expect(plain.Contains("Veyon Campus 1.1.72"));
+        Expect(plain.Contains("修复 A"));
+        Expect(plain.Contains("重点：B"));
+        Expect(plain.Contains("raw block"));
+        Expect(plain.Contains("发布页"));
+        Expect(!plain.Contains("\r"));
+        Expect(!plain.Contains("\n\n\n"));
+        Expect(ReleaseNotesText.ToPlainText("") == "");
+        Expect(ReleaseNotesText.ToPlainText(null) == "");
+        var truncated = ReleaseNotesText.ToPlainText(new string('x', 40), 10);
+        Expect(truncated.Length <= 12 && truncated.EndsWith('…'));
     }
 
     private static async Task CheckSignedReleaseMetadataAndDownloadAsync()

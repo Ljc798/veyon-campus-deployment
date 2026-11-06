@@ -63,6 +63,12 @@ internal static class WorkerProtocolChecks
                 PrivilegedWorkerProtocol.SerializeResponse(response)).Result.Status == ExecutionPlan.Cancelled);
             Expect(PrivilegedWorkerDispatcher.GetStepId(PrivilegedWorkerOperation.AddVeyonRoom) == "room-directory");
 
+            var teacherCaller = caller with { Role = VeyonCampusRole.TeacherConsole };
+            var emptyRoomRequest = new PrivilegedWorkerRequest(PrivilegedWorkerProtocol.CurrentVersion,
+                Guid.NewGuid(), teacherCaller, PrivilegedWorkerOperation.AddVeyonRoom,
+                LocationName: "首次部署机房", Computers: Array.Empty<VeyonNetworkComputer>());
+            Expect(PrivilegedWorkerProtocol.SerializeRequest(emptyRoomRequest).Length > 0);
+
             // A foreign step id must not erase the adapter's own diagnosis.
             var foreignStep = new StepResult("teacher-auth", ExecutionPlan.Failed,
                 "教师端切换密钥认证失败（退出码 5）。", 5);

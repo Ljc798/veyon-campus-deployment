@@ -14,6 +14,7 @@ public sealed partial class TeacherViewModel
 {
     // ===== Classroom / events / chat / task members moved from TeacherViewModel.cs =====
     private bool _isImportingInitialSeatGridFromVeyon;
+    private bool _returnToSetupAfterRoomConfiguration;
     private (int Row, int Column)? _seatGridDragTarget;
     private string _seatMapDragFeedback = "";
     private string _seatMapIdentityRecoverySummary = "";
@@ -145,7 +146,10 @@ public sealed partial class TeacherViewModel
             Changed();
             Changed(nameof(HasSeatMap));
             Changed(nameof(HasNoSeatMap));
+            Changed(nameof(HasNoSeatMapInfo));
+            Changed(nameof(HasNoSeatMapError));
             Changed(nameof(CanRetryInitialSeatGridImport));
+            Changed(nameof(CanReturnToTeacherSetupWizard));
             Changed(nameof(CanPrintSeatMap));
             Changed(nameof(SeatGridSummary));
             Changed(nameof(CanStartRoomCreation));
@@ -216,6 +220,7 @@ public sealed partial class TeacherViewModel
             Changed(nameof(IsSeatMapPreview));
             Changed(nameof(SeatMapEditButtonLabel));
             Changed(nameof(CanRetryInitialSeatGridImport));
+            Changed(nameof(CanReturnToTeacherSetupWizard));
             Changed(nameof(CanEditSeatMap));
             Changed(nameof(CanClearSelectedSeatVeyonTarget));
             Changed(nameof(CanInteractWithSeatMap));
@@ -549,6 +554,7 @@ public sealed partial class TeacherViewModel
         Changed(nameof(CanToggleSeatMapEditing));
         Changed(nameof(CanCancelSeatMapEditing));
         Changed(nameof(CanRetrySeatMapSync));
+        Changed(nameof(CanReturnToTeacherSetupWizard));
         Changed(nameof(CanAddSeatGridRow));
         Changed(nameof(CanAddSeatGridColumn));
         RefreshSeatMapCells();
@@ -562,6 +568,7 @@ public sealed partial class TeacherViewModel
         Changed(nameof(CanToggleSeatMapEditing));
         Changed(nameof(CanCancelSeatMapEditing));
         Changed(nameof(CanRetrySeatMapSync));
+        Changed(nameof(CanReturnToTeacherSetupWizard));
         Changed(nameof(CanAddSeatGridRow));
         Changed(nameof(CanAddSeatGridColumn));
         RefreshSeatMapCells();
@@ -815,8 +822,12 @@ public sealed partial class TeacherViewModel
 
     public bool CanPrepareRoomSeatGrid => !IsExecuting && !IsCheckingRoomConflicts &&
                                          !IsImportingInitialSeatGridFromVeyon &&
+                                         !_isSeatMapSyncing &&
                                          !string.IsNullOrWhiteSpace(RoomCampusName) &&
                                          !string.IsNullOrWhiteSpace(RoomLocationName);
+
+    public bool CanReturnToTeacherSetupWizard => _returnToSetupAfterRoomConfiguration && IsRoomPage &&
+        HasSeatMap && !IsSeatMapEditing && !IsExecuting && !_isSeatMapSyncing;
 
     private void TryStartInitialSeatGridImportFromVeyon()
     {
@@ -856,6 +867,11 @@ public sealed partial class TeacherViewModel
             var matchingLocations = objects.Where(item =>
                 item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(item.Name, room.DisplayName, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matchingLocations.Length == 0)
+            {
+                SeatMapStatus = $"Veyon 中尚无地点“{room.DisplayName}”；点击“开始编辑座位图”后会先创建地点。";
+                return;
+            }
             if (matchingLocations.Length != 1 || matchingLocations[0].ObjectId == Guid.Empty)
                 throw new InvalidDataException("找不到与当前地点名称唯一对应的 Veyon 地点；请核对地点名称和 Veyon 目录后重试。");
 
@@ -868,7 +884,10 @@ public sealed partial class TeacherViewModel
                 item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase)).ToArray();
             var roomComputers = allComputers.Where(item => item.ParentObjectId == location.ObjectId).ToArray();
             if (roomComputers.Length == 0)
-                throw new InvalidDataException("当前 Veyon 地点没有电脑记录；请先在 Veyon 中配置电脑后重试。");
+            {
+                SeatMapStatus = $"Veyon 地点“{room.DisplayName}”已存在但还没有电脑；开始编辑座位图后可添加座位，保存时再同步电脑。";
+                return;
+            }
             if (roomComputers.Length > ClassroomSeatGridStore.MaximumSeats)
                 throw new InvalidDataException($"当前地点超过 {ClassroomSeatGridStore.MaximumSeats} 台电脑，无法一次导入。");
 
@@ -1214,6 +1233,8 @@ public sealed partial class TeacherViewModel
             Changed(nameof(HasSeatMapStatus));
             Changed(nameof(HasSeatMapError));
             Changed(nameof(HasSeatMapInfo));
+            Changed(nameof(HasNoSeatMapInfo));
+            Changed(nameof(HasNoSeatMapError));
             Changed(nameof(CanRetryInitialSeatGridImport));
         }
     }
@@ -1233,6 +1254,8 @@ public sealed partial class TeacherViewModel
     public bool HasSeatMapError => SeatMapStatus.StartsWith("无法", StringComparison.Ordinal) ||
                                    SeatMapStatus.StartsWith("座位图", StringComparison.Ordinal);
     public bool HasSeatMapInfo => HasSeatMapStatus && !HasSeatMapError;
+    public bool HasNoSeatMapInfo => HasNoSeatMap && HasSeatMapInfo;
+    public bool HasNoSeatMapError => HasNoSeatMap && HasSeatMapError;
     public TeacherCampusProfile? SelectedCampusProfile
     {
         get => _selectedCampusProfile is { } selected
@@ -2831,6 +2854,7 @@ public sealed partial class TeacherViewModel
                     : "已是最新版本。";
             RecordUpdateSuccess(UpdateDiagnosticModule.TeacherConsole, UpdateDiagnosticOperation.Check,
                 result.Release?.Manifest.Version);
+            await LoadTeacherUpdateNotesAsync(result.Release?.Manifest.Version);
         }
         catch (Exception exception)
         {
@@ -2851,6 +2875,41 @@ public sealed partial class TeacherViewModel
             Changed(nameof(CanInstallOfflineTeacherUpdate));
             Changed(nameof(HasTeacherUpdate));
         }
+    }
+
+    /// <summary>
+    /// Loads the release notes shown next to "检查更新". They are human-readable text fetched outside
+    /// the signed manifest, so every failure here degrades to "no notes" instead of failing the check.
+    /// </summary>
+    private async Task LoadTeacherUpdateNotesAsync(string? version)
+    {
+        if (_releaseClient is null || string.IsNullOrWhiteSpace(version))
+        {
+            ApplyTeacherUpdateNotes(null, null);
+            return;
+        }
+        if (string.Equals(_teacherUpdateNotesVersion, version, StringComparison.Ordinal) &&
+            TeacherUpdateNotes.Length > 0)
+            return;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var notes = await _releaseClient.ReadReleaseNotesAsync(version, timeout.Token);
+            ApplyTeacherUpdateNotes(version, notes);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or
+                                          InvalidDataException or OperationCanceledException or
+                                          TimeoutException)
+        {
+            ApplyTeacherUpdateNotes(version, null);
+        }
+    }
+
+    private void ApplyTeacherUpdateNotes(string? version, string? notesMarkdown)
+    {
+        _teacherUpdateNotesVersion = string.IsNullOrWhiteSpace(version) ? null : version;
+        TeacherUpdateNotes = ReleaseNotesText.ToPlainText(notesMarkdown);
+        Changed(nameof(TeacherUpdateNotesHeader));
     }
 
     public async Task<bool> DownloadTeacherUpdateAsync()
@@ -4484,7 +4543,12 @@ public sealed partial class TeacherViewModel
 
     public void NextTeacherSetupWizardStep() => SetTeacherSetupWizardStep(Math.Min(3, _teacherSetupWizardStep + 1));
 
-    public void OpenRoomSetupFromTeacherWizard() => SelectPage("rooms");
+    public void OpenRoomSetupFromTeacherWizard()
+    {
+        _returnToSetupAfterRoomConfiguration = IsTeacherSetupStep2 && !IsTeacherSetupRoomComplete;
+        Changed(nameof(CanReturnToTeacherSetupWizard));
+        SelectPage("rooms");
+    }
 
     public async Task RefreshActiveClassroomStatusAsync()
     {

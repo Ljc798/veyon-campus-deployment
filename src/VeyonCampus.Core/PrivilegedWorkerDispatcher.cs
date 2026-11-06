@@ -138,13 +138,15 @@ public static class PrivilegedWorkerDispatcher
                     break;
                 case PrivilegedWorkerOperation.AddVeyonRoom:
                     operationStarted = true;
-                    var import = VeyonNetworkObjectDirectory.AddLocation(
-                        request.LocationName!, request.Computers!);
+                    var import = request.Computers!.Count == 0
+                        ? VeyonNetworkObjectDirectory.EnsureLocation(request.LocationName!)
+                        : VeyonNetworkObjectDirectory.AddLocation(request.LocationName!, request.Computers!);
                     veyonAddedComputerTargets = import.AddedComputerTargets;
-                    var locationAction = import.LocationCreated ? "新建地点" :
-                        import.AddedComputerCount > 0 ? "复用地点" : "无需更改地点";
-                    result = new StepResult("room-directory", ExecutionPlan.Succeeded,
-                        $"{locationAction}“{import.LocationName}”：新增 {import.AddedComputerCount} 台电脑，跳过 {import.SkippedComputerCount} 台。");
+                    var locationAction = import.LocationCreated ? "新建地点" : "核对已有地点";
+                    var detail = import.ComputerCount == 0
+                        ? $"已{locationAction}“{import.LocationName}”，尚未添加电脑。"
+                        : $"{locationAction}“{import.LocationName}”：新增 {import.AddedComputerCount} 台电脑，跳过 {import.SkippedComputerCount} 台。";
+                    result = new StepResult("room-directory", ExecutionPlan.Succeeded, detail);
                     break;
                 case PrivilegedWorkerOperation.RenameVeyonComputers:
                 {

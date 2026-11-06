@@ -11,6 +11,7 @@ public partial class TeacherRoomView : UserControl
     public TeacherRoomView() => InitializeComponent();
 
     public event EventHandler<RoutedEventArgs>? PrepareRoomSeatGridRequested;
+    public event EventHandler<RoutedEventArgs>? ReturnToTeacherSetupWizardRequested;
     public event EventHandler<RoutedEventArgs>? ToggleSeatMapEditingRequested;
     public event EventHandler<RoutedEventArgs>? CancelSeatMapEditingRequested;
     public event EventHandler<RoutedEventArgs>? PrintSeatChartRequested;
@@ -34,6 +35,9 @@ public partial class TeacherRoomView : UserControl
 
     private void RequestPrepareRoomSeatGrid(object? sender, RoutedEventArgs e) =>
         PrepareRoomSeatGridRequested?.Invoke(sender, e);
+
+    private void RequestReturnToTeacherSetupWizard(object? sender, RoutedEventArgs e) =>
+        ReturnToTeacherSetupWizardRequested?.Invoke(sender, e);
 
     private void RequestToggleSeatMapEditing(object? sender, RoutedEventArgs e) =>
         ToggleSeatMapEditingRequested?.Invoke(sender, e);

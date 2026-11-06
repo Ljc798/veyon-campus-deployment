@@ -228,6 +228,42 @@ public sealed class ApplicationReleaseClient
         return EvaluateLatest(result.Release, role, currentVersion, result.StudentAgentTarget);
     }
 
+    /// <summary>
+    /// Reads the human-readable release notes for one published version. The notes travel outside the
+    /// signed manifest on purpose (older clients reject unknown manifest fields) and are informational
+    /// only: they never feed a digest, signature or compatibility decision.
+    /// </summary>
+    public async Task<string?> ReadReleaseNotesAsync(string version,
+        CancellationToken cancellationToken = default)
+    {
+        _ = ParseVersion(version);
+        var url = new Uri(_apiBaseAddress,
+            $"v1/releases/notes?version={Uri.EscapeDataString(version)}");
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+            cancellationToken).ConfigureAwait(false);
+        if (response.StatusCode == HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode)
+            throw new HttpRequestException("更新说明暂时不可用。", null, response.StatusCode);
+        var responseBytes = await ReadBoundedAsync(response.Content, MaximumMetadataBytes, cancellationToken)
+            .ConfigureAwait(false);
+        ReleaseNotesResponse? result;
+        try
+        {
+            result = JsonSerializer.Deserialize<ReleaseNotesResponse>(responseBytes, JsonOptions);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("更新说明响应格式无效。", exception);
+        }
+        if (result is null || !string.Equals(result.Version, version, StringComparison.Ordinal) ||
+            string.IsNullOrWhiteSpace(result.Notes))
+            return null;
+        return result.Notes;
+    }
+
+
     public ApplicationReleaseCheckResult EvaluateLatest(ApplicationReleaseEnvelope? release,
         ApplicationReleaseRole role, string currentVersion,
         ApplicationReleaseAgentTargetEnvelope? studentAgentTarget = null)
@@ -834,6 +870,10 @@ public sealed class ApplicationReleaseClient
     private sealed record LatestReleaseResponse(
         [property: JsonPropertyName("release")] ApplicationReleaseEnvelope? Release,
         [property: JsonPropertyName("studentAgentTarget")] ApplicationReleaseAgentTargetEnvelope? StudentAgentTarget = null);
+
+    private sealed record ReleaseNotesResponse(
+        [property: JsonPropertyName("version")] string Version,
+        [property: JsonPropertyName("notes")] string Notes);
 
     private sealed record SemanticVersion(BigInteger[] Core, string[]? Prerelease);
 }

@@ -1285,7 +1285,10 @@ public partial class TeacherWindow : Window
             _model.DeleteSelectedCampusProfile();
     }
     private void NewRoomProfile(object? sender, RoutedEventArgs e) => _model.NewRoomProfile();
-    private void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) => _model.PrepareCurrentRoomSeatGrid();
+    private async void PrepareRoomSeatGrid(object? sender, RoutedEventArgs e) =>
+        await _model.PrepareCurrentRoomSeatGrid();
+    private void ReturnToTeacherSetupWizard(object? sender, RoutedEventArgs e) =>
+        _model.ReturnToTeacherSetupWizard();
     private void OpenVeyonConfigurator(object? sender, RoutedEventArgs e) => _model.OpenVeyonConfigurator();
     private async void ToggleSeatMapEditing(object? sender, RoutedEventArgs e)
     {

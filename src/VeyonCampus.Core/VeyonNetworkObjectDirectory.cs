@@ -64,6 +64,8 @@ public static class VeyonNetworkObjectDirectory
     public static string? LastRegistrySnapshotDetail { get; private set; }
     private const string RegistrySettingsSubKey = @"SOFTWARE\Veyon Solutions\Veyon\BuiltinDirectory";
     private const string RegistryNetworkObjectsValue = "NetworkObjects";
+    private static readonly Guid BuiltinDirectoryPluginId =
+        Guid.Parse("14bacaaa-ebe5-449c-b881-5b382f952571");
     // Veyon stores complex settings as "@@JsonValue(<base64 utf8 json>)" inside a single registry value.
     private const string JsonValueMarker = "@@JsonValue(";
     // Veyon's 4.11.2 format importer is a placeholder-to-regex parser, not an RFC CSV decoder.
@@ -843,6 +845,53 @@ public static class VeyonNetworkObjectDirectory
             .ToArray();
     }
 
+    /// <summary>Creates or verifies a Veyon location without adding any computers.</summary>
+    public static VeyonLocationImportResult EnsureLocation(string locationName)
+    {
+        if (!OperatingSystem.IsWindows())
+            throw new PlatformNotSupportedException("写入 Veyon 机房目录仅支持 Windows 教师端。");
+        ValidateDirectoryName(locationName, "地点名称");
+
+        using var mutationGate = VeyonDirectoryMutationGate.Acquire();
+        var cliPath = ResolveCliPathOrThrow("networkobjects dump");
+        var workingDirectory = Path.GetDirectoryName(cliPath)!;
+        var current = ReadNetworkObjects(cliPath, workingDirectory);
+        var existingLocations = current.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (existingLocations.Length > 1)
+            throw new InvalidDataException($"Veyon 中有多个同名地点“{locationName}”，无法安全选择目标。");
+        if (existingLocations.Length == 1 && (existingLocations[0].ObjectId == Guid.Empty ||
+            current.Count(item => item.ObjectId == existingLocations[0].ObjectId) != 1))
+            throw new InvalidDataException($"地点“{locationName}”的 Veyon UUID 缺失或重复，无法安全使用。");
+        if (existingLocations.Length == 0 && current.Any(item =>
+                item.Type.Equals("computer", StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(item.Location, locationName, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException($"地点“{locationName}”有电脑记录但缺少地点对象 UUID；请先核对 Veyon 目录。");
+
+        var locationCreated = false;
+        if (existingLocations.Length == 0)
+        {
+            var runner = new ProcessRunner();
+            runner.Run(cliPath, ["networkobjects", "add", "location", locationName],
+                workingDirectory, TimeSpan.FromSeconds(45), outputLimitChars: 4096);
+            if (runner.ExitCode is not 0)
+                throw new InvalidOperationException(
+                    $"创建 Veyon 地点失败（退出码 {runner.ExitCode?.ToString() ?? "未知"}）：{ProcessDetail(runner)}");
+            locationCreated = true;
+        }
+
+        var after = ReadNetworkObjects(cliPath, workingDirectory);
+        var verifiedLocations = after.Where(item =>
+            item.Type.Equals("location", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(item.Name, locationName, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (verifiedLocations.Length != 1 || verifiedLocations[0].ObjectId == Guid.Empty ||
+            after.Count(item => item.ObjectId == verifiedLocations[0].ObjectId) != 1)
+            throw new InvalidDataException("Veyon 地点操作后读回的 UUID 不唯一；请人工核对目录。");
+
+        return new VeyonLocationImportResult(locationName, 0, 0, 0, 0, locationCreated);
+    }
+
     /// <summary>Reuses an existing location, preserves duplicate objects and imports only new computers.</summary>
     public static VeyonLocationImportResult AddLocation(string locationName,
         IReadOnlyList<VeyonNetworkComputer> computers)
@@ -1480,6 +1529,9 @@ public static class VeyonNetworkObjectDirectory
         var root = document.RootElement;
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Veyon 配置格式无法识别。");
+        if (!UsesBuiltinDirectory(root))
+            throw new InvalidDataException(
+                "Veyon 当前选择的网络对象目录不是 Builtin Directory；为避免读取错误名单或覆盖外部目录，已停止自动同步。请在 Veyon 中切换到内置目录后再创建地点。");
         JsonElement objects = default;
         var directorySectionFound = false;
         // Veyon 4.1 moved the built-in directory from LocalData/NetworkObjects
@@ -1504,12 +1556,11 @@ public static class VeyonNetworkObjectDirectory
         }
         if (objects.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
         {
-            // A freshly installed Veyon has the built-in directory section but no objects in it yet.
-            // That is a legitimately empty directory — the first-run case where the teacher is about
-            // to create the first location — not an external directory backend. Refuse only when no
-            // directory section exists at all, because then an empty built-in store cannot be told
-            // apart from another backend and guessing would silently hide a real roster.
-            if (directorySectionFound) return Array.Empty<VeyonNetworkObject>();
+            // A fresh/default Veyon configuration can select BuiltinDirectory before the plugin
+            // has written its first NetworkObjects section. The selected plugin (or Veyon's default)
+            // distinguishes that first-run empty directory from LDAP and other external backends.
+            if (directorySectionFound || UsesBuiltinDirectory(root))
+                return Array.Empty<VeyonNetworkObject>();
             throw new InvalidDataException(
                 "Veyon 配置中没有可识别的 Builtin Directory；可能使用外部目录后端，已拒绝将其误判为空目录。");
         }
@@ -1570,6 +1621,22 @@ public static class VeyonNetworkObjectDirectory
             .Select(entry => new VeyonNetworkObject(
             entry.Type == VeyonObjectTypeLocation ? "location" : "computer", entry.Name, entry.Host, entry.Mac,
             locations.GetValueOrDefault(entry.Parent, ""), entry.Id, entry.Parent)).ToArray();
+    }
+
+    private static bool UsesBuiltinDirectory(JsonElement root)
+    {
+        if (!root.TryGetProperty("NetworkObjectDirectory", out var directorySettings))
+            return true; // BuiltinDirectory is Veyon's documented default backend.
+        if (directorySettings.ValueKind != JsonValueKind.Object)
+            throw new InvalidDataException("Veyon 网络对象目录设置格式无法识别。");
+        if (!directorySettings.TryGetProperty("Plugin", out var plugin))
+            return true;
+        if (plugin.ValueKind != JsonValueKind.String)
+            throw new InvalidDataException("Veyon 网络对象目录插件标识无效。");
+        var pluginText = plugin.GetString()?.Trim();
+        if (string.IsNullOrEmpty(pluginText))
+            return true;
+        return Guid.TryParse(pluginText, out var pluginId) && pluginId == BuiltinDirectoryPluginId;
     }
 
     private static string ProcessDetail(ProcessRunner runner)

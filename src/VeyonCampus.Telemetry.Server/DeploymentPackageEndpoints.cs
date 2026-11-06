@@ -418,8 +418,8 @@ internal static class DeploymentPackageEndpoints
         var supportedFields = new HashSet<string>(StringComparer.Ordinal) { "archive", "files" };
         if (form.Files.Any(file => !supportedFields.Contains(file.Name)))
             throw new InvalidDataException("Only the archive or files multipart field is accepted.");
-        if (form.Files.Count is < 1 or > 6)
-            throw new InvalidDataException("Upload one ZIP archive or a package folder containing at most six files.");
+        if (form.Files.Count is < 1 or > 8)
+            throw new InvalidDataException("Upload one ZIP archive or a package folder containing at most eight files.");
 
         var archives = form.Files.Where(file => file.Name == "archive").ToArray();
         var folderFiles = form.Files.Where(file => file.Name == "files").ToArray();
@@ -482,7 +482,7 @@ internal static class DeploymentPackageEndpoints
                     await file.CopyToAsync(output, cancellationToken);
                 }
 
-                // Create() enforces schema v3/v4/v5/v6, the fixed public-key file set, hashes,
+                // Create() enforces schema v3-v8, the fixed public-key file set, hashes,
                 // campus.json consistency, no private keys, no extra paths and only the approved telemetry URL.
                 var canonicalFolderArchive = CampusConfigurationArchive.Create(packageRoot);
                 var unpackedRoot = Path.Combine(stagingRoot, "validated");
@@ -490,9 +490,9 @@ internal static class DeploymentPackageEndpoints
             }
 
             var package = PackageManifest.Load(packageDirectory);
-            if (package.SchemaVersion is not (3 or 4 or 5 or 6) || package.WebsitePolicyPublicKeyPath is null ||
+            if (package.SchemaVersion is not (3 or 4 or 5 or 6 or 7 or 8) || package.WebsitePolicyPublicKeyPath is null ||
                 !AnonymousUsageHeartbeat.IsAllowedPackageEndpoint(package.TelemetryEndpoint))
-                throw new InvalidDataException("Only schemaVersion=3/4/5/6 packages with an empty or approved project telemetry endpoint can be published.");
+                throw new InvalidDataException("Only schemaVersion=3 through 8 packages with an empty or approved project telemetry endpoint can be published.");
 
             using var manifest = JsonDocument.Parse(await File.ReadAllBytesAsync(
                 Path.Combine(packageDirectory, "manifest.json"), cancellationToken));

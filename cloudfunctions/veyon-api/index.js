@@ -1566,10 +1566,10 @@ async function handleDownload(request, response, config, packageId) {
   const artifact = downloadAuthorization;
   const compactPackageId = packageId.replace(/-/g, '').toLowerCase();
   const storageKeyVersion = typeof artifact.storage_key === 'string'
-    ? /^deployment-packages\/v([3456])\/[^/]+$/.exec(artifact.storage_key)
+    ? /^deployment-packages\/v([345678])\/[^/]+$/.exec(artifact.storage_key)
     : null;
   const schemaVersion = storageKeyVersion ? Number(storageKeyVersion[1]) : null;
-  if (![3, 4, 5, 6].includes(schemaVersion)) {
+  if (![3, 4, 5, 6, 7, 8].includes(schemaVersion)) {
     sendProblem(response, 502, 'The published artifact is temporarily unavailable.');
     return;
   }
@@ -1883,6 +1883,86 @@ async function readSiteDownloadSettings(config) {
   return table(config, 'site_download_settings', query);
 }
 
+// Release notes are human-readable text shown by the teacher console next to "检查更新". They are
+// deliberately kept out of the signed release manifest: older clients reject unknown manifest fields,
+// and this text is informational only, never an input to signature or digest checks.
+const RELEASE_NOTES_MAX_CHARACTERS = 20000;
+const RELEASE_NOTES_CACHE_MILLISECONDS = 10 * 60 * 1000;
+const releaseNotesCache = new Map();
+
+async function requestReleaseNotesForVersion(source, version) {
+  const github = source === 'github';
+  const owner = github ? GITHUB_RELEASE_OWNER : GITCODE_RELEASE_OWNER;
+  const repository = github ? GITHUB_RELEASE_REPOSITORY : GITCODE_RELEASE_REPOSITORY;
+  const releaseUrl = new URL(`/repos/${owner}/${repository}/releases/tags/v${version}`,
+    github ? GITHUB_API_BASE_URL : GITCODE_API_BASE_URL);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const response = await fetch(releaseUrl, {
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Veyon-Campus-Release-Notes'
+      },
+      cache: 'no-store',
+      credentials: 'omit',
+      redirect: 'error',
+      signal: controller.signal
+    });
+    if (!response.ok) {
+      if (response.body) void response.body.cancel().catch(() => {});
+      return null;
+    }
+    const bytes = await readResponseBuffer(response, 512 * 1024);
+    const release = JSON.parse(bytes.toString('utf8'));
+    const body = typeof release?.body === 'string' ? release.body : null;
+    if (body === null || release?.tag_name !== `v${version}`) return null;
+    return body;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeReleaseNotesText(value) {
+  const text = value.replace(/\r\n?/g, '\n')
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return text.length > RELEASE_NOTES_MAX_CHARACTERS
+    ? text.slice(0, RELEASE_NOTES_MAX_CHARACTERS) + '\n…'
+    : text;
+}
+
+async function handleReleaseNotes(response, url) {
+  const version = url.searchParams.get('version') || '';
+  if (!/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(version)) {
+    sendJson(response, 400, { error: 'version must be a semantic version' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+  const cached = releaseNotesCache.get(version);
+  if (cached && cached.expiresAt > Date.now()) {
+    sendJson(response, 200, { version, notes: cached.notes }, { 'Cache-Control': 'public, max-age=300' });
+    return;
+  }
+  const raw = await requestReleaseNotesForVersion('gitcode', version) ??
+    await requestReleaseNotesForVersion('github', version);
+  if (raw === null) {
+    sendJson(response, 404, { error: '未找到该版本的更新说明。' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+  const notes = normalizeReleaseNotesText(raw);
+  if (notes.length === 0) {
+    sendJson(response, 404, { error: '该版本没有更新说明。' }, { 'Cache-Control': 'no-store' });
+    return;
+  }
+  if (releaseNotesCache.size >= 64) releaseNotesCache.clear();
+  releaseNotesCache.set(version, { notes, expiresAt: Date.now() + RELEASE_NOTES_CACHE_MILLISECONDS });
+  sendJson(response, 200, { version, notes }, { 'Cache-Control': 'public, max-age=300' });
+}
+
 async function handleDownloadPageConfig(response, config) {
   try {
     const rows = await readSiteDownloadSettings(config);
@@ -2162,6 +2242,10 @@ function createRequestHandler(config) {
       }
       if (request.method === 'GET' && pathname === '/v1/releases/latest') {
         await handleLatestRelease(request, response, config, url);
+        return;
+      }
+      if (request.method === 'GET' && pathname === '/v1/releases/notes') {
+        await handleReleaseNotes(response, url);
         return;
       }
       if (request.method === 'GET' && pathname === '/v1/download-page-config') {

@@ -19,6 +19,15 @@
           <TextBlock Text="{Binding TeacherUpdateProgressText}" Classes="supporting-copy" TextWrapping="Wrap"
                      IsVisible="{Binding IsTeacherUpdateProgressVisible}" />
           <TextBlock Text="{Binding TeacherUpdateStatus}" Classes="supporting-copy" TextWrapping="Wrap" />
+          <Expander Header="{Binding TeacherUpdateNotesHeader}"
+                    Theme="{StaticResource App.DetailExpander}"
+                    IsExpanded="True"
+                    IsVisible="{Binding HasTeacherUpdateNotes}">
+            <ScrollViewer MaxHeight="300" VerticalScrollBarVisibility="Auto" Margin="0,8,0,0">
+              <SelectableTextBlock Text="{Binding TeacherUpdateNotes}" Classes="supporting-copy"
+                                   TextWrapping="Wrap" />
+            </ScrollViewer>
+          </Expander>
           <Expander Header="离线更新" Theme="{StaticResource App.DetailExpander}" IsExpanded="False">
             <StackPanel Spacing="8" Margin="0,8,0,0">
               <WrapPanel Orientation="Horizontal">
@@ -64,6 +73,13 @@
           <Border x:Name="ConfigurationSyncSection" Classes="subtle-panel">
             <StackPanel Spacing="9">
               <TextBlock Text="教师连接配置" Classes="component-title" />
+              <TextBlock Text="将当前教师端的安全连接地址与证书同步到已选学生机，供课堂状态与双向通信使用。"
+                         Classes="muted" TextWrapping="Wrap" />
+              <Button Classes="secondary" Content="同步教师连接配置"
+                      Click="RequestSyncStudentConfiguration"
+                      IsEnabled="{Binding CanSyncStudentConfiguration}"
+                      ToolTip.Tip="逐台核验学生 Agent 身份后同步教师连接配置，并读回确认。"
+                      HorizontalAlignment="Left" />
               <TextBlock Text="{Binding StudentConfigurationSyncStatus}"
                          Classes="supporting-copy" TextWrapping="Wrap" />
               <ProgressBar Minimum="0" Maximum="100"

@@ -42,7 +42,7 @@
                  IsVisible="{Binding HasCampusDirectoryError}" TextWrapping="Wrap" />
       <Border Classes="card">
         <StackPanel Spacing="12">
-          <Grid ColumnDefinitions="*" ColumnSpacing="14">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="14">
             <StackPanel Spacing="4">
               <TextBlock Text="机房座位图" FontSize="20" FontWeight="SemiBold" />
               <TextBlock Text="{Binding SeatGridContext}" Classes="muted" TextWrapping="Wrap"
@@ -50,6 +50,10 @@
               <TextBlock Text="座位图和学生姓名保存在教师电脑；从 Veyon 删除地点不会删除本机档案。"
                          Classes="muted" TextWrapping="Wrap" IsVisible="{Binding HasSeatMap}" />
             </StackPanel>
+            <Button Grid.Column="1" Classes="secondary" Content="返回首次设置向导"
+                    Click="RequestReturnToTeacherSetupWizard"
+                    IsVisible="{Binding CanReturnToTeacherSetupWizard}"
+                    VerticalAlignment="Center" />
           </Grid>
           <Grid ColumnDefinitions="*,16,*" IsVisible="{Binding HasNoSeatMap}">
             <StackPanel Spacing="8">
@@ -68,6 +72,10 @@
           <Button Classes="primary" Content="开始编辑座位图" Click="RequestPrepareRoomSeatGrid"
                   IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
                   HorizontalAlignment="Left" />
+          <TextBlock Text="{Binding SeatMapStatus}" Classes="muted"
+                     IsVisible="{Binding HasNoSeatMapInfo}" TextWrapping="Wrap" />
+          <TextBlock Text="{Binding SeatMapStatus}" Foreground="{DynamicResource Teacher.Color.Danger}"
+                     IsVisible="{Binding HasNoSeatMapError}" TextWrapping="Wrap" />
           <StackPanel IsVisible="{Binding HasSeatMap}">
             <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12" Margin="0,4,0,8">
               <TextBlock Text="{Binding SeatGridSummary}" VerticalAlignment="Center" />
@@ -151,9 +159,9 @@
                             IsEnabled="{Binding CanEdit}"
                             PointerEntered="AxisHeaderPointerEntered" PointerExited="AxisHeaderPointerExited"
                             Click="RequestDeleteSeatAxis"
-                            Margin="2" Width="76" Height="24" Padding="0">
+                            Margin="1" Width="60" Height="22" Padding="0">
                       <Grid>
-                        <TextBlock Text="{Binding Label}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Label}" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         <TextBlock Text="−" IsVisible="False" FontSize="16" FontWeight="Bold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Grid>
@@ -172,9 +180,9 @@
                             IsEnabled="{Binding CanEdit}"
                             PointerEntered="AxisHeaderPointerEntered" PointerExited="AxisHeaderPointerExited"
                             Click="RequestDeleteSeatAxis"
-                            Margin="1" Width="24" Height="48" Padding="0">
+                            Margin="1" Width="20" Height="40" Padding="0">
                       <Grid>
-                        <TextBlock Text="{Binding Label}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        <TextBlock Text="{Binding Label}" FontSize="10" HorizontalAlignment="Center" VerticalAlignment="Center" />
                         <TextBlock Text="−" IsVisible="False" FontSize="16" FontWeight="Bold"
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                       </Grid>
@@ -196,7 +204,7 @@
                             ToolTip.Tip="{Binding TooltipText}"
                             Click="RequestSeatCellClicked"
                             PointerPressed="SeatCellPointerPressed"
-                            Margin="2" Width="76" Height="48" MinHeight="48" Padding="4,3">
+                            Margin="1" Width="60" Height="40" MinHeight="40" Padding="2,1">
                       <Button.ContextMenu>
                         <ContextMenu x:CompileBindings="False" Opening="SeatCellContextMenuOpening">
                           <MenuItem Header="删除此座位" IsVisible="{Binding ShowDeleteLocalSeat}"
@@ -208,10 +216,10 @@
                                     Click="RequestDeleteSeatComputer" />
                         </ContextMenu>
                       </Button.ContextMenu>
-                      <StackPanel Spacing="2" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding ComputerIdLabel}" FontSize="11" FontWeight="Bold"
+                      <StackPanel Spacing="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding ComputerIdLabel}" FontSize="9" FontWeight="Bold"
                                    HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding StudentNameLabel}" FontSize="11" FontWeight="Normal"
+                        <TextBlock Text="{Binding StudentNameLabel}" FontSize="9" FontWeight="Normal"
                                    Classes.emptyName="{Binding IsStudentNameMissing}"
                                    HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
                       </StackPanel>

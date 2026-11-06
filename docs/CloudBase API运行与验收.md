@@ -134,11 +134,11 @@ PostgreSQL 迁移验证脚本会创建测试表和角色，只能对一次性空
 函数部署配置位于根目录 cloudbaserc.json，部署脚本为 scripts/deploy-cloudbase-api.sh。脚本会：
 
 1. 要求显式传入 --confirm-public-api，确认这是供教师和学生使用的公网 API。
-2. 在读取任何本地密钥文件前，要求交互输入确认，或由调用环境设置 `CLOUDBASE_SERVICE_ROLE_KEY_ROTATED=yes`；非交互运行缺少此确认时立即退出。
+2. 在读取任何本地密钥文件前，要求确认新的 service API Key 已创建并写入本地，或由调用环境设置 `CLOUDBASE_SERVICE_ROLE_KEY_ROTATED=yes`；非交互运行缺少此确认时立即退出。
 3. 通过轮换门后，才从 Git 忽略的 .env.cloudbase.local 读取 CLOUDBASE_SERVICE_ROLE_KEY、稳定的 TELEMETRY_DAILY_HASH_KEY 和 `CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW=yes` 标记；不会输出这些值。
 4. 通过进程级国内 DNS 包装器运行 CLI；检查 isIntl=false、目标环境/地域、所需迁移和代码包完整性。
 5. 以 Nodejs20.19、HTTP 函数、ZIP 模式部署本地 cloudfunctions/veyon-api，不调用 TCR。
-6. 退出时从部署脚本环境清除服务密钥变量。
+6. 退出时从部署脚本环境清除服务密钥变量。确认新函数已正常运行后，再到 CloudBase 撤销旧 service API Key。
 
 bash scripts/deploy-cloudbase-api.sh --confirm-public-api
 

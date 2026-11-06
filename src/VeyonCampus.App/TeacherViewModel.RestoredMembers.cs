@@ -673,6 +673,28 @@ public sealed partial class TeacherViewModel
         }
     }
 
+    /// <summary>
+    /// Release notes of the version the update points at. They are informational text fetched
+    /// separately from the signed manifest, so a failure to load them must never block an update.
+    /// </summary>
+    public string TeacherUpdateNotes
+    {
+        get => _teacherUpdateNotes;
+        private set
+        {
+            if (_teacherUpdateNotes == value) return;
+            _teacherUpdateNotes = value;
+            Changed();
+            Changed(nameof(HasTeacherUpdateNotes));
+        }
+    }
+
+    public bool HasTeacherUpdateNotes => _teacherUpdateNotes.Length > 0;
+
+    public string TeacherUpdateNotesHeader => _teacherUpdateNotesVersion is { Length: > 0 } version
+        ? $"更新内容（{version}）"
+        : "更新内容";
+
     public string OfflineTeacherUpdateStatus
     {
         get => _offlineTeacherUpdateStatus;

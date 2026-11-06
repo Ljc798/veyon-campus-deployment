@@ -400,6 +400,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private bool _isStudentUpdateProgressVisible, _studentUpdateProgressIsIndeterminate = true;
     private string _teacherUpdateProgressText = "", _studentUpdateProgressText = "";
     private string _teacherUpdateLatestVersion = "尚未检查";
+    private string _teacherUpdateNotes = "";
+    private string? _teacherUpdateNotesVersion;
     private string _offlineTeacherUpdateStatus = "安装器和配套清单需放在一起。";
     private string _studentUpdateStatus = "尚未向学生电脑发送更新。";
     private string _studentAgentIdentityDetails = "";
@@ -500,6 +502,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         }
         _websiteObservedAddress = LoadWebsiteObservedAddress();
         LoadCampusDirectory();
+        if (!HasCampusProfiles) _selectedPage = "setup";
         _packagePublisher = new DeploymentPackagePublishingClient();
         try { _releaseClient = new ApplicationReleaseClient(); }
         catch (Exception exception) when (exception is InvalidOperationException or InvalidDataException)
@@ -653,6 +656,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(CanRetrySeatMapSync));
             Changed(nameof(CanRetryInitialSeatGridImport));
             Changed(nameof(CanPrepareRoomSeatGrid));
+            Changed(nameof(CanReturnToTeacherSetupWizard));
             Changed(nameof(CanCheckRoomConflicts));
             Changed(nameof(CanPublishStudentPackage));
             Changed(nameof(CanCheckTeacherUpdate));
@@ -1352,13 +1356,21 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         RefreshSeatMapCells();
     }
 
-    public void PrepareCurrentRoomSeatGrid()
+    public async Task PrepareCurrentRoomSeatGrid()
     {
         if (!CanPrepareRoomSeatGrid)
         {
             SeatMapStatus = "请先填写校区和地点名称。";
             return;
         }
+        if (!TryBeginExclusiveTask())
+        {
+            SeatMapStatus = "另一项教师端操作正在运行；请稍后再创建 Veyon 地点。";
+            return;
+        }
+
+        var locationName = RoomLocationName.Trim();
+        var veyonLocationVerified = false;
         try
         {
             if (!TrySaveCurrentRoomProfile(out var error))
@@ -1366,14 +1378,70 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 SeatMapStatus = "无法保存地点信息；座位表尚未建立。" + error;
                 return;
             }
+
+            if (OperatingSystem.IsWindows())
+            {
+                SeatMapStatus = $"正在检查 Veyon 并创建或核对地点“{locationName}”；暂不添加电脑……";
+                var veyon = await Task.Run(VeyonFacts.Probe);
+                if (veyon.Status != "installed" || !VeyonFacts.IsSupportedVersionDetail(veyon.VersionDetail))
+                {
+                    SeatMapStatus = $"无法在 Veyon 创建地点；座位表尚未建立。需要先安装并确认 Veyon {VeyonInstallerTrust.Version}。\n{veyon.AsText()}";
+                    return;
+                }
+
+                var response = await ElevatedWorkerClient.ExecuteAsync(VeyonCampusRole.TeacherConsole,
+                    (requestId, caller) => new PrivilegedWorkerRequest(
+                        PrivilegedWorkerProtocol.CurrentVersion, requestId, caller,
+                        PrivilegedWorkerOperation.AddVeyonRoom,
+                        LocationName: locationName, Computers: Array.Empty<VeyonNetworkComputer>()));
+                if (!response.Result.Ok)
+                {
+                    SeatMapStatus = "无法在 Veyon 创建地点；座位表尚未建立。" + response.Result.Detail;
+                    return;
+                }
+                veyonLocationVerified = true;
+            }
+
             BeginSeatMapEdit();
-            SeatMapStatus = "机房已保存在教师电脑；已有电脑编号保持固定，新座位默认待编号。";
+            SeatMapStatus = veyonLocationVerified
+                ? $"Veyon 地点“{locationName}”已创建并核对，机房信息也已保存在教师电脑；请继续添加座位和电脑编号。"
+                : "机房已保存在教师电脑；已有电脑编号保持固定，新座位默认待编号。";
         }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                          InvalidDataException or FormatException or OverflowException)
+        catch (Exception exception) when (exception is not OutOfMemoryException and
+                                          not StackOverflowException and not AccessViolationException)
         {
-            SeatMapStatus = "无法建立座位表；本机资料未更改。" + exception.Message;
+            SeatMapStatus = "无法在 Veyon 创建地点或建立座位表；本机机房资料已保留。" + exception.Message;
         }
+        finally
+        {
+            try
+            {
+                if (veyonLocationVerified)
+                {
+                    try
+                    {
+                        var viewsRefreshed = await RefreshDirectoryViewsAfterVeyonWriteAsync(locationName);
+                        if (!viewsRefreshed && !HasSeatMapError)
+                            SeatMapStatus = "Veyon 地点已创建并核对；本机策略和课堂名单刷新失败，请稍后重新读取目录。";
+                    }
+                    catch (Exception exception) when (exception is not OutOfMemoryException and
+                                                      not StackOverflowException and not AccessViolationException)
+                    {
+                        SeatMapStatus = "Veyon 地点已创建并核对；本机名单刷新失败，请稍后重新读取目录。" + exception.Message;
+                    }
+                }
+            }
+            finally { EndExclusiveTask(); }
+        }
+    }
+
+    public void ReturnToTeacherSetupWizard()
+    {
+        if (!CanReturnToTeacherSetupWizard) return;
+        _returnToSetupAfterRoomConfiguration = false;
+        Changed(nameof(CanReturnToTeacherSetupWizard));
+        SetTeacherSetupWizardStep(2);
+        SelectPage("setup");
     }
 
     public void AssignMissingSeatComputerNumbers()
@@ -3462,6 +3530,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(IsClassroomWorkspacePage)); Changed(nameof(IsUpdatesPage)); Changed(nameof(IsHealthCenterPage));
         Changed(nameof(IsTeacherAboutPage));
         Changed(nameof(IsRoomPage)); Changed(nameof(IsSetupPage));
+        Changed(nameof(CanReturnToTeacherSetupWizard));
         Changed(nameof(IsTeacherSetupPackageStepVisible));
         Changed(nameof(ClassroomQuickControlPresetSummary));
         if (page is "classroom" or "updates")
