@@ -236,6 +236,40 @@
           <Border Classes="status-panel danger" Padding="12" IsVisible="{Binding HasPackageOutputError}">
             <TextBlock Text="{Binding PackageOutputError}" TextWrapping="Wrap" />
           </Border>
+          <Border Classes="card" IsVisible="{Binding HasPackageOutput}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="发布到云端（可选）" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" TextWrapping="Wrap"
+                         Text="发布后学生端可以按校区名称搜索，并输入教师手机号后四位完成绑定。不发布也不影响离线部署。" />
+              <TextBlock Text="配置包文件夹" FontWeight="SemiBold" />
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBox Text="{Binding PublishPackageDirectory, Mode=TwoWay}" IsReadOnly="True"
+                         PlaceholderText="选择刚生成的学生配置包文件夹" HorizontalAlignment="Stretch" />
+                <Button Grid.Column="1" Content="选择配置包" Click="RequestChoosePublishPackageDirectory" />
+              </Grid>
+              <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="发布者姓名" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding PublisherName, Mode=TwoWay}" PlaceholderText="例如：张老师" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Spacing="6">
+                  <TextBlock Text="教师手机号后四位" FontWeight="SemiBold" />
+                  <TextBox Text="{Binding TeacherPhoneLast4, Mode=TwoWay}" MaxLength="4"
+                           PlaceholderText="4 位数字" />
+                </StackPanel>
+              </Grid>
+              <Button Classes="primary" Content="发布到云端" Click="RequestPublishStudentPackage"
+                      IsEnabled="{Binding CanPublishStudentPackage}" />
+              <TextBlock Text="{Binding PackagePublisherStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding HasPackagePublisherStatus}" />
+              <Border Classes="status-panel success" Padding="12" IsVisible="{Binding HasPackagePublishResult}">
+                <TextBlock Text="{Binding PackagePublishResult}" TextWrapping="Wrap" />
+              </Border>
+              <Border Classes="status-panel danger" Padding="12" IsVisible="{Binding HasPackagePublisherError}">
+                <TextBlock Text="{Binding PackagePublisherError}" TextWrapping="Wrap" />
+              </Border>
+            </StackPanel>
+          </Border>
         </StackPanel>
       </Border>
     </StackPanel>

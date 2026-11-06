@@ -1108,6 +1108,14 @@ public static class WebsitePolicyAgentInstaller
             return;
         }
 
+        // An update that died while the previous setup was preserved leaves a journal whose rollback
+        // can never run. Retire it here as well as in the update path, otherwise uninstall is blocked
+        // forever by a transaction that has no work left to do.
+        if (record.State == StudentUpdateTransactionState.PreviousSetupPreserved &&
+            StudentUpdateAtomicTransaction.TryDiscardStalePreservedTransaction(fullConfigPath,
+                ReadInstalledAgentVersion()))
+            return;
+
         var expectedArguments = "--recover-student-update " + Quote(fullConfigPath);
         string? recoveryTaskName = null;
         foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })

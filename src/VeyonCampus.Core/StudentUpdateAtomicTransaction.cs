@@ -607,11 +607,17 @@ public static class StudentUpdateAtomicTransaction
     }
 
     /// <summary>
-    /// Retires a "previous setup preserved" journal that no longer describes this computer: a newer
-    /// StudentSetup and Agent were installed afterwards, so the interrupted update can no longer be
-    /// rolled back to its original version. Left in place, that journal keeps the pinned legacy
-    /// recovery task replaying an impossible transition forever, which blocks every Agent update.
-    /// Only the verified live installation is kept; nothing is uninstalled or downgraded.
+    /// Retires a "previous setup preserved" journal that no longer describes this computer, so the
+    /// interrupted update can never be rolled back to its original version. Left in place, that
+    /// journal keeps the pinned legacy recovery task replaying an impossible transition forever,
+    /// which blocks every Agent update and blocks uninstall.
+    /// <para>
+    /// Two shapes converge here: the failed-update case, where the <em>previous</em> setup is still
+    /// the installed one, and the interrupted-handoff case, where the target setup did install but
+    /// the journal never advanced. Both are retired only after the live Agent tree, its version and
+    /// its configuration fingerprint are verified, and never while an installer is still running.
+    /// Nothing is uninstalled or downgraded.
+    /// </para>
     /// </summary>
     public static bool TryDiscardStalePreservedTransaction(string configPath, string? installedAgentVersion)
     {
@@ -627,8 +633,20 @@ public static class StudentUpdateAtomicTransaction
         {
             if (!OperatingSystem.IsWindows()) return false;
             var installedSetupVersion = ReadVerifiedInstalledSetupVersion();
-            if (ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.PreviousSetupVersion) <= 0 ||
-                ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.TargetSetupVersion) <= 0)
+            // A failed update leaves the PREVIOUS StudentSetup installed, so requiring a strictly
+            // newer version than both the previous and the target setup can never converge: the
+            // common case is installed == PreviousSetupVersion. installed == TargetSetupVersion is
+            // the other common shape, where the new setup did install but the journal never advanced
+            // past this state. Both are safe to retire because the live tree is fully verified below.
+            // Only a downgrade below the preserved setup is refused: then the live files no longer
+            // match anything the journal describes.
+            if (ApplicationReleaseClient.CompareVersions(installedSetupVersion, record.PreviousSetupVersion) < 0)
+                return false;
+            // Never retire a journal another process may still be driving. A live update keeps the
+            // new installer running while this state is current, and the journal is not rewritten
+            // during that window, so elapsed time alone cannot tell a slow install from a dead one.
+            if (VeyonCampusProcessCleanup.IsUpdateInstallerRunning("StudentSetup") ||
+                record.UpdatedUtc > DateTimeOffset.UtcNow.Subtract(TimeSpan.FromMinutes(2)))
                 return false;
 
             var currentAgentPath = WebsitePolicyAgentInstaller.ReadManagedAgentExecutablePath(configPath);

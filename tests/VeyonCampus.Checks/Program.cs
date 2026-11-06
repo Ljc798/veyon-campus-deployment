@@ -1172,6 +1172,13 @@ Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID �
     Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("BuiltinDirectory", "LocalData")).Count == 3);
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory(json.Replace("33333333-3333-3333-3333-333333333333", "22222222-2222-2222-2222-222222222222")));
     Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":\"invalid\"}}"));
+    // First run on a fresh Veyon: the built-in directory section exists but holds no objects yet.
+    // That must read as an empty directory so the teacher can create the first location, while a
+    // config with no directory section at all still has to be refused.
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{}}").Count == 0);
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"BuiltinDirectory\":{\"NetworkObjects\":null}}").Count == 0);
+    Expect(VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{\"LocalData\":{}}").Count == 0);
+    Reject(() => VeyonNetworkObjectDirectory.ParseConfigurationDirectory("{}"));
 });
 Check("Veyon 注册表目录快照可在 veyon-cli 无法启动时恢复名单", () =>
 {

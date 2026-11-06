@@ -46,7 +46,9 @@
           ReplaceWebsiteSigningKeyRequested="ReplaceWebsiteSigningKey"
           ChooseTrustMigrationSourceRequested="ChooseTrustMigrationSourcePackage"
           ImportMacVeyonPrivateKeyRequested="ChooseMacVeyonPrivateKey"
-          ChooseStudentPackageOutputDirectoryRequested="ChooseStudentPackageOutputDirectory" />
+          ChooseStudentPackageOutputDirectoryRequested="ChooseStudentPackageOutputDirectory"
+          PublishStudentPackageRequested="PublishStudentPackage"
+          ChoosePublishPackageDirectoryRequested="ChoosePublishPackageDirectory" />
     </DataTemplate>
     <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">

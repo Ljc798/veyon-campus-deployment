@@ -91,15 +91,50 @@ public static class VeyonCampusProcessCleanup
         }
     }
 
+    private static string UpdateInstallerPrefix(string role) => role switch
+    {
+        "StudentSetup" => "VeyonCampus-Student-Setup-",
+        "TeacherConsole" => "VeyonCampus-Teacher-Setup-",
+        _ => throw new ArgumentException("Veyon Campus 程序角色无效。", nameof(role))
+    };
+
+    /// <summary>
+    /// True while any process for this role's update installer is running, wherever its image lives.
+    /// The installer carries its version in the file name
+    /// (VeyonCampus-Student-Setup-&lt;version&gt;-win-x64.exe), so a prefix match covers every build.
+    /// Callers use this to avoid acting on state a live install may still be rewriting; unlike
+    /// <see cref="StopInstalledRoleProcesses"/> it does not restrict the image to the staging root,
+    /// because an installer started by hand from Downloads is just as live.
+    /// </summary>
+    public static bool IsUpdateInstallerRunning(string role)
+    {
+        if (!OperatingSystem.IsWindows()) return false;
+        var prefix = UpdateInstallerPrefix(role);
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (process.ProcessName.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        return true;
+                }
+                catch (Exception exception) when (exception is InvalidOperationException or Win32Exception)
+                {
+                    // A process that exited between enumeration and inspection is not a running installer.
+                }
+            }
+        }
+        return false;
+    }
+
     private static void ThrowIfUpdateInstallerIsRunning(string role,
         IReadOnlyCollection<string> programFilesRoots)
     {
         var stagingRoots = programFilesRoots
             .Select(programFiles => Path.Combine(programFiles, "Veyon Campus", "UpdateStaging"))
             .ToArray();
-        var installerPrefix = role == "StudentSetup"
-            ? "VeyonCampus-Student-Setup-"
-            : "VeyonCampus-Teacher-Setup-";
+        var installerPrefix = UpdateInstallerPrefix(role);
         foreach (var process in Process.GetProcesses())
         {
             using (process)
