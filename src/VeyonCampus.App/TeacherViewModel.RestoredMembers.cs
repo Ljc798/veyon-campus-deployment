@@ -1377,12 +1377,15 @@ private IReadOnlyDictionary<string, string> ResolveClassroomStudentDisplayNames(
             }
         }
 
-        for (var index = 0; index < targets.Count; index++)
+        foreach (var target in targets)
         {
-            var target = targets[index];
-            var sessionTarget = index < session.Targets.Length ? session.Targets[index] : null;
+            // Resolve the session target by its own label, never by list position: the caller may hand
+            // us network targets in a different order than the session recorded them.
+            var sessionTarget = session.Targets.FirstOrDefault(item =>
+                string.Equals(item.DeviceLabel, target, StringComparison.OrdinalIgnoreCase));
             var deviceLabel = sessionTarget?.DeviceLabel ?? "";
-            var seat = FindUniqueClassroomSeat(seats, sessionTarget?.TargetId, target, deviceLabel);
+            var snapshotNumber = ResolveSnapshotComputerNumber(session.Room, deviceLabel);
+            var seat = FindUniqueClassroomSeat(seats, sessionTarget?.TargetId, target, deviceLabel, snapshotNumber);
 
             var studentName = seat?.StudentName?.Trim();
             if ((string.IsNullOrWhiteSpace(studentName) || studentName == "未填写姓名") &&
@@ -1398,8 +1401,15 @@ private IReadOnlyDictionary<string, string> ResolveClassroomStudentDisplayNames(
         return names;
     }
 
+/// <summary>
+/// Resolves the single saved seat that belongs to one classroom target. Resolution is ordered by
+/// identity strength: the Veyon object UUID first, then a recorded host/computer alias, and only
+/// then the snapshot computer number for seats that carry no Veyon identity at all. Every stage
+/// returns null when two seats claim the same key, so an ambiguous map never labels the wrong student.
+/// </summary>
 private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(
-        IReadOnlyList<ClassroomSeatGridLocation> seats, Guid? deviceId, string target, string deviceLabel)
+        IReadOnlyList<ClassroomSeatGridLocation> seats, Guid? deviceId, string target, string deviceLabel,
+        int? snapshotComputerNumber = null)
     {
         if (deviceId is { } id)
         {
@@ -1408,15 +1418,47 @@ private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(
             if (identityMatches.Length > 0) return identityMatches.Length == 1 ? identityMatches[0] : null;
         }
 
-        var aliasMatches = seats.Where(item => !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
-                (string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(target),
-                     StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(deviceLabel),
-                     StringComparison.OrdinalIgnoreCase)))
+        var aliasMatches = seats.Where(item =>
+                (!string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
+                 (string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(target),
+                      StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(deviceLabel),
+                      StringComparison.OrdinalIgnoreCase))) ||
+                (!string.IsNullOrWhiteSpace(item.VeyonComputerName) &&
+                 (string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(deviceLabel),
+                      StringComparison.OrdinalIgnoreCase) ||
+                  string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(target),
+                      StringComparison.OrdinalIgnoreCase))))
             .DistinctBy(item => item.SeatId).Take(2).ToArray();
         if (aliasMatches.Length > 0) return aliasMatches.Length == 1 ? aliasMatches[0] : null;
+
+        // A session created before the UUID directory existed only knows the snapshot's computer
+        // numbers, so a seat that is still unbound can be identified by its own number. Seats that
+        // already own a Veyon identity are never matched this way: their identity is authoritative.
+        if (snapshotComputerNumber is { } number)
+        {
+            var numberMatches = seats.Where(item => item.SeatNumber == number && item.VeyonObjectId is null)
+                .DistinctBy(item => item.SeatId).Take(2).ToArray();
+            if (numberMatches.Length > 0) return numberMatches.Length == 1 ? numberMatches[0] : null;
+        }
+
         return null;
     }
+
+/// <summary>
+/// Reads the computer number that the session snapshot itself assigned to a target label, so a
+/// legacy seat can be matched without trusting any array position or the live room profile.
+/// </summary>
+private static int? ResolveSnapshotComputerNumber(ClassroomRoomSnapshot room, string deviceLabel)
+{
+    if (string.IsNullOrWhiteSpace(deviceLabel)) return null;
+    var numbers = room.ComputerNumbers ??
+        (room.ComputerCount == 0
+            ? Array.Empty<int>()
+            : Enumerable.Range(room.StartNumber, room.ComputerCount).ToArray());
+    if (!MachineNaming.TryParseNumber(room.ComputerPrefix, deviceLabel, out var number)) return null;
+    return numbers.Contains(number) ? number : null;
+}
 
 internal void RefreshClassroomRestoreLedger(string? status = null)
     {
@@ -1781,7 +1823,8 @@ private string GetStudentNameForSessionTarget(ClassroomSession session, string d
         var sessionTarget = session.Targets.SingleOrDefault(item =>
             string.Equals(item.DeviceLabel, deviceLabel, StringComparison.OrdinalIgnoreCase));
         if (sessionTarget is null) return "未填写姓名";
-        var seat = FindUniqueClassroomSeat(seats, sessionTarget.TargetId, deviceLabel, deviceLabel);
+        var seat = FindUniqueClassroomSeat(seats, sessionTarget.TargetId, deviceLabel, deviceLabel,
+            ResolveSnapshotComputerNumber(session.Room, deviceLabel));
         return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
 

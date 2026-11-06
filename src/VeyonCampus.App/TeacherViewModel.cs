@@ -1731,16 +1731,16 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             var layout = _classroomSeatGridStore.GetLayout(active.Room.CampusProfileId, active.Room.RoomId,
                 active.Room.StartNumber);
-            var locationsByDeviceId = ClassroomSeatGridStore.GetLocations(layout)
-                .Where(location => location.VeyonObjectId is not null)
-                .ToDictionary(location => location.VeyonObjectId!.Value);
-            return active.Targets
-                .Where(target => locationsByDeviceId.ContainsKey(target.TargetId))
-                .ToDictionary(target => target.DeviceLabel, target =>
-                {
-                    var location = locationsByDeviceId[target.TargetId];
-                    return $"第 {location.Row} 排 · 第 {location.Column} 列";
-                }, StringComparer.OrdinalIgnoreCase);
+            var seats = ClassroomSeatGridStore.GetLocations(layout);
+            var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var target in active.Targets)
+            {
+                var seat = FindUniqueClassroomSeat(seats, target.TargetId, target.DeviceLabel,
+                    target.DeviceLabel, ResolveSnapshotComputerNumber(active.Room, target.DeviceLabel));
+                if (seat is null) continue;
+                labels[target.DeviceLabel] = $"第 {seat.Row} 排 · 第 {seat.Column} 列";
+            }
+            return labels;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidDataException)
         {

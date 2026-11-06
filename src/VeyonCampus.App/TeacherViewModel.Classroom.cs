@@ -4696,7 +4696,8 @@ public sealed partial class TeacherViewModel
             var sessionTarget = active.Targets.FirstOrDefault(item =>
                 string.Equals(item.DeviceLabel, target, StringComparison.OrdinalIgnoreCase));
             var deviceLabel = sessionTarget?.DeviceLabel ?? "";
-            var seat = FindUniqueClassroomSeat(seats, sessionTarget?.TargetId, target, deviceLabel);
+            var seat = FindUniqueClassroomSeat(seats, sessionTarget?.TargetId, target, deviceLabel,
+                ResolveSnapshotComputerNumber(active.Room, deviceLabel));
             var studentName = context.TargetDisplayNames.GetValueOrDefault(target, "未填写姓名");
             var seatName = seat is null ? "" : $"第 {seat.Row} 排 · 第 {seat.Column} 列";
             var title = string.IsNullOrWhiteSpace(studentName) ? "未填写姓名" : studentName;
