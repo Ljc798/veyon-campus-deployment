@@ -85,6 +85,11 @@ fi
 VERSION="${TAG#beta-}"
 VERSION="${VERSION#v}"
 
+# 试运行只下载与校验：不推送标签，也不读取 Token。
+if [ "$DRY_RUN" -eq 1 ] && [ "$SKIP_TAG_PUSH" -eq 0 ]; then
+  SKIP_TAG_PUSH=1
+fi
+
 STUDENT_NAME="VeyonCampus-Student-Setup-$VERSION-win-x64.exe"
 TEACHER_NAME="VeyonCampus-Teacher-Setup-$VERSION-win-x64.exe"
 CHECKSUMS_NAME="SHA256SUMS"
@@ -173,7 +178,34 @@ if [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
 fi
 info "源提交：$LOCAL_SHA"
 
-# 3. GitCode 源 tag
+# 3. Token（只在本进程内有效）
+# 标签同步和 Release 上传都需要 GitCode 写权限，所以先取 Token，避免让用户输两遍。
+TOKEN_FROM_PROMPT=0
+if [ "$DRY_RUN" -eq 0 ] && [ -z "${GITCODE_TOKEN:-}" ]; then
+  [ -t 0 ] || die "GITCODE_TOKEN 未设置，且当前不是交互终端"
+  printf 'GitCode Token（输入不回显）: ' >&2
+  stty -echo || true
+  if ! IFS= read -r GITCODE_TOKEN; then
+    stty echo || true
+    die "未读取到 GitCode Token"
+  fi
+  stty echo || true
+  printf '\n' >&2
+  export GITCODE_TOKEN
+  TOKEN_FROM_PROMPT=1
+fi
+
+cleanup() {
+  if [ "$TOKEN_FROM_PROMPT" -eq 1 ]; then
+    unset GITCODE_TOKEN
+  fi
+}
+trap cleanup EXIT
+
+export GITCODE_OWNER="${GITCODE_OWNER:-$DEFAULT_GITCODE_OWNER}"
+export GITCODE_REPO="${GITCODE_REPO:-$DEFAULT_GITCODE_REPO}"
+
+# 4. GitCode 源 tag
 if [ "$SKIP_TAG_PUSH" -eq 0 ]; then
   if ! git -C "$REPO_ROOT" remote get-url gitcode >/dev/null 2>&1; then
     info "添加 gitcode 远端 ..."
@@ -186,7 +218,12 @@ if [ "$SKIP_TAG_PUSH" -eq 0 ]; then
   fi
   if [ -z "$GITCODE_SHA" ]; then
     info "GitCode 缺少标签 ${TAG}，推送中 ..."
-    git -C "$REPO_ROOT" push gitcode "refs/tags/$TAG:refs/tags/$TAG"
+    # 认证信息只作为本次推送的地址参数传入，不写入 .git/config。
+    # 标签指向的提交及其祖先会随标签一起推过去，GitCode 侧不需要先有分支。
+    PUSH_URL="https://${GITCODE_OWNER}:${GITCODE_TOKEN}@gitcode.com/${GITCODE_OWNER}/${GITCODE_REPO}.git"
+    if ! git -C "$REPO_ROOT" push "$PUSH_URL" "refs/tags/${TAG}:refs/tags/${TAG}" 2>&1 | sed "s#${GITCODE_TOKEN}#***#g"; then
+      die "推送 GitCode 标签 ${TAG} 失败；请确认 Token 有该仓库的写权限"
+    fi
   elif [ "$GITCODE_SHA" != "$LOCAL_SHA" ]; then
     die "GitCode 标签 ${TAG} 指向 ${GITCODE_SHA}，与源提交 ${LOCAL_SHA} 不一致；不要强制覆盖，先核对两侧历史"
   else
@@ -196,7 +233,7 @@ else
   info "已跳过 GitCode tag 检查（--skip-tag-push）"
 fi
 
-# 4. 从 GitHub Release 下载附件
+# 5. 从 GitHub Release 下载附件
 RELEASE_JSON="$BUNDLE_DIR/.github-release.json"
 if ! gh release view "$TAG" -R "$GITHUB_REPO" --json tagName,isDraft,body > "$RELEASE_JSON"; then
   die "无法读取 GitHub Release $TAG"
@@ -223,7 +260,7 @@ for asset in "$STUDENT_NAME" "$TEACHER_NAME" "$CHECKSUMS_NAME"; do
     || die "下载 $asset 失败"
 done
 
-# 5. 本机校验摘要
+# 6. 本机校验摘要
 verify_bundle
 
 if [ "$DRY_RUN" -eq 1 ]; then
@@ -231,32 +268,6 @@ if [ "$DRY_RUN" -eq 1 ]; then
   info "目录：$BUNDLE_DIR"
   exit 0
 fi
-
-# 6. Token（只在本进程内有效）
-TOKEN_FROM_PROMPT=0
-if [ -z "${GITCODE_TOKEN:-}" ]; then
-  [ -t 0 ] || die "GITCODE_TOKEN 未设置，且当前不是交互终端"
-  printf 'GitCode Token（输入不回显）: ' >&2
-  stty -echo || true
-  if ! IFS= read -r GITCODE_TOKEN; then
-    stty echo || true
-    die "未读取到 GitCode Token"
-  fi
-  stty echo || true
-  printf '\n' >&2
-  export GITCODE_TOKEN
-  TOKEN_FROM_PROMPT=1
-fi
-
-cleanup() {
-  if [ "$TOKEN_FROM_PROMPT" -eq 1 ]; then
-    unset GITCODE_TOKEN
-  fi
-}
-trap cleanup EXIT
-
-export GITCODE_OWNER="${GITCODE_OWNER:-$DEFAULT_GITCODE_OWNER}"
-export GITCODE_REPO="${GITCODE_REPO:-$DEFAULT_GITCODE_REPO}"
 
 # 7. 上传并读回校验
 info "上传到 GitCode（${GITCODE_OWNER}/${GITCODE_REPO}）..."
