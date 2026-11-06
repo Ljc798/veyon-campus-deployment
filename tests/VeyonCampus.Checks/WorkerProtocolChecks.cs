@@ -63,6 +63,19 @@ internal static class WorkerProtocolChecks
                 PrivilegedWorkerProtocol.SerializeResponse(response)).Result.Status == ExecutionPlan.Cancelled);
             Expect(PrivilegedWorkerDispatcher.GetStepId(PrivilegedWorkerOperation.AddVeyonRoom) == "room-directory");
 
+            // A foreign step id must not erase the adapter's own diagnosis.
+            var foreignStep = new StepResult("teacher-auth", ExecutionPlan.Failed,
+                "教师端切换密钥认证失败（退出码 5）。", 5);
+            var alignedStep = PrivilegedWorkerDispatcher.AlignStepResult(foreignStep, "veyon-teacher-key");
+            Expect(alignedStep.StepId == "veyon-teacher-key" &&
+                   alignedStep.Status == ExecutionPlan.NeedsReview &&
+                   alignedStep.Detail.Contains("教师端切换密钥认证失败", StringComparison.Ordinal) &&
+                   alignedStep.Detail.Contains("teacher-auth", StringComparison.Ordinal) &&
+                   alignedStep.ExitCode == 5);
+            var matchingStep = new StepResult("veyon-teacher-key", ExecutionPlan.Succeeded, "ok");
+            Expect(ReferenceEquals(PrivilegedWorkerDispatcher.AlignStepResult(matchingStep, "veyon-teacher-key"),
+                matchingStep));
+
             var oversizedHeader = new byte[sizeof(int)];
             BinaryPrimitives.WriteInt32LittleEndian(oversizedHeader, PrivilegedWorkerProtocol.MaximumFrameBytes + 1);
             using var oversizedStream = new MemoryStream(oversizedHeader);
