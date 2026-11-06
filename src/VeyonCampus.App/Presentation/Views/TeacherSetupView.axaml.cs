@@ -24,6 +24,8 @@ public partial class TeacherSetupView : UserControl
     public event EventHandler<RoutedEventArgs>? ChooseTrustMigrationSourceRequested;
     public event EventHandler<RoutedEventArgs>? ImportMacVeyonPrivateKeyRequested;
     public event EventHandler<RoutedEventArgs>? ChooseStudentPackageOutputDirectoryRequested;
+    public event EventHandler<RoutedEventArgs>? PublishStudentPackageRequested;
+    public event EventHandler<RoutedEventArgs>? ChoosePublishPackageDirectoryRequested;
 
     private void RequestTeacherSetupStep1(object? sender, RoutedEventArgs e) =>
         TeacherSetupStep1Requested?.Invoke(sender, e);
@@ -75,4 +77,10 @@ public partial class TeacherSetupView : UserControl
 
     private void RequestChooseStudentPackageOutputDirectory(object? sender, RoutedEventArgs e) =>
         ChooseStudentPackageOutputDirectoryRequested?.Invoke(sender, e);
+
+    private void RequestPublishStudentPackage(object? sender, RoutedEventArgs e) =>
+        PublishStudentPackageRequested?.Invoke(sender, e);
+
+    private void RequestChoosePublishPackageDirectory(object? sender, RoutedEventArgs e) =>
+        ChoosePublishPackageDirectoryRequested?.Invoke(sender, e);
 }

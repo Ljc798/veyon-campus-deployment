@@ -833,6 +833,34 @@ begin
   RaiseException('Edge 扩展安装策略没有可用的数值位置；没有覆盖现有扩展策略。');
 end;
 
+(* Inno Setup keeps the uninstaller's messages in unins000.msg next to unins000.exe. If that file is
+   ever lost, unins000.exe aborts with "Messages file ... is missing" and the product can no longer be
+   removed from Apps & features, which strands the machine. Keep a copy beside the installer and
+   restore it whenever a re-install regenerated the uninstaller without regenerating its messages. *)
+procedure PreserveOrRestoreUninstallerMessages();
+var
+  MessagesPath: String;
+  MessagesBackupPath: String;
+begin
+  MessagesPath := ExpandConstant('{app}\unins000.msg');
+  MessagesBackupPath := ExpandConstant('{app}\unins000.msg.bak');
+  if FileExists(MessagesPath) then
+  begin
+    if not FileCopy(MessagesPath, MessagesBackupPath, False) then
+      Log('Could not back up unins000.msg; a later install will not be able to restore it.');
+    Exit;
+  end;
+  if FileExists(MessagesBackupPath) then
+  begin
+    if FileCopy(MessagesBackupPath, MessagesPath, False) then
+      Log('Restored the missing unins000.msg from its backup so the uninstaller keeps working.')
+    else
+      Log('unins000.msg is missing and its backup could not be restored.');
+    Exit;
+  end;
+  Log('This Inno Setup build produced no unins000.msg; nothing to preserve.');
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   HostPath: String;
@@ -858,7 +886,10 @@ begin
     end;
     if not InstallAndStartMaintenanceService() then
       RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
-  end;
+  end
+  else if CurStep = ssDone then
+    { The uninstaller is only guaranteed to exist once Setup reports ssDone. }
+    PreserveOrRestoreUninstallerMessages();
 end;
 
 procedure CurPageChanged(CurPageID: Integer);

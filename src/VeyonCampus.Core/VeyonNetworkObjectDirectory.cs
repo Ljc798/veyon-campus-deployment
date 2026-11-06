@@ -1481,6 +1481,7 @@ public static class VeyonNetworkObjectDirectory
         if (root.ValueKind != JsonValueKind.Object)
             throw new InvalidDataException("Veyon 配置格式无法识别。");
         JsonElement objects = default;
+        var directorySectionFound = false;
         // Veyon 4.1 moved the built-in directory from LocalData/NetworkObjects
         // to BuiltinDirectory/NetworkObjects. Older keys can remain in a 4.x
         // registry export even though the Configurator no longer displays them.
@@ -1490,6 +1491,7 @@ public static class VeyonNetworkObjectDirectory
         {
             if (builtinDirectory.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("Veyon 目录配置格式无法识别。");
+            directorySectionFound = true;
             builtinDirectory.TryGetProperty("NetworkObjects", out objects);
         }
         else if (root.TryGetProperty("LocalData", out var legacyLocalData))
@@ -1497,11 +1499,20 @@ public static class VeyonNetworkObjectDirectory
             // Compatibility for exports created before the 4.1 directory migration.
             if (legacyLocalData.ValueKind != JsonValueKind.Object)
                 throw new InvalidDataException("Veyon 目录配置格式无法识别。");
+            directorySectionFound = true;
             legacyLocalData.TryGetProperty("NetworkObjects", out objects);
         }
-        if (objects.ValueKind == JsonValueKind.Undefined)
+        if (objects.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            // A freshly installed Veyon has the built-in directory section but no objects in it yet.
+            // That is a legitimately empty directory — the first-run case where the teacher is about
+            // to create the first location — not an external directory backend. Refuse only when no
+            // directory section exists at all, because then an empty built-in store cannot be told
+            // apart from another backend and guessing would silently hide a real roster.
+            if (directorySectionFound) return Array.Empty<VeyonNetworkObject>();
             throw new InvalidDataException(
                 "Veyon 配置中没有可识别的 Builtin Directory；可能使用外部目录后端，已拒绝将其误判为空目录。");
+        }
         if (objects.ValueKind == JsonValueKind.Object && objects.TryGetProperty("JsonStoreArray", out var array))
             objects = array;
         if (objects.ValueKind != JsonValueKind.Array || objects.GetArrayLength() > 10000)
