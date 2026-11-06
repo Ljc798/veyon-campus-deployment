@@ -1570,6 +1570,14 @@ public sealed class MainViewModel : INotifyPropertyChanged
             return;
         }
 
+        try { campus = WebsitePolicySigningKeyStore.ResolveEnrollmentCampus(campus); }
+        catch (InvalidDataException exception)
+        {
+            PackageOutputError = exception.Message;
+            return;
+        }
+        if (!string.Equals(campus, CampusId.Trim(), StringComparison.Ordinal)) CampusId = campus;
+
         if (!OperatingSystem.IsWindows())
         {
             PackageOutputError = "请在安装了 Veyon 的 Windows 教师电脑上生成配置包。";

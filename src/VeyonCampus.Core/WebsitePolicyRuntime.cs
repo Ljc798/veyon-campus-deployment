@@ -96,6 +96,26 @@ public static class WebsitePolicySigningKeyStore
         return CreateAndPin(store, campusId, replacement: selection.HasMatchingCertificates || replaceUnavailableKey);
     }
 
+    /// <summary>
+    /// Resolves the campus identifier a student configuration package must be built for.
+    /// Every campus identifier owns its own signing root and each student agent trusts exactly one,
+    /// so generating a package for a mistyped or renamed identifier must not silently mint a second
+    /// root: when this machine already has exactly one signing campus, that campus is reused.
+    /// </summary>
+    public static string ResolveEnrollmentCampus(string requestedCampusId)
+    {
+        ValidateCampusId(requestedCampusId);
+        if (ReadPinnedThumbprint(requestedCampusId) is not null) return requestedCampusId;
+        var existing = ReadCampusIds();
+        if (existing.Count == 1 && !string.Equals(existing[0], requestedCampusId, StringComparison.Ordinal))
+            return existing[0];
+        if (existing.Count > 1 && !existing.Contains(requestedCampusId, StringComparer.Ordinal))
+            throw new InvalidDataException(
+                "本机已有多个校区签名密钥：" + string.Join("、", existing) +
+                "。每个校区对应一把独立密钥，而学生机只认其中一个；请先选定学生机实际使用的校区，再生成配置包。");
+        return requestedCampusId;
+    }
+
     public static WebsitePolicySigningKey Open(string campusId)
     {
         ValidateCampusId(campusId);

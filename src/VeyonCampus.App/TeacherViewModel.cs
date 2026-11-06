@@ -7889,10 +7889,18 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     throw new InvalidDataException($"当前校区“{CampusId.Trim()}”与来源包校区“{trustSourcePackage.Campus}”不一致；没有生成配置包。");
             }
 
-            var campus = trustSourcePackage?.Campus ?? CampusId.Trim();
+            var campus = trustSourcePackage?.Campus ??
+                         WebsitePolicySigningKeyStore.ResolveEnrollmentCampus(CampusId.Trim());
             if (campus == DefaultCampusNamePrefix)
                 throw new InvalidDataException($"请在默认前缀“{DefaultCampusNamePrefix}”后填写校区名称。");
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
+            if (!string.Equals(campus, CampusId.Trim(), StringComparison.Ordinal))
+            {
+                // Reuse the only existing signing campus instead of minting a second root the
+                // student agents would not trust.
+                CampusId = campus;
+                PackageGenerationStatus = $"已复用本机唯一的校区标识“{campus}”生成配置包，没有新建密钥。";
+            }
             var packagePrefix = trustSourcePackage?.ComputerPrefix ?? RoomPrefix;
             MachineNaming.CreateRange(packagePrefix, "1", "150");
 
