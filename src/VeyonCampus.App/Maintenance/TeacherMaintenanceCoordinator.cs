@@ -72,7 +72,11 @@ public interface ITeacherMaintenanceAdapter
 /// <summary>Device-level workflow; UI callers only submit identities/plans and render structured results.</summary>
 public sealed class TeacherMaintenanceCoordinator
 {
+    /// <summary>How many devices are probed at the same time before planning starts.</summary>
+    private const int MaximumConcurrentInspections = 8;
     private const int SameFailureRolloutCircuitThreshold = 3;
+    /// <summary>How many students install at the same time.</summary>
+    private const int MaximumConcurrentStudentUpdates = 4;
     private const string RolloutCircuitBreakMarker = "[RolloutCircuitBreak]";
     private static readonly ConcurrentDictionary<MaintenanceDeviceKey, SemaphoreSlim> DeviceExecutionGates = new();
     private static readonly AsyncLocal<HashSet<MaintenanceDeviceKey>?> HeldDeviceExecutionGates = new();
@@ -92,46 +96,51 @@ public sealed class TeacherMaintenanceCoordinator
         ArgumentNullException.ThrowIfNull(devices);
         var normalized = devices.GroupBy(device => device.Key)
             .Select(group => group.Last()).ToArray();
-        var results = new List<MaintenanceInspectionSnapshot>(normalized.Length);
-        foreach (var device in normalized)
+        // Inspecting 20+ machines one after another took minutes before the first update could even be
+        // planned; every run is keyed per device and the journal store serialises writes, so the probes
+        // can run side by side.
+        using var gate = new SemaphoreSlim(MaximumConcurrentInspections, MaximumConcurrentInspections);
+        var inspected = await Task.WhenAll(normalized.Select(async device =>
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
-            var active = journal.Runs.FirstOrDefault(run => !run.IsTerminal && run.Device.Key == device.Key);
-            if (active is not null)
-            {
-                var routed = active.UpdateRouteAddress(device.RouteAddress);
-                if (!ReferenceEquals(routed, active))
-                {
-                    await _store.UpdateAsync(routed, cancellationToken).ConfigureAwait(false);
-                    active = routed;
-                }
-                if (active.State is MaintenanceRunState.Discovered or MaintenanceRunState.IdentityVerified)
-                {
-                    results.Add(await InspectRunAsync(active, device, cancellationToken).ConfigureAwait(false));
-                    continue;
-                }
-                results.Add(ToInspectionSnapshot(active, "该设备已有活动 operationId；没有创建第二个维护操作。"));
-                continue;
-            }
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try { return await InspectOneAsync(device, cancellationToken).ConfigureAwait(false); }
+            finally { gate.Release(); }
+        })).ConfigureAwait(false);
+        return Array.AsReadOnly(inspected);
+    }
 
-            var created = MaintenanceRun.Start(Guid.NewGuid(), device, DateTimeOffset.UtcNow);
-            journal = await _store.AddOrGetAsync(created, cancellationToken).ConfigureAwait(false);
-            var run = journal.Find(created.OperationId);
-            if (run is null)
+    private async Task<MaintenanceInspectionSnapshot> InspectOneAsync(MaintenanceDeviceIdentity device,
+        CancellationToken cancellationToken)
+    {
+        var journal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var active = journal.Runs.FirstOrDefault(run => !run.IsTerminal && run.Device.Key == device.Key);
+        if (active is not null)
+        {
+            var routed = active.UpdateRouteAddress(device.RouteAddress);
+            if (!ReferenceEquals(routed, active))
             {
-                run = journal.Runs.FirstOrDefault(item => !item.IsTerminal && item.Device.Key == device.Key)
-                      ?? throw new InvalidDataException("保存维护 operationId 后未读回活动设备记录。");
-                run = run.UpdateRouteAddress(device.RouteAddress);
-                journal = await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
-                run = journal.Find(run.OperationId) ?? run;
-                results.Add(ToInspectionSnapshot(run, "已有 operationId 抢先占用此设备；未重复检查或下发。"));
-                continue;
+                await _store.UpdateAsync(routed, cancellationToken).ConfigureAwait(false);
+                active = routed;
             }
-
-            results.Add(await InspectRunAsync(run, device, cancellationToken).ConfigureAwait(false));
+            if (active.State is MaintenanceRunState.Discovered or MaintenanceRunState.IdentityVerified)
+                return await InspectRunAsync(active, device, cancellationToken).ConfigureAwait(false);
+            return ToInspectionSnapshot(active, "该设备已有活动 operationId；没有创建第二个维护操作。");
         }
-        return Array.AsReadOnly(results.ToArray());
+
+        var created = MaintenanceRun.Start(Guid.NewGuid(), device, DateTimeOffset.UtcNow);
+        journal = await _store.AddOrGetAsync(created, cancellationToken).ConfigureAwait(false);
+        var run = journal.Find(created.OperationId);
+        if (run is null)
+        {
+            run = journal.Runs.FirstOrDefault(item => !item.IsTerminal && item.Device.Key == device.Key)
+                  ?? throw new InvalidDataException("保存维护 operationId 后未读回活动设备记录。");
+            run = run.UpdateRouteAddress(device.RouteAddress);
+            journal = await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
+            run = journal.Find(run.OperationId) ?? run;
+            return ToInspectionSnapshot(run, "已有 operationId 抢先占用此设备；未重复检查或下发。");
+        }
+
+        return await InspectRunAsync(run, device, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<MaintenanceRun> PlanAsync(Guid operationId, MaintenancePlan plan,
@@ -293,13 +302,17 @@ public sealed class TeacherMaintenanceCoordinator
 
         if (softwareUpdates.Count > 0)
         {
-            for (var index = 0; index < softwareUpdates.Count; index++)
+            // Installers used to run strictly one device at a time, so a 20-seat room meant twenty
+            // sequential installs. Waves of four keep the per-device journal and the student-side
+            // machine lock intact while cutting the wall clock roughly fourfold.
+            var completedCounter = new int[1];
+            var total = softwareUpdates.Count;
+            for (var index = 0; index < total;)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var request = softwareUpdates[index];
-                var plan = request.Plan;
-                var beforeSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
-                var priorFailures = GetTrailingRolloutFailureStreak(beforeSendJournal.Runs, plan);
+                var journalBeforeWave = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+                var priorFailures = GetTrailingRolloutFailureStreak(journalBeforeWave.Runs,
+                    softwareUpdates[index].Plan);
                 if (priorFailures.Count >= SameFailureRolloutCircuitThreshold)
                 {
                     await MarkRolloutCircuitBlockedAsync(softwareUpdates.Skip(index), priorFailures.Signature!,
@@ -307,77 +320,13 @@ public sealed class TeacherMaintenanceCoordinator
                     break;
                 }
 
-                var completedBefore = index;
-                IProgress<MaintenanceCoordinatorProgress>? requestProgress = progress is null
-                    ? null
-                    : new Progress<MaintenanceCoordinatorProgress>(value => progress.Report(value with
-                    {
-                        Completed = completedBefore + value.Completed,
-                        Total = softwareUpdates.Count
-                    }));
-
-                try
-                {
-                    var results = await _adapter.OfferUpdatesAsync([request],
-                        async (prepared, token) =>
-                        {
-                            if (prepared.OperationId != plan.OperationId)
-                                throw new InvalidDataException("更新适配器准备了不属于当前设备 operationId 的命令。");
-                            await PersistPreparedUpdateCommandAsync(prepared, token).ConfigureAwait(false);
-                            progress?.Report(new MaintenanceCoordinatorProgress(prepared.OperationId,
-                                MaintenanceRunState.Updating,
-                                "签名更新命令与 operationId 已写入 journal，正在发送至学生 Agent。",
-                                index, softwareUpdates.Count, prepared.CommandId, plan.Device.RouteAddress));
-                        }, requestProgress, cancellationToken).ConfigureAwait(false);
-                    var matchingResults = results.Where(result => result.OperationId == plan.OperationId).Take(2).ToArray();
-                    if (matchingResults.Length != 1 || results.Count != 1)
-                    {
-                        await MarkPendingOrFailedAsync(plan.OperationId,
-                            "阶段：更新适配器结果核对。适配器未返回当前设备唯一且匹配的结果。",
-                            CancellationToken.None).ConfigureAwait(false);
-                    }
-                    else
-                    {
-                        await ApplyUpdateResultAsync(matchingResults[0], cancellationToken).ConfigureAwait(false);
-                    }
-                }
-                catch (OperationCanceledException exception)
-                {
-                    if (cancellationToken.IsCancellationRequested)
-                    {
-                        await MarkPendingOrFailedAsync(plan.OperationId,
-                            "阶段：更新命令等待或结果读回。教师端停止等待；当前设备需重新查询原事务，不会自动重发。",
-                            CancellationToken.None).ConfigureAwait(false);
-                        throw;
-                    }
-                    await MarkPendingOrFailedAsync(plan.OperationId,
-                        "阶段：更新适配器超时。" + Sanitize(exception.Message), CancellationToken.None)
-                        .ConfigureAwait(false);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
-                                                  InvalidDataException or CryptographicException or
-                                                  InvalidOperationException or ArgumentException or TimeoutException)
-                {
-                    await MarkPendingOrFailedAsync(plan.OperationId,
-                        "阶段：签名更新或结果读回。更新适配器异常：" + Sanitize(exception.Message),
-                        CancellationToken.None).ConfigureAwait(false);
-                }
-
-                var afterSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
-                var failureStreak = GetTrailingRolloutFailureStreak(afterSendJournal.Runs, plan);
-                var currentRun = afterSendJournal.Find(plan.OperationId);
-                progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
-                    currentRun?.State ?? MaintenanceRunState.Failed,
-                    currentRun?.Transitions.LastOrDefault()?.Reason ?? "设备维护结果已写入 journal。",
-                    index + 1, softwareUpdates.Count, currentRun?.AgentCommandId, plan.Device.RouteAddress));
-                if (failureStreak.Count >= SameFailureRolloutCircuitThreshold && index + 1 < softwareUpdates.Count)
-                {
-                    await MarkRolloutCircuitBlockedAsync(softwareUpdates.Skip(index + 1),
-                        failureStreak.Signature!, cancellationToken).ConfigureAwait(false);
-                    break;
-                }
+                var wave = softwareUpdates.Skip(index).Take(MaximumConcurrentStudentUpdates).ToArray();
+                index += wave.Length;
+                await Task.WhenAll(wave.Select(request => RunStudentUpdateAsync(request, completedCounter,
+                    total, progress, cancellationToken))).ConfigureAwait(false);
             }
         }
+
 
         var current = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
         var configurationRuns = current.Runs.Where(run => ids.Contains(run.OperationId) && run.Plan is not null &&
@@ -399,6 +348,75 @@ public sealed class TeacherMaintenanceCoordinator
             .Select(run => MaintenanceResult.FromRun(run!, run!.Transitions.LastOrDefault()?.Reason ??
                 "维护仍在等待验证。"))
             .ToArray());
+    }
+
+    private async Task RunStudentUpdateAsync(MaintenanceUpdateRequest request, int[] completedCounter,
+        int total, IProgress<MaintenanceCoordinatorProgress>? progress, CancellationToken cancellationToken)
+    {
+        var plan = request.Plan;
+        var completedBefore = Volatile.Read(ref completedCounter[0]);
+        IProgress<MaintenanceCoordinatorProgress>? requestProgress = progress is null
+            ? null
+            : new Progress<MaintenanceCoordinatorProgress>(value => progress.Report(value with
+            {
+                Completed = completedBefore + value.Completed,
+                Total = total
+            }));
+
+        try
+        {
+            var results = await _adapter.OfferUpdatesAsync([request],
+                async (prepared, token) =>
+                {
+                    if (prepared.OperationId != plan.OperationId)
+                        throw new InvalidDataException("更新适配器准备了不属于当前设备 operationId 的命令。");
+                    await PersistPreparedUpdateCommandAsync(prepared, token).ConfigureAwait(false);
+                    progress?.Report(new MaintenanceCoordinatorProgress(prepared.OperationId,
+                        MaintenanceRunState.Updating,
+                        "签名更新命令与 operationId 已写入 journal，正在发送至学生 Agent。",
+                        completedBefore, total, prepared.CommandId, plan.Device.RouteAddress));
+                }, requestProgress, cancellationToken).ConfigureAwait(false);
+            var matchingResults = results.Where(result => result.OperationId == plan.OperationId).Take(2).ToArray();
+            if (matchingResults.Length != 1 || results.Count != 1)
+            {
+                await MarkPendingOrFailedAsync(plan.OperationId,
+                    "阶段：更新适配器结果核对。适配器未返回当前设备唯一且匹配的结果。",
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+            else
+            {
+                await ApplyUpdateResultAsync(matchingResults[0], cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException exception)
+        {
+            if (cancellationToken.IsCancellationRequested)
+            {
+                await MarkPendingOrFailedAsync(plan.OperationId,
+                    "阶段：更新命令等待或结果读回。教师端停止等待；当前设备需重新查询原事务，不会自动重发。",
+                    CancellationToken.None).ConfigureAwait(false);
+                throw;
+            }
+            await MarkPendingOrFailedAsync(plan.OperationId,
+                "阶段：更新适配器超时。" + Sanitize(exception.Message), CancellationToken.None)
+                .ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or CryptographicException or
+                                          InvalidOperationException or ArgumentException or TimeoutException)
+        {
+            await MarkPendingOrFailedAsync(plan.OperationId,
+                "阶段：签名更新或结果读回。更新适配器异常：" + Sanitize(exception.Message),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        var afterSendJournal = await _store.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var currentRun = afterSendJournal.Find(plan.OperationId);
+        var completed = Interlocked.Increment(ref completedCounter[0]);
+        progress?.Report(new MaintenanceCoordinatorProgress(plan.OperationId,
+            currentRun?.State ?? MaintenanceRunState.Failed,
+            currentRun?.Transitions.LastOrDefault()?.Reason ?? "设备维护结果已写入 journal。",
+            completed, total, currentRun?.AgentCommandId, plan.Device.RouteAddress));
     }
 
     public async Task<MaintenanceRun> ResumeAsync(Guid operationId,

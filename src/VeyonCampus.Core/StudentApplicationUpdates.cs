@@ -1921,13 +1921,26 @@ public static class StudentApplicationUpdateTransport
         if (progress is null) return;
         var startedUtc = DateTimeOffset.UtcNow;
         var timer = Stopwatch.StartNew();
+        var lastTimingRefresh = TimeSpan.Zero;
+        StudentApplicationUpdateProgress? reported = null;
         while (!cancellationToken.IsCancellationRequested)
         {
-            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
-            await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
-                campusPrivateKey, commandId, startedUtc, timer, "inProgress", progress,
-                getCompletedTargets(), totalTargets, cancellationToken,
-                $"学生端更新处理中；已等待 {timer.Elapsed.TotalSeconds:0} 秒").ConfigureAwait(false);
+            // The clock ticks every second so the teacher sees real elapsed time; the signed phase
+            // snapshot is still read from the Agent only every five seconds.
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken).ConfigureAwait(false);
+            var stage = $"学生端更新处理中；已等待 {timer.Elapsed.TotalSeconds:0} 秒";
+            if (reported is null || timer.Elapsed - lastTimingRefresh >= TimeSpan.FromSeconds(5))
+            {
+                lastTimingRefresh = timer.Elapsed;
+                reported = await ReportUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
+                    campusPrivateKey, commandId, startedUtc, timer, "inProgress", progress,
+                    getCompletedTargets(), totalTargets, cancellationToken, stage).ConfigureAwait(false);
+                continue;
+            }
+            progress.Report(reported with
+            {
+                CompletedTargets = getCompletedTargets(), TotalTargets = totalTargets, Stage = stage
+            });
         }
     }
 
@@ -2071,13 +2084,14 @@ public static class StudentApplicationUpdateTransport
         }
     }
 
-    private static async Task ReportUpdatePhaseTimingsAsync(HttpClient client, string target, string campusId,
+    private static async Task<StudentApplicationUpdateProgress?> ReportUpdatePhaseTimingsAsync(HttpClient client,
+        string target, string campusId,
         string pinnedAgentPublicKeyPem, RSA campusPrivateKey, Guid commandId, DateTimeOffset receiptStartedUtc,
         Stopwatch receiptTimer, string outcome,
         IProgress<StudentApplicationUpdateProgress>? progress, int completedTargets, int totalTargets,
         CancellationToken cancellationToken, string stage = "正在核对教师端签名回执")
     {
-        if (progress is null) return;
+        if (progress is null) return null;
         var snapshot = await TryReadUpdatePhaseTimingsAsync(client, target, campusId, pinnedAgentPublicKeyPem,
             campusPrivateKey, commandId, cancellationToken).ConfigureAwait(false);
         var receiptTiming = new StudentUpdatePhaseTiming(StudentUpdatePhase.TeacherReceipt, receiptStartedUtc,
@@ -2086,8 +2100,10 @@ public static class StudentApplicationUpdateTransport
         var phases = (snapshot?.Phases ?? Array.Empty<StudentUpdatePhaseTiming>())
             .Where(phase => phase.Phase != StudentUpdatePhase.TeacherReceipt)
             .Append(receiptTiming).ToArray();
-        progress.Report(new StudentApplicationUpdateProgress(target, completedTargets, totalTargets,
-            stage, phases, commandId, snapshot?.Environment));
+        var update = new StudentApplicationUpdateProgress(target, completedTargets, totalTargets,
+            stage, phases, commandId, snapshot?.Environment);
+        progress.Report(update);
+        return update;
     }
 
     private static async Task<StudentApplicationUpdatePushResult?> TryResolvePreflightFailureAsync(

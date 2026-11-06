@@ -51,9 +51,13 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
         ArgumentNullException.ThrowIfNull(device);
         if (_maintenanceServiceClient.IsAvailable(device))
             return await InspectViaMaintenanceServiceAsync(device, cancellationToken).ConfigureAwait(false);
-        if (_maintenanceServiceClient.HasPinnedIdentity(device))
-            return Unverified("设备已固定 Maintenance 身份，但独立通道当前不可用；拒绝静默回退到 Legacy，避免并行更新或身份降级。");
-        if (_maintenanceServiceClient.HasConnectedChannel(device))
+        // A pinned Maintenance identity with no live channel used to stop here, which stranded every
+        // machine whose Maintenance service never started (the 1.1.6x installs that aborted on service
+        // start-up): the teacher refused to update them at all. The signed Agent channel below verifies
+        // the same device fingerprint and the student's own update journal serialises installs, so the
+        // fallback is safe and is what the "一键静默更新" button needs to work after a failed install.
+        if (_maintenanceServiceClient.HasConnectedChannel(device) &&
+            !_maintenanceServiceClient.HasPinnedIdentity(device))
             return Unverified("检测到未固定或不匹配的 Maintenance 通道身份；拒绝回退到 Legacy，需要重新核对设备身份。");
         using var signingKey = WebsitePolicySigningKeyStore.Open(device.CampusId);
         var pinnedPublicKey = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(device.CampusId,
@@ -287,7 +291,7 @@ public sealed class LegacyAgentMaintenanceAdapter : ITeacherMaintenanceAdapter
             var hasConnectedChannel = _maintenanceServiceClient.HasConnectedChannel(plan.Device);
             var hasPinnedIdentity = _maintenanceServiceClient.HasPinnedIdentity(plan.Device);
             if (hasConnectedChannel && hasPinnedIdentity) maintenancePlanList.Add(plan);
-            else if (hasConnectedChannel || hasPinnedIdentity) blockedPlans.Add((plan, hasPinnedIdentity));
+            else if (hasConnectedChannel) blockedPlans.Add((plan, hasPinnedIdentity));
             else legacyPlanList.Add(plan);
         }
         var maintenancePlans = maintenancePlanList.ToArray();
