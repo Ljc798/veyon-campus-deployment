@@ -3540,7 +3540,8 @@ public sealed partial class TeacherViewModel
                     var results = await WebsitePolicyStatusTransport.ReadAsync(targets, campus,
                         signingKey.PrivateKey, includeHealthSnapshot: true, allowLegacyDirectFallback: true,
                         allowDirectFallbackWhenChannelOffline: true).ConfigureAwait(true);
-                    if (results.Any(result => result.Succeeded)) verified.Add(campus);
+                    if (results.Any(result => result.Succeeded || result.IdentityCandidate is not null))
+                        verified.Add(campus);
                 }
                 catch (Exception exception) when (exception is not OutOfMemoryException and
                                                   not StackOverflowException and not AccessViolationException)
@@ -3564,7 +3565,8 @@ public sealed partial class TeacherViewModel
                 var switched = !string.Equals(campus, CampusId.Trim(), StringComparison.Ordinal);
                 if (switched) CampusId = campus;
                 StudentTrustedCampusStatus = switched
-                    ? $"学生端信任的校区是“{campus}”，教师端已切换；请再点一次“一键静默更新全部学生端”。"
+                    ? $"学生端信任的校区是“{campus}”，教师端已切换；请再点一次“一键静默更新全部学生端”。" +
+                      "若提示身份未固定，请先在“设备健康”里核对并固定身份。"
                     : $"学生端信任的校区就是当前的“{campus}”；如果更新仍返回 409，请核对两机时间差是否超过 2 分钟。";
                 return;
             }
