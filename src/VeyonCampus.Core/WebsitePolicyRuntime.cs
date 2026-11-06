@@ -3443,7 +3443,20 @@ public static class WebsitePolicyAgentInstaller
     private static bool HasAnyProgramDataProductDirectory()
     {
         var root = GetProgramDataProductRoot();
-        return Directory.Exists(root) || File.Exists(root);
+        if (File.Exists(root)) return true;
+        if (!Directory.Exists(root)) return false;
+        // The independent Maintenance service keeps its own host log and recovery state here. It is a
+        // separate product with its own installer, so its directories must not make the student Agent
+        // uninstall look incomplete (the service legitimately survives a StudentSetup uninstall).
+        foreach (var entry in Directory.EnumerateFileSystemEntries(root))
+        {
+            var name = Path.GetFileName(entry);
+            if (string.Equals(name, "MaintenanceServiceHost", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "MaintenanceServiceRecovery", StringComparison.OrdinalIgnoreCase))
+                continue;
+            return true;
+        }
+        return false;
     }
 
     private static void RemoveEmptyProgramDataProductRoot()
