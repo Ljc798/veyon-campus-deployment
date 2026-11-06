@@ -1,0 +1,475 @@
+{
+  "source": "graphify-out/graph.json",
+  "scope": [
+    "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+    "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+    "src/VeyonCampus.App/TeacherViewModel.cs",
+    "src/VeyonCampus.Core/ClassroomQuickControl.cs",
+    "src/VeyonCampus.Core/ClassroomSessions.cs",
+    "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+    "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs"
+  ],
+  "limitations": [
+    "AST graph only; it does not include AXAML bindings or SQL schema references.",
+    "Graphify reported a parser error in tests/VeyonCampus.Checks/Program.cs.",
+    "This is a source-symbol/call graph, not proof of runtime state on a teacher PC."
+  ],
+  "nodes": [
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_setclassroomcontext",
+      "label": "TeacherClassroomQuickControlService.SetClassroomContext()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L81",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_readsnapshot",
+      "label": "TeacherClassroomQuickControlService.ReadSnapshot()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L227",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_readsavedsnapshot",
+      "label": "TeacherClassroomQuickControlService.ReadSavedSnapshot()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L234",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_buildsnapshot",
+      "label": "TeacherClassroomQuickControlService.BuildSnapshot()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L249",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_queueendedsessionrestores",
+      "label": "TeacherClassroomQuickControlService.QueueEndedSessionRestores()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L1598",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_recoverpreviousprocessstate",
+      "label": "TeacherClassroomQuickControlService.RecoverPreviousProcessState()",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L1608",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherviewmodel_classroom_veyoncampus_app_teacherviewmodel_getactiveclassroomeventcontext",
+      "label": "TeacherViewModel.GetActiveClassroomEventContext()",
+      "source_file": "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+      "source_location": "L4486",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherviewmodel_classroom_veyoncampus_app_teacherviewmodel_updateactiveclassroomscopeasync",
+      "label": "TeacherViewModel.UpdateActiveClassroomScopeAsync()",
+      "source_file": "src/VeyonCampus.App/TeacherViewModel.Classroom.cs",
+      "source_location": "L4792",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_app_teacherviewmodel_veyoncampus_app_teacherviewmodel_readactiveseatlabels",
+      "label": "TeacherViewModel.ReadActiveSeatLabels()",
+      "source_file": "src/VeyonCampus.App/TeacherViewModel.cs",
+      "source_location": "L1730",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsession_start",
+      "label": "ClassroomSession.Start()",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L34",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsession_updatescope",
+      "label": "ClassroomSession.UpdateScope()",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L86",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsessionstore_startsession",
+      "label": "ClassroomSessionStore.StartSession()",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L211",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsessionstore_updateactivesession",
+      "label": "ClassroomSessionStore.UpdateActiveSession()",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L230",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsessionstore_endsession",
+      "label": "ClassroomSessionStore.EndSession()",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L251",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile",
+      "label": "TeacherRoomProfile",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L14",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernumbers",
+      "label": "TeacherRoomProfile.GetComputerNumbers()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L20",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernames",
+      "label": "TeacherRoomProfile.GetComputerNames()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L25",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "label": "TeacherCampusDirectoryStore",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L120",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_load",
+      "label": "TeacherCampusDirectoryStore.Load()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L147",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_save",
+      "label": "TeacherCampusDirectoryStore.Save()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L181",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validate",
+      "label": "TeacherCampusDirectoryStore.Validate()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L217",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validatename",
+      "label": "TeacherCampusDirectoryStore.ValidateName()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L268",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_clone",
+      "label": "TeacherCampusDirectoryStore.Clone()",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L275",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore",
+      "label": "VeyonDeviceDirectoryStore.cs",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L1"
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "label": "VeyonDeviceDirectoryStore",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L37",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_read",
+      "label": "VeyonDeviceDirectoryStore.Read()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L62",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "label": "VeyonDeviceDirectoryStore.Reconcile()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L69",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_readnolock",
+      "label": "VeyonDeviceDirectoryStore.ReadNoLock()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L227",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_writenolock",
+      "label": "VeyonDeviceDirectoryStore.WriteNoLock()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L252",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_acquirefilelock",
+      "label": "VeyonDeviceDirectoryStore.AcquireFileLock()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L281",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_validate",
+      "label": "VeyonDeviceDirectoryStore.Validate()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L307",
+      "_callable": true
+    },
+    {
+      "id": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_bound",
+      "label": "VeyonDeviceDirectoryStore.Bound()",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L332",
+      "_callable": true
+    }
+  ],
+  "links": [
+    {
+      "source": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_setclassroomcontext",
+      "target": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_queueendedsessionrestores",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L105"
+    },
+    {
+      "source": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_readsnapshot",
+      "target": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_buildsnapshot",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L231"
+    },
+    {
+      "source": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_readsavedsnapshot",
+      "target": "src_veyoncampus_app_teacherclassroomquickcontrolservice_veyoncampus_app_teacherclassroomquickcontrolservice_buildsnapshot",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.App/TeacherClassroomQuickControlService.cs",
+      "source_location": "L246"
+    },
+    {
+      "source": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsession_updatescope",
+      "target": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsession_start",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L92"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernumbers",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L20"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernames",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L25"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_load",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L147"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_save",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L181"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validate",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L217"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validatename",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L268"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_clone",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L275"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernames",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teacherroomprofile_getcomputernumbers",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L25"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_load",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validate",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L176"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_save",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_load",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L187"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_save",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validate",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L191"
+    },
+    {
+      "source": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validate",
+      "target": "src_veyoncampus_core_teachercampusdirectory_veyoncampus_core_teachercampusdirectorystore_validatename",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/TeacherCampusDirectory.cs",
+      "source_location": "L229"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "relation": "contains",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L37"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_read",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L62"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L69"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_readnolock",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L227"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_writenolock",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L252"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_acquirefilelock",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L281"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_validate",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L307"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_bound",
+      "relation": "method",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L332"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_read",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_acquirefilelock",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L65"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_read",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_readnolock",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L65"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_acquirefilelock",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L79"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_readnolock",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L81"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_bound",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L194"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_reconcile",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_writenolock",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L222"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_readnolock",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_validate",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L242"
+    },
+    {
+      "source": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_writenolock",
+      "target": "src_veyoncampus_core_veyondevicedirectorystore_veyoncampus_core_veyondevicedirectorystore_validate",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/VeyonDeviceDirectoryStore.cs",
+      "source_location": "L254"
+    },
+    {
+      "source": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsessionstore_startsession",
+      "target": "src_veyoncampus_core_classroomsessions_veyoncampus_core_classroomsession_start",
+      "relation": "calls",
+      "source_file": "src/VeyonCampus.Core/ClassroomSessions.cs",
+      "source_location": "L222"
+    }
+  ]
+}

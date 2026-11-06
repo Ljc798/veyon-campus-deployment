@@ -68,6 +68,51 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         return session;
     }
 
+    /// <summary>Starts from a complete, already reconciled Veyon UUID directory snapshot.</summary>
+    public static ClassroomSession StartFromVerifiedDirectory(TeacherCampusProfile campus, Guid roomId,
+        IReadOnlyList<VeyonDeviceDirectoryEntry> verifiedDevices, DateTimeOffset startedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(campus);
+        ArgumentNullException.ThrowIfNull(verifiedDevices);
+        if (campus.ProfileId == Guid.Empty || campus.Rooms is null || roomId == Guid.Empty)
+            throw new InvalidDataException("本机校区或机房档案无效，无法开始课堂。");
+        var matches = campus.Rooms.Where(room => room is not null && room.RoomId == roomId).ToArray();
+        if (matches.Length != 1)
+            throw new InvalidDataException("所选机房不属于当前本机校区档案。");
+        var room = matches[0];
+        ValidateDisplayName(campus.DisplayName, "校区");
+        ValidateDisplayName(room.DisplayName, "机房");
+        if (verifiedDevices.Count is < 1 or > MaximumTargets ||
+            verifiedDevices.Any(device => device is null || device.VeyonObjectId == Guid.Empty ||
+                device.VeyonLocationObjectId == Guid.Empty || device.State is not
+                    (VeyonDeviceDirectoryState.InSync or VeyonDeviceDirectoryState.Discovered)))
+            throw new InvalidDataException("Veyon 当前设备目录为空、含冲突或超出课堂设备数量限制。");
+        if (verifiedDevices.Select(device => device.VeyonObjectId).Distinct().Count() != verifiedDevices.Count ||
+            verifiedDevices.Select(device => device.VeyonLocationObjectId).Distinct().Count() != 1)
+            throw new InvalidDataException("课堂目标存在重复电脑 UUID，或跨越多个 Veyon 地点。");
+
+        var targets = verifiedDevices.Select(device =>
+        {
+            string host;
+            try { host = VeyonHostAddress.NormalizeOverride(device.HostAddress); }
+            catch (InvalidDataException exception)
+            { throw new InvalidDataException("Veyon 电脑 Host 无效；未开始课堂。", exception); }
+            if (Uri.CheckHostName(host) != UriHostNameType.Dns)
+                throw new InvalidDataException("课堂连接地址必须是固定 Windows 计算机名。");
+            ValidateDisplayName(host, "Veyon Host");
+            return new ClassroomSessionTarget(device.VeyonObjectId, host);
+        }).ToImmutableArray();
+        if (targets.Select(target => target.DeviceLabel).Distinct(StringComparer.OrdinalIgnoreCase).Count() != targets.Length)
+            throw new InvalidDataException("Veyon 课堂目标 Host 重复；未开始课堂。");
+
+        var snapshot = new ClassroomRoomSnapshot(campus.ProfileId, campus.DisplayName, room.RoomId,
+            room.DisplayName, room.Prefix, room.StartNumber, targets.Length, ComputerNumbers: null);
+        var session = new ClassroomSession(CurrentSchemaVersion, Guid.NewGuid(), snapshot,
+            startedAtUtc.ToUniversalTime(), null, ClassroomSessionStatus.Active, targets);
+        Validate(session);
+        return session;
+    }
+
     /// <summary>Ends once. Repeated completion calls preserve the original end time.</summary>
     public ClassroomSession End(DateTimeOffset endedAtUtc)
     {
@@ -105,6 +150,22 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         return updated;
     }
 
+    public ClassroomSession UpdateScopeFromVerifiedDirectory(TeacherCampusProfile campus, Guid roomId,
+        IReadOnlyList<VeyonDeviceDirectoryEntry> verifiedDevices)
+    {
+        Validate(this);
+        if (Status != ClassroomSessionStatus.Active)
+            throw new InvalidDataException("只有持续进行中的课堂才能更新地点范围。");
+        var replacement = StartFromVerifiedDirectory(campus, roomId, verifiedDevices, StartedAtUtc);
+        var previousTargets = Targets.ToDictionary(target => target.TargetId);
+        var targets = replacement.Targets.Select(target => previousTargets.TryGetValue(target.TargetId, out var previous)
+            ? previous with { DeviceLabel = target.DeviceLabel }
+            : target).ToImmutableArray();
+        var updated = this with { Room = replacement.Room, Targets = targets };
+        Validate(updated);
+        return updated;
+    }
+
     internal static void Validate(ClassroomSession? session)
     {
         if (session is null || session.SchemaVersion != CurrentSchemaVersion || session.SessionId == Guid.Empty ||
@@ -136,11 +197,14 @@ public sealed record ClassroomSession(int SchemaVersion, Guid SessionId, Classro
         if (session.Targets.Length != expectedLabels.Count)
             throw new InvalidDataException("课堂目标数量与机房快照不匹配。");
         var targetIds = new HashSet<Guid>();
+        var labels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         for (var index = 0; index < session.Targets.Length; index++)
         {
             var target = session.Targets[index];
             if (target is null || target.TargetId == Guid.Empty || !targetIds.Add(target.TargetId) ||
-                !string.Equals(target.DeviceLabel, expectedLabels[index], StringComparison.Ordinal))
+                string.IsNullOrWhiteSpace(target.DeviceLabel) || target.DeviceLabel.Length > 253 ||
+                target.DeviceLabel != target.DeviceLabel.Trim() || target.DeviceLabel.Any(char.IsControl) ||
+                !labels.Add(target.DeviceLabel))
                 throw new InvalidDataException("课堂目标 ID 或电脑编号无效。");
         }
 
@@ -226,6 +290,25 @@ public sealed class ClassroomSessionStore
         }
     }
 
+    public ClassroomSession StartSession(TeacherCampusProfile campus, Guid roomId,
+        IReadOnlyList<VeyonDeviceDirectoryEntry> verifiedDevices, DateTimeOffset startedAtUtc)
+    {
+        ArgumentNullException.ThrowIfNull(campus);
+        ArgumentNullException.ThrowIfNull(verifiedDevices);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            var document = ReadDocument();
+            if (document.Sessions.Any(session => session.Status == ClassroomSessionStatus.Active))
+                throw new InvalidDataException("已有一堂进行中的课堂；请先结束后再开始新课堂。");
+
+            var session = ClassroomSession.StartFromVerifiedDirectory(campus, roomId, verifiedDevices, startedAtUtc);
+            var sessions = KeepRecent(document.Sessions.Append(session));
+            WriteDocument(new SessionDocument(ClassroomSession.CurrentSchemaVersion, sessions));
+            return session;
+        }
+    }
+
     /// <summary>Updates the sole active session in place, retaining its identity and start time.</summary>
     public ClassroomSession UpdateActiveSession(Guid sessionId, TeacherCampusProfile campus, Guid roomId)
     {
@@ -243,6 +326,26 @@ public sealed class ClassroomSessionStore
             var sessions = KeepRecent(document.Sessions.Select(session =>
                 session.SessionId == existing.SessionId ? updated : session));
             WriteDocument(new SessionDocument(ClassroomSession.CurrentSchemaVersion, sessions));
+            return updated;
+        }
+    }
+
+    public ClassroomSession UpdateActiveSession(Guid sessionId, TeacherCampusProfile campus, Guid roomId,
+        IReadOnlyList<VeyonDeviceDirectoryEntry> verifiedDevices)
+    {
+        if (sessionId == Guid.Empty) throw new InvalidDataException("课堂 ID 无效。");
+        ArgumentNullException.ThrowIfNull(campus);
+        ArgumentNullException.ThrowIfNull(verifiedDevices);
+        lock (ProcessGate)
+        using (AcquireFileLock())
+        {
+            var document = ReadDocument();
+            var existing = document.Sessions.SingleOrDefault(session => session.SessionId == sessionId);
+            if (existing is null || existing.Status != ClassroomSessionStatus.Active)
+                throw new InvalidDataException("本机持续课堂记录已不存在；未更新控制范围。");
+            var updated = existing.UpdateScopeFromVerifiedDirectory(campus, roomId, verifiedDevices);
+            var sessions = document.Sessions.Select(session => session.SessionId == sessionId ? updated : session).ToArray();
+            WriteDocument(new SessionDocument(ClassroomSession.CurrentSchemaVersion, KeepRecent(sessions)));
             return updated;
         }
     }

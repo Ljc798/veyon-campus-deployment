@@ -21,6 +21,8 @@ Desktop.ini
 /website/src/api-contract.generated.js
 /website/public/api/openapi.yaml
 /artifacts/
+/graphify-out/
+/.workbuddy-ai/
 /cloudbase/live-backup-*/
 /.local/
 /.tmp-build/

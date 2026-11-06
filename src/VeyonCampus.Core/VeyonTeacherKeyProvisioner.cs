@@ -88,7 +88,10 @@ public sealed class VeyonTeacherKeyProvisioner
 
             _ = PackageBuilder.ReadPublicKeyPem(fullDestination);
             var authentication = VeyonTeacherAuthentication.Configure();
-            if (!authentication.Ok) return new(authentication, created);
+            if (!authentication.Ok)
+                return new(Result(ExecutionPlan.NeedsReview,
+                    "Veyon 公钥已导出，但教师端密钥认证没有确认成功；请核对本机 Veyon 配置。" +
+                    authentication.Detail, authentication.ExitCode), created);
             var detail = created
                 ? "已在 Veyon 受控密钥目录创建并读回密钥对，只导出公钥供学生校区配置包使用。"
                 : "已复用 Veyon 受控密钥目录中的现有密钥对，只导出公钥供学生校区配置包使用。";

@@ -1194,7 +1194,7 @@ public string ClassroomNoticeDraft
     }
 
 public bool CanSendClassroomNotice => HasActiveClassroomSession && !_isClassroomTransitioning &&
-        IsClassroomDirectoryScopeVerified &&
+        IsClassroomDirectoryScopeVerified && !HasPendingClassroomScopeChange &&
         !string.IsNullOrWhiteSpace(_classroomNoticeDraft) && _classroomNoticeDraft.Trim().Length <=
         ClassroomEventCryptography.MaximumMessageCharacters &&
         !_classroomNoticeDraft.Any(character => char.IsControl(character) &&
@@ -1337,7 +1337,7 @@ public string ClassroomChatStatus
     }
 
 public bool CanSendClassroomChat => HasActiveClassroomSession && !_isClassroomTransitioning &&
-        IsClassroomDirectoryScopeVerified &&
+        IsClassroomDirectoryScopeVerified && !HasPendingClassroomScopeChange &&
         SelectedClassroomChatThread?.IsSupported == true && !string.IsNullOrWhiteSpace(ClassroomChatDraft) &&
         ClassroomEventCryptography.IsValidChatMessage(ClassroomChatDraft);
 
@@ -1377,14 +1377,12 @@ private IReadOnlyDictionary<string, string> ResolveClassroomStudentDisplayNames(
             }
         }
 
-        var computerNumbers = session.Room.ComputerNumbers ??
-            Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
         for (var index = 0; index < targets.Count; index++)
         {
             var target = targets[index];
-            var deviceLabel = index < session.Targets.Length ? session.Targets[index].DeviceLabel : "";
-            var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, index,
-                index < computerNumbers.Length ? computerNumbers[index] : null);
+            var sessionTarget = index < session.Targets.Length ? session.Targets[index] : null;
+            var deviceLabel = sessionTarget?.DeviceLabel ?? "";
+            var seat = FindUniqueClassroomSeat(seats, sessionTarget?.TargetId, target, deviceLabel);
 
             var studentName = seat?.StudentName?.Trim();
             if ((string.IsNullOrWhiteSpace(studentName) || studentName == "未填写姓名") &&
@@ -1400,30 +1398,24 @@ private IReadOnlyDictionary<string, string> ResolveClassroomStudentDisplayNames(
         return names;
     }
 
-private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(ClassroomSession session,
-        IReadOnlyList<ClassroomSeatGridLocation> seats, string target, string deviceLabel, int index,
-        int? computerNumberOverride = null)
+private static ClassroomSeatGridLocation? FindUniqueClassroomSeat(
+        IReadOnlyList<ClassroomSeatGridLocation> seats, Guid? deviceId, string target, string deviceLabel)
     {
-        var aliasMatches = seats.Where(item =>
-            !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
-            string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(target),
-                StringComparison.OrdinalIgnoreCase) ||
-            !string.IsNullOrWhiteSpace(item.VeyonComputerName) &&
-            (string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(deviceLabel),
-                 StringComparison.OrdinalIgnoreCase) ||
-             string.Equals(NormalizeTargetKey(item.VeyonComputerName), NormalizeTargetKey(target),
-                 StringComparison.OrdinalIgnoreCase)))
+        if (deviceId is { } id)
+        {
+            var identityMatches = seats.Where(item => item.VeyonObjectId == id)
+                .DistinctBy(item => item.SeatId).Take(2).ToArray();
+            if (identityMatches.Length > 0) return identityMatches.Length == 1 ? identityMatches[0] : null;
+        }
+
+        var aliasMatches = seats.Where(item => !string.IsNullOrWhiteSpace(item.VeyonHostAddress) &&
+                (string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(target),
+                     StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(NormalizeTargetKey(item.VeyonHostAddress), NormalizeTargetKey(deviceLabel),
+                     StringComparison.OrdinalIgnoreCase)))
             .DistinctBy(item => item.SeatId).Take(2).ToArray();
         if (aliasMatches.Length > 0) return aliasMatches.Length == 1 ? aliasMatches[0] : null;
-
-        var numbers = session.Room.ComputerNumbers ??
-            Enumerable.Range(session.Room.StartNumber, session.Room.ComputerCount).ToArray();
-        var computerNumber = computerNumberOverride ??
-            (index >= 0 && index < numbers.Length ? numbers[index] : (int?)null);
-        if (computerNumber is null) return null;
-        var numberMatches = seats.Where(item => item.SeatNumber == computerNumber.Value)
-            .DistinctBy(item => item.SeatId).Take(2).ToArray();
-        return numberMatches.Length == 1 ? numberMatches[0] : null;
+        return null;
     }
 
 internal void RefreshClassroomRestoreLedger(string? status = null)
@@ -1786,20 +1778,10 @@ private string GetStudentNameForSessionTarget(ClassroomSession session, string d
             return "未填写姓名";
         }
 
-        var targetIndex = -1;
-        for (var index = 0; index < session.Targets.Length; index++)
-            if (string.Equals(session.Targets[index].DeviceLabel, deviceLabel,
-                    StringComparison.OrdinalIgnoreCase))
-            {
-                targetIndex = index;
-                break;
-            }
-        if (targetIndex < 0) return "未填写姓名";
-        var target = session.Room.HostOverrides is { } hosts && targetIndex < hosts.Length &&
-                     !string.IsNullOrWhiteSpace(hosts[targetIndex])
-            ? hosts[targetIndex].Trim()
-            : deviceLabel;
-        var seat = FindUniqueClassroomSeat(session, seats, target, deviceLabel, targetIndex);
+        var sessionTarget = session.Targets.SingleOrDefault(item =>
+            string.Equals(item.DeviceLabel, deviceLabel, StringComparison.OrdinalIgnoreCase));
+        if (sessionTarget is null) return "未填写姓名";
+        var seat = FindUniqueClassroomSeat(seats, sessionTarget.TargetId, deviceLabel, deviceLabel);
         return string.IsNullOrWhiteSpace(seat?.StudentName) ? "未填写姓名" : seat.StudentName.Trim();
     }
 

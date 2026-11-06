@@ -1427,31 +1427,6 @@ public partial class TeacherWindow : Window
                 return;
             }
 
-            foreach (var cell in _model.SeatMapCells.Where(item => item.IsSeat && item.HasVeyonTarget).ToArray())
-            {
-                var syncResult = await _model.SyncSeatStudentNameToVeyonAsync(cell.Row, cell.Column);
-                if (syncResult?.StartsWith("CONFIRM_NAME:", StringComparison.Ordinal) == true)
-                {
-                    var separator = syncResult.IndexOf('|');
-                    var confirmedName = separator >= 0 ? syncResult[13..separator] : "";
-                    var prompt = separator >= 0 ? syncResult[(separator + 1)..] : syncResult;
-                    var choice = await ChooseSeatNameConflictActionAsync(prompt);
-                    if (choice == SeatNameConflictAction.UseCampusName)
-                        syncResult = await _model.SyncSeatStudentNameToVeyonAsync(cell.Row, cell.Column,
-                            confirmedExternalName: confirmedName);
-                    else if (choice == SeatNameConflictAction.UseVeyonName)
-                        syncResult = await _model.SyncSeatVeyonNameToStudentAsync(cell.Row, cell.Column,
-                            confirmedName);
-                    else
-                        syncResult = "名称冲突尚未处理；本机资料已保存，未覆盖 Veyon 或本机姓名。可处理冲突后重试。";
-                }
-                if (!string.IsNullOrWhiteSpace(syncResult))
-                {
-                    await ReportSeatMapSyncFailureWithDirectoryRefreshAsync(syncResult);
-                    return;
-                }
-            }
-
             if (_model.SeatGridUnboundComputerCount == 0)
             {
                 var refreshed = await _model.RefreshDeviceListsAfterSeatMapSaveAsync();
@@ -1577,7 +1552,8 @@ public partial class TeacherWindow : Window
         if (!cell.CanEdit) return;
         var edit = await EditSeatCellAsync(cell);
         if (edit is null) return;
-        _model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber);
+        _model.SaveSeatCell(cell.Row, cell.Column, edit.StudentName, edit.ComputerNumber,
+            saveImmediately: true);
     }
 
     private void SeatCellPointerPressed(object? sender, PointerPressedEventArgs e)
@@ -1712,7 +1688,7 @@ public partial class TeacherWindow : Window
         {
             Text = cell.CanEditComputerNumber
                 ? "编号固定跟随这个座位，不受插入或移动座位影响。填写姓名且编号留空时，会从本机已登记地点的最大编号后续排；空姓名不编号。"
-                : "此座位已绑定 Veyon 电脑。电脑编号对应固定 Windows Hostname，绑定后编号锁定；修改学生姓名会按 UUID 同步 Veyon Name，HostAddress 不变。",
+                : "此座位已绑定 Veyon 电脑。编号对应固定 Windows Hostname；修改学生姓名只保存到教师端，不会改变 Veyon Name、HostAddress 或 UUID。",
             Classes = { "muted" },
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
@@ -1724,7 +1700,7 @@ public partial class TeacherWindow : Window
         };
         layout.Children.Add(new TextBlock { Text = "学生姓名" });
         layout.Children.Add(nameBox);
-        layout.Children.Add(new TextBlock { Text = "填写姓名后会生成学生电脑；编号留空时按本机已登记地点的最大编号续排。无姓名座位可手动填写编号并生成电脑；无编号座位只保留桌位。Veyon Name 默认使用学生姓名；姓名为空时使用 PC 编号。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
+        layout.Children.Add(new TextBlock { Text = "填写姓名后会为座位建议电脑编号；无姓名座位也可手动分配编号。学生姓名与 Veyon 电脑名称分别保存；改姓名不会修改 Veyon Name、Host 或 UUID。" , Classes = { "muted" }, TextWrapping = Avalonia.Media.TextWrapping.Wrap });
         var actions = new StackPanel
         {
             Orientation = Avalonia.Layout.Orientation.Horizontal,
@@ -1806,7 +1782,7 @@ public partial class TeacherWindow : Window
         var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
         layout.Children.Add(new TextBlock
         {
-            Text = "将交换所选座位的学生姓名及其 Veyon 显示名（允许一个座位为空）。电脑编号、连接地址、UUID 和座位绑定不变；有冲突会先要求核对。",
+            Text = "将交换所选座位的学生姓名（允许一个座位为空）。Veyon Name、电脑编号、连接地址、UUID 和座位绑定均保持不变。",
             TextWrapping = Avalonia.Media.TextWrapping.Wrap
         });
         layout.Children.Add(new ListBox

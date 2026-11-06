@@ -181,6 +181,10 @@ test('release workflow leaves GitCode uploads to the local workstation', () => {
   assert.match(workflow, /GitCode\/AtomGit 附件由维护者在本机上传/);
   assert.doesNotMatch(workflow, /GITCODE_TOKEN|publish-gitcode-release\.cjs|mirror-gitcode-develop\.sh|Sync beta source commit to GitCode/);
   assert.match(fs.readFileSync(path.join(__dirname, 'upload-gitcode-release.ps1'), 'utf8'), /publish-gitcode-release\.cjs/);
+  const shellUploader = fs.readFileSync(path.join(__dirname, 'upload-gitcode-release.sh'), 'utf8');
+  assert.match(shellUploader, /publish-gitcode-release\.cjs/);
+  assert.match(shellUploader, /gh release download/);
+  assert.doesNotMatch(shellUploader, /GITCODE_TOKEN=[A-Za-z0-9]{16,}/);
   assert.equal(fs.existsSync(path.join(__dirname, '../.github/workflows/mirror-develop-to-gitcode.yml')), false);
   assert.equal(fs.existsSync(path.join(__dirname, 'mirror-gitcode-develop.sh')), false);
   assert.match(workflow, /Create or verify the release tag/);

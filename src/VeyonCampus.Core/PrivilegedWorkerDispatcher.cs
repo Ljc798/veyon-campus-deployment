@@ -161,9 +161,7 @@ public static class PrivilegedWorkerDispatcher
             }
 
             var expectedStepId = GetStepId(operation);
-            if (!string.Equals(result.StepId, expectedStepId, StringComparison.Ordinal))
-                result = new StepResult(expectedStepId, ExecutionPlan.NeedsReview,
-                    "Worker 适配器返回了不匹配的步骤标识；请核对本机状态。");
+            result = AlignStepResult(result, expectedStepId);
             return new PrivilegedWorkerResponse(PrivilegedWorkerProtocol.CurrentVersion, requestId,
                 result, publicKeyPem, teacherKeyCreated, VeyonRenameBackupPath: veyonRenameBackupPath,
                 VeyonRenameResults: veyonRenameResults,
@@ -223,4 +221,18 @@ public static class PrivilegedWorkerDispatcher
         PrivilegedWorkerOperation.RenameVeyonComputers => "veyon-computer-rename",
         _ => "worker-operation"
     };
+
+    /// <summary>
+    /// Forces the operation's own step id while keeping the adapter's diagnosis. Replacing the
+    /// detail would hide the only actionable part of a failed operation, which is how a failed
+    /// Veyon authentication write used to surface as an unexplained step-id mismatch.
+    /// </summary>
+    public static StepResult AlignStepResult(StepResult result, string expectedStepId)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedStepId);
+        if (string.Equals(result.StepId, expectedStepId, StringComparison.Ordinal)) return result;
+        return new StepResult(expectedStepId, ExecutionPlan.NeedsReview,
+            $"Worker 适配器返回了不匹配的步骤标识（{result.StepId}）：{result.Detail}", result.ExitCode);
+    }
 }

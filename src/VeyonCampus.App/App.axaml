@@ -98,6 +98,7 @@
     <Style Selector="Button.nav.selected:pressed"><Setter Property="Background" Value="#064783" /><Setter Property="Foreground" Value="White" /><Setter Property="BorderBrush" Value="#064783" /></Style>
     <Style Selector="Button.seat-dot"><Setter Property="MinHeight" Value="0" /><Setter Property="Padding" Value="0" /><Setter Property="Background" Value="#EEF2F5" /><Setter Property="Foreground" Value="#657485" /><Setter Property="BorderBrush" Value="#DCE3E8" /><Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="5" /></Style>
     <Style Selector="Button.seat-dot.seat"><Setter Property="Background" Value="#FFFFFF" /><Setter Property="Foreground" Value="#173447" /><Setter Property="BorderBrush" Value="#9CB4C0" /></Style>
+    <Style Selector="TextBlock.emptyName"><Setter Property="Foreground" Value="#667784" /></Style>
     <Style Selector="Button.seat-dot.namedSeat"><Setter Property="Background" Value="#DDF1EC" /><Setter Property="Foreground" Value="#155E57" /><Setter Property="BorderBrush" Value="#70B0A2" /></Style>
     <Style Selector="Button.seat-dot.needsComputerNumber"><Setter Property="Background" Value="#FFF3D6" /><Setter Property="Foreground" Value="#865300" /><Setter Property="BorderBrush" Value="#D99A26" /><Setter Property="BorderThickness" Value="2" /></Style>
     <Style Selector="Button.seat-dot.addRemoveMode"><Setter Property="BorderBrush" Value="#0B69C7" /><Setter Property="BorderThickness" Value="2" /></Style>
