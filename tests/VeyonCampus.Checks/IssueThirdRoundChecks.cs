@@ -71,23 +71,17 @@ internal static class IssueThirdRoundChecks
         Expect(vm.StudentSidsByTarget(["PC-03"], false)["PC-03"].SequenceEqual([sid1]), "explicit advanced input remains supported");
         vm.CampusId = "智学前程-third-round";
         vm.StudentSystemPolicyLockWallpaper = true;
-        if (OperatingSystem.IsWindows())
-        {
-            vm.UseManualApplicationInputs = false;
-            Expect(vm.StudentSystemPolicyPushGuidance.Contains("读取并选择学生账户"), "disabled system push explains account selection requirement");
-            vm.UseManualApplicationInputs = true;
-            vm.ApplicationStudentSids = sid1;
-            var selectedAccount = new StudentAccountChoice("PC-03", new("student", sid1));
-            vm.SetStudentAccountChoices([selectedAccount]);
-            selectedAccount.IsSelected = true;
-            vm.StudentSystemPolicyImpactReviewed = true;
-            Expect(string.IsNullOrEmpty(vm.StudentSystemPolicyPushGuidance), "system push shows no warning once it is ready");
-        }
-        else
-        {
-            Expect(vm.StudentSystemPolicyPushGuidance.Contains("请在 Windows 教师端设置学生电脑限制"),
-                "system policy guidance remains platform-specific");
-        }
+        // The guidance is computed from the draft alone and no longer branches on the host platform,
+        // so the same readiness contract must hold wherever this fixture runs.
+        vm.UseManualApplicationInputs = false;
+        Expect(vm.StudentSystemPolicyPushGuidance.Contains("读取并选择学生账户"), "disabled system push explains account selection requirement");
+        vm.UseManualApplicationInputs = true;
+        vm.ApplicationStudentSids = sid1;
+        var selectedAccount = new StudentAccountChoice("PC-03", new("student", sid1));
+        vm.SetStudentAccountChoices([selectedAccount]);
+        selectedAccount.IsSelected = true;
+        vm.StudentSystemPolicyImpactReviewed = true;
+        Expect(string.IsNullOrEmpty(vm.StudentSystemPolicyPushGuidance), "system push shows no warning once it is ready");
     }
     public static void CheckWindowsAccountReader()
     {
