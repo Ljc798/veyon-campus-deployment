@@ -43,7 +43,37 @@ internal static class StudentCompanionChecks
 
         CheckSingleActionHelpFlow();
 
+        CheckDisconnectedDiagnostics();
+
         CheckSignedLocalSnapshots();
+    }
+
+    /// <summary>
+    /// A student screen that only ever says "waiting for the teacher" cannot be diagnosed in the
+    /// classroom. Each way the companion can lose its classroom must reach the screen with its own
+    /// reason, and an active classroom must not show one.
+    /// </summary>
+    private static void CheckDisconnectedDiagnostics()
+    {
+        var viewModel = new StudentCompanionViewModel();
+        Expect(!viewModel.HasStatusDetail && viewModel.StatusDetail.Length == 0);
+
+        viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
+            StudentCompanionConnectionState.Disconnected,
+            StatusDetail: "无法连接本机学生 Agent（127.0.0.1:39174）。"));
+        Expect(viewModel.HasStatusDetail);
+        Expect(viewModel.StatusDetail.Contains("127.0.0.1:39174", StringComparison.Ordinal));
+        Expect(viewModel.StatusTitle == "等待教师端连接");
+
+        viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
+            StudentCompanionConnectionState.ConnectedWithoutClass,
+            StatusDetail: "教师端课堂状态已超过 2 分钟没有刷新；教师端可能已退出，或推送被网络、防火墙阻断。"));
+        Expect(viewModel.StatusDetail.Contains("2 分钟", StringComparison.Ordinal));
+
+        viewModel.ApplyStatus(new StudentCompanionStatusSnapshot(
+            StudentCompanionConnectionState.ClassroomActive, "LAB-01", 1, Guid.NewGuid(),
+            ClassroomMode.Normal, StatusDetail: "课堂进行中不应显示失败原因。"));
+        Expect(!viewModel.HasStatusDetail && viewModel.StatusDetail.Length == 0);
     }
 
     private static void CheckSingleActionHelpFlow()
