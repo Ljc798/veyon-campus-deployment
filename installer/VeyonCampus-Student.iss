@@ -67,6 +67,9 @@ Source: "{#PublishDirectory}\*"; DestDir: "{app}"; Excludes: "MaintenanceService
 Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Versions\{#MaintenanceServiceVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs onlyifdoesntexist uninsneveruninstall; Check: not IsMaintenanceServiceSelfUpdate
 Source: "{#PublishDirectory}\MaintenanceService\*"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Versions\{#MaintenanceServiceVersion}"; Flags: ignoreversion recursesubdirs createallsubdirs uninsneveruninstall; Check: IsMaintenanceServiceSelfUpdate
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\Updater\Student\{#AppVersion}"; Flags: ignoreversion
+; The Maintenance service version directory must carry its own UpdateHelper: the boot recovery task and
+; the service self-update transaction both launch it from next to the service executable.
+Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{autopf}\Veyon Campus\MaintenanceService\Versions\{#MaintenanceServiceVersion}"; Flags: ignoreversion
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "EdgePolicyExecutor.task.xml"; DestDir: "{tmp}"; Flags: dontcopy
@@ -366,7 +369,9 @@ begin
   end
   else
   begin
-    Result := RunMaintenanceServiceControl('--install-and-start-service', ResultCode) and (ResultCode = 0);
+    // A non-zero control exit code still leaves a usable service when the SCM reports it running
+    // (for example a post-start bookkeeping step failed). Judge by the service state, not by the code.
+    Result := RunMaintenanceServiceControl('--install-and-start-service', ResultCode);
     if Result then
       Result := IsMaintenanceServiceRunning(StateCode);
     if not Result then
@@ -885,7 +890,8 @@ begin
         RemoveOwnedEdgeExtensionPolicy();
     end;
     if not InstallAndStartMaintenanceService() then
-      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志并重试。');
+      RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志 ' +
+        '(control/state 退出码) 与 C://ProgramData//VeyonCampus//MaintenanceServiceHost//service.log 后重试。');
   end
   else if CurStep = ssDone then
     { The uninstaller is only guaranteed to exist once Setup reports ssDone. }

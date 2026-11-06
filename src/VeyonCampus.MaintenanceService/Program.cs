@@ -79,9 +79,12 @@ internal static class Program
             }
             catch (Exception exception) when (exception is Win32Exception or IOException or
                                               UnauthorizedAccessException or CryptographicException or
-                                              InvalidOperationException or ArgumentException)
+                                              InvalidOperationException or ArgumentException or TimeoutException)
             {
-                WriteLog("Service control operation failed: " + exception.GetType().Name);
+                // TimeoutException used to escape this filter and crash the process with
+                // 0xE0434352, which the installer could only report as an unknown failure.
+                WriteLog("Service control operation failed: " + exception.GetType().Name + " " +
+                         exception.Message);
                 return 1;
             }
         }
@@ -188,8 +191,19 @@ internal static class Program
         ApplyFailureActions(service);
         StartServiceHandle(service);
         WaitForServiceState(service, ServiceRunning);
-        MaintenanceServiceRecoveryTask.Register(Environment.ProcessPath
-            ?? throw new InvalidOperationException("无法定位 Maintenance Recovery task 的服务版本目录。"));
+        // The boot recovery task is a safety net for a broken service image. It must never decide
+        // whether the service counts as installed: a missing helper or a locked-down Task Scheduler
+        // used to turn a healthy, already running service into a failed installation.
+        try
+        {
+            MaintenanceServiceRecoveryTask.Register(Environment.ProcessPath
+                ?? throw new InvalidOperationException("无法定位 Maintenance Recovery task 的服务版本目录。"));
+        }
+        catch (Exception exception) when (exception is not OutOfMemoryException and not StackOverflowException)
+        {
+            WriteLog("Maintenance recovery task registration skipped: " + exception.GetType().Name + " " +
+                     exception.Message);
+        }
         WriteLog("Maintenance service installed or updated and started.");
         return 0;
     }
@@ -272,10 +286,19 @@ internal static class Program
         }
         StopServiceAndWait();
         using var manager = OpenServiceControlManager(ScManagerConnect);
-        using var service = TryOpenService(manager, DeleteAccess | ServiceQueryStatus, out var notInstalled);
-        if (notInstalled || service is null) return 0;
-        if (!DeleteService(service))
-            throw LastError("无法删除 Maintenance Windows 服务注册。" );
+        {
+            // A deleted service only disappears from the SCM once every open handle is closed, so the
+            // handle must be released before the removal is polled; otherwise the poll always timed out
+            // and the uninstaller failed after the service was already gone.
+            using var service = TryOpenService(manager, DeleteAccess | ServiceQueryStatus, out var notInstalled);
+            if (notInstalled || service is null)
+            {
+                MaintenanceServiceRecoveryTask.Remove();
+                return 0;
+            }
+            if (!DeleteService(service))
+                throw LastError("无法删除 Maintenance Windows 服务注册。" );
+        }
         var deadline = DateTime.UtcNow + ServiceTransitionTimeout;
         while (DateTime.UtcNow < deadline)
         {
@@ -707,7 +730,11 @@ internal static class Program
     private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string stringSecurityDescriptor,
         int stringSdRevision, out IntPtr securityDescriptor, out uint securityDescriptorSize);
 
-    [DllImport("advapi32.dll", SetLastError = true)]
+    // LocalFree lives in kernel32, not advapi32. Declaring it against advapi32 made every
+    // install/upgrade crash with EntryPointNotFoundException (0xE0434352) inside the
+    // ApplyServiceSecurity finally block, so the service was created but never started and
+    // StudentSetup reported "无法安装或启动独立 Maintenance 后台服务" after a successful install.
+    [DllImport("kernel32.dll", SetLastError = true)]
     private static extern IntPtr LocalFree(IntPtr memory);
 
     [DllImport("advapi32.dll", SetLastError = true)]
