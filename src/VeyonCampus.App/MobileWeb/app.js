@@ -154,6 +154,9 @@ function setActiveControlTab(tab) {
   }
   if (selected === "policy" && policyPageMode === "directory") startDirectoryStatusPolling();
   else stopDirectoryStatusPolling();
+  // Opening the policy tab must already show why the apply button is (or is not) usable.
+  if (selected === "policy" && policyPageMode !== "directory" && selectedTargets().length)
+    void refreshStatusIfSelected();
 }
 
 function handleControlTabKeydown(event) {
@@ -1087,33 +1090,30 @@ function updateCustomWebsiteModeGuidance(targets = selectedTargets(), websiteSta
     mode === "combined" ? "应用阻止名单和例外" : "应用阻止名单";
   if (guidance) {
     guidance.textContent = mode === "allowlist"
-      ? "只允许“允许的网站”名单中的域名及其子域名；其他网站都会被阻止。阻止名单会保留，切换方式后可继续使用。"
+      ? "只允许名单内的网站，其他网站都会被阻止。"
       : mode === "combined"
-        ? "先阻止名单中的网站，再放行允许名单中的例外；名单外网站仍可访问。"
-        : "只阻止“要阻止的网站”名单中的网站；其他网站仍可访问。允许名单会保留，切换方式后可继续使用。";
+        ? "先阻止名单中的网站，再放行允许名单。"
+        : "只阻止名单中的网站，其他网站仍可访问。";
   }
   const nextStep = $("custom-website-next-step-guidance");
   if (!nextStep) return;
   if (policyOperationInFlight) {
-    nextStep.textContent = "下一步：等待网站限制处理完成，再查看下方逐台结果。";
+    nextStep.textContent = "正在处理，请稍候。";
   } else if (!websiteListsAvailable) {
-    nextStep.textContent = "下一步：先读取教师电脑上当前校区的网站名单。";
+    nextStep.textContent = "请先读取教师端名单。";
   } else if (!targets.length) {
-    nextStep.textContent = "下一步：选择至少一台学生电脑，再核对名单和截止时间。";
+    nextStep.textContent = "请先选择学生电脑。";
   } else if (!input.hasRequiredDomains) {
-    nextStep.textContent = mode === "allowlist"
-      ? "下一步：打开“编辑阻止与允许的网站”，至少填写一个允许访问的域名。"
-      : mode === "combined"
-        ? "下一步：打开“编辑阻止与允许的网站”，填写要阻止的网站或允许例外。"
-        : "下一步：打开“编辑阻止与允许的网站”，至少填写一个要阻止的域名。";
+    nextStep.textContent = mode === "allowlist" ? "请填写至少一个允许的域名。"
+      : "请在“编辑阻止与允许的网站”里填写域名。";
   } else if (input.domainValidationError) {
-    nextStep.textContent = `下一步：打开“编辑阻止与允许的网站”并修正域名。${input.domainValidationError}`;
+    nextStep.textContent = "域名格式不对：" + input.domainValidationError;
   } else if (!input.validDeadline) {
-    nextStep.textContent = "下一步：设置未来 24 小时内的限制截止时间。";
+    nextStep.textContent = "请设置 24 小时内的截止时间。";
   } else if (!(websiteStatusReady ?? hasRequiredPolicyStatus(targets))) {
-    nextStep.textContent = "下一步：刷新所选学生电脑状态，再核对规则并应用。";
+    nextStep.textContent = policyStatusRequirementMessage(targets);
   } else {
-    nextStep.textContent = "下一步：核对所选电脑和截止时间，再点击下方应用按钮。";
+    nextStep.textContent = "可以推送。";
   }
 }
 
@@ -1579,14 +1579,12 @@ function updateSelectionCount() {
 function policyStatusRequirementMessage(targets) {
   const statuses = targets.map(target => latestStatusByTarget.get(normalizeTarget(target)));
   if (statuses.some(status => status?.needsReview))
-    return "学生 Agent 身份或签名需要核对。请先在教师端“设备健康”确认身份，再刷新手机状态。";
+    return "学生身份需核对：请到教师端“设备健康”点一次“核对并固定身份”。";
   if (statuses.some(status => !status?.online))
-    return "至少一台学生电脑没有回应。请检查学生 Agent 和校园网，再刷新状态。";
+    return "有学生电脑没有回应：请确认 Agent 和学生机在线后刷新。";
   if (statuses.some(status => !status?.supportsPolicyCompareAndSet))
-    return "至少一台学生 Agent 版本过旧或状态不完整。请更新学生端并重新读取状态。";
-  if (statuses.some(status => !Number.isSafeInteger(status?.websiteRevision) || status.websiteRevision < 0))
-    return "没有读到网站策略版本。请刷新所选电脑状态后重试。";
-  return "请刷新所选电脑状态；状态未确认时，无法安全更改限制。";
+    return "学生 Agent 版本过旧：请更新学生端后重新读取状态。";
+  return "请先刷新所选电脑状态，再推送限制。";
 }
 
 function hasRequiredPolicyStatus(targets) {
@@ -1594,10 +1592,12 @@ function hasRequiredPolicyStatus(targets) {
   const duplicates = duplicateDirectoryTargets();
   if (targets.some(target => duplicates.has(normalizeTarget(target))))
     return false;
+  // A device that has never received a website policy reports no revision yet; requiring one here
+  // made the very first push impossible (the button stayed disabled no matter how often you refreshed).
+  // Fresh revisions are still read on the teacher PC and embedded as expectedRevision in the signed policy.
   return targets.every(target => {
     const status = latestStatusByTarget.get(normalizeTarget(target));
-    if (!status || !status.online || status.needsReview || !status.supportsPolicyCompareAndSet) return false;
-    return status.websiteRevision != null;
+    return Boolean(status && status.online && !status.needsReview && status.supportsPolicyCompareAndSet);
   });
 }
 
@@ -3950,12 +3950,9 @@ async function runCustomWebsitePolicy(enabled) {
     toast("还没有读取到教师端名单，请刷新后再试。");
     return;
   }
-  const expected = expectedRevisionFields(targets);
-  if (!expected) {
-    toast("电脑状态有变化，请刷新状态后重试。");
-    await refreshStatusIfSelected();
-    return;
-  }
+  // Missing revisions are not fatal: the teacher console re-reads the signed status and embeds the
+  // expected revision in each policy, so the Agent still rejects a stale write.
+  const expected = expectedRevisionFields(targets) ?? {};
   const input = customWebsitePolicyInput();
   if (enabled && !input.valid) {
     toast(customWebsitePolicyInputError(input));
@@ -4211,6 +4208,7 @@ $("target-picker").addEventListener("toggle", () => {
   }
 });
 $("refresh-status").addEventListener("click", refreshStatusIfSelected);
+$("refresh-status-inline").addEventListener("click", () => void refreshStatusIfSelected());
 $("refresh-custom-website-lists").addEventListener("click", () => void refreshCustomWebsiteLists());
 $("refresh-saved-policy-profiles").addEventListener("click", () => void refreshSavedPolicyProfiles());
 $("saved-policy-profile").addEventListener("change", () => {

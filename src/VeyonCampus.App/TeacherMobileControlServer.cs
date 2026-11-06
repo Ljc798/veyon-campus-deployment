@@ -4104,8 +4104,10 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 throw new InvalidDataException($"本次操作不包含{policyName}；请刷新手机页面后重试。");
             return;
         }
-        if (supplied is null)
-            throw new InvalidDataException($"手机页面没有提交已读到的{policyName}版本；请刷新状态后重新确认。");
+        // The phone may not have seen a revision yet (for example the very first website policy, or a
+        // device that was reimaged). The revisions read here a moment ago are authoritative and are
+        // embedded as expectedRevision in the signed policy, so the Agent still rejects a stale write.
+        if (supplied is null) return;
 
         var normalized = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
         foreach (var pair in supplied)
