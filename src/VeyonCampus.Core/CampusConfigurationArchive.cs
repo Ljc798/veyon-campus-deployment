@@ -160,7 +160,10 @@ public static class CampusConfigurationArchive
         using var input = new MemoryStream(archiveBytes, writable: false);
         using var archive = new ZipArchive(input, ZipArchiveMode.Read, leaveOpen: false);
         if (archive.Entries.Count is < 3 or > MaximumFiles)
-            throw new InvalidDataException("下载 ZIP 的文件数量不符合校区配置包格式。");
+            throw new InvalidDataException(
+                $"下载 ZIP 的文件数量不符合校区配置包格式（ZIP 内有 {archive.Entries.Count} 个条目，" +
+                $"本版本最多接受 {MaximumFiles} 个）。schemaVersion 7 起的配置包带有教师连接根证书，" +
+                "请改用与本包同版本或更新的 StudentSetup 载入。");
 
         long totalBytes = 0;
         foreach (var entry in archive.Entries)
