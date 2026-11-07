@@ -30,7 +30,7 @@
                                    AutomationProperties.Name="{Binding TeacherSetupWizardProgressText}"
                                    Height="7" VerticalAlignment="Center" />
           </Border>
-          <TextBlock Text="确认教师端环境、配置学生座位，再生成学生配置包。空座位不会生成电脑。"
+          <TextBlock Text="确认教师端环境、配置学生座位，再生成学生配置包。"
                      Classes="muted" TextWrapping="Wrap" />
         </StackPanel>
       </Border>

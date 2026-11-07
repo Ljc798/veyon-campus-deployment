@@ -67,7 +67,7 @@
                        PlaceholderText="默认使用配置包名称" />
             </StackPanel>
           </Grid>
-          <TextBlock Text="默认 15×15；可点按或按住鼠标拖动连续添加桌位。电脑编号固定跟随座位；填写姓名且编号留空时，从本机已登记地点的最大编号后续排。无姓名座位可手动填写编号并生成电脑；无编号座位不会生成电脑。"
+          <TextBlock Text="无编号座位不会生成电脑。"
                      Classes="muted" IsVisible="{Binding HasNoSeatMap}" TextWrapping="Wrap" />
           <Button Classes="primary" Content="开始编辑座位图" Click="RequestPrepareRoomSeatGrid"
                   IsEnabled="{Binding CanPrepareRoomSeatGrid}" IsVisible="{Binding HasNoSeatMap}"
@@ -97,9 +97,7 @@
                         IsEnabled="{Binding CanDeleteRoomProfile}" />
               </StackPanel>
             </Expander>
-            <TextBlock Text="预览 · 悬停查看桌位和学生姓名。" Classes="muted"
-                       IsVisible="{Binding IsSeatMapPreview}" TextWrapping="Wrap" Margin="0,0,0,8" />
-            <TextBlock Text="编辑 · 点击空格添加座位，点击座位修改姓名或编号；拖动座位可移动学生和电脑绑定。行列标题右键可删除空行或空列。按 Ctrl+Z 撤销，Ctrl+Shift+Z 重做。"
+            <TextBlock Text="编辑 · 点击添加或修改座位，拖动移动；Ctrl+Z 撤销，Ctrl+Shift+Z 重做。"
                        Classes="muted" IsVisible="{Binding IsSeatMapEditing}" TextWrapping="Wrap" Margin="0,0,0,8" />
             <StackPanel Orientation="Horizontal" Spacing="12" Margin="0,0,0,8">
               <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">

@@ -19,7 +19,6 @@
                     <TextBlock Text="学生电脑" Classes="muted" FontSize="12" />
                     <TextBlock Text="{Binding ClassroomOverviewDeviceCount}" Foreground="{DynamicResource Teacher.Color.Info}"
                                FontSize="25" FontWeight="Bold" />
-                    <TextBlock Text="当前课堂范围" Classes="muted" FontSize="12" />
                   </StackPanel>
                 </Border>
                 <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.SuccessSubtle}" CornerRadius="10" Padding="14">
@@ -27,7 +26,6 @@
                     <TextBlock Text="已回执 / 核验" Classes="muted" FontSize="12" />
                     <TextBlock Text="{Binding ClassroomOverviewReceiptCount}" Foreground="{DynamicResource Teacher.Color.Success}"
                                FontSize="25" FontWeight="Bold" />
-                    <TextBlock Text="最近一次签名确认" Classes="muted" FontSize="12" />
                   </StackPanel>
                 </Border>
                 <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="10" Padding="14">
@@ -85,8 +83,7 @@
                         Classes="quick-control-choice"
                         Classes.active="{Binding IsClassroomWebsiteControlActive}"
                         Height="96" Click="RequestEnableClassroomWebsiteControl"
-                        IsEnabled="{Binding CanStartClassroomWebsiteControl}"
-                        ToolTip.Tip="网站策略由 Student Agent 处理，不依赖键鼠 Guard 状态。">
+                        IsEnabled="{Binding CanStartClassroomWebsiteControl}">
                   <Grid ColumnDefinitions="44,*" ColumnSpacing="12" HorizontalAlignment="Left">
                     <Border Width="42" Height="42" CornerRadius="12" Background="{DynamicResource Teacher.Color.SuccessSubtle}"
                             VerticalAlignment="Center">
@@ -107,8 +104,7 @@
                         Classes.active="{Binding IsClassroomInputControlActive}"
                         Classes.needs-review="{Binding HasUnverifiedClassroomInputControl}"
                         Height="96" Click="RequestLockClassroomInput"
-                        IsEnabled="{Binding CanToggleClassroomInputControl}"
-                        ToolTip.Tip="键鼠操作需要 InputGuard 提供可信的签名状态。">
+                        IsEnabled="{Binding CanToggleClassroomInputControl}">
                   <Grid ColumnDefinitions="44,*" ColumnSpacing="12" HorizontalAlignment="Left">
                     <Border Width="42" Height="42" CornerRadius="12" Background="{DynamicResource Teacher.Color.InfoSubtle}"
                             VerticalAlignment="Center">

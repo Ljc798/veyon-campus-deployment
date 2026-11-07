@@ -7,8 +7,8 @@ const cloudbaseConfigPresent = Boolean(import.meta.env.VITE_CLOUDBASE_ENV_ID && 
 // Keep the built-in floor aligned with the latest stable release. Admin settings
 // remain source-specific, but an older saved value must not roll the page back.
 const DOWNLOAD_FALLBACK_RELEASES = Object.freeze({
-  github: { version: '1.1.77', tag: 'v1.1.77', channel: '稳定版' },
-  gitcode: { version: '1.1.77', tag: 'v1.1.77', channel: '稳定版' }
+  github: { version: '1.1.78', tag: 'v1.1.78', channel: '稳定版' },
+  gitcode: { version: '1.1.78', tag: 'v1.1.78', channel: '稳定版' }
 });
 
 const paths = {
@@ -149,7 +149,20 @@ function deploymentVisual() {
 }
 
 function featureCard(iconName, title, copy, link, label) {
-  return '<article class="feature-card"><span class="feature-icon">' + icon(iconName) + '</span><h3>' + title + '</h3><p>' + copy + '</p>' + routeLink(link, label + ' ' + icon('arrow'), '') + '</article>';
+  return '<article class="feature-card"><span class="feature-icon">' + icon(iconName) + '</span><h3>' + title + '</h3><p>' + copy + '</p>' +
+    (link ? routeLink(link, label + ' ' + icon('arrow'), '') : '') + '</article>';
+}
+
+function capabilitySection() {
+  return '<section class="section tint" id="capabilities"><div class="site-container">' +
+    '<div class="section-head section-head-left"><span class="eyebrow"><i class="eyebrow-dot"></i>课堂管控能力</span>' +
+    '<h2>名单、下载与浏览器限制</h2>' +
+    '<p>在教师端选好名单与模式，学生端按已确认的设置执行；效果以逐台回执为准，未生效时重启学生浏览器并重新下发名单。</p></div>' +
+    '<div class="feature-grid">' +
+    featureCard('globe', '网站黑白名单', '按名单阻止或只允许指定网站，支持阻止名单、白名单与组合模式。', '', '') +
+    featureCard('download', '阻止 Edge 下载', '应用网站策略时同时禁止 Edge 下载文件，并关闭 Edge 冲浪游戏与 Chrome 小恐龙。', '', '') +
+    featureCard('lock', '软件与系统限制', '按学生账户限制 EXE 运行并配置系统限制；解除时只撤销本工具写入的规则。', '', '') +
+    '</div></div></section>';
 }
 
 function homePage() {
@@ -174,6 +187,8 @@ function homePage() {
     featureCard('download', '选择正确的安装包', '教师电脑和学生电脑需要不同版本；下载页提供 GitHub 与 GitCode 两个渠道。', '/download', '查看下载') +
     featureCard('book', '按步骤准备和部署', '了解教师端、学生端分别要做什么，以及哪些设置需要先确认。', '/docs', '打开指南') +
     featureCard('check', '试装后再扩大使用', '先检查安装结果和 Veyon 连接，再按批次部署到其他电脑。', '/docs#verify', '查看检查步骤') +
+    '</div><div class="docs-actions">' +
+    routeLink('/product#capabilities', '查看课堂管控能力 ' + icon('arrow'), 'text-link') +
     '</div></div></section>' +
     '<section class="section tint"><div class="site-container">' +
     '<div class="callout guide-alert">' + icon('warning') + '<div><strong>请先在可恢复的测试电脑上试装</strong>' +
@@ -278,6 +293,7 @@ function productPage() {
     '<ul class="product-points"><li>从云端获取配置，或导入本地文件</li><li>逐项确认要执行的设置</li><li>查看结果，再配合教师端检查连接</li></ul>' +
     routeLink('/download#github-downloads', '选择学生端安装包 ' + icon('arrow'), 'text-link') + '</article>' +
     '</div></div></section>' +
+    capabilitySection() +
     '<section class="section tint"><div class="site-container"><div class="workflow">' +
     '<div class="workflow-copy"><span class="eyebrow"><i class="eyebrow-dot"></i>推荐顺序</span><h2>先在两台电脑上走完一遍</h2>' +
     '<p>确认教师端和学生端都能按预期工作后，再安排小批量部署。学校的账户规则、网络和设备管理策略可能影响实际结果。</p>' +

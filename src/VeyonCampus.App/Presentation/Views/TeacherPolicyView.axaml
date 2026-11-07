@@ -65,8 +65,6 @@
                          IsVisible="{Binding !HasWebsitePolicyTargetChoices}" />
               <Border Height="1" Background="{DynamicResource Teacher.Color.Border}" />
               <TextBlock Text="学生代理" Classes="component-title" />
-              <TextBlock Text="Edge 实时同步启用后，可在这里读取逐台名单和扩展状态。"
-                         Classes="muted" TextWrapping="Wrap" />
               <StackPanel Spacing="6">
                 <TextBlock Text="网站策略模式" FontWeight="SemiBold" />
                 <WrapPanel Orientation="Horizontal">
@@ -157,7 +155,7 @@
           <Border Classes="section-card" IsVisible="{Binding IsApplicationPolicyPage}">
             <StackPanel Spacing="12">
               <TextBlock Text="学生应用限制 · 演示" Classes="section-title" />
-              <TextBlock Text="演示功能，正式启用前需在目标 Windows 设备验收。禁用软件前，请先检查影响并阅读结果。"
+              <TextBlock Text="禁用软件前，请先检查影响并阅读结果。"
                          Classes="muted" TextWrapping="Wrap" />
               <Border Classes="status-panel info" Padding="12">
                 <StackPanel Spacing="7">
@@ -377,7 +375,7 @@
               <Border Classes="subtle-panel">
                 <StackPanel Spacing="8">
                   <TextBlock Text="目标学生账户" FontWeight="SemiBold" />
-                  <TextBlock Text="先勾选确实需要限制的学生账户。账户选择按电脑分别保存。" Classes="muted" TextWrapping="Wrap" />
+                  <TextBlock Text="账户选择按电脑分别保存。" Classes="muted" TextWrapping="Wrap" />
                   <Button Content="读取目标电脑账户" IsEnabled="{Binding CanReadApplicationInventory}"
                           Click="RequestReadStudentAccounts" HorizontalAlignment="Left" />
                   <TextBlock Text="{Binding StudentAccountsStatus}" Classes="muted"

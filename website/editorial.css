@@ -395,8 +395,8 @@ select:focus-visible, textarea:focus-visible {
 .field-hint { color: var(--muted); font-size: 11px; }
 .principle { border-top: 1px solid var(--line); }
 .principle .icon { color: var(--accent); }
-.principle strong { color: var(--ink); font-size: 13px; }
-.principle span { color: var(--muted); font-size: 12px; }
+.principle > div > strong { color: var(--ink); font-size: 14px; }
+.principle > div > span { color: var(--muted); font-size: 13px; }
 
 /* ── 6. Admin shell: 纸色侧栏 + 双线顶栏 ─────────────────────────────── */
 .admin-shell { background: var(--paper); }

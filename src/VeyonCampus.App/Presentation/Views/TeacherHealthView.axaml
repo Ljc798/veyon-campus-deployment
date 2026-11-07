@@ -50,23 +50,21 @@
                    IsVisible="{Binding HasClassroomDirectoryError}" />
         <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
           <Border Background="{DynamicResource Teacher.Color.SuccessSubtle}" CornerRadius="10" Padding="12">
-            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="4">
               <TextBlock Text="正常" Classes="muted" FontSize="12" />
               <TextBlock Grid.Row="1" Text="{Binding DeviceHealthHealthyCount}"
                          Foreground="{DynamicResource Teacher.Color.Success}" FontSize="23" FontWeight="Bold" />
               <Ellipse Grid.Row="1" Grid.Column="1" Width="8" Height="8"
                        Fill="{DynamicResource Teacher.Color.Success}" VerticalAlignment="Center" />
-              <TextBlock Grid.Row="2" Text="最近状态已确认" Classes="muted" FontSize="12" TextWrapping="Wrap" />
             </Grid>
           </Border>
           <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="10" Padding="12">
-            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="4">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="4">
               <TextBlock Text="需处理" Classes="muted" FontSize="12" />
               <TextBlock Grid.Row="1" Text="{Binding DeviceHealthNeedsActionCount}"
                          Foreground="{DynamicResource Teacher.Color.Warning}" FontSize="23" FontWeight="Bold" />
               <Ellipse Grid.Row="1" Grid.Column="1" Width="8" Height="8"
                        Fill="{DynamicResource Teacher.Color.Warning}" VerticalAlignment="Center" />
-              <TextBlock Grid.Row="2" Text="包含需人工核对的设备" Classes="muted" FontSize="12" TextWrapping="Wrap" />
             </Grid>
           </Border>
           <Border Grid.Column="2" Background="{DynamicResource Teacher.Color.InfoSubtle}" CornerRadius="10" Padding="12">
@@ -156,7 +154,6 @@
         </Grid>
         <Border Classes="subtle-panel" Padding="12" IsVisible="{Binding HasDeviceHealthTargets}">
           <StackPanel Spacing="8">
-            <TextBlock Text="本页统一设备选择" Classes="component-title" />
             <TextBlock Text="{Binding WebsitePolicyTargetSelectionSummary}" Classes="supporting-copy" />
             <WrapPanel Orientation="Horizontal">
               <Button Classes="secondary" Content="全选设备" Click="RequestSelectAllDeviceTargets"

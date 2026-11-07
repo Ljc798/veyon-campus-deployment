@@ -38,8 +38,7 @@
               IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomNotice"
               ToolTip.Tip="发送给当前课堂目标；两分钟后失效。" />
       <Button x:Name="ClassroomChatDrawerToggle" Grid.Column="4" Classes="secondary"
-              IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomChatToggle"
-              ToolTip.Tip="打开学生消息">
+              IsEnabled="{Binding HasActiveClassroomSession}" Click="RequestClassroomChatToggle">
         <Grid ColumnDefinitions="Auto,Auto,Auto" ColumnSpacing="6">
           <Path Data="M3,4 L21,4 L21,17 L14,17 L9,21 L9,17 L3,17 Z M7,9 L17,9 M7,13 L14,13"
                 Width="17" Height="17" Stretch="Uniform" Stroke="#536477" StrokeThickness="1.6"

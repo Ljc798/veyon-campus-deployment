@@ -484,14 +484,12 @@
                     Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateDeviceStatusSection">
               <StackPanel Spacing="2">
                 <TextBlock Text="设备概览" FontWeight="SemiBold" />
-                <TextBlock Text="状态、告警与设备列表" Classes="muted" FontSize="11" />
               </StackPanel>
             </Button>
             <Button x:Name="UpdatesNavStudent" Classes="secondary updates-nav-card" MinWidth="120"
                     Padding="12,8" HorizontalContentAlignment="Left" Click="NavigateStudentMaintenanceSection">
               <StackPanel Spacing="2">
                 <TextBlock Text="学生端维护" FontWeight="SemiBold" />
-                <TextBlock Text="更新、配置与维护进度" Classes="muted" FontSize="11" />
               </StackPanel>
             </Button>
           </StackPanel>
@@ -623,14 +621,13 @@
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
                   <TextBox x:Name="ClassroomChatDraftInput" Text="{Binding ClassroomChatDraft, Mode=TwoWay}"
                            AcceptsReturn="True" TextWrapping="Wrap" Height="48" MaxLength="500"
-                           IsEnabled="{Binding HasSelectedClassroomChatThread}" PlaceholderText="输入消息；Shift+Enter 换行" />
+                           IsEnabled="{Binding HasSelectedClassroomChatThread}" PlaceholderText="输入消息；Enter 发送，Shift+Enter 换行" />
                   <Button Grid.Column="1" Classes="primary" IsEnabled="{Binding CanSendClassroomChat}"
                           Click="SendClassroomChatMessage" ToolTip.Tip="发送消息" VerticalAlignment="Stretch">
                     <Path Data="M2,3 L23,12 L2,21 L5,13 L15,12 L5,11 Z" Width="20" Height="20"
                           Stretch="Uniform" Fill="White" />
                   </Button>
                 </Grid>
-                <TextBlock Text="Enter 发送 · Shift+Enter 换行" Classes="muted" FontSize="12" />
               </StackPanel>
             </Grid>
           </Border>
