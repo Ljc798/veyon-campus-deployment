@@ -78,7 +78,7 @@
 以下全部针对 `website/dist` 这一份静态产物和本机 `vite preview`，属于**上线前能在本地排除的风险**，不代替托管运行时验收。
 
 - **深链接（产物层面）**：36 条 `catalog.json` 记录全部对应到 `dist/docs/articles/<slug>.html` 实体文件，缺失 0；文章页内部 `href`/`src` 全部可解析。
-- **唯一"断链"是设计使然**：`render-public-docs.mjs` 会把 `/product`、`/download`、`/about`、`/contact` 四个 clean URL 写进页脚和 `sitemap.xml`，但本构建不产出这四个页面（它们属于生产站点现有页面）。因此本地断链检查必然命中这 4 条，`sitemap.xml` 42 条 = 6 条站点路由 + 36 篇文章。**这 4 条必须在上线后按实际域名确认，否则页脚会 404。**
+- **唯一"断链"是设计使然**：`render-public-docs.mjs` 会把 `/product`、`/download`、`/about`、`/contact` 四个 clean URL 写进页脚和 `sitemap.xml`，但本构建不产出这四个页面（它们是 `app.js` 的客户端路由）。因此本地断链检查必然命中这 4 条，`sitemap.xml` 42 条 = 6 条站点路由 + 36 篇文章。**上线后已实测 `/product` 正常渲染（SPA 回退到 `index.html` 后由前端路由接管），不是 404。**
 - **本地路由**：`/`、`/docs/`、`/docs`（无尾斜杠）、`/docs/articles/seat-chart.html`、`/docs/catalog.json`、`/pagefind/pagefind.js` 均返回 200。注意 `/docs` 无尾斜杠在 `vite preview` 下可用，CloudBase 是否同样回落到 `docs/index.html` 仍需托管验证。
 - **移动端**：390×844 与 320×568 两个视口下 `documentElement.scrollWidth === innerWidth`（390/390、320/320），无横向溢出、无元素越界；截图确认汉堡菜单、搜索框与按钮、建议词两列换行、分类卡片单列均正常。文章页同样无溢出，宽表格与代码块未撑破版心。
 - **键盘**：首个 Tab 站是"跳到主要内容"；回车后 `location.hash=#main-content`，焦点实际落到 `main#main-content`（`tabindex=-1`），不是只改 URL。连续 18 个 Tab 站（页头导航→搜索框→搜索按钮→6 个建议词→分类筛选→分类卡片）全部带可见焦点环，无一例丢失焦点指示。
@@ -96,6 +96,31 @@
 3. 清空全部配置不再被中断的学生更新阻断。
 4. 教师端侧边栏"帮助与文档"入口 + 打开失败兜底窗口。
 5. 文档中心 36 篇、Pagefind 索引、召回三处修复、47 条评测与本文档结果。
+
+### 生产静态发布记录（2026-11-07 10:30–10:36 HKT）
+
+用户确认没有 Preview 环境，只有一个 CloudBase 环境 `veyon-control-d3gs8hmuyd09c00a7`（ap-shanghai），要求直接发布到该环境；同时明确**只要文档中心，整站视觉保持原样**。
+
+- **发布 Commit**：`2f1cea6`（分支 `feat/website-docs-center`）。在 `git worktree` 里从该 Commit 干净构建（`npm ci` + `npm run build`），避免把当时正在被另一进程修改的 `website/app.js` 带进产物。
+- **发布内容**：`assets/`（7 个新哈希文件）、`pagefind/`、`docs/`（首页 + 36 篇文章 + `catalog.json`）、根级 `sitemap.xml` 与 `robots.txt`。
+- **刻意未发布**：根 `index.html`、`api/`、`old/`。因此首页与其余页面仍引用 2026-10-29 那版带哈希的旧资源，**整站外观没有任何变化**；发布后 `/` 的 `index.html` SHA-256 与发布前完全一致（`6455890f7066b63df80182ab6f0e8d858cf3dde1c2cca5f2e7d94b2abf98027c`）。
+- **为什么可以只发一半**：CloudBase 静态托管按路径取文件，`docs/index.html`、`docs/articles/*.html` 是真实文件，会覆盖原有的 SPA 回退；旧资源文件不会被删除，所以旧首页继续正常。
+- **发布前本地预演**：把线上 110 个文件完整下载，叠加本次要上传的文件，用静态服务器跑一遍——`/` 仍是旧外观（背景 `rgb(244,247,246)`），`/docs/` 正常渲染且搜索返回 15 条结果。
+- **发布后实测**：
+  - 36 个文章 URL 全部 200，页内 3 个 `/assets` 引用全部 200，无 404。
+  - `/docs/` 标题"帮助与文档 · Veyon Campus"，`h1` 唯一，3 个样式表全部生效（背景 `rgb(248,246,240)`）；搜索"学生电脑显示离线怎么办"返回 15 条，前三条为"学生端安装指南 / 学生电脑离线排查 / 推送网站名单"。
+  - `/product` 仍正常渲染旧版"工具介绍"，证明 SPA 回退与旧资源未受影响。
+  - 生产 390px 移动端截图与本机构建截图**逐字节一致**（SHA-256 `94b85813…906da19d6`）。
+  - `robots.txt` 由原来的"HTML 回退"变为 `text/plain`；`sitemap.xml` 由"HTML 回退"变为 `application/xml`，42 条 `<loc>`（6 条站点路由 + 36 篇文章）。
+- **回滚入口**：本次只新增文件、未覆盖任何被引用的旧文件，因此回滚 = 删除 `/docs`、`/pagefind`、`/sitemap.xml`、`/robots.txt` 与 7 个新 `assets/*` 文件即可恢复到发布前状态。命令：
+  ```bash
+  tcb hosting delete /docs --dir -e veyon-control-d3gs8hmuyd09c00a7
+  tcb hosting delete /pagefind --dir -e veyon-control-d3gs8hmuyd09c00a7
+  tcb hosting delete /sitemap.xml -e veyon-control-d3gs8hmuyd09c00a7
+  tcb hosting delete /robots.txt -e veyon-control-d3gs8hmuyd09c00a7
+  ```
+  发布前整站快照（110 个文件）保存在本机 `/tmp/vc-live-backup`，属临时目录，不作为长期回滚依赖。
+- **仍未做**：真实屏幕阅读器走查、非开发者可用性测试、教师端内点击"帮助与文档"按钮的实际验证（按钮代码已具备，未在 Windows 实机点过）、RC-01～RC-09 稳定包发布。
 
 ## 0. 最终决策（不可误解）
 
@@ -446,7 +471,8 @@ website/
 ### Phase A｜仓库和内容审计（先执行）
 
 - [x] 源码核对 `website/` 路由、Vite `dist` 输出、文档独立 HTML 路径，以及 CloudBase Hosting 的站点根目录和输出目录；仓库未声明 SPA 重写规则。
-- [ ] 在 CloudBase Preview/实际静态域名验证 `/docs/`、直接文章 URL 和刷新后的深链接返回行为；本地源码无法替代托管运行时验收。
+- [x] 在 CloudBase Preview/实际静态域名验证 `/docs/`、直接文章 URL 和刷新后的深链接返回行为；本地源码无法替代托管运行时验收。
+  - 2026-11-07 已在**实际生产域名** `kidscode.fun` 验证（该项目没有 Preview 环境）：`/docs/`、`/docs/articles/<slug>.html` 均返回真实页面而非 SPA 回退，36 个文章 URL 全部 200；直接访问与刷新等价，因为它们是真实 `.html` 文件。记录见"生产静态发布记录"。
 - [x] 扫描公开候选资料，输出 `docs/website-docs-source-inventory.json`：文件路径、受众、适用版本、能否公开、过时内容、是否包含机密、替代关系。
 - [x] 建立写作规范和术语要求；已有 36 篇首批文章及 47 个教师自然语言搜索问题。
 - [ ] 对每个“已经支持”的描述核对源码、发布说明和现场验证证据。
@@ -490,9 +516,12 @@ website/
 ### Phase E｜上线与回归
 
 - [ ] 预览环境走完整静态构建、索引和敏感扫描；对现有下载页、管理员后台路由做回归。
-- [ ] 记录静态发布前后资源摘要与回滚入口，不更改 CloudBase API/数据库。
+- [x] 记录静态发布前后资源摘要与回滚入口，不更改 CloudBase API/数据库。
+  - 2026-11-07 首次发布已记录：发布前整站 110 个文件已完整下载留档，`/` 的 `index.html` 发布前后 SHA-256 一致（`6455890f…98027c`），未改动 API 函数、数据库与任何 CloudBase 非静态资源。回滚入口见下文"生产静态发布记录"。
 - [ ] 人工点击网站和教师端入口，验证 30 个搜索问题及至少 5 个直接文章 URL。
-- [ ] 如验收允许，才部署生产静态网站；记录发布时间、发布 Commit、测试记录。
+  - 自动化已覆盖：36 个文章 URL 全部 200、页内 3 个 `/assets` 引用全部 200、无头浏览器实测搜索返回 15 条结果；但"人工点击"与教师端入口点击仍未做。
+- [x] 如验收允许，才部署生产静态网站；记录发布时间、发布 Commit、测试记录。
+  - 2026-11-07 10:30–10:36 已发布，Commit `2f1cea6`，详见下文"生产静态发布记录"。**只发布了文档中心与索引，未替换首页，整站视觉仍是 2026-10-29 的版本。**
 - [ ] 发布 1.1.6x→目标版稳定包的任务单独执行 RC-01～RC-09，不随文档上线自动进行。
 
 **交付物**：验收报告、可回滚的网站部署版本、稳定的软件发布候选建议。
