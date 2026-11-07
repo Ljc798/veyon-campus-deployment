@@ -100,6 +100,8 @@
                       Click="RequestExportUpdateDiagnostics" />
               <TextBlock Text="{Binding UpdateDiagnosticsStatus}" Classes="muted" FontSize="12"
                          TextWrapping="Wrap" IsVisible="{Binding HasUpdateDiagnosticsStatus}" />
+              <Button Classes="sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                      Content="帮助与文档" Click="RequestOpenDocumentation" />
               <Button Classes="sidebar-action" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Content="联系方式" Click="RequestOpenFeedbackContacts" />
             </StackPanel>
           </ScrollViewer>

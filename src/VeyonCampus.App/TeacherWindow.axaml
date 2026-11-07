@@ -455,7 +455,8 @@
                               ClearAllConfigurationRequested="ClearAllConfiguration"
                               ExportUpdateDiagnosticsRequested="ExportUpdateDiagnostics"
                               OpenFeedbackIssueRequested="OpenFeedbackIssue"
-                              OpenFeedbackContactsRequested="OpenFeedbackContacts" />
+                              OpenFeedbackContactsRequested="OpenFeedbackContacts"
+                              OpenDocumentationRequested="OpenDocumentation" />
     <Grid Grid.Column="1" RowDefinitions="Auto,*">
       <views:TeacherHeaderView x:Name="TeacherHeader" Grid.Row="0"
                                ClassroomSessionToggleRequested="ToggleClassroomSession"

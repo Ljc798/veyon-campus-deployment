@@ -12,6 +12,7 @@ public partial class TeacherSidebarView : UserControl
     public event EventHandler<RoutedEventArgs>? ExportUpdateDiagnosticsRequested;
     public event EventHandler<RoutedEventArgs>? OpenFeedbackIssueRequested;
     public event EventHandler<RoutedEventArgs>? OpenFeedbackContactsRequested;
+    public event EventHandler<RoutedEventArgs>? OpenDocumentationRequested;
 
     private void RequestOpenMobileControl(object? sender, RoutedEventArgs e) =>
         OpenMobileControlRequested?.Invoke(this, e);
@@ -27,6 +28,9 @@ public partial class TeacherSidebarView : UserControl
 
     private void RequestOpenFeedbackContacts(object? sender, RoutedEventArgs e) =>
         OpenFeedbackContactsRequested?.Invoke(this, e);
+
+    private void RequestOpenDocumentation(object? sender, RoutedEventArgs e) =>
+        OpenDocumentationRequested?.Invoke(this, e);
 
     private void ToggleSidebarHelp(object? sender, RoutedEventArgs e)
     {

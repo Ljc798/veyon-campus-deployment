@@ -2296,6 +2296,23 @@ public partial class TeacherWindow : Window
     private async void CheckTeacherUpdate(object? sender, RoutedEventArgs e) => await _model.CheckTeacherUpdateAsync();
     private void OpenFeedbackContacts(object? sender, RoutedEventArgs e) => FeedbackContactsWindow.ShowFor(this);
     private void OpenFeedbackIssue(object? sender, RoutedEventArgs e) => FeedbackIssueLink.Open();
+    private void OpenDocumentation(object? sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (Process.Start(new ProcessStartInfo(DocumentationLinkFailureWindow.DocumentationUrl)
+            {
+                UseShellExecute = true
+            }) is null)
+                _ = new DocumentationLinkFailureWindow().ShowDialog(this);
+        }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                          InvalidOperationException or NotSupportedException or
+                                          ArgumentException or System.Security.SecurityException or IOException)
+        {
+            _ = new DocumentationLinkFailureWindow().ShowDialog(this);
+        }
+    }
     private async void ClearAllConfiguration(object? sender, RoutedEventArgs e)
     {
         if (_model.IsExecuting)
