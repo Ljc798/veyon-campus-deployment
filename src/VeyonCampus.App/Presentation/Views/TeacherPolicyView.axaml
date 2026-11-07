@@ -81,7 +81,7 @@
                                IsEnabled="{Binding !IsExecuting}" />
                 </WrapPanel>
                 <TextBlock Text="{Binding WebsiteModeGuidance}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
-                <TextBlock Text="应用网站黑/白名单时，同时禁止 Edge 下载文件、Edge 冲浪游戏和 Chrome 小恐龙；重启相关浏览器后生效。解除时只撤销本工具写入的限制。"
+                <TextBlock Text="应用网站黑/白名单时，同时禁止 Edge 下载文件、Edge 冲浪游戏和 Chrome 小恐龙；如果未生效请重启学生浏览器。解除时只撤销本工具写入的限制。"
                            Classes="muted" FontSize="12" TextWrapping="Wrap" />
               </StackPanel>
               <StackPanel Spacing="8">
