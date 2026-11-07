@@ -437,6 +437,10 @@ export function mountDocsSearch(root) {
   const categoryGrid = root.querySelector('#docs-category-grid');
   const empty = root.querySelector('#docs-empty');
   const filter = root.querySelector('#docs-category-filter');
+  const dock = root.querySelector('#docs-search-dock');
+  const dockForm = root.querySelector('#docs-search-dock-form');
+  const dockInput = root.querySelector('#docs-search-dock-input');
+  const toTop = root.querySelector('#docs-to-top');
   if (!form || form.dataset.docsSearchMounted === 'true' || !input || !status || !results ||
       !featured || !categoryGrid || !empty || !filter) return;
   unmountDocsSearch();
@@ -458,9 +462,31 @@ export function mountDocsSearch(root) {
   let inputHistoryEntryOpen = false;
   let selectedCategory = '';
   let articleSlugs = new Set();
+  let scrollAfterSearch = false;
+
+  const setQueryValue = value => {
+    input.value = value;
+    if (dockInput) dockInput.value = value;
+  };
+
+  // The results section sits well below the hero, so a search that leaves the viewport where it was
+  // looks like nothing happened. Both offsets are measured instead of hard-coded because the dock is
+  // only on screen once the page has been scrolled.
+  const scrollToResults = () => {
+    const target = root.querySelector('#docs-search-results');
+    if (!target) return;
+    const navHeight = document.querySelector('.site-nav')?.offsetHeight || 0;
+    const dockHeight = dock ? dock.offsetHeight : 0;
+    const top = Math.max(0,
+      target.getBoundingClientRect().top + window.scrollY - navHeight - dockHeight - 14);
+    if (Math.abs(window.scrollY - top) < 4) return;
+    // No explicit behaviour: the global scroll-behavior rule already honours prefers-reduced-motion.
+    window.scrollTo({ top });
+  };
+
   const initialUrl = new URL(window.location.href);
   const initialSearchState = readSearchStateFromUrl(initialUrl);
-  input.value = initialSearchState.query.slice(0, 160);
+  setQueryValue(initialSearchState.query.slice(0, 160));
   const initialCategory = initialSearchState.category;
   if (Object.hasOwn(CATEGORIES, initialCategory)) selectedCategory = initialCategory;
 
@@ -495,6 +521,10 @@ export function mountDocsSearch(root) {
   };
 
   const executeSearch = async query => {
+    // Consumed up front: a superseded search must not leave the flag behind for the next one, which
+    // would scroll the page while the teacher is still typing.
+    const scrollWhenDone = scrollAfterSearch;
+    scrollAfterSearch = false;
     currentQuery = query.trim().slice(0, 160);
     const request = ++requestNumber;
     if (!currentQuery) { showInitial(); return; }
@@ -624,7 +654,12 @@ export function mountDocsSearch(root) {
       renderCategories(root, articles, selectedCategory);
       renderFeatured(root, articles, selectedCategory);
     } finally {
-      if (request === requestNumber) results.setAttribute('aria-busy', 'false');
+      if (request === requestNumber) {
+        results.setAttribute('aria-busy', 'false');
+        // Scrolling before the results exist would land on the space they are about to fill, and a
+        // short document clamps that position; do it once the list is in the DOM instead.
+        if (scrollWhenDone) scrollToResults();
+      }
     }
   };
 
@@ -642,24 +677,27 @@ export function mountDocsSearch(root) {
     clearTimeout(timer);
     syncSearchUrl({ push: true });
     inputHistoryEntryOpen = false;
+    scrollAfterSearch = true;
     void executeSearch(input.value);
   });
   input.addEventListener('input', () => {
+    if (dockInput) dockInput.value = input.value;
     if (syncSearchUrl({ push: !inputHistoryEntryOpen })) inputHistoryEntryOpen = true;
     scheduleSearch(input.value);
   });
   input.addEventListener('blur', () => { inputHistoryEntryOpen = false; });
   input.addEventListener('focus', () => { void ensurePagefindApi().catch(() => {}); }, { once: true });
+  const clearQuery = () => {
+    setQueryValue('');
+    clearTimeout(timer);
+    currentQuery = '';
+    requestNumber++;
+    showInitial();
+    syncSearchUrl({ push: true });
+    inputHistoryEntryOpen = false;
+  };
   input.addEventListener('keydown', event => {
-    if (event.key === 'Escape') {
-      input.value = '';
-      clearTimeout(timer);
-      currentQuery = '';
-      requestNumber++;
-      showInitial();
-      syncSearchUrl({ push: true });
-      inputHistoryEntryOpen = false;
-    }
+    if (event.key === 'Escape') clearQuery();
   });
   filter.addEventListener('change', () => {
     clearTimeout(timer);
@@ -667,7 +705,11 @@ export function mountDocsSearch(root) {
     syncSearchUrl({ push: true });
     inputHistoryEntryOpen = false;
     const query = input.value.trim();
-    if (query) void executeSearch(query);
+    if (query) {
+      // The filter lives inside the results area, so only an empty result list needs the viewport.
+      scrollAfterSearch = true;
+      void executeSearch(query);
+    }
     else {
       currentQuery = '';
       requestNumber++;
@@ -682,11 +724,11 @@ export function mountDocsSearch(root) {
         selectedCategory = '';
         filter.value = '';
       }
-      input.value = queryButton.dataset.docQuery || '';
+      setQueryValue(queryButton.dataset.docQuery || '');
       syncSearchUrl({ push: true });
       inputHistoryEntryOpen = false;
+      scrollAfterSearch = true;
       void executeSearch(input.value);
-      input.focus();
       return;
     }
     const categoryButton = event.target.closest('[data-doc-category]');
@@ -697,7 +739,10 @@ export function mountDocsSearch(root) {
       syncSearchUrl({ push: true });
       inputHistoryEntryOpen = false;
       const query = input.value.trim();
-      if (query) void executeSearch(query);
+      if (query) {
+        scrollAfterSearch = true;
+        void executeSearch(query);
+      }
       else {
         currentQuery = '';
         requestNumber++;
@@ -714,7 +759,7 @@ export function mountDocsSearch(root) {
     clearTimeout(timer);
     const url = new URL(window.location.href);
     const searchState = readSearchStateFromUrl(url);
-    input.value = searchState.query.slice(0, 160);
+    setQueryValue(searchState.query.slice(0, 160));
     const category = searchState.category;
     selectedCategory = Object.hasOwn(CATEGORIES, category) ? category : '';
     filter.value = selectedCategory;
@@ -729,6 +774,58 @@ export function mountDocsSearch(root) {
   };
   window.addEventListener('popstate', handlePopState);
 
+  // The dock is a second entry point for the same query: it mirrors the hero field so either box can
+  // be used to refine a search without losing the other one's value.
+  let dockObserver = null;
+  if (dock && dockForm && dockInput) {
+    dockInput.addEventListener('input', () => {
+      input.value = dockInput.value.slice(0, 160);
+      if (syncSearchUrl({ push: !inputHistoryEntryOpen })) inputHistoryEntryOpen = true;
+      scheduleSearch(input.value);
+    });
+    dockInput.addEventListener('blur', () => { inputHistoryEntryOpen = false; });
+    dockInput.addEventListener('keydown', event => {
+      if (event.key === 'Escape') clearQuery();
+    });
+    dockForm.addEventListener('submit', event => {
+      event.preventDefault();
+      clearTimeout(timer);
+      input.value = dockInput.value.slice(0, 160);
+      syncSearchUrl({ push: true });
+      inputHistoryEntryOpen = false;
+      scrollAfterSearch = true;
+      void executeSearch(input.value);
+    });
+    const navHeight = document.querySelector('.site-nav')?.offsetHeight || 0;
+    // The dock is fixed, so it needs the navigation's real height instead of a copy of the CSS
+    // value; a one-pixel overlap would show as a hairline above the search field.
+    document.documentElement.style.setProperty('--docs-nav-offset', `${navHeight}px`);
+    if (typeof IntersectionObserver === 'function') {
+      dockObserver = new IntersectionObserver(entries => {
+        const entry = entries[entries.length - 1];
+        // Only once the hero field has gone under the sticky navigation: a field still below the
+        // fold must not put a second search box on screen.
+        dock.classList.toggle('is-visible',
+          !entry.isIntersecting && entry.boundingClientRect.top < 0);
+      }, { rootMargin: `-${navHeight}px 0px 0px 0px`, threshold: 0 });
+      dockObserver.observe(form);
+    }
+  }
+
+  const updateToTop = () => {
+    if (!toTop) return;
+    toTop.classList.toggle('is-visible', window.scrollY > 520);
+  };
+  if (toTop) {
+    toTop.addEventListener('click', event => {
+      window.scrollTo({ top: 0 });
+      // A keyboard activation would otherwise leave focus on a button that just hid itself.
+      if (event.detail === 0) input.focus({ preventScroll: true });
+    });
+    window.addEventListener('scroll', updateToTop, { passive: true });
+    updateToTop();
+  }
+
   activeDocsSearchCleanup = () => {
     clearTimeout(timer);
     requestNumber++;
@@ -736,6 +833,9 @@ export function mountDocsSearch(root) {
     catalogAbortController?.abort();
     catalogAbortController = null;
     window.removeEventListener('popstate', handlePopState);
+    window.removeEventListener('scroll', updateToTop);
+    dockObserver?.disconnect();
+    dockObserver = null;
     delete form.dataset.docsSearchMounted;
   };
 

@@ -339,6 +339,14 @@ function docsPage() {
     '<input id="docs-search-input" name="q" type="search" maxlength="160" autocomplete="off" placeholder="例如：学生电脑显示离线怎么办？" aria-controls="docs-search-results" aria-describedby="docs-search-hint" />' +
     '<button class="btn" type="submit">搜索</button></form>' +
     '<p class="docs-search-hint" id="docs-search-hint">支持中文问题、错误码、版本号和常见组件名；最多 160 个字符。按 Enter 搜索，按 Esc 清空。查询在浏览器中对照本站文档索引，不提交给搜索服务；查询词保存在地址片段，复制链接时会一并带上。</p></div></section>' +
+    // The hero search scrolls away with the page, so a compact copy takes over once it leaves the
+    // viewport; otherwise refining a query after reading results means scrolling back to the top.
+    '<div class="docs-search-dock" id="docs-search-dock">' +
+    '<div class="site-container"><form class="docs-search-dock-form" id="docs-search-dock-form">' +
+    '<span class="docs-search-icon">' + icon('search') + '</span>' +
+    '<label class="sr-only" for="docs-search-dock-input">搜索帮助文档</label>' +
+    '<input id="docs-search-dock-input" name="q" type="search" maxlength="160" autocomplete="off" placeholder="搜索帮助文档" aria-controls="docs-search-results" />' +
+    '<button class="btn" type="submit">搜索</button></form></div></div>' +
     '<section class="page-body docs-home-body"><div class="site-container">' +
     '<section class="docs-popular" aria-labelledby="docs-popular-title"><div class="docs-section-heading"><h2 id="docs-popular-title">大家经常查这些</h2></div>' +
     '<div class="docs-popular-links">' +
@@ -372,7 +380,8 @@ function docsPage() {
     '<button type="button" data-doc-query="学生电脑更新">学生电脑更新</button>' +
     '<button type="button" data-doc-query="座位图">座位图</button></div>' +
     routeLink('/contact', '去问题反馈页 ' + icon('arrow'), 'text-link') + '</div>' +
-    '</section></div></section>'
+    '</section></div></section>' +
+    '<button class="docs-to-top" id="docs-to-top" type="button" aria-label="回到顶部">' + icon('arrowUp') + '</button>'
   );
 }
 
