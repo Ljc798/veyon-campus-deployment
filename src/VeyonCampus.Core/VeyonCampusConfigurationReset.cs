@@ -34,7 +34,11 @@ public static class VeyonCampusConfigurationReset
         VeyonCampusProcessCleanup.StopInstalledRoleProcesses("TeacherConsole");
         VeyonCampusProcessCleanup.StopInstalledRoleProcesses("StudentSetup");
 
-        var agentRemoval = WebsitePolicyAgentInstaller.Uninstall();
+        // "Clear all configuration" is the teacher's explicit way out of a broken machine, so it must
+        // not be blocked by an interrupted student update: the records and recovery tasks are about to
+        // be deleted by RemoveAllMachineProductData anyway. Refusing here left the exact dead end the
+        // reset exists to resolve.
+        var agentRemoval = WebsitePolicyAgentInstaller.Uninstall(discardInterruptedStudentUpdates: true);
         if (agentRemoval.Status != ExecutionPlan.Succeeded)
             throw new IOException("学生策略 Agent 或其策略尚未安全恢复：" + agentRemoval.Detail);
 

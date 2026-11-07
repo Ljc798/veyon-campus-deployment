@@ -121,7 +121,55 @@ public static class WebsitePolicyListDraftStore
         }
         if (file.Drafts.Select(item => item.CampusId).Distinct(StringComparer.Ordinal).Count() != file.Drafts.Count)
             throw new InvalidDataException("本机网站名单文件包含重复校区。");
-        return file.Drafts.ToList();
+
+        var drafts = file.Drafts.ToList();
+        var migratedLegacyDomain = false;
+        for (var index = 0; index < drafts.Count; index++)
+        {
+            var draft = drafts[index];
+            var upgradedAllowedDomains = UpgradeLegacyAllowedDomain(draft.AllowedDomains);
+            if (string.Equals(draft.AllowedDomains, upgradedAllowedDomains, StringComparison.Ordinal)) continue;
+
+            drafts[index] = draft with
+            {
+                AllowedDomains = upgradedAllowedDomains,
+                UpdatedUtc = DateTimeOffset.UtcNow
+            };
+            migratedLegacyDomain = true;
+        }
+
+        if (migratedLegacyDomain) TryPersistMigration(path, drafts);
+        return drafts;
+    }
+
+    /// <summary>
+    /// The legacy-domain upgrade is an optimization, not part of reading. Persisting it must never turn
+    /// a readable draft into an empty policy page, so a read-only or briefly locked file keeps the
+    /// upgraded values in memory and retries the write on the next successful read.
+    /// </summary>
+    private static void TryPersistMigration(string path, IReadOnlyList<WebsitePolicyListDraft> drafts)
+    {
+        try { WriteFile(path, drafts); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          System.Security.SecurityException or InvalidDataException)
+        {
+        }
+    }
+
+    private static string UpgradeLegacyAllowedDomain(string value)
+    {
+        var entries = value.Split(["\r\n", "\n", "\r"], StringSplitOptions.None)
+            .Select(domain =>
+            {
+                var trimmed = domain.Trim();
+                if (!string.Equals(trimmed, "bdfjiaoyu.com", StringComparison.OrdinalIgnoreCase)) return domain;
+
+                var leadingWhitespace = domain.Length - domain.TrimStart().Length;
+                var trailingWhitespace = domain.Length - domain.TrimEnd().Length;
+                var suffix = trailingWhitespace == 0 ? "" : domain[^trailingWhitespace..];
+                return domain[..leadingWhitespace] + "www.bdfjiaoyu.com" + suffix;
+            });
+        return string.Join(Environment.NewLine, entries);
     }
 
     private static void WriteFile(string path, IReadOnlyList<WebsitePolicyListDraft> drafts)

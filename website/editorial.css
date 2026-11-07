@@ -853,3 +853,147 @@ tbody tr:hover { background: var(--paper); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+
+/* ── Public documentation center ──────────────────────────────────────── */
+.docs-home-hero {
+  padding: clamp(64px, 9vw, 112px) 0 74px;
+  color: #f8f6f0;
+  background: var(--navy);
+}
+.docs-home-heading { max-width: 900px; }
+.docs-home-heading h1 {
+  margin: 0 0 14px;
+  color: #fffefb;
+  font-family: var(--font-serif);
+  font-size: clamp(40px, 6vw, 68px);
+  font-weight: 600;
+  letter-spacing: -.04em;
+  line-height: 1.15;
+}
+.docs-home-heading h1 em { color: #a9d4ca; font-style: normal; }
+.docs-home-heading > p { max-width: 680px; color: #d2dee0; font-size: 17px; line-height: 1.8; }
+.docs-search-form {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  margin-top: 30px;
+  padding: 9px 10px 9px 18px;
+  border: 1px solid #c8d9da;
+  background: #fffefb;
+}
+.docs-search-icon { display: grid; color: var(--brand-dark); }
+.docs-search-icon svg { width: 20px; height: 20px; }
+.docs-search-form input {
+  width: 100%;
+  min-height: 46px;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-size: 16px;
+}
+.docs-search-form input:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
+.docs-search-form .btn { min-height: 44px; padding-inline: 24px; }
+.docs-search-hint { margin: 12px 0 0 !important; color: #c6d3d6 !important; font-size: 13px !important; }
+.docs-home-body { padding-top: 38px; }
+.docs-popular { padding: 18px 0 34px; border-bottom: 1px solid var(--line); }
+.docs-section-heading { margin-bottom: 18px; }
+.docs-section-heading h2,
+.docs-search-toolbar h2 { margin: 0; color: var(--navy); font-family: var(--font-serif); font-size: 27px; }
+.docs-popular-links { display: flex; flex-wrap: wrap; gap: 9px; }
+.docs-popular-links button,
+.docs-empty-suggestions button,
+.docs-category-link {
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  cursor: pointer;
+}
+.docs-popular-links button,
+.docs-empty-suggestions button { padding: 10px 14px; font-size: 14px; }
+.docs-popular-links button:hover,
+.docs-popular-links button:focus-visible,
+.docs-empty-suggestions button:hover,
+.docs-empty-suggestions button:focus-visible,
+.docs-category-link:hover,
+.docs-category-link:focus-visible { border-color: var(--brand); color: var(--brand-dark); background: var(--brand-soft); }
+.docs-search-area { padding-top: 34px; }
+.docs-search-toolbar { display: flex; justify-content: space-between; gap: 20px; align-items: end; }
+.docs-category-filter { display: grid; gap: 5px; color: var(--muted); font-size: 12px; }
+.docs-category-filter select { min-width: 185px; min-height: 42px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 2px; color: var(--ink); background: var(--surface); font: inherit; font-size: 14px; }
+.docs-search-status { min-height: 24px; margin: 16px 0; color: var(--muted); font-size: 14px; }
+.docs-search-failure-help { margin: -8px 0 16px; color: var(--muted); font-size: 13px; }
+.docs-search-failure-help a { color: var(--brand-dark); font-weight: 700; text-underline-offset: 3px; }
+.docs-static-fallback { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 18px; }
+.docs-static-fallback[hidden] { display: none; }
+.docs-static-fallback a { padding: 9px 12px; border: 1px solid var(--line); color: var(--brand-dark); background: var(--surface); font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.docs-static-fallback a:hover, .docs-static-fallback a:focus-visible { border-color: var(--brand); background: var(--brand-soft); }
+.docs-catalog-retry { margin: -6px 0 18px; }
+.docs-catalog-retry[hidden] { display: none; }
+.docs-catalog-retry:disabled { cursor: wait; }
+.docs-category-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; margin-bottom: 22px; }
+.docs-category-link { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 13px 14px; text-align: left; }
+.docs-category-link small { color: var(--muted); white-space: nowrap; }
+.docs-category-link.active { border-color: var(--brand); color: var(--brand-dark); background: var(--brand-soft); }
+.docs-featured-grid,
+.docs-result-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 13px; }
+.docs-featured-grid { margin-bottom: 20px; }
+.docs-result-card { min-width: 0; padding: 19px 20px; border: 1px solid var(--line); border-radius: 2px; background: var(--surface); }
+.docs-result-card h3 { margin: 9px 0; font-size: 18px; line-height: 1.4; }
+.docs-result-card h3 a { color: var(--navy); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.docs-result-card h3 a:hover,
+.docs-result-card h3 a:focus-visible { color: var(--brand-dark); }
+.docs-result-card > p { margin: 7px 0; color: var(--muted); font-size: 14px; line-height: 1.7; }
+.docs-result-card > p:not(.docs-result-excerpt) {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+.docs-result-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted); font-size: 12px; }
+.docs-result-excerpt { padding-top: 9px; border-top: 1px solid var(--line); }
+.docs-result-excerpt mark { color: #6a351e; background: #f3dfb7; }
+.docs-empty { margin-top: 14px; padding: 22px; border-left: 3px solid var(--amber); background: var(--amber-soft); }
+.docs-empty strong { color: var(--navy); }
+.docs-empty p { color: var(--muted); }
+.docs-empty-suggestions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 16px; }
+.docs-article-page .docs-article-hero { padding-block: 42px; }
+.docs-breadcrumb { display: flex; gap: 8px; margin-bottom: 20px; color: var(--muted); font-size: 13px; }
+.docs-breadcrumb a,
+.docs-back-link { color: var(--brand-dark); text-underline-offset: 3px; }
+.docs-article-summary { max-width: 800px; color: var(--muted); font-size: 17px; line-height: 1.75; }
+.docs-article-meta { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 16px; color: var(--muted); font-size: 12px; }
+.docs-content h2,
+.docs-content h3,
+.docs-content h4 { scroll-margin-top: 24px; }
+.docs-content a { overflow-wrap: anywhere; }
+.docs-content pre { overflow-x: auto; padding: 14px; border: 1px solid var(--line); background: var(--paper-deep); }
+.docs-content code { padding: 1px 4px; color: var(--navy); background: var(--paper-deep); font-family: var(--font-mono); font-size: .92em; }
+.docs-content pre code { padding: 0; background: transparent; }
+.docs-search-terms { margin-top: 25px !important; padding-top: 11px; border-top: 1px solid var(--line); color: var(--muted-2) !important; font-size: 12px !important; }
+.docs-search-terms span { color: var(--muted); font-weight: 600; }
+.doc-heading-anchor { margin-left: 5px; color: var(--muted-2); text-decoration: none; }
+.docs-related { margin-top: 30px; padding: 22px; border: 1px solid var(--line); background: var(--surface); }
+.docs-related h2 { margin-top: 0; font-size: 20px; }
+.docs-related ul { display: grid; gap: 12px; padding-left: 18px; }
+.docs-related li span { display: block; color: var(--muted); font-size: 13px; }
+.docs-back-link { display: inline-block; margin-top: 16px; font-size: 12px; }
+
+@media (max-width: 767px) {
+  .docs-home-hero { padding: 54px 0 45px; }
+  .docs-home-heading > p { font-size: 15px; }
+  .docs-search-form { grid-template-columns: 20px minmax(0, 1fr); gap: 9px; padding: 8px 12px; }
+  .docs-search-form .btn { grid-column: 1 / -1; width: 100%; }
+  .docs-search-toolbar { align-items: stretch; flex-direction: column; }
+  .docs-category-filter select { width: 100%; }
+  .docs-category-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .docs-featured-grid,
+  .docs-result-list { grid-template-columns: minmax(0, 1fr); }
+  .docs-article-page .docs-article-hero { padding-block: 30px; }
+  .docs-article-summary { font-size: 15px; }
+}

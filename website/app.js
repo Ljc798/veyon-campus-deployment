@@ -66,6 +66,7 @@ function icon(name, extra) {
 }
 
 const state = { currentPath: '/', renderSequence: 0 };
+let docsSearchModule = null;
 
 function escapeHtml(value) {
   return String(value == null ? '' : value).replace(/[&<>"']/g, function (c) {
@@ -97,7 +98,7 @@ function routeLink(path, label, className) {
 
 const siteNavItems = [
   ['/product', '工具介绍'],
-  ['/docs', '部署指南'],
+  ['/docs', '帮助与文档'],
   ['/about', '关于项目'],
   ['/contact', '问题反馈'],
   ['/download', '下载软件', 'btn nav-download']
@@ -120,7 +121,7 @@ function publicFooter() {
   return '<footer class="site-footer"><div class="site-container"><div class="footer-grid">' +
     '<div class="footer-about">' + routeLink('/', '<img src="/assets/veyon-campus-mark.svg" alt="" /><span class="brand-copy"><strong>Veyon Campus</strong><span>校园机房部署助手</span></span>', 'brand-lockup') +
     '<p>提供教师端、学生端 Windows 工具和中文部署指南，帮助学校机房准备并检查 Veyon。</p></div>' +
-    '<div class="footer-col"><strong>开始使用</strong>' + routeLink('/download', '下载软件') + routeLink('/docs', '部署指南') + routeLink('/product', '工具介绍') + '</div>' +
+    '<div class="footer-col"><strong>开始使用</strong>' + routeLink('/download', '下载软件') + routeLink('/docs', '帮助与文档') + routeLink('/product', '工具介绍') + '</div>' +
     '<div class="footer-col"><strong>帮助</strong>' + routeLink('/contact', '问题反馈') +
     '<a href="https://github.com/Ljc798/veyon-campus-deployment/issues" target="_blank" rel="noopener noreferrer">提交问题</a></div>' +
     '<div class="footer-col"><strong>相关项目</strong><a href="https://veyon.io/" target="_blank" rel="noopener noreferrer">Veyon 官方网站</a>' +
@@ -313,45 +314,49 @@ function aboutPage() {
 
 function docsPage() {
   return publicPage(
-    '<section class="page-hero"><div class="site-container"><span class="eyebrow"><i class="eyebrow-dot"></i>部署指南</span>' +
-    '<h1>从下载到连接，按步骤完成部署</h1>' +
-    '<p>给负责学校机房部署的老师和技术人员。先用一台教师电脑和一台学生电脑走完流程，确认正常后再安排更多电脑。</p></div></section>' +
-    '<section class="page-body"><div class="site-container docs-layout">' +
-    '<aside class="docs-toc"><strong>快速导航</strong><nav aria-label="部署指南目录">' +
-    '<a href="#before">开始前准备</a><a href="#download">下载和安装</a><a href="#teacher">教师端</a>' +
-    '<a href="#student">学生端</a><a href="#verify">试装检查</a><a href="#help">问题处理</a></nav></aside>' +
-    '<article class="docs-article">' +
-    '<section id="before"><span class="guide-step-label">开始前</span><h2>准备两台可恢复的 Windows 电脑</h2>' +
-    '<p>当前安装包适用于 Windows 10/11 64 位电脑。准备一台教师电脑和一台学生电脑，确认学校允许你安装软件和修改设置，并记录电脑当前状态及恢复方法。</p>' +
-    '<div class="callout guide-alert">' + icon('warning') + '<div><strong>学生端的部署操作可能更改系统设置</strong>' +
-    '<p>工具可能安装 Veyon、修改电脑名称、创建学生账户或更改本地管理员密码。更改密码后，工具无法恢复旧密码。请先在可恢复的测试电脑上操作；不确定某项设置时先不要选择，询问负责学校电脑维护的人。</p></div></div></section>' +
-    '<section id="download"><span class="guide-step-label">第 1 步</span><h2>下载并安装对应角色的工具</h2>' +
-    '<ol class="guide-list"><li>教师电脑下载并安装<strong>教师端</strong>。</li><li>学生电脑下载并安装<strong>学生端</strong>。</li>' +
-    '<li>在下载页面选择对应角色的 EXE 安装程序并直接运行。安装步骤可随时在本页面查看。</li></ol>' +
-    '<p>每个渠道和安装包版本都列在下载页面。请核对文件名称中的角色，避免把教师端安装到学生电脑或反过来。</p>' +
-    routeLink('/download', '打开下载页面 ' + icon('arrow'), 'btn') + '</section>' +
-    '<section id="teacher"><span class="guide-step-label">第 2 步</span><h2>在教师电脑生成学生配置</h2>' +
-    '<ol class="guide-list"><li>安装并启动教师端工具。按提示确认教师电脑的 Veyon 已安装并能正常启动。</li>' +
-    '<li>在“首次设置”填写学校或机房名称，查看要提供给学生电脑的设置，然后生成学生配置包。</li>' +
-    '<li>要让学生端从云端获取配置，在“发布到云端目录”填写教师姓名和手机号后四位，选择刚生成的配置包并发布。学生端下载时需要这两个信息。</li>' +
-    '<li>如不使用云端，可通过学校认可的方式把生成的配置包文件夹交给学生电脑；配置包与学生端安装程序是两份不同文件。</li></ol></section>' +
-    '<section id="student"><span class="guide-step-label">第 3 步</span><h2>在学生电脑检查并执行部署</h2>' +
-    '<ol class="guide-list"><li>在学生电脑安装并启动学生端工具，使用学校授权且有管理员权限的 Windows 账户。</li>' +
-    '<li>选择“从云端获取”并按机房名称搜索；输入发布教师手机号后四位，选择对应配置并下载。离线时可导入教师提供的配置包文件夹。</li>' +
-    '<li>查看机房信息和配置校验结果，再逐项核对要安装或更改的内容；取消本次不需要执行的项目。</li>' +
-    '<li>确认后执行部署，等待工具显示结果。若提示重启，先保存工作，再按学校安排处理。</li></ol>' +
-    '<div class="guide-note"><strong>请留意</strong><span>失败、取消或中断时，已经完成的更改可能仍然生效。先查看每一步的结果并核对电脑状态，不要直接重复整套部署。管理员密码更改无法自动恢复，请务必确认新密码的交接和保管方式。</span></div></section>' +
-    '<section id="verify"><span class="guide-step-label">第 4 步</span><h2>检查结果，再逐批扩大使用</h2>' +
-    '<ol class="guide-list"><li>在学生电脑查看结果页，确认所选的安装和设置都已完成；失败或待重启的项目先处理。</li>' +
-    '<li>从教师电脑打开 Veyon，确认能看到并连接到这台学生电脑。</li>' +
-    '<li>记录遇到的问题和对应步骤；一台教师机与一台学生机都通过后，再安排小批量部署。</li></ol>' +
-    '<div class="public-release-grid guide-facts"><article class="public-release-card"><div class="public-release-heading"><h3>系统要求</h3></div><strong class="public-release-value">Windows 10/11</strong><p>64 位电脑；修改系统设置的操作需要管理员权限。</p></article>' +
-    '<article class="public-release-card"><div class="public-release-heading"><h3>安装安全提示</h3></div><strong class="public-release-value">核对下载来源</strong><p>安装器没有 Windows 发布者数字签名。请核对下载页的版本、角色和来源后运行安装程序。</p></article></div></section>' +
-    '<section id="help"><span class="guide-step-label">需要帮助</span><h2>问题报告里写清楚发生了什么</h2>' +
-    '<p>记录 Windows 版本、教师端或学生端、安装包版本、操作步骤以及结果页的提示。分享截图或日志前，请遮盖校区名称、账户、密钥、电话号码和电脑 IP。</p>' +
-    '<div class="docs-actions">' + routeLink('/download', '查看当前下载 ' + icon('download'), 'btn secondary') +
-    routeLink('/contact', '获取问题反馈方式 ' + icon('arrow'), 'text-link') + '</div></section>' +
-    '</article></div></section>'
+    '<section class="docs-home-hero"><div class="site-container docs-home-heading">' +
+    '<h1>有什么问题？<br><em>直接搜一下</em></h1>' +
+    '<p>按老师的实际问题查找部署步骤、课堂操作和故障处理。搜索只返回已有指南，不会编造答案。</p>' +
+    '<form class="docs-search-form" id="docs-search-form" role="search">' +
+    '<label class="sr-only" for="docs-search-input">搜索帮助文档</label>' +
+    '<span class="docs-search-icon">' + icon('search') + '</span>' +
+    '<input id="docs-search-input" name="q" type="search" maxlength="160" autocomplete="off" placeholder="例如：学生电脑显示离线怎么办？" aria-controls="docs-search-results" aria-describedby="docs-search-hint" />' +
+    '<button class="btn" type="submit">搜索</button></form>' +
+    '<p class="docs-search-hint" id="docs-search-hint">支持中文问题、错误码、版本号和常见组件名；最多 160 个字符。按 Enter 搜索，按 Esc 清空。查询在浏览器中对照本站文档索引，不提交给搜索服务；查询词保存在地址片段，复制链接时会一并带上。</p></div></section>' +
+    '<section class="page-body docs-home-body"><div class="site-container">' +
+    '<section class="docs-popular" aria-labelledby="docs-popular-title"><div class="docs-section-heading"><h2 id="docs-popular-title">大家经常查这些</h2></div>' +
+    '<div class="docs-popular-links">' +
+    '<button type="button" data-doc-query="学生端怎么安装">学生端怎么安装</button>' +
+    '<button type="button" data-doc-query="电脑不在线怎么办">电脑不在线</button>' +
+    '<button type="button" data-doc-query="怎么开启网站限制">怎么开启网站限制</button>' +
+    '<button type="button" data-doc-query="怎么结束课堂">怎么结束课堂</button>' +
+    '<button type="button" data-doc-query="怎么更新学生电脑">怎么更新学生电脑</button>' +
+    '<button type="button" data-doc-query="怎么打印座位图">怎么打印座位图</button>' +
+    '</div></section>' +
+    '<section class="docs-search-area" id="docs-search-results" aria-labelledby="docs-results-title">' +
+    '<div class="docs-search-toolbar"><div><h2 id="docs-results-title">帮助文档</h2></div>' +
+    '<label class="docs-category-filter">分类筛选<select id="docs-category-filter" aria-label="按分类筛选帮助文档"><option value="">全部分类</option></select></label></div>' +
+    '<p class="docs-search-status" id="docs-search-status" role="status" aria-live="polite">正在读取文档目录…</p>' +
+    '<p class="docs-search-failure-help" id="docs-search-failure-help" hidden>如果搜索或文档目录持续不可用，可' +
+    routeLink('/contact', '反馈这个问题', 'text-link') + '。</p>' +
+    '<nav class="docs-static-fallback" id="docs-static-fallback" aria-label="常用帮助文档" hidden>' +
+    '<a href="/docs/articles/student-setup.html">学生端安装指南</a>' +
+    '<a href="/docs/articles/student-offline.html">学生电脑离线排查</a>' +
+    '<a href="/docs/articles/apply-website-policy.html">推送网站名单</a>' +
+    '<a href="/docs/articles/end-class.html">结束课堂与解除限制</a>' +
+    '<a href="/docs/articles/student-update.html">更新学生电脑</a>' +
+    '<a href="/docs/articles/print-seat-chart.html">打印座位图</a>' +
+    '</nav>' +
+    '<div class="docs-category-grid" id="docs-category-grid" role="group" aria-label="文档分类"></div>' +
+    '<div class="docs-featured-grid" id="docs-featured-grid"></div>' +
+    '<div class="docs-result-list" id="docs-result-list" aria-busy="false"></div>' +
+    '<div class="docs-empty" id="docs-empty" hidden><strong>没有找到合适的文章</strong><p>可以换一种说法试试，或在全部分类中试试：</p>' +
+    '<div class="docs-empty-suggestions" role="group" aria-label="替代搜索词">' +
+    '<button type="button" data-doc-query="学生电脑离线">学生电脑离线</button>' +
+    '<button type="button" data-doc-query="学生电脑更新">学生电脑更新</button>' +
+    '<button type="button" data-doc-query="座位图">座位图</button></div>' +
+    routeLink('/contact', '去问题反馈页 ' + icon('arrow'), 'text-link') + '</div>' +
+    '</section></div></section>'
   );
 }
 
@@ -377,6 +382,18 @@ function notFoundPage() {
 
 function render() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
+  if (path === '/docs') {
+    const legacyDocs = {
+      before: 'prepare-before-install', download: 'download-tools', teacher: 'teacher-first-setup',
+      student: 'student-setup', verify: 'deployment-check', help: 'report-issue'
+    };
+    const legacyAnchor = window.location.hash.slice(1).toLowerCase();
+    if (legacyDocs[legacyAnchor]) {
+      window.location.replace('/docs/articles/' + legacyDocs[legacyAnchor] + '.html');
+      return;
+    }
+  }
+  if (path !== '/docs') docsSearchModule?.unmountDocsSearch();
   const renderSequence = ++state.renderSequence;
   state.currentPath = path;
   const isAdminPath = path === '/admin' || path.indexOf('/admin/') === 0;
@@ -405,7 +422,20 @@ function render() {
     });
   }
   else if (path === '/about') app.innerHTML = aboutPage();
-  else if (path === '/docs') app.innerHTML = docsPage();
+  else if (path === '/docs') {
+    app.innerHTML = docsPage();
+    import('./src/docs-search.js').then(function (module) {
+      docsSearchModule = module;
+      if (state.currentPath === path) module.mountDocsSearch(app);
+    }).catch(function () {
+      const status = document.getElementById('docs-search-status');
+      if (status) status.textContent = '帮助文档组件未能加载；请刷新页面重试，仍无法使用时请前往问题反馈。';
+      const failureHelp = document.getElementById('docs-search-failure-help');
+      if (failureHelp) failureHelp.hidden = false;
+      const staticFallback = document.getElementById('docs-static-fallback');
+      if (staticFallback) staticFallback.hidden = false;
+    });
+  }
   else if (path === '/contact') app.innerHTML = contactPage();
   else app.innerHTML = notFoundPage();
   const pageTitle = path === '/' ? '校园机房部署工具' : path === '/download' ? '下载软件' : (siteNavItems.find(function (x) { return x[0] === path; }) || ['', 'Veyon Campus'])[1];

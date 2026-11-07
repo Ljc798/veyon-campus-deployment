@@ -928,7 +928,7 @@ public static class WebsitePolicyAgentInstaller
         }
     }
 
-    public static StepResult Uninstall()
+    public static StepResult Uninstall(bool discardInterruptedStudentUpdates = false)
     {
         const string step = "website-agent-uninstall";
         var stage = "检查管理员权限";
@@ -948,28 +948,36 @@ public static class WebsitePolicyAgentInstaller
             var task = ReadTaskForRemoval();
             stage = "读取 Agent 配置";
             var configs = FindAgentConfigurationFiles();
-            stage = "核验学生端原子更新事务";
             var updateTransactions = new List<(string Path, StudentUpdateTransactionRecord Record)>();
-            foreach (var item in configs)
+            if (discardInterruptedStudentUpdates)
             {
-                var updateTransaction = StudentUpdateAtomicTransaction.Read(item.Path);
-                if (updateTransaction is not null) updateTransactions.Add((item.Path, updateTransaction));
+                stage = "清理学生端后台更新任务";
+                RemoveStudentUpdateRecoveryTasksForUninstall();
             }
-            foreach (var updateTransaction in updateTransactions.Where(item => item.Record.State is not
-                         (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
-                             StudentUpdateTransactionState.Superseded)))
-                RunStudentUpdateRecoveryTask(updateTransaction.Path);
-
-            task = ReadTaskForRemoval();
-            foreach (var updateTransaction in updateTransactions)
+            else
             {
-                var unfinishedTransaction = StudentUpdateAtomicTransaction.Read(updateTransaction.Path);
-                if (unfinishedTransaction is null || unfinishedTransaction.State is
-                    StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
-                    StudentUpdateTransactionState.Superseded)
-                    continue;
-                return new(step, ExecutionPlan.NeedsReview,
-                    $"学生端更新事务仍处于 {unfinishedTransaction.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
+                stage = "核验学生端原子更新事务";
+                foreach (var item in configs)
+                {
+                    var updateTransaction = StudentUpdateAtomicTransaction.Read(item.Path);
+                    if (updateTransaction is not null) updateTransactions.Add((item.Path, updateTransaction));
+                }
+                foreach (var updateTransaction in updateTransactions.Where(item => item.Record.State is not
+                             (StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+                                 StudentUpdateTransactionState.Superseded)))
+                    RunStudentUpdateRecoveryTask(updateTransaction.Path);
+
+                task = ReadTaskForRemoval();
+                foreach (var updateTransaction in updateTransactions)
+                {
+                    var unfinishedTransaction = StudentUpdateAtomicTransaction.Read(updateTransaction.Path);
+                    if (unfinishedTransaction is null || unfinishedTransaction.State is
+                        StudentUpdateTransactionState.Committed or StudentUpdateTransactionState.RolledBack or
+                        StudentUpdateTransactionState.Superseded)
+                        continue;
+                    return new(step, ExecutionPlan.NeedsReview,
+                        $"学生端更新事务仍处于 {unfinishedTransaction.State}；卸载已停止，请先运行原子恢复任务或让管理员核对恢复文件。");
+                }
             }
             stage = "读取网站策略所有权";
             var registryCampus = WebsitePolicyRegistryStore.ReadCampusForAgentRemoval();
@@ -1069,9 +1077,12 @@ public static class WebsitePolicyAgentInstaller
                 DeleteScheduledTask();
             }
 
-            stage = "清理学生端原子更新恢复任务和记录";
-            foreach (var updateTransaction in updateTransactions)
-                StudentUpdateAtomicTransaction.RemoveForUninstall(updateTransaction.Path);
+            stage = "清理学生端后台更新记录";
+            if (discardInterruptedStudentUpdates)
+                StudentUpdateAtomicTransaction.RemoveAllForUninstall();
+            else
+                foreach (var updateTransaction in updateTransactions)
+                    StudentUpdateAtomicTransaction.RemoveForUninstall(updateTransaction.Path);
 
             stage = "清理网站策略所有权记录";
             if (campus is not null)
@@ -2270,6 +2281,41 @@ public static class WebsitePolicyAgentInstaller
         var fullConfigPath = Path.GetFullPath(configPath);
         RemoveStudentUpdateRecoveryTaskForConfig(StudentUpdateRecoveryTaskName, fullConfigPath);
         RemoveStudentUpdateRecoveryTaskForConfig(StudentUpdateRecoveryWatchdogTaskName, fullConfigPath);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void RemoveStudentUpdateRecoveryTasksForUninstall()
+    {
+        if (!OperatingSystem.IsWindows() || !IsElevated())
+            throw new UnauthorizedAccessException("移除学生端后台更新任务需要 Windows 管理员权限。");
+
+        foreach (var taskName in new[] { StudentUpdateRecoveryTaskName, StudentUpdateRecoveryWatchdogTaskName })
+        {
+            var action = ReadScheduledTaskAction(taskName);
+            if (action is null) continue;
+            const string argumentPrefix = "--recover-student-update \"";
+            if (!string.Equals(action.UserId, "S-1-5-18", StringComparison.Ordinal) ||
+                !IsManagedAgentExecutablePath(action.ExecutablePath) ||
+                !action.Arguments.StartsWith(argumentPrefix, StringComparison.Ordinal) ||
+                !action.Arguments.EndsWith('"'))
+                throw new InvalidDataException($"后台更新任务 {taskName} 不属于学生端；没有删除未知任务。");
+
+            var configPath = action.Arguments[argumentPrefix.Length..^1];
+            var configRoot = Path.GetFullPath(GetAgentConfigurationRoot());
+            var expectedPrefix = Path.TrimEndingDirectorySeparator(configRoot) + Path.DirectorySeparatorChar;
+            var fullConfigPath = Path.GetFullPath(configPath);
+            var relativePath = Path.GetRelativePath(configRoot, fullConfigPath);
+            var parts = relativePath.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar],
+                StringSplitOptions.RemoveEmptyEntries);
+            if (!fullConfigPath.StartsWith(expectedPrefix, StringComparison.OrdinalIgnoreCase) ||
+                parts.Length != 2 || !Regex.IsMatch(parts[0], "^[0-9A-Fa-f]{24}$", RegexOptions.CultureInvariant) ||
+                !string.Equals(parts[1], "agent-" + parts[0] + ".json", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException($"后台更新任务 {taskName} 配置路径不属于学生端；没有删除未知任务。");
+
+            Run("schtasks.exe", ["/Delete", "/TN", taskName, "/F"]);
+            if (ReadScheduledTaskAction(taskName) is not null)
+                throw new IOException($"后台更新任务 {taskName} 删除失败。");
+        }
     }
 
     [SupportedOSPlatform("windows")]

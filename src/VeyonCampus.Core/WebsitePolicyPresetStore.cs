@@ -175,7 +175,7 @@ private static readonly string[] DefaultBlockedDomains =
 
     private static readonly string[] DefaultAllowedDomains =
     [
-        "smartedu.cn", "icourse163.org", "xuetangx.com", "bdfjiaoyu.com"
+        "smartedu.cn", "icourse163.org", "xuetangx.com", "www.bdfjiaoyu.com"
     ];
     private static readonly JsonSerializerOptions Options = new()
     {
@@ -205,8 +205,25 @@ private static readonly string[] DefaultBlockedDomains =
                 file.AllowedDomains.Length > MaximumListCharacters)
                 throw new InvalidDataException("常用网站名单文件版本或内容无效。");
 
-            return new WebsitePolicyPresetLists(NormalizeList(file.BlockedDomains),
-                NormalizeList(file.AllowedDomains), file.UpdatedUtc);
+            var blockedDomains = NormalizeList(file.BlockedDomains);
+            var normalizedAllowedDomains = NormalizeList(file.AllowedDomains);
+            var allowedDomains = UpgradeLegacyAllowedDomains(normalizedAllowedDomains);
+            var migratedLegacyDomain = !string.Equals(normalizedAllowedDomains, allowedDomains,
+                StringComparison.Ordinal);
+            var updatedUtc = migratedLegacyDomain ? DateTimeOffset.UtcNow : file.UpdatedUtc;
+            var presets = new WebsitePolicyPresetLists(blockedDomains, allowedDomains, updatedUtc);
+            if (migratedLegacyDomain)
+            {
+                // Same rule as the draft store: a failed upgrade write must not hide the lists the
+                // teacher already saved. The in-memory value is already correct and the next read
+                // retries the write.
+                try { WriteFile(path, presets); }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  System.Security.SecurityException or InvalidDataException)
+                {
+                }
+            }
+            return presets;
         }
     }
 
@@ -232,6 +249,15 @@ private static readonly string[] DefaultBlockedDomains =
     private static string NormalizeList(string value)
     {
         var entries = value.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        return string.Join(Environment.NewLine, WebsitePolicyCompiler.NormalizeDomains(entries));
+    }
+
+    private static string UpgradeLegacyAllowedDomains(string value)
+    {
+        var entries = value.Split([Environment.NewLine], StringSplitOptions.RemoveEmptyEntries)
+            .Select(domain => string.Equals(domain, "bdfjiaoyu.com", StringComparison.OrdinalIgnoreCase)
+                ? "www.bdfjiaoyu.com"
+                : domain);
         return string.Join(Environment.NewLine, WebsitePolicyCompiler.NormalizeDomains(entries));
     }
 

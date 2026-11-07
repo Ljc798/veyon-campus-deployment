@@ -1084,6 +1084,23 @@ public static class StudentUpdateAtomicTransaction
             Directory.Delete(transactionsRoot);
     }
 
+    internal static void RemoveAllForUninstall()
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+            AgentProductDirectoryName, "StudentUpdateTransactions");
+        PathLinkSecurity.RejectLinksAllowingMissingComponents(root);
+        if (File.Exists(root))
+        {
+            PathLinkSecurity.RejectLinks(root);
+            File.Delete(root);
+            return;
+        }
+        if (!Directory.Exists(root)) return;
+        EnsureNoReparsePointsInTree(root);
+        Directory.Delete(root, recursive: true);
+        if (Directory.Exists(root)) throw new IOException("学生端后台更新记录目录未能完整移除。");
+    }
+
     public static string GetAgentExecutablePath(string version) => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), AgentProductDirectoryName,
         "WebsitePolicyAgent", version, "VeyonCampus.Agent.exe");

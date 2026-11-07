@@ -1,0 +1,33 @@
+name: Website documentation checks
+
+on:
+  push:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-docs.yml'
+  pull_request:
+    paths:
+      - 'website/**'
+      - '.github/workflows/website-docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-check-docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Install locked website dependencies
+        working-directory: website
+        run: npm ci
+      - name: Build website, render public docs, generate Pagefind, and run static checks
+        working-directory: website
+        run: npm run build

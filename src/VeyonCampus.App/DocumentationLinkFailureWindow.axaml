@@ -1,0 +1,19 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="VeyonCampus.App.DocumentationLinkFailureWindow"
+        Title="帮助与文档" Width="520" SizeToContent="Height" CanResize="False"
+        WindowStartupLocation="CenterOwner" Background="#F3F6F8">
+  <Border Background="White" CornerRadius="14" BorderBrush="#E3E9EC" BorderThickness="1" Padding="24" Margin="18">
+    <StackPanel Spacing="14">
+      <TextBlock Text="未能自动打开帮助网页" FontSize="20" FontWeight="Bold" />
+      <TextBlock Text="请复制下面的网址，再粘贴到浏览器地址栏。" TextWrapping="Wrap" Foreground="#536671" />
+      <TextBox x:Name="DocumentationAddress" IsReadOnly="True" TextWrapping="Wrap"
+               MinHeight="44" VerticalContentAlignment="Center" />
+      <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+        <TextBlock x:Name="CopyStatus" Classes="muted" VerticalAlignment="Center" TextWrapping="Wrap" />
+        <Button Grid.Column="1" Content="复制网址" Classes="secondary" Click="CopyAddress" />
+        <Button Grid.Column="2" Content="关闭" Click="CloseWindow" />
+      </Grid>
+    </StackPanel>
+  </Border>
+</Window>

@@ -23,7 +23,7 @@ public static class StudentSetupUninstaller
             VeyonCampusProcessCleanup.StopInstalledRoleProcesses("StudentSetup");
             if (!preserveConfiguration)
                 VeyonCampusProcessCleanup.StopInstalledRoleProcesses("TeacherConsole");
-            var agentRemoval = WebsitePolicyAgentInstaller.Uninstall();
+            var agentRemoval = WebsitePolicyAgentInstaller.Uninstall(discardInterruptedStudentUpdates: true);
             if (agentRemoval.Status != ExecutionPlan.Succeeded)
                 return new(Step, agentRemoval.Status,
                     "学生程序已停止，但后台 Agent 或其策略未能安全清理；保留安装文件以便检查并重试。" +
