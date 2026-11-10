@@ -31,7 +31,7 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'deployment_packages', table: 'deployment_packages', title: '已发布配置包目录',
-    description: 'owner/admin 可查看全表；身份 HMAC 指纹由服务端遮罩，其他角色只见已发布目录字段。',
+    description: 'owner/admin 可查看全表，包含发布者身份与手机号 HMAC 指纹；其他角色只见已发布目录字段。',
     columns: PACKAGE_COLUMNS,
     privilegedView: true,
     summary: ['display_name', 'campus_name', 'status', 'download_count', 'published_at'],
@@ -59,12 +59,14 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'campus_daily_teacher_heartbeats', table: 'campus_daily_teacher_heartbeats', title: '教师每日心跳',
-    description: '显示日期、配置包、版本与电脑数；匿名身份和发布者 HMAC 摘要由服务端遮罩。',
+    description: '显示日期、配置包及关联校区、版本与电脑数；身份摘要为 HMAC 值，用于同一条记录的对账。',
     columns: TEACHER_HEARTBEAT_COLUMNS,
     privilegedView: true,
+    summary: ['day_hkt', 'campus_id', 'package_id', 'package_campus_name', 'teacher_version', 'configured_computer_count'],
     fields: [
       ['day_hkt', '日期'], ['campus_id', '正式校区编号', 'number'],
       ['campus_identity_digest', '校区身份摘要', 'code'], ['package_id', '配置包编号', 'code'],
+      ['package_campus_name', '配置包校区'],
       ['publisher_digest', '发布者身份摘要', 'code'], ['teacher_version', '教师端版本'],
       ['student_version', '学生端版本'], ['configured_computer_count', '配置电脑数', 'number'],
       ['updated_at', '更新时间', 'date']
@@ -103,7 +105,7 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'application_releases', table: 'application_releases', title: '应用发行清单',
-    description: '仅 owner/admin 可通过受限只读 API 查看；私有对象键由服务端遮罩。',
+    description: '仅 owner/admin 可通过受限只读 API 查看，包含私有对象键与签名。',
     columns: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,status,published_at,created_at',
     privilegedView: true, serviceOnly: true,
     fields: [
@@ -118,22 +120,26 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'deployment_package_artifacts', table: 'deployment_package_artifacts', title: '配置包私有对象索引',
-    description: 'owner/admin 可查看对象索引记录；对象键会由服务端遮罩。',
+    description: 'owner/admin 可查看对象索引记录，包含私有存储对象键与关联校区。',
     columns: 'package_id,storage_key,created_at',
     privilegedView: true, serviceOnly: true,
+    summary: ['package_id', 'package_campus_name', 'storage_key', 'created_at'],
     fields: [
-      ['package_id', '配置包编号', 'code'], ['storage_key', '私有对象键', 'code'],
+      ['package_id', '配置包编号', 'code'], ['package_campus_name', '配置包校区'],
+      ['storage_key', '私有对象键', 'code'],
       ['created_at', '创建时间', 'date']
     ],
     order: ['created_at', false]
   },
   {
     id: 'deployment_package_download_attempts', table: 'deployment_package_download_attempts', title: '下载校验与限错状态',
-    description: 'owner/admin 可查看失败计数与封锁时间；客户端地址 HMAC 会由服务端遮罩。',
+    description: 'owner/admin 可查看失败计数与封锁时间，包含客户端地址 HMAC 与关联校区。',
     columns: 'package_id,client_fingerprint,window_started_at,failure_count,blocked_until,last_attempt_at',
     privilegedView: true, serviceOnly: true,
+    summary: ['package_id', 'package_campus_name', 'failure_count', 'blocked_until', 'last_attempt_at'],
     fields: [
-      ['package_id', '配置包编号', 'code'], ['client_fingerprint', '客户端地址指纹', 'code'],
+      ['package_id', '配置包编号', 'code'], ['package_campus_name', '配置包校区'],
+      ['client_fingerprint', '客户端地址指纹', 'code'],
       ['window_started_at', '计数窗口开始', 'date'], ['failure_count', '失败次数', 'number'],
       ['blocked_until', '封锁至', 'date'], ['last_attempt_at', '最近尝试', 'date']
     ],
@@ -141,7 +147,7 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'telemetry_daily_deployment_devices', table: 'telemetry_daily_deployment_devices', title: '校区匿名设备明细',
-    description: 'owner/admin 可分页查看每日分组记录；安装 HMAC 摘要会由服务端遮罩。',
+    description: 'owner/admin 可分页查看每日分组记录，包含安装 HMAC 摘要。',
     columns: 'day_hkt,campus_id,deployment_id,application_version,installation_digest,recorded_at',
     privilegedView: true, serviceOnly: true,
     fields: [
@@ -153,7 +159,7 @@ export const ADMIN_DATASETS = [
   },
   {
     id: 'telemetry_daily_hkt_devices', table: 'telemetry_daily_hkt_devices', title: '全站匿名设备明细',
-    description: 'owner/admin 可分页查看每日去重记录；安装 HMAC 摘要会由服务端遮罩。',
+    description: 'owner/admin 可分页查看每日去重记录，包含安装 HMAC 摘要。',
     columns: 'day_hkt,installation_digest,recorded_at',
     privilegedView: true, serviceOnly: true,
     fields: [
@@ -176,16 +182,16 @@ export const ADMIN_DATASETS = [
 
 export const DATABASE_TABLES = [
   { name: 'admin_profiles', purpose: '后台账号角色', access: 'owner/admin 可查看全部；其他账号仅 RLS 可见本人的记录', dataset: 'admin_profiles', ownerAdminApi: true },
-  { name: 'application_releases', purpose: '教师端与学生端签名发行清单', access: 'owner/admin 只读；私有对象键由服务端遮罩', dataset: 'application_releases', ownerAdminApi: true, serviceOnly: true, link: '/admin/api' },
+  { name: 'application_releases', purpose: '教师端与学生端签名发行清单', access: 'owner/admin 只读，含私有对象键', dataset: 'application_releases', ownerAdminApi: true, serviceOnly: true, link: '/admin/api' },
   { name: 'campus_daily_operations_reports', purpose: '用户主动开启后的 Teacher 每日更新与课堂汇总', access: '仅服务端读写；owner/admin 只看全站每日聚合', serviceOnly: true },
-  { name: 'campus_daily_teacher_heartbeats', purpose: '校区每日教师端快照', access: 'owner/admin 可查看全部；HMAC 摘要由服务端遮罩', dataset: 'campus_daily_teacher_heartbeats', ownerAdminApi: true },
+  { name: 'campus_daily_teacher_heartbeats', purpose: '校区每日教师端快照', access: 'owner/admin 可查看全部，含 HMAC 摘要', dataset: 'campus_daily_teacher_heartbeats', ownerAdminApi: true },
   { name: 'campuses', purpose: '校区名称、地区、城市与状态', access: 'owner/admin 只读全表；editor 可按 RLS 维护', dataset: 'campuses', ownerAdminApi: true },
-  { name: 'deployment_package_artifacts', purpose: '配置包私有对象索引', access: 'owner/admin 只读；对象键由服务端遮罩', dataset: 'deployment_package_artifacts', ownerAdminApi: true, serviceOnly: true },
-  { name: 'deployment_package_download_attempts', purpose: '下载失败计数与临时封锁状态', access: 'owner/admin 只读；客户端 HMAC 由服务端遮罩', dataset: 'deployment_package_download_attempts', ownerAdminApi: true, serviceOnly: true },
-  { name: 'deployment_packages', purpose: '学生配置包目录、发布者和撤回记录', access: 'owner/admin 查看全表；身份指纹由服务端遮罩', dataset: 'deployment_packages', ownerAdminApi: true },
-  { name: 'telemetry_daily_deployment_devices', purpose: '按日、校区、配置包与版本去重的记录', access: 'owner/admin 可分页查看；安装 HMAC 由服务端遮罩', dataset: 'telemetry_daily_deployment_devices', ownerAdminApi: true, serviceOnly: true },
+  { name: 'deployment_package_artifacts', purpose: '配置包私有对象索引', access: 'owner/admin 只读，含对象键', dataset: 'deployment_package_artifacts', ownerAdminApi: true, serviceOnly: true },
+  { name: 'deployment_package_download_attempts', purpose: '下载失败计数与临时封锁状态', access: 'owner/admin 只读，含客户端 HMAC', dataset: 'deployment_package_download_attempts', ownerAdminApi: true, serviceOnly: true },
+  { name: 'deployment_packages', purpose: '学生配置包目录、发布者和撤回记录', access: 'owner/admin 查看全表，含身份指纹', dataset: 'deployment_packages', ownerAdminApi: true },
+  { name: 'telemetry_daily_deployment_devices', purpose: '按日、校区、配置包与版本去重的记录', access: 'owner/admin 可分页查看，含安装 HMAC', dataset: 'telemetry_daily_deployment_devices', ownerAdminApi: true, serviceOnly: true },
   { name: 'telemetry_daily_deployment_stats', purpose: '校区、配置包与版本每日汇总', access: 'owner/admin 全表；其他授权角色按 RLS 读取', dataset: 'telemetry_daily_deployment_stats', ownerAdminApi: true },
-  { name: 'telemetry_daily_hkt_devices', purpose: '全站逐日安装摘要记录', access: 'owner/admin 可分页查看；安装 HMAC 由服务端遮罩', dataset: 'telemetry_daily_hkt_devices', ownerAdminApi: true, serviceOnly: true },
+  { name: 'telemetry_daily_hkt_devices', purpose: '全站逐日安装摘要记录', access: 'owner/admin 可分页查看，含安装 HMAC', dataset: 'telemetry_daily_hkt_devices', ownerAdminApi: true, serviceOnly: true },
   { name: 'telemetry_daily_hkt_stats', purpose: '全站每日匿名汇总', access: 'owner/admin 全表；其他授权角色按 RLS 读取', dataset: 'telemetry_daily_hkt_stats', ownerAdminApi: true },
   { name: 'telemetry_hkt_retention_state', purpose: '匿名数据保留清理进度', access: 'owner/admin 只读查看', dataset: 'telemetry_hkt_retention_state', ownerAdminApi: true, serviceOnly: true }
 ];

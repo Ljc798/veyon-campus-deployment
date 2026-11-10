@@ -221,15 +221,17 @@ paths:
       tags: [Admin]
       operationId: browseAdminDatabaseTable
       summary: Read a page from an allowlisted application table
-      x-display-purpose: 分页读取数据库表记录；敏感 HMAC 与私有对象键由服务端遮罩。
+      x-display-purpose: 分页读取数据库表记录；owner/admin 可见完整诊断字段。
       x-access: CloudBase Auth；owner/admin
       description: >-
         Requires an active CloudBase Auth access token and an owner/admin role
         in admin_profiles. The server selects the table, fields, and stable order
         from a fixed allowlist; callers cannot provide SQL, filters, columns, or
-        ordering. HMAC identity fingerprints, client-address fingerprints, and
-        private storage object keys are replaced with [已隐藏]. Results are
-        uncached. Page offsets are capped at 1,000,000 rows.
+        ordering. Identity fingerprints and client-address fingerprints are HMAC
+        values, so they can be matched but not reversed; private storage object
+        keys are returned as stored. Rows that only carry a package id also get
+        package_campus_name and package_display_name from deployment_packages.
+        Results are uncached. Page offsets are capped at 1,000,000 rows.
       security:
         - CloudBaseAccessToken: []
       parameters:

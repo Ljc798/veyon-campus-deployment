@@ -354,7 +354,12 @@ function createMockCloudBase() {
         { release_id: '00112233-4455-6677-8899-aabbccddeeff', object_key: 'releases/private.exe' }
       ],
       campus_daily_teacher_heartbeats: [
-        { day_hkt: '2026-10-02', campus_identity_digest: 'A'.repeat(64), publisher_digest: 'B'.repeat(64) }
+        {
+          day_hkt: '2026-10-02',
+          campus_identity_digest: 'A'.repeat(64),
+          publisher_digest: 'B'.repeat(64),
+          package_id: '00112233-4455-6677-8899-aabbccddeeff'
+        }
       ],
       deployment_package_artifacts: [
         {
@@ -374,6 +379,8 @@ function createMockCloudBase() {
       deployment_packages: [
         {
           package_id: '00112233-4455-6677-8899-aabbccddeeff',
+          campus_name: '测试校区',
+          display_name: '测试校区 / PC-',
           publisher_identity_fingerprint: 'D'.repeat(64),
           publisher_phone_fingerprint: 'E'.repeat(64)
         }
@@ -644,9 +651,10 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
     const adminPage = await adminPageResponse.json();
     assert.equal(adminPage.table, 'deployment_package_artifacts');
     assert.equal(adminPage.hasMore, true);
-    assert.deepEqual(adminPage.redactedFields, ['storage_key']);
+    assert.deepEqual(adminPage.redactedFields, []);
     assert.equal(adminPage.rows.length, 1);
-    assert.equal(adminPage.rows[0].storage_key, '[已隐藏]');
+    assert.equal(adminPage.rows[0].storage_key, 'deployment-packages/v3/private-one.zip');
+    assert.equal(adminPage.rows[0].package_campus_name, '测试校区');
 
     const adminNextPageResponse = await originalFetch(
       `${baseUrl}/v1/admin/database/deployment_package_artifacts?page=2&pageSize=1`,
@@ -661,25 +669,31 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
       { headers: { Authorization: 'Bearer fixture-owner-token' } });
     assert.equal(digestPageResponse.status, 200);
     const digestPage = await digestPageResponse.json();
-    assert.deepEqual(digestPage.redactedFields, ['installation_digest']);
-    assert.equal(digestPage.rows[0].installation_digest, '[已隐藏]');
+    assert.deepEqual(digestPage.redactedFields, []);
+    assert.equal(digestPage.rows[0].installation_digest, 'A'.repeat(64));
 
-    const redactedCases = [
-      ['application_releases', ['object_key']],
-      ['campus_daily_teacher_heartbeats', ['campus_identity_digest', 'publisher_digest']],
-      ['deployment_package_download_attempts', ['client_fingerprint']],
-      ['deployment_packages', ['publisher_identity_fingerprint', 'publisher_phone_fingerprint']],
-      ['telemetry_daily_deployment_devices', ['installation_digest']]
+    const completeCases = [
+      ['application_releases', 'object_key'],
+      ['campus_daily_teacher_heartbeats', 'campus_identity_digest'],
+      ['deployment_package_download_attempts', 'client_fingerprint'],
+      ['deployment_packages', 'publisher_identity_fingerprint'],
+      ['telemetry_daily_deployment_devices', 'installation_digest']
     ];
-    for (const [tableName, fields] of redactedCases) {
+    for (const [tableName, field] of completeCases) {
       const response = await originalFetch(`${baseUrl}/v1/admin/database/${tableName}`, {
         headers: { Authorization: 'Bearer fixture-owner-token' }
       });
       assert.equal(response.status, 200);
       const payload = await response.json();
-      assert.deepEqual(payload.redactedFields, fields);
-      for (const field of fields) assert.equal(payload.rows[0][field], '[已隐藏]');
+      assert.deepEqual(payload.redactedFields, []);
+      assert.notEqual(payload.rows[0][field], '[已隐藏]');
+      assert.ok(payload.rows[0][field]);
     }
+    const heartbeatPageResponse = await originalFetch(
+      `${baseUrl}/v1/admin/database/campus_daily_teacher_heartbeats`,
+      { headers: { Authorization: 'Bearer fixture-owner-token' } });
+    const heartbeatPage = await heartbeatPageResponse.json();
+    assert.equal(heartbeatPage.rows[0].package_campus_name, '测试校区');
 
     const viewerAdminPage = await originalFetch(
       `${baseUrl}/v1/admin/database/deployment_package_artifacts`,
@@ -711,10 +725,10 @@ test('anonymous package, release, and campus heartbeat APIs work end to end agai
       { headers: { Authorization: 'Bearer fixture-owner-token' } });
     assert.equal(oversizedPage.status, 400);
     const protectedApiCallCount = callerAuthorizationHeaders.length;
-    assert.equal(mockCloudBase.state.adminRoleQueryAuthorizations.length, 4 + redactedCases.length);
+    assert.equal(mockCloudBase.state.adminRoleQueryAuthorizations.length, 10);
     assert.ok(mockCloudBase.state.adminRoleQueryAuthorizations.every(
       value => value === 'Bearer fixture-service-role-key'));
-    assert.equal(mockCloudBase.state.adminTableAuthorizations.length, 3 + redactedCases.length);
+    assert.equal(mockCloudBase.state.adminTableAuthorizations.length, 14);
     assert.ok(mockCloudBase.state.adminTableAuthorizations.every(
       value => value === 'Bearer fixture-service-role-key'));
 

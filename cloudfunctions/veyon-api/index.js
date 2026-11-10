@@ -58,12 +58,13 @@ const ADMIN_DATABASE_TABLES = Object.freeze({
   application_releases: {
     columns: 'release_id,role,product,version,architecture,file_name,object_key,size_bytes,sha256,signature_algorithm,signature,status,published_at,created_at',
     order: 'published_at.desc,release_id.asc',
-    redact: ['object_key']
+    redact: []
   },
   campus_daily_teacher_heartbeats: {
     columns: 'day_hkt,campus_identity_digest,campus_id,package_id,publisher_digest,teacher_version,student_version,configured_computer_count,updated_at',
     order: 'day_hkt.desc,campus_identity_digest.asc',
-    redact: ['campus_identity_digest', 'publisher_digest']
+    redact: [],
+    packageLookup: 'package_id'
   },
   campuses: {
     columns: 'id,name,region,city,status,created_at,updated_at',
@@ -73,22 +74,24 @@ const ADMIN_DATABASE_TABLES = Object.freeze({
   deployment_package_artifacts: {
     columns: 'package_id,storage_key,created_at',
     order: 'created_at.desc,package_id.asc',
-    redact: ['storage_key']
+    redact: [],
+    packageLookup: 'package_id'
   },
   deployment_package_download_attempts: {
     columns: 'package_id,client_fingerprint,window_started_at,failure_count,blocked_until,last_attempt_at',
     order: 'last_attempt_at.desc,package_id.asc,client_fingerprint.asc',
-    redact: ['client_fingerprint']
+    redact: [],
+    packageLookup: 'package_id'
   },
   deployment_packages: {
     columns: 'package_id,campus_id,campus_name,computer_prefix,display_name,schema_version,target_os,architecture,artifact_size_bytes,artifact_sha256,status,created_by_user_id,created_at,published_at,download_count,withdrawn_at,withdrawn_by_user_id,withdrawn_reason,publisher_identity_fingerprint,publisher_phone_fingerprint,publisher_name,artifact_file_name',
     order: 'created_at.desc,package_id.asc',
-    redact: ['publisher_identity_fingerprint', 'publisher_phone_fingerprint']
+    redact: []
   },
   telemetry_daily_deployment_devices: {
     columns: 'day_hkt,campus_id,deployment_id,application_version,installation_digest,recorded_at',
     order: 'recorded_at.desc,day_hkt.desc,campus_id.asc,deployment_id.asc,application_version.asc,installation_digest.asc',
-    redact: ['installation_digest']
+    redact: []
   },
   telemetry_daily_deployment_stats: {
     columns: 'day_hkt,campus_id,deployment_id,application_version,unique_devices,heartbeat_signals,updated_at',
@@ -98,7 +101,7 @@ const ADMIN_DATABASE_TABLES = Object.freeze({
   telemetry_daily_hkt_devices: {
     columns: 'day_hkt,installation_digest,recorded_at',
     order: 'recorded_at.desc,day_hkt.desc,installation_digest.asc',
-    redact: ['installation_digest']
+    redact: []
   },
   telemetry_daily_hkt_stats: {
     columns: 'day_hkt,unique_devices,heartbeat_signals,updated_at',
@@ -2124,6 +2127,37 @@ async function handleAdminDownloadPageSync(request, response, config) {
   }
 }
 
+/**
+ * Adds the package's campus name to rows that only store a package id, so the
+ * admin tables can show "which campus" without a second client round trip.
+ * The logical foreign key is package_id -> deployment_packages.package_id.
+ */
+async function attachPackageCampusNames(config, rows, field) {
+  if (!field || rows.length === 0) return;
+  const ids = [...new Set(rows
+    .map(row => row[field])
+    .filter(value => typeof value === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)))];
+  if (ids.length === 0) return;
+  let packages;
+  try {
+    packages = await table(config, 'deployment_packages', new URLSearchParams({
+      select: 'package_id,campus_name,display_name',
+      package_id: 'in.(' + ids.join(',') + ')',
+      limit: String(ids.length),
+      offset: '0'
+    }));
+  } catch {
+    return;
+  }
+  const byId = new Map(packages.map(item => [String(item.package_id || '').toLowerCase(), item]));
+  for (const row of rows) {
+    const match = byId.get(String(row[field] || '').toLowerCase());
+    row.package_campus_name = match?.campus_name || '';
+    row.package_display_name = match?.display_name || '';
+  }
+}
+
 async function handleAdminDatabase(request, response, config, tableName, url) {
   const token = bearerToken(request);
   if (!token) {
@@ -2165,20 +2199,15 @@ async function handleAdminDatabase(request, response, config, tableName, url) {
     });
     const records = await table(config, tableName, query);
     const hasMore = records.length > pageSize;
-    const rows = records.slice(0, pageSize).map(record => {
-      const safeRecord = { ...record };
-      for (const field of spec.redact) {
-        if (Object.hasOwn(safeRecord, field)) safeRecord[field] = '[已隐藏]';
-      }
-      return safeRecord;
-    });
+    const rows = records.slice(0, pageSize).map(record => ({ ...record }));
+    await attachPackageCampusNames(config, rows, spec.packageLookup);
     sendJson(response, 200, {
       table: tableName,
       page,
       pageSize,
       rows,
       hasMore,
-      redactedFields: spec.redact
+      redactedFields: []
     }, { 'Cache-Control': 'no-store' });
   } catch (error) {
     mapError(response, error, 'admin-database');
