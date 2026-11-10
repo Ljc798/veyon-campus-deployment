@@ -398,6 +398,24 @@ async function callAdminApi(path, options = {}) {
   }
 }
 
+/**
+ * Withdraws (soft-deletes) a published deployment package. The row keeps its
+ * downloads, heartbeats and telemetry; only status/withdrawn_* change, and the
+ * database refuses to publish it again.
+ */
+export async function withdrawDeploymentPackage(packageId, reason = '') {
+  const id = String(packageId || '').trim();
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id))
+    throw new Error('配置包编号无效。');
+  const text = String(reason || '').trim();
+  if (text.length > 500) throw new Error('撤回原因不能超过 500 个字符。');
+  if (/\p{Cc}/u.test(text)) throw new Error('撤回原因不能包含控制字符。');
+  await callAdminApi('/v1/deployment-packages/' + id.toLowerCase() + '/withdraw', {
+    method: 'POST',
+    body: { reason: text }
+  });
+}
+
 export async function loadDailyOperationsReports(days = 30) {
   if (![7, 30, 90].includes(Number(days))) throw new Error('统计周期无效。');
   const payload = await callAdminApi('/v1/admin/operations/daily?days=' + Number(days));

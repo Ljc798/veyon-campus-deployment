@@ -460,6 +460,8 @@ tbody tr:hover { background: #fbfdfc; }
 .database-data-table td code, .database-inventory code, .api-endpoints-card code { color: #426173; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; overflow-wrap: anywhere; }
 .database-data-table td code { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }
 .database-data-table .db-expand-cell { width: 34px; padding-right: 2px; }
+.database-data-table .db-action-cell { width: 72px; }
+.database-data-table .text-link { padding: 0; border: 0; background: none; cursor: pointer; }
 .database-data-table .db-expand { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid #e0e8e5; border-radius: 6px; background: #fff; color: #5d7480; font-size: 13px; line-height: 1; cursor: pointer; }
 .database-data-table .db-expand:hover { border-color: #b7d2ca; color: #238d79; }
 .database-data-table .db-expand:focus-visible { outline: 2px solid #9cc7ba; outline-offset: 1px; }

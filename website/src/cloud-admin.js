@@ -15,6 +15,7 @@ import {
   loadAdminDatasetPage,
   loadAdminProfile,
   loadUnregisteredCampusCandidates,
+  withdrawDeploymentPackage,
   loadApiOverview,
   loadDailyOperationsReports,
   loadReleaseDispatchStatus,
@@ -405,10 +406,12 @@ function databasePage() {
   const result = model.databaseCatalog?.[dataset.id];
   const fields = !ownerOrAdmin && dataset.rlsFields ? dataset.rlsFields : dataset.fields;
   const summaryFields = databaseSummaryFields(dataset, fields);
+  const canWithdraw = ownerOrAdmin && dataset.id === 'deployment_packages';
   const options = availableDatasets.map(item => '<option value="' + escapeHtml(item.id) + '" ' + (item.id === dataset.id ? 'selected' : '') + '>' + escapeHtml(item.title) + '</option>').join('');
   const headers = '<th class="db-expand-cell" scope="col"><span class="sr-only">展开详情</span></th>' +
-    summaryFields.map(field => '<th scope="col">' + escapeHtml(field[1]) + '</th>').join('');
-  const columnCount = summaryFields.length + 1;
+    summaryFields.map(field => '<th scope="col">' + escapeHtml(field[1]) + '</th>').join('') +
+    (canWithdraw ? '<th scope="col">操作</th>' : '');
+  const columnCount = summaryFields.length + 1 + (canWithdraw ? 1 : 0);
   let rows = '';
   if (!result?.available) {
     rows = '<tr><td colspan="' + columnCount + '"><div class="empty-state">' + (dataset.serviceOnly && !ownerOrAdmin ? '此数据集仅向站点 owner/admin 开放。' : '此数据集当前无法读取。请检查登录会话与服务端数据库权限。') + '</div></td></tr>';
@@ -417,6 +420,12 @@ function databasePage() {
   } else {
     rows = result.rows.map((row, index) => {
       const summaryCells = summaryFields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('');
+      const actionCell = canWithdraw
+        ? '<td class="db-action-cell">' + (row.status === 'withdrawn'
+          ? '<span class="pill neutral">已撤回</span>'
+          : '<button class="text-link" type="button" data-withdraw-package="' + escapeHtml(String(row.package_id || '')) +
+            '" data-withdraw-label="' + escapeHtml(String(row.display_name || '')) + '">撤回</button>') + '</td>'
+        : '';
       const extraFields = fields.filter(field => !summaryFields.includes(field));
       const detail = extraFields.length
         ? '<dl class="db-detail-grid">' + extraFields.map(field =>
@@ -424,7 +433,7 @@ function databasePage() {
         : '<p class="empty-state">没有更多字段。</p>';
       return '<tr class="db-row"><td class="db-expand-cell"><button class="db-expand" type="button" data-db-expand="' + index +
         '" aria-expanded="false" aria-controls="db-detail-' + index + '" aria-label="展开第 ' + (index + 1) + ' 行的全部字段">+</button></td>' +
-        summaryCells + '</tr>' +
+        summaryCells + actionCell + '</tr>' +
         '<tr class="db-detail" id="db-detail-' + index + '" data-db-detail="' + index + '" hidden><td colspan="' + columnCount + '">' + detail + '</td></tr>';
     }).join('');
   }
@@ -622,6 +631,16 @@ function openCampusImportModal() {
     (model.campusCandidateHasMore ? '<p class="field-hint">配置包超过一页，只列出了最近 50 条记录中的校区名称。</p>' : '') + '</form>';
   const footer = '<button class="btn secondary sm" type="button" data-cb-action="close-modal">取消</button><button class="btn sm" type="submit" form="cloudbase-import-form">登记选中的校区</button>';
   openModal('从配置包登记校区', '只新建校区档案，不改动任何配置包记录。', body, footer);
+}
+
+function openWithdrawPackageModal(packageId, label) {
+  const body = '<form id="withdraw-package-form" data-package-id="' + escapeHtml(packageId) + '">' +
+    '<p class="field-hint">撤回是软删除：这个配置包会从下载目录和 latest 接口消失，但已有的下载记录、教师心跳和匿名统计都会保留。撤回后不能恢复为已发布状态。</p>' +
+    '<div class="field full"><label for="withdraw-reason">撤回原因（可选）</label>' +
+    '<input id="withdraw-reason" name="reason" maxlength="500" placeholder="例如：测试包，清理" /></div></form>';
+  const footer = '<button class="btn secondary sm" type="button" data-cb-action="close-modal">取消</button>' +
+    '<button class="btn sm" type="submit" form="withdraw-package-form">确认撤回</button>';
+  openModal('撤回配置包', escapeHtml(label || packageId), body, footer);
 }
 
 function openModal(title, subtitle, body, footer) {
@@ -942,6 +961,34 @@ function installHandlers(root) {
         model.working = false;
       }
     }
+    if (event.target.id === 'withdraw-package-form') {
+      event.preventDefault();
+      if (model.working) return;
+      const formElement = event.target;
+      const packageId = formElement.dataset.packageId;
+      const reason = String(new FormData(formElement).get('reason') || '');
+      const submitButton = formElement.closest('.modal')?.querySelector('button[type="submit"]');
+      model.working = true;
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = '正在撤回…';
+      }
+      try {
+        await withdrawDeploymentPackage(packageId, reason);
+        model.root.querySelector('.modal-backdrop')?.remove();
+        toast('配置包已撤回；下载记录和统计仍然保留。');
+        await redraw();
+      } catch (error) {
+        toast(error?.message || '撤回失败，请稍后重试。');
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = '确认撤回';
+        }
+      } finally {
+        model.working = false;
+      }
+      return;
+    }
     if (event.target.id === 'cloudbase-import-form') {
       event.preventDefault();
       if (model.working) return;
@@ -1003,6 +1050,12 @@ function installHandlers(root) {
     }
   });
   root.addEventListener('click', async event => {
+    const withdrawButton = event.target.closest('[data-withdraw-package]');
+    if (withdrawButton) {
+      openWithdrawPackageModal(withdrawButton.getAttribute('data-withdraw-package'),
+        withdrawButton.getAttribute('data-withdraw-label'));
+      return;
+    }
     const expandButton = event.target.closest('[data-db-expand]');
     if (expandButton) {
       const index = expandButton.getAttribute('data-db-expand');
