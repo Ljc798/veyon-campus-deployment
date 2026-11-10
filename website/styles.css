@@ -225,6 +225,11 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .field textarea { min-height: 116px; resize: vertical; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: #67a99b; box-shadow: 0 0 0 3px rgba(24, 123, 112, .1); }
 .field-hint { color: var(--muted-2); font-size: 10px; }
+.admin-shell .campus-import-list { display: grid; max-height: 300px; margin-top: 12px; padding: 6px; gap: 2px; overflow-y: auto; border: 1px solid #e7eeeb; border-radius: 10px; background: #fcfdfd; }
+.admin-shell .campus-import-row { display: flex; padding: 8px 10px; gap: 10px; align-items: center; border-radius: 7px; color: #465c69; font-size: 11px; cursor: pointer; }
+.admin-shell .campus-import-row:hover { background: #f1f8f5; }
+.admin-shell .campus-import-row input { width: 15px; height: 15px; flex: none; margin: 0; accent-color: #238d79; }
+.admin-shell .campus-import-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-links { display: grid; gap: 11px; }
 .contact-link-card { display: grid; grid-template-columns: 39px 1fr 18px; min-height: 74px; padding: 15px; gap: 12px; align-items: center; border: 1px solid #e7eeeb; border-radius: 13px; background: #fbfdfc; }
 .contact-link-card .feature-icon { width: 39px; height: 39px; border-radius: 12px; }
@@ -449,10 +454,22 @@ tbody tr:hover { background: #fbfdfc; }
 .database-select-label { display: grid; min-width: 230px; gap: 5px; color: #829097; font-size: 9px; }
 .database-table-meta { display: flex; padding: 11px 20px; gap: 14px; align-items: center; border-bottom: 1px solid #edf1ef; color: #8a989e; background: #fbfcfc; font-size: 9px; }
 .database-table-meta > span:last-child { margin-left: auto; }
-.database-data-table { min-width: 720px; }
-.database-data-table th, .database-data-table td { white-space: normal; overflow-wrap: anywhere; }
+.database-data-table { min-width: 860px; }
+.database-data-table th { white-space: nowrap; }
+.database-data-table td { white-space: nowrap; overflow-wrap: normal; }
 .database-data-table td code, .database-inventory code, .api-endpoints-card code { color: #426173; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 9px; overflow-wrap: anywhere; }
-.database-data-table td code { display: inline-block; max-width: 260px; }
+.database-data-table td code { display: inline-block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }
+.database-data-table .db-expand-cell { width: 34px; padding-right: 2px; }
+.database-data-table .db-expand { display: inline-grid; width: 22px; height: 22px; padding: 0; place-items: center; border: 1px solid #e0e8e5; border-radius: 6px; background: #fff; color: #5d7480; font-size: 13px; line-height: 1; cursor: pointer; }
+.database-data-table .db-expand:hover { border-color: #b7d2ca; color: #238d79; }
+.database-data-table .db-expand:focus-visible { outline: 2px solid #9cc7ba; outline-offset: 1px; }
+.database-data-table tr.db-detail > td { padding: 12px 16px 14px; border-top: 0; background: #fbfcfc; white-space: normal; }
+.database-data-table tr.db-detail[hidden] { display: none; }
+.db-detail-grid { display: grid; margin: 0; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px 24px; }
+.db-detail-grid > div { display: grid; min-width: 0; gap: 3px; }
+.db-detail-grid dt { color: #8b989e; font-size: 9px; letter-spacing: .02em; }
+.db-detail-grid dd { margin: 0; color: #465c69; font-size: 10px; overflow-wrap: anywhere; }
+.db-detail-grid dd code { max-width: none; overflow: visible; text-overflow: clip; white-space: normal; }
 .database-inventory table { min-width: 920px; }
 .database-state { color: #687c84; font-size: 9px; }
 .database-inventory .text-link { padding: 0; border: 0; background: none; cursor: pointer; }
@@ -666,7 +683,7 @@ tbody tr:hover { background: #fbfdfc; }
 }
 
 /* Admin readability refresh */
-.admin-shell .chart-point { cursor: help; outline: none; }
+.admin-shell .chart-point { cursor: crosshair; outline: none; }
 .admin-shell .chart-point-dot { opacity: .45; transition: opacity .15s ease, transform .15s ease; transform-box: fill-box; transform-origin: center; }
 .admin-shell .chart-point:hover .chart-point-dot,
 .admin-shell .chart-point:focus .chart-point-dot { opacity: 1; transform: scale(1.8); }

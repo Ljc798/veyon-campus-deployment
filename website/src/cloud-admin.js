@@ -14,6 +14,7 @@ import {
   loadAdminData,
   loadAdminDatasetPage,
   loadAdminProfile,
+  loadUnregisteredCampusCandidates,
   loadApiOverview,
   loadDailyOperationsReports,
   loadReleaseDispatchStatus,
@@ -67,6 +68,8 @@ const model = {
   campusPageSize: 25,
   campusPageResult: null,
   activeCampusCount: 0,
+  campusCandidates: [],
+  campusCandidateHasMore: false,
   telemetry: [],
   deploymentTelemetry: [],
   operationsReports: [],
@@ -276,11 +279,19 @@ function dashboardPage() {
 
 function campusRows(items) {
   const canEdit = ['owner', 'admin', 'editor'].includes(model.profile.role);
-  return items.map(campus => '<tr><td><div class="campus-name"><span class="campus-mark">' + escapeHtml(campus.name.slice(0, 1)) + '</span><span><strong>' + escapeHtml(campus.name) + '</strong><small>' + campusCode(campus) + '</small></span></div></td><td>' + escapeHtml(campus.region) + ' · ' + escapeHtml(campus.city) + '</td><td>' + campusStatus(campus) + '</td><td>' + updatedLabel(campus.updated_at) + '</td><td>' + (canEdit ? '<button class="row-action" type="button" data-cb-action="edit-campus" data-id="' + escapeHtml(campus.id) + '" aria-label="编辑校区">' + icon('settings') + '</button>' : '') + '</td></tr>').join('');
+  return items.map(campus => {
+    const place = [campus.region, campus.city]
+      .map(value => String(value || '').trim())
+      .filter(Boolean)
+      .map(value => escapeHtml(value))
+      .join(' · ') || '<span class="database-state">待补充</span>';
+    return '<tr><td><div class="campus-name"><span class="campus-mark">' + escapeHtml(campus.name.slice(0, 1)) + '</span><span><strong>' + escapeHtml(campus.name) + '</strong><small>' + campusCode(campus) + '</small></span></div></td><td>' + place + '</td><td>' + campusStatus(campus) + '</td><td>' + updatedLabel(campus.updated_at) + '</td><td>' + (canEdit ? '<button class="row-action" type="button" data-cb-action="edit-campus" data-id="' + escapeHtml(campus.id) + '" aria-label="编辑校区">' + icon('settings') + '</button>' : '') + '</td></tr>';
+  }).join('');
 }
 
 function campusPage() {
   const canEdit = ['owner', 'admin', 'editor'].includes(model.profile.role);
+  const canImport = ['owner', 'admin'].includes(model.profile.role);
   const rows = model.campuses;
   const pageResult = model.campusPageResult;
   const total = Number(pageResult?.total ?? 0);
@@ -289,8 +300,8 @@ function campusPage() {
   const canNext = Boolean(pageResult?.hasMore);
   const emptyMessage = total
     ? '当前页没有校区记录。'
-    : (model.search ? '没有匹配的校区名称。' : '数据库还没有校区记录，请按实际资料新增。');
-  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>心跳只通过已发布配置包编号关联数据库校区；不使用客户端自报校区名称或校区编号。</p></div><div class="heading-actions">' + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出当前页 CSV</button></div></div>' +
+    : (model.search ? '没有匹配的校区名称。' : '数据库还没有校区记录。可以点右上角“从配置包登记”，把已发布配置包里的校区补登记为正式档案。');
+  return connectionBanner() + '<div class="page-heading"><div><h2>校区资料</h2><p>心跳只通过已发布配置包编号关联数据库校区；不使用客户端自报校区名称或校区编号。</p></div><div class="heading-actions">' + (canImport ? '<button class="btn secondary sm" type="button" data-cb-action="discover-campuses" title="从已发布配置包里找出还没有正式登记的校区名称">' + icon('database') + '从配置包登记</button>' : '') + (canEdit ? '<button class="btn sm" type="button" data-cb-action="add-campus">' + icon('plus') + '新增校区</button>' : '') + '<button class="btn secondary sm" type="button" data-cb-action="export-campuses">' + icon('download') + '导出当前页 CSV</button></div></div>' +
     '<div class="stat-grid">' + liveStat('符合条件的校区', total.toLocaleString('zh-CN'), model.search ? '名称匹配结果' : '全部校区记录', 'building') + liveStat('总校区数', Number(pageResult?.allCount ?? model.campusCount).toLocaleString('zh-CN'), '数据库记录', 'grid') + liveStat('本页启用校区', rows.filter(campus => campus.status === 'active').length.toLocaleString('zh-CN'), '当前页', 'activity') + liveStat('本页暂停校区', rows.filter(campus => campus.status === 'paused').length.toLocaleString('zh-CN'), '当前页', 'settings') + '</div>' +
     '<div class="toolbar"><div class="search-field">' + icon('search') + '<input type="search" data-cb-search value="' + escapeHtml(model.search) + '" placeholder="按校区名称搜索全部记录…" aria-label="按校区名称搜索" /></div><button class="btn secondary" type="button" data-cb-action="search-campuses">查询</button></div>' +
     '<section class="card table-card"><div class="table-wrap"><table><thead><tr><th>校区</th><th>地区 / 城市</th><th>状态</th><th>最近更新</th><th></th></tr></thead><tbody id="cloud-campus-rows">' + (rows.length ? campusRows(rows) : '<tr><td colspan="5"><div class="empty-state">' + emptyMessage + '</div></td></tr>') + '</tbody></table></div><div class="pagination"><span id="cloud-campus-count">第 ' + model.campusPage + ' 页 / ' + totalPages + ' 页 · 本页 ' + rows.length + ' 条 · 筛选结果 ' + total.toLocaleString('zh-CN') + ' 条</span><div class="database-pagination-actions"><button class="btn secondary sm" type="button" data-cb-action="campus-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="campus-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>';
@@ -354,6 +365,13 @@ function databaseFieldValue(row, field) {
   return kind === 'code' ? '<code>' + escapeHtml(text) + '</code>' : escapeHtml(text);
 }
 
+function databaseSummaryFields(dataset, fields) {
+  const keys = Array.isArray(dataset.summary) ? dataset.summary : [];
+  const picked = keys.map(key => fields.find(field => field[0] === key)).filter(Boolean);
+  if (picked.length) return picked;
+  return fields.slice(0, Math.min(6, fields.length));
+}
+
 function databaseInventoryRows() {
   const ownerOrAdmin = ['owner', 'admin'].includes(model.profile?.role);
   return DATABASE_TABLES.map(table => {
@@ -386,15 +404,29 @@ function databasePage() {
   const dataset = availableDatasets.find(item => item.id === model.databaseTable) || availableDatasets[0];
   const result = model.databaseCatalog?.[dataset.id];
   const fields = !ownerOrAdmin && dataset.rlsFields ? dataset.rlsFields : dataset.fields;
+  const summaryFields = databaseSummaryFields(dataset, fields);
   const options = availableDatasets.map(item => '<option value="' + escapeHtml(item.id) + '" ' + (item.id === dataset.id ? 'selected' : '') + '>' + escapeHtml(item.title) + '</option>').join('');
-  const headers = fields.map(field => '<th>' + escapeHtml(field[1]) + '</th>').join('');
+  const headers = '<th class="db-expand-cell" scope="col"><span class="sr-only">展开详情</span></th>' +
+    summaryFields.map(field => '<th scope="col">' + escapeHtml(field[1]) + '</th>').join('');
+  const columnCount = summaryFields.length + 1;
   let rows = '';
   if (!result?.available) {
-    rows = '<tr><td colspan="' + fields.length + '"><div class="empty-state">' + (dataset.serviceOnly && !ownerOrAdmin ? '此数据集仅向站点 owner/admin 开放。' : '此数据集当前无法读取。请检查登录会话与服务端数据库权限。') + '</div></td></tr>';
+    rows = '<tr><td colspan="' + columnCount + '"><div class="empty-state">' + (dataset.serviceOnly && !ownerOrAdmin ? '此数据集仅向站点 owner/admin 开放。' : '此数据集当前无法读取。请检查登录会话与服务端数据库权限。') + '</div></td></tr>';
   } else if (!result.rows.length) {
-    rows = '<tr><td colspan="' + fields.length + '"><div class="empty-state">此数据库表当前没有记录。</div></td></tr>';
+    rows = '<tr><td colspan="' + columnCount + '"><div class="empty-state">此数据库表当前没有记录。</div></td></tr>';
   } else {
-    rows = result.rows.map(row => '<tr>' + fields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('') + '</tr>').join('');
+    rows = result.rows.map((row, index) => {
+      const summaryCells = summaryFields.map(field => '<td>' + databaseFieldValue(row, field) + '</td>').join('');
+      const extraFields = fields.filter(field => !summaryFields.includes(field));
+      const detail = extraFields.length
+        ? '<dl class="db-detail-grid">' + extraFields.map(field =>
+          '<div><dt>' + escapeHtml(field[1]) + '</dt><dd>' + databaseFieldValue(row, field) + '</dd></div>').join('') + '</dl>'
+        : '<p class="empty-state">没有更多字段。</p>';
+      return '<tr class="db-row"><td class="db-expand-cell"><button class="db-expand" type="button" data-db-expand="' + index +
+        '" aria-expanded="false" aria-controls="db-detail-' + index + '" aria-label="展开第 ' + (index + 1) + ' 行的全部字段">+</button></td>' +
+        summaryCells + '</tr>' +
+        '<tr class="db-detail" id="db-detail-' + index + '" data-db-detail="' + index + '" hidden><td colspan="' + columnCount + '">' + detail + '</td></tr>';
+    }).join('');
   }
   const totalPages = result?.total == null ? null : Math.max(1, Math.ceil(result.total / model.databasePageSize));
   const canPrevious = model.databasePage > 1;
@@ -402,12 +434,12 @@ function databasePage() {
     ? Boolean(result?.hasMore ?? result?.rows.length === model.databasePageSize)
     : model.databasePage < totalPages;
   const serviceOnlyCount = DATABASE_TABLES.filter(table => table.serviceOnly && table.ownerAdminApi).length;
-  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>13 张业务表中，12 张提供受限分页视图；运维汇总只通过全站聚合接口查看。其他角色仍受 PostgreSQL RLS 限制。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
+  return '<div class="page-heading"><div><h2>数据库资料与表清单</h2><p>' + DATABASE_TABLES.length + ' 张业务表，当前账号可浏览 ' + availableDatasets.length + ' 个数据集。敏感字段由服务端遮罩，其他角色仍受 PostgreSQL RLS 限制。</p></div><div class="heading-actions"><button class="btn secondary sm" type="button" data-cb-action="retry">' + icon('refresh') + '重新读取</button></div></div>' +
     '<div class="stat-grid database-stats">' + liveStat('数据库表清单', DATABASE_TABLES.length.toLocaleString('zh-CN'), '迁移中定义的业务表', 'database') + liveStat('当前可浏览数据集', availableDatasets.length.toLocaleString('zh-CN'), ownerOrAdmin ? 'owner/admin 只读视图' : '按当前账号 RLS 读取', 'grid') + liveStat('owner/admin 专用表', serviceOnlyCount.toLocaleString('zh-CN'), '哈希与私有对象键在服务端遮罩', 'settings') + liveStat('发行清单', 'API', '通过 latest 接口读取公开清单', 'terminal') + '</div>' +
     '<section class="card database-browser"><div class="database-browser-head"><div><h3>安全数据浏览器</h3><p>' + escapeHtml(dataset.description) + '</p></div><label class="database-select-label">选择数据集<select class="control-select" data-database-table aria-label="选择数据库数据集">' + options + '</select></label></div>' +
     '<div class="database-table-meta"><code>' + escapeHtml(dataset.table) + '</code><span>' + (result?.available ? (result.total == null ? '当前页 ' + result.rows.length + ' 条' + (result.hasMore ? '；还有后续记录' : '') : 'RLS 可见 ' + Number(result.total).toLocaleString('zh-CN') + ' 条') : '读取失败或权限受限') + '</span><span>第 ' + model.databasePage + (totalPages == null ? ' 页' : ' / ' + totalPages + ' 页') + '</span></div>' +
     '<div class="table-wrap"><table class="database-data-table"><thead><tr>' + headers + '</tr></thead><tbody>' + rows + '</tbody></table></div>' +
-    '<div class="pagination"><span>' + (ownerOrAdmin ? 'owner/admin 的只读 API 限制每页 50 行，并在服务端遮罩 HMAC 身份摘要与私有对象键。' : '仅显示当前账号 RLS 可见字段；服务端专用数据集不向此角色开放。') + '</span><div class="database-pagination-actions">' +
+    '<div class="pagination"><span>' + (ownerOrAdmin ? '只读 API 每页最多 50 行，敏感字段已在服务端遮罩。' : '仅显示当前账号 RLS 可见字段。') + '</span><div class="database-pagination-actions">' +
     (result?.available && result.rows.length ? '<button class="btn secondary sm" type="button" data-cb-action="export-database-page">导出当前页</button>' : '') +
     '<button class="btn secondary sm" type="button" data-cb-action="database-previous" ' + (canPrevious ? '' : 'disabled') + '>上一页</button><button class="btn secondary sm" type="button" data-cb-action="database-next" ' + (canNext ? '' : 'disabled') + '>下一页</button></div></div></section>' +
     '<section class="card table-card database-inventory"><div class="card-pad"><div class="card-heading"><div><h3>全部数据库表</h3><p>owner/admin 可查询全表行；其他账号只会读到既有 RLS 授权的数据集。</p></div></div></div><div class="table-wrap"><table><thead><tr><th>表名</th><th>用途</th><th>访问边界</th><th>当前状态</th><th></th></tr></thead><tbody>' + databaseInventoryRows() + '</tbody></table></div></section>' +
@@ -554,6 +586,42 @@ function openCampusModal(campus) {
   const body = '<form id="cloudbase-campus-form" data-campus-id="' + (editing ? escapeHtml(campus.id) : '') + '"><div class="form-grid"><div class="field full"><label for="campus-name">校区名称 *</label><input id="campus-name" name="name" required maxlength="100" value="' + escapeHtml(campus?.name || '') + '" placeholder="例如：春晓实验学校" /></div><div class="field"><label for="campus-region">省 / 地区 *</label><input id="campus-region" name="region" required maxlength="80" value="' + escapeHtml(campus?.region || '') + '" placeholder="例如：广东省" /></div><div class="field"><label for="campus-city">城市 *</label><input id="campus-city" name="city" required maxlength="80" value="' + escapeHtml(campus?.city || '') + '" placeholder="例如：深圳市" /></div><div class="field full"><label for="campus-status">状态</label><select id="campus-status" name="status"><option value="active" ' + (!campus || campus.status === 'active' ? 'selected' : '') + '>有效</option><option value="paused" ' + (campus?.status === 'paused' ? 'selected' : '') + '>已暂停</option></select></div></div><p class="field-hint">资料保存到 CloudBase PostgreSQL。当前匿名心跳没有校区编号，因此不会自动生成校区终端数。</p></form>';
   const footer = '<button class="btn secondary sm" type="button" data-cb-action="close-modal">取消</button><button class="btn sm" type="submit" form="cloudbase-campus-form">保存到数据库</button>';
   openModal(editing ? '编辑校区资料' : '新增校区', editing ? '更新 PostgreSQL 中的校区记录。' : '创建一条真实校区记录。', body, footer);
+}
+
+async function discoverCampuses(button) {
+  if (model.working) return;
+  model.working = true;
+  const original = button.innerHTML;
+  button.disabled = true;
+  button.textContent = '正在查找…';
+  try {
+    const result = await loadUnregisteredCampusCandidates(model.profile?.role || '');
+    model.campusCandidates = result.names;
+    model.campusCandidateHasMore = result.hasMore;
+    if (!result.names.length) {
+      toast('没有发现未登记的校区名称。');
+      return;
+    }
+    openCampusImportModal();
+  } catch (error) {
+    toast(error?.message || '读取配置包里的校区失败。');
+  } finally {
+    model.working = false;
+    button.disabled = false;
+    button.innerHTML = original;
+  }
+}
+
+function openCampusImportModal() {
+  const names = model.campusCandidates;
+  const looksLikeTest = name => /synthetic|codex-api-e2e|e2e|test/i.test(name);
+  const rows = names.map((name, index) =>
+    '<label class="campus-import-row" for="campus-import-' + index + '"><input type="checkbox" id="campus-import-' + index +
+    '" name="campus" value="' + escapeHtml(name) + '"' + (looksLikeTest(name) ? '' : ' checked') + ' /><span>' + escapeHtml(name) + '</span></label>').join('');
+  const body = '<form id="cloudbase-import-form"><p class="field-hint">这些名称来自已发布的配置包，还没有对应的校区档案。登记后地区和城市显示为“待补充”，可以随时编辑。明显是测试用途的名称默认不勾选。</p><div class="campus-import-list">' + rows + '</div>' +
+    (model.campusCandidateHasMore ? '<p class="field-hint">配置包超过一页，只列出了最近 50 条记录中的校区名称。</p>' : '') + '</form>';
+  const footer = '<button class="btn secondary sm" type="button" data-cb-action="close-modal">取消</button><button class="btn sm" type="submit" form="cloudbase-import-form">登记选中的校区</button>';
+  openModal('从配置包登记校区', '只新建校区档案，不改动任何配置包记录。', body, footer);
 }
 
 function openModal(title, subtitle, body, footer) {
@@ -874,6 +942,36 @@ function installHandlers(root) {
         model.working = false;
       }
     }
+    if (event.target.id === 'cloudbase-import-form') {
+      event.preventDefault();
+      if (model.working) return;
+      const formElement = event.target;
+      const names = [...formElement.querySelectorAll('input[name="campus"]:checked')].map(input => input.value);
+      if (!names.length) {
+        toast('请至少勾选一个校区。');
+        return;
+      }
+      model.working = true;
+      let created = 0;
+      let firstFailure = '';
+      for (const name of names) {
+        try {
+          await createCampus({ name, region: '', city: '', status: 'active' });
+          created += 1;
+        } catch (error) {
+          if (!firstFailure) firstFailure = error?.message || '保存失败';
+        }
+      }
+      model.working = false;
+      model.root.querySelector('.modal-backdrop')?.remove();
+      const failed = names.length - created;
+      toast(created
+        ? '已登记 ' + created + ' 个校区' + (failed ? '，' + failed + ' 个失败：' + firstFailure : '。')
+        : '登记失败：' + firstFailure);
+      model.campusPage = 1;
+      await redraw();
+      return;
+    }
     if (event.target.id === 'cloudbase-campus-form') {
       event.preventDefault();
       if (model.working) return;
@@ -905,6 +1003,18 @@ function installHandlers(root) {
     }
   });
   root.addEventListener('click', async event => {
+    const expandButton = event.target.closest('[data-db-expand]');
+    if (expandButton) {
+      const index = expandButton.getAttribute('data-db-expand');
+      const detail = root.querySelector('[data-db-detail="' + index + '"]');
+      if (detail) {
+        const willOpen = detail.hasAttribute('hidden');
+        detail.toggleAttribute('hidden', !willOpen);
+        expandButton.setAttribute('aria-expanded', String(willOpen));
+        expandButton.textContent = willOpen ? '−' : '+';
+      }
+      return;
+    }
     const databaseButton = event.target.closest('[data-db-table]');
     if (databaseButton) {
       model.databaseTable = databaseButton.dataset.dbTable;
@@ -916,6 +1026,7 @@ function installHandlers(root) {
     if (!button) return;
     const action = button.dataset.cbAction;
     if (action === 'add-campus') openCampusModal(null);
+    if (action === 'discover-campuses') await discoverCampuses(button);
     if (action === 'edit-campus') {
       const campus = model.campuses.find(row => String(row.id) === button.dataset.id);
       if (campus) openCampusModal(campus);

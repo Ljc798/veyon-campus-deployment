@@ -34,6 +34,7 @@ export const ADMIN_DATASETS = [
     description: 'owner/admin 可查看全表；身份 HMAC 指纹由服务端遮罩，其他角色只见已发布目录字段。',
     columns: PACKAGE_COLUMNS,
     privilegedView: true,
+    summary: ['display_name', 'campus_name', 'status', 'download_count', 'published_at'],
     fields: [
       ['package_id', '配置包编号', 'code'], ['campus_id', '关联校区编号', 'number'],
       ['campus_name', '校区名称'], ['computer_prefix', '电脑名前缀'], ['display_name', '显示名称'],
@@ -552,6 +553,32 @@ export async function loadApiOverview() {
       TeacherConsole: releaseSummary(teacherRelease),
       StudentSetup: releaseSummary(studentRelease)
     }
+  };
+}
+
+/**
+ * Names that appear in published deployment packages but have no campuses row yet.
+ * Campuses still have to be registered explicitly: the packages keep campus_id null
+ * until an administrator creates the matching record.
+ */
+export async function loadUnregisteredCampusCandidates(role = '') {
+  const client = requireDatabase();
+  const { data, error } = await client.from('campuses').select('name').limit(1000);
+  if (error) throw error;
+  const registered = new Set();
+  for (const row of Array.isArray(data) ? data : []) {
+    const name = String(row?.name || '').trim();
+    if (name) registered.add(name);
+  }
+  const page = await loadAdminDatasetPage('deployment_packages', 1, 50, role);
+  const candidates = new Set();
+  for (const row of page.rows || []) {
+    const name = String(row?.campus_name || '').trim();
+    if (name && !registered.has(name)) candidates.add(name);
+  }
+  return {
+    names: [...candidates].sort((a, b) => a.localeCompare(b, 'zh-CN')),
+    hasMore: Boolean(page.hasMore)
   };
 }
 
