@@ -419,9 +419,8 @@ public sealed class ApplicationReleaseClient
                     .ConfigureAwait(false);
                 await envelopeStream.FlushAsync(cancellationToken).ConfigureAwait(false);
             }
-            File.Move(temporaryPath, targetPath, overwrite: false);
-            artifactMoved = true;
-            File.Move(envelopeTemporaryPath, envelopePath, overwrite: false);
+            artifactMoved = TryMoveStagedFile(temporaryPath, targetPath);
+            TryMoveStagedFile(envelopeTemporaryPath, envelopePath);
             progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
                 release.Manifest.SizeBytes));
             ReportNetworkBytes(networkBytesProgress, release.Manifest.SizeBytes);
@@ -443,6 +442,27 @@ public sealed class ApplicationReleaseClient
                 catch (UnauthorizedAccessException) { }
             }
             throw;
+        }
+    }
+
+    /// <summary>
+    /// A wave stages the same signed installer from several devices at once. Every writer verified the
+    /// same SHA-256 before this point, so losing the rename race means the destination already holds the
+    /// identical file; that must not surface as Win32 183 "file already exists".
+    /// </summary>
+    private static bool TryMoveStagedFile(string source, string destination)
+    {
+        try
+        {
+            File.Move(source, destination, overwrite: false);
+            return true;
+        }
+        catch (IOException) when (File.Exists(destination))
+        {
+            try { File.Delete(source); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            return false;
         }
     }
 
@@ -549,10 +569,8 @@ public sealed class ApplicationReleaseClient
                 release.Manifest.SizeBytes, "离线安装器");
             CopyBoundedRegularFile(sourceEnvelopePath, temporaryEnvelopePath, null, MaximumMetadataBytes,
                 "离线发布清单");
-            File.Move(temporaryPath, targetPath, overwrite: false);
-            artifactMoved = true;
-            File.Move(temporaryEnvelopePath, targetEnvelopePath, overwrite: false);
-            envelopeMoved = true;
+            artifactMoved = TryMoveStagedFile(temporaryPath, targetPath);
+            envelopeMoved = TryMoveStagedFile(temporaryEnvelopePath, targetEnvelopePath);
 
             var staged = ReadVerifiedStagedRelease(targetPath, expectedRole, apiBaseAddress, publicKeyPem);
             if (staged != release)

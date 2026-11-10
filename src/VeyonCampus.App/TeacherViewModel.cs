@@ -6243,6 +6243,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         outcome.Result?.AgentCommandId);
                 switch (outcome.State)
                 {
+                    case MaintenanceRunState.Completed when
+                        TeacherMaintenancePerformanceReportFactory.SetupVersionMismatch(outcome):
+                        row.SetResult(false, true, detail);
+                        break;
                     case MaintenanceRunState.Completed:
                         row.SetResult(true, false, detail);
                         break;
@@ -6261,6 +6265,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         break;
                     case MaintenanceRunState.ManualRequired:
                         row.SetManualRequired(detail);
+                        break;
+                    case MaintenanceRunState.Unreachable:
+                        row.SetUnreachable(detail);
                         break;
                     case MaintenanceRunState.Failed:
                         row.SetResult(false, false, detail);
@@ -6307,7 +6314,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 CaptureStudentUpdatePerformanceReport(performanceStartedUtc, performanceStopwatch.ElapsedMilliseconds,
                     selectedTargets, results);
             SortStudentUpdateTargetRows();
-            var completed = results.Count(item => item.State == MaintenanceRunState.Completed);
+            var completed = results.Count(item => item.State == MaintenanceRunState.Completed &&
+                !TeacherMaintenancePerformanceReportFactory.SetupVersionMismatch(item));
+            var staleCompleted = results.Count(item => item.State == MaintenanceRunState.Completed &&
+                TeacherMaintenancePerformanceReportFactory.SetupVersionMismatch(item));
             var pending = results.Count(item => item.State is MaintenanceRunState.PendingVerification or
                 MaintenanceRunState.Updating or MaintenanceRunState.WaitingForCommit or
                 MaintenanceRunState.ConfigurationSyncing or MaintenanceRunState.MaintenanceServiceHealthVerified);
@@ -6316,6 +6326,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             var failed = results.Count(item => item.State == MaintenanceRunState.Failed);
             var uniqueResults = results.GroupBy(item => NormalizeTargetKey(item.Target),
                 StringComparer.OrdinalIgnoreCase).Select(group => group.Last()).ToArray();
+            var unreachable = uniqueResults.Count(item => item.State == MaintenanceRunState.Unreachable);
             static bool RequiresFieldMaintenance(TeacherMaintenanceTargetResult item) => item.State is
                 MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired;
             var fieldMaintenance = uniqueResults.Count(RequiresFieldMaintenance);
@@ -6326,13 +6337,16 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 item.Capabilities is not null &&
                 item.Capabilities.Names.Contains("maintenance-service.v1",
                     StringComparer.Ordinal) == false);
-            var unclassified = uniqueResults.Length - maintenanceAccepted - legacy - fieldMaintenance;
-            StudentMaintenanceStatus = $"本批设备：Maintenance 已接管 {maintenanceAccepted} · Legacy {legacy} · 需现场维护 {fieldMaintenance}" +
+            var unclassified = uniqueResults.Length - maintenanceAccepted - legacy - fieldMaintenance - unreachable;
+            StudentMaintenanceStatus = $"本批设备：Maintenance 已接管 {maintenanceAccepted} · Legacy {legacy} · 需现场维护 {fieldMaintenance} · 未开机 {unreachable}" +
                 (unclassified > 0 ? $" · 结果未分类 {unclassified}" : "") +
-                $"。事务：已记录 {results.Count} · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}。";
+                $"。事务：已记录 {results.Count} · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}" +
+                (staleCompleted > 0 ? $" · 版本未达目标 {staleCompleted}" : "") + "。";
             StudentUpdateStatus = results.Count == 0
                 ? "没有可执行的维护目标。"
-                : $"维护操作已持久化 · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}";
+                : $"维护操作已持久化 · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}" +
+                  (unreachable > 0 ? $" · 未开机 {unreachable}" : "") +
+                  (staleCompleted > 0 ? $" · 版本未达目标 {staleCompleted}" : "");
             if (requestedOperation == MaintenanceOperationKind.ConfigurationSync)
             {
                 StudentConfigurationSyncStatus = $"连接配置维护已记录 {results.Count} 台 · 完成 {completed} · 待验证 {pending} · 人工核对 {manual} · 失败 {failed}";
@@ -6452,6 +6466,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 var detail = SanitizeStudentUpdateDetail(outcome.Summary, outcome.Target, row.DisplayName);
                 switch (outcome.State)
                 {
+                    case MaintenanceRunState.Completed when
+                        TeacherMaintenancePerformanceReportFactory.SetupVersionMismatch(outcome):
+                        row.SetResult(false, true, detail);
+                        break;
                     case MaintenanceRunState.Completed:
                         row.SetResult(true, false, detail);
                         break;
@@ -6470,6 +6488,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                         break;
                     case MaintenanceRunState.ManualRequired:
                         row.SetManualRequired(detail);
+                        break;
+                    case MaintenanceRunState.Unreachable:
+                        row.SetUnreachable(detail);
                         break;
                     case MaintenanceRunState.Failed:
                         row.SetResult(false, false, detail);
@@ -10251,6 +10272,7 @@ public sealed class TeacherMaintenanceIssueItem(string target, string displayNam
         MaintenanceRunState.PendingVerification => "待验证",
         MaintenanceRunState.RecoveryRequired => "需要恢复",
         MaintenanceRunState.ManualRequired => "需现场维护",
+        MaintenanceRunState.Unreachable => "未开机或不在线",
         MaintenanceRunState.RolledBack => "已回滚",
         MaintenanceRunState.Failed => "失败",
         MaintenanceRunState.Discovered => "已发现设备",
@@ -10790,6 +10812,24 @@ public sealed class StudentApplicationUpdateTargetProgressItem(string target, st
         Detail = detail;
         Raise(nameof(CanRequery));
         SetCanReviewIdentity(IsIdentityReviewDetail(detail));
+    }
+
+    public void SetUnreachable(string detail)
+    {
+        if (_maintenanceCanResume)
+        {
+            _maintenanceCanResume = false;
+            Raise(nameof(CanRequery));
+        }
+        _isRechecking = false;
+        _phase = 5;
+        _priority = 2;
+        Raise(nameof(Priority));
+        IsIndeterminate = false;
+        StatusText = "未开机或不在线";
+        Detail = detail;
+        Raise(nameof(CanRequery));
+        SetCanReviewIdentity(false);
     }
 
     public void SetMaintenanceOperation(Guid operationId)

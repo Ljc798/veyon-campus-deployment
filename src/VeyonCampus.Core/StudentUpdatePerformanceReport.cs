@@ -226,8 +226,15 @@ public static class StudentUpdatePerformanceReportBuilder
         return report;
     }
 
-    public static byte[] Serialize(StudentUpdatePerformanceReport report)
-    {
+    /// <summary>
+    /// A completed run only proves the setup version actually reached the plan's target. An unknown
+    /// target cannot be compared, so it keeps the previous "already current" behaviour.
+    /// </summary>
+    public static bool SetupVersionMismatch(string? currentVersion, string? targetVersion) =>
+        !string.IsNullOrWhiteSpace(currentVersion) && !string.IsNullOrWhiteSpace(targetVersion) &&
+        !string.Equals(currentVersion, targetVersion, StringComparison.Ordinal);
+
+    public static byte[] Serialize(StudentUpdatePerformanceReport report)    {
         ArgumentNullException.ThrowIfNull(report);
         return System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(report, new System.Text.Json.JsonSerializerOptions
         {

@@ -16,6 +16,7 @@ public enum MaintenanceRunState
     PendingVerification,
     RecoveryRequired,
     RolledBack,
+    Unreachable,
     ManualRequired,
     Failed,
     Completed

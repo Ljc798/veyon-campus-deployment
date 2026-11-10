@@ -105,8 +105,8 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
             cancellationToken.ThrowIfCancellationRequested();
             if (!pinnedKeys.TryGetValue(target, out var pinnedPublicKey))
             {
-                outcomes.Add(new TeacherMaintenanceTargetResult(target, null, MaintenanceRunState.ManualRequired,
-                    "该地址的学生 Agent 没有应答，无法核对身份；如果它只是 Veyon 目录里的历史电脑对象，请从地点中删除后再试。"));
+                outcomes.Add(new TeacherMaintenanceTargetResult(target, null, MaintenanceRunState.Unreachable,
+                    "学生电脑未开机或不在线（地址无应答）；开机后重新执行即可。若该地址已不存在，请从地点中删除。"));
                 continue;
             }
             var fingerprint = StudentAgentResponseCryptography.GetFingerprint(pinnedPublicKey);
@@ -647,6 +647,14 @@ public sealed record TeacherMaintenanceReportRow(
 
 public static class TeacherMaintenancePerformanceReportFactory
 {
+    public static bool SetupVersionMismatch(TeacherMaintenanceTargetResult item)
+    {
+        var current = item.Result?.VerifiedCurrentVersions?.StudentSetupVersion ??
+                      item.CurrentVersions?.StudentSetupVersion;
+        return StudentUpdatePerformanceReportBuilder.SetupVersionMismatch(current,
+            item.TargetVersions?.StudentSetupVersion);
+    }
+
     private static string? Describe(string? summary)
     {
         if (string.IsNullOrWhiteSpace(summary)) return null;
@@ -668,11 +676,15 @@ public static class TeacherMaintenancePerformanceReportFactory
         var distinctResults = results.GroupBy(item => normalizeTargetKey(item.Target),
                 StringComparer.OrdinalIgnoreCase)
             .Select(group => group.Last()).ToArray();
-        var samples = distinctResults.Select(outcome =>
+        var samples = distinctResults.Where(outcome => outcome.State != MaintenanceRunState.Unreachable)
+            .Select(outcome =>
         {
             var row = findRow(outcome.Target);
             var attempted = outcome.Result?.StudentSetupUpdateAttempted == true;
-            var sampleOutcome = outcome.State switch
+            // "Completed" after a configuration-only pass used to mean "already current" even when the
+            // setup version was still the old one. Only matching versions may count as success.
+            var staleCompleted = !attempted && SetupVersionMismatch(outcome);
+            var sampleOutcome = staleCompleted ? "needsReview" : outcome.State switch
             {
                 MaintenanceRunState.Completed => "succeeded",
                 MaintenanceRunState.RolledBack => "rolledBack",
@@ -690,18 +702,22 @@ public static class TeacherMaintenancePerformanceReportFactory
         var targetVersion = distinctResults.Select(item => item.TargetVersions?.StudentSetupVersion)
             .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version));
         var alreadyCurrent = distinctResults.Count(item => item.State == MaintenanceRunState.Completed &&
-            item.Result?.StudentSetupUpdateAttempted != true);
+            item.Result?.StudentSetupUpdateAttempted != true && !SetupVersionMismatch(item));
+        var staleCompleted = distinctResults.Count(item => item.State == MaintenanceRunState.Completed &&
+            item.Result?.StudentSetupUpdateAttempted != true && SetupVersionMismatch(item));
+        var unreachable = distinctResults.Count(item => item.State == MaintenanceRunState.Unreachable);
         var preflightFailure = distinctResults.Count(item => item.State is MaintenanceRunState.Failed or
             MaintenanceRunState.ManualRequired or MaintenanceRunState.RecoveryRequired &&
             item.Result?.StudentSetupUpdateAttempted != true);
-        var unresolved = distinctResults.Count(item => item.State is MaintenanceRunState.PendingVerification or
+        var unresolved = staleCompleted + distinctResults.Count(item =>
+            item.State is MaintenanceRunState.PendingVerification or
             MaintenanceRunState.UpdateOffered or MaintenanceRunState.Updating or
             MaintenanceRunState.WaitingForCommit or MaintenanceRunState.ConfigurationSyncing or
             MaintenanceRunState.MaintenanceServiceHealthVerified);
         var reportedTargets = distinctResults.Select(item => normalizeTargetKey(item.Target))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var notStarted = selectedTargets.Select(normalizeTargetKey).Distinct(StringComparer.OrdinalIgnoreCase)
-            .Count(target => !reportedTargets.Contains(target));
+            .Count(target => !reportedTargets.Contains(target)) + unreachable;
         var completedUtc = DateTimeOffset.UtcNow;
         if (completedUtc < startedUtc) completedUtc = startedUtc;
         var rolloutId = distinctResults.Select(item => item.RolloutId)
