@@ -748,6 +748,39 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         HasValidClassroomQuickControlDeadline;
     public bool IsClassroomQuickControlPilotDisabled => HasActiveClassroomSession &&
         !TeacherClassroomQuickControlBuildFeatures.PilotEnabled;
+    /// <summary>
+    /// Explains a disabled quick-control button instead of leaving the teacher with a grey control.
+    /// Keep the order: setup problems first, then "class not started", then transient states.
+    /// </summary>
+    public string ClassroomQuickControlBlockedReason
+    {
+        get
+        {
+            if (CanStartClassroomQuickControl) return "";
+            if (!TeacherClassroomQuickControlBuildFeatures.PilotEnabled)
+                return "当前构建没有启用课堂快捷管控，请改用“策略与预设”单独下发。";
+            if (!WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal))
+                return "本机没有当前校区的签名身份，课堂无法开始。请使用生成这份学生端配置包的教师机，或重新生成配置包并部署学生端。";
+            if (HasPendingClassroomScopeChange)
+                return "课堂范围已经变化，请先确认切换到当前 Veyon 名单。";
+            if (OperatingSystem.IsWindows() && !IsVeyonDeviceDirectoryCurrent)
+                return "Veyon 设备名单没有读取成功，请到“设备健康”重新读取后再回到课堂页。";
+            if (HasClassroomDirectoryError)
+                return "读取 Veyon 地点失败，请到“设备健康”检查后重试。";
+            if (OperatingSystem.IsWindows() && CurrentClassroomDirectoryTargetCount is not > 0)
+                return "当前教室在 Veyon 里没有学生电脑，请到“配置与部署 → 地点与学生名单”核对电脑编号。";
+            if (!HasActiveClassroomSession && !CanToggleClassroomSession)
+                return IsExecuting || _isClassroomTransitioning || _isRetryingClassroomRestores
+                    ? "正在处理上一项操作，稍后会自动恢复。"
+                    : "还不能开始课堂，请先在“地点与学生名单”核对本机教室和学生名单。";
+            if (!HasActiveClassroomSession)
+                return "先在页面顶部点击“开始课堂”，网站限制和键鼠锁定才会启用。";
+            if (_isClassroomQuickControlBusy) return "正在发送上一批管控命令，请稍候。";
+            if (!HasValidClassroomQuickControlDeadline) return "自动解除时间无效，请重新选择管控时长。";
+            return "";
+        }
+    }
+    public bool HasClassroomQuickControlBlockedReason => ClassroomQuickControlBlockedReason.Length > 0;
     public bool CanStartClassroomWebsiteControl => CanStartClassroomQuickControl;
     public bool CanStartClassroomInputLock => CanStartClassroomQuickControl &&
         !(_classroomQuickControlSnapshot?.Devices.Any(item =>
@@ -890,6 +923,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         if (_isClassroomQuickControlBusy == busy) return;
         _isClassroomQuickControlBusy = busy;
         Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
         Changed(nameof(CanStartClassroomWebsiteControl));
         Changed(nameof(CanStartClassroomInputLock));
         Changed(nameof(CanToggleClassroomInputControl));
@@ -908,6 +943,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasValidClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlDeadlineSummary));
         Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
         Changed(nameof(CanStartClassroomWebsiteControl));
         Changed(nameof(CanStartClassroomInputLock));
         Changed(nameof(CanToggleClassroomInputControl));
@@ -2699,6 +2736,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasValidClassroomQuickControlDeadline));
         Changed(nameof(ClassroomQuickControlDeadlineSummary));
         Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
         Changed(nameof(CanStartClassroomWebsiteControl));
         Changed(nameof(CanStartClassroomInputLock));
     }
@@ -2775,6 +2814,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -2826,6 +2867,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -4452,6 +4495,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomRoomContextSummary));
         Changed(nameof(ClassroomSessionSummary));
         Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
         Changed(nameof(CanStartClassroomWebsiteControl));
         Changed(nameof(CanStartClassroomInputLock));
         Changed(nameof(CanSendClassroomNotice));
@@ -4618,6 +4663,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             Changed(nameof(ClassroomSessionSummary));
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));

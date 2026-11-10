@@ -67,6 +67,10 @@
               <TextBlock Text="{Binding ClassroomRoomContextSummary}"
                          IsVisible="{Binding !HasMultipleRoomProfiles}"
                          Classes="muted" TextWrapping="Wrap" />
+              <Border Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="8" Padding="10,8"
+                      IsVisible="{Binding HasClassroomQuickControlBlockedReason}">
+                <TextBlock Text="{Binding ClassroomQuickControlBlockedReason}" TextWrapping="Wrap" FontSize="12" />
+              </Border>
               <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="10" Padding="12,10">
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
                   <StackPanel Spacing="3">

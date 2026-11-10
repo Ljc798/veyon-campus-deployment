@@ -38,6 +38,8 @@ public sealed partial class TeacherViewModel
                 Changed(nameof(SeatGridTitle));
                 Changed(nameof(ClassroomSessionSummary));
                 Changed(nameof(CanStartClassroomQuickControl));
+                Changed(nameof(ClassroomQuickControlBlockedReason));
+                Changed(nameof(HasClassroomQuickControlBlockedReason));
                 Changed(nameof(CanSendClassroomNotice));
                 Changed(nameof(CanSendClassroomChat));
                 Changed(nameof(CanStartClassroomCountdown));
@@ -56,6 +58,8 @@ public sealed partial class TeacherViewModel
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(CanSwitchClassroomScope));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -1283,6 +1287,8 @@ public sealed partial class TeacherViewModel
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -1323,6 +1329,8 @@ public sealed partial class TeacherViewModel
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
             Changed(nameof(CanStartClassroomQuickControl));
+            Changed(nameof(ClassroomQuickControlBlockedReason));
+            Changed(nameof(HasClassroomQuickControlBlockedReason));
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));

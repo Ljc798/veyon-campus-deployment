@@ -1785,6 +1785,8 @@ private void RefreshClassroomSessionProperties()
         Changed(nameof(ClassroomOverviewDeviceCount));
         Changed(nameof(ClassroomRoomContextSummary));
         Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
         Changed(nameof(IsClassroomQuickControlPilotDisabled));
         Changed(nameof(CanReleaseClassroomQuickControl));
         Changed(nameof(HasActiveClassroomEventStatus));
