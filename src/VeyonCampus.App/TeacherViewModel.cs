@@ -992,11 +992,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         : GetClassroomQuickControlSelectionSummary(snapshot);
     public string ClassroomQuickControlProgressSummary => _classroomQuickControlSnapshot is not { } snapshot
         ? _classroomQuickControlSessionNotice.Length > 0 ? _classroomQuickControlSessionNotice :
-            HasActiveClassroomSession ? "尚未启用快捷管控。" : "确认教室范围后可查看逐台进度。"
+            HasActiveClassroomSession ? "尚未启用快捷管控。" : "点击“开始课堂”后可查看逐台进度。"
         : GetClassroomQuickControlProgressSummary(snapshot) +
           (_classroomQuickControlSessionNotice.Length > 0 ? " · " + _classroomQuickControlSessionNotice : "");
     public string ClassroomQuickControlBadgeText => _classroomQuickControlSnapshot is not { } snapshot
-        ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "状态需核对" : "等待教室配置"
+        ? HasActiveClassroomSession ? "当前未启用" : _classroomQuickControlSessionNotice.Length > 0 ? "状态需核对" : "课堂未开始"
         : GetClassroomQuickControlBadge(snapshot);
     public IBrush ClassroomQuickControlBadgeBrush => _classroomQuickControlSnapshot is not { } snapshot
         ? QuickControlNeutralBadgeBrush

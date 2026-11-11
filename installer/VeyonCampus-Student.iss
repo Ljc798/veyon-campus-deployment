@@ -866,6 +866,35 @@ begin
   Log('This Inno Setup build produced no unins000.msg; nothing to preserve.');
 end;
 
+procedure StartInteractiveProgramsAfterSilentUpdate;
+var
+  ResultCode: Integer;
+  CompanionPath: String;
+  ExecutorPath: String;
+begin
+  { Silent updates run as SYSTEM through the maintenance service, so the [Run]
+    entries with runasoriginaluser are skipped and no one restarts the tray
+    programs. Start them in the active console session instead; without this a
+    silent update leaves the student without the classroom companion until the
+    next sign-in. }
+  if not WizardSilent then
+    Exit;
+  CompanionPath := ExpandConstant('{app}\StudentCompanion\VeyonCampus.StudentCompanion.exe');
+  ExecutorPath := ExpandConstant('{app}\EdgePolicyExecutor\VeyonCampus.EdgePolicyExecutor.exe');
+  if FileExists(CompanionPath) then
+  begin
+    if not ShellExecAsUser(CompanionPath, '--startup', ExpandConstant('{app}\StudentCompanion'),
+      SW_SHOWNORMAL, ewNoWait, ResultCode) then
+      Log('Could not start the student companion in the active session after the silent update.');
+  end;
+  if FileExists(ExecutorPath) then
+  begin
+    if not ShellExecAsUser(ExecutorPath, '--startup', ExpandConstant('{app}\EdgePolicyExecutor'),
+      SW_SHOWNORMAL, ewNoWait, ResultCode) then
+      Log('Could not start the Edge policy executor in the active session after the silent update.');
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   HostPath: String;
@@ -892,6 +921,7 @@ begin
     if not InstallAndStartMaintenanceService() then
       RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志 ' +
         '(control/state 退出码) 与 C://ProgramData//VeyonCampus//MaintenanceServiceHost//service.log 后重试。');
+    StartInteractiveProgramsAfterSilentUpdate();
   end
   else if CurStep = ssDone then
     { The uninstaller is only guaranteed to exist once Setup reports ssDone. }
