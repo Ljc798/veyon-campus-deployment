@@ -795,7 +795,8 @@ public static class StudentApplicationUpdateProcessor
                     return RecordNoChange(command, configPath, config, currentVersion, currentAgentVersion);
                 }
 
-                EnsureUpdateDiskSpace(installDirectory, configDirectory, installerPath, manifest.SizeBytes);
+                EnsureUpdateDiskSpace(configPath, installDirectory, configDirectory, installerPath,
+                    manifest.SizeBytes);
                 // The transaction renames the whole Student directory before launching Inno Setup.
                 // Close installed UI and worker processes first so their loaded files cannot block that move.
                 VeyonCampusProcessCleanup.StopInstalledRoleProcesses("StudentSetup",
@@ -1009,8 +1010,8 @@ public static class StudentApplicationUpdateProcessor
     }
 
     [SupportedOSPlatform("windows")]
-    private static void EnsureUpdateDiskSpace(string installDirectory, string configDirectory, string installerPath,
-        long installerBytes)
+    private static void EnsureUpdateDiskSpace(string configPath, string installDirectory, string configDirectory,
+        string installerPath, long installerBytes)
     {
         var installDrive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(installDirectory))!);
         var configDrive = new DriveInfo(Path.GetPathRoot(Path.GetFullPath(configDirectory))!);
@@ -1022,12 +1023,40 @@ public static class StudentApplicationUpdateProcessor
         var installReserve = Math.Max(256L * 1024 * 1024, checked(installBytes + installerBytes / 2));
         var configReserve = Math.Max(64L * 1024 * 1024, checked(agentBytes + installerBytes / 4));
         var sameVolume = string.Equals(installDrive.Name, configDrive.Name, StringComparison.OrdinalIgnoreCase);
-        if (installDrive.AvailableFreeSpace < installReserve ||
-            configDrive.AvailableFreeSpace < (sameVolume ? checked(installReserve + configReserve) : configReserve))
-            throw new IOException("学生电脑剩余磁盘空间不足以同时保留旧版本、暂存更新包并安装新版本。");
+        var requiredBytes = sameVolume ? checked(installReserve + configReserve) : Math.Max(installReserve, configReserve);
+        if (!HasEnoughFreeSpace())
+        {
+            // Staged installers from earlier commands are the one kind of file this service is allowed
+            // to reclaim on its own. A classroom machine at 32 GB regularly runs out of room after a
+            // few updates, and a leftover 68 MB staging directory is often the whole difference.
+            StudentUpdateAtomicTransaction.ReclaimStaleStagingDirectories(configPath);
+            if (!HasEnoughFreeSpace())
+                throw new IOException(DescribeShortfall());
+        }
         if (new FileInfo(installerPath).Length != installerBytes)
             throw new InvalidDataException("学生更新暂存包大小与签名清单不一致。");
+        return;
+
+        bool HasEnoughFreeSpace() =>
+            installDrive.AvailableFreeSpace >= installReserve &&
+            configDrive.AvailableFreeSpace >= (sameVolume ? requiredBytes : configReserve);
+
+        string DescribeShortfall()
+        {
+            const long megabyte = 1024 * 1024;
+            var freeBytes = sameVolume
+                ? Math.Min(installDrive.AvailableFreeSpace, configDrive.AvailableFreeSpace)
+                : (installDrive.AvailableFreeSpace < configReserve ? installDrive.AvailableFreeSpace
+                    : configDrive.AvailableFreeSpace);
+            var volume = (sameVolume ? configDrive : installDrive).Name.TrimEnd(Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar);
+            return $"学生电脑磁盘空间不足：{volume} 可用 {freeBytes / megabyte} MB，" +
+                   $"本次更新需要约 {requiredBytes / megabyte} MB" +
+                   $"（当前版本 {installBytes / megabyte} MB + 暂存包 {installerBytes / megabyte} MB + 新版本预留）。" +
+                   "已清理历史更新暂存包；请在该学生机上释放磁盘空间后重新下发，更新不会留下半成品。";
+        }
     }
+
 
     [SupportedOSPlatform("windows")]
     private static async Task<StudentArtifactDownloadResult> DownloadArtifactAsync(Uri downloadUri,

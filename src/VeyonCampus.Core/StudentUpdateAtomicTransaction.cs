@@ -1123,6 +1123,49 @@ public static class StudentUpdateAtomicTransaction
         DeleteProtectedStagingDirectory(stagingDirectory);
     }
 
+    /// <summary>
+    /// Deletes the staging directories left behind by earlier update commands so a machine that is
+    /// short on free space can still run the next update. The directory the current journal points
+    /// at is always kept: an interrupted update still needs its own staged installer to roll back.
+    /// Returns the reclaimed byte count measured before deletion; failures are ignored because the
+    /// caller re-measures free space immediately afterwards.
+    /// </summary>
+    public static long ReclaimStaleStagingDirectories(string configPath)
+    {
+        var root = GetAgentConfigurationDirectory(configPath);
+        if (!Directory.Exists(root)) return 0;
+        StudentUpdateTransactionRecord? record;
+        try { record = Read(configPath); }
+        catch (Exception exception) when (exception is IOException or JsonException or InvalidDataException)
+        { return 0; }
+
+        long reclaimed = 0;
+        IEnumerable<string> candidates;
+        try { candidates = Directory.EnumerateDirectories(root, "student-update-*").ToArray(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        { return 0; }
+
+        foreach (var directory in candidates)
+        {
+            var name = Path.GetFileName(directory);
+            if (!Guid.TryParseExact(name["student-update-".Length..], "N", out var commandId)) continue;
+            if (record?.CommandId == commandId) continue;
+            try
+            {
+                reclaimed += MeasureDirectoryBytes(directory);
+                DeleteProtectedStagingDirectory(directory);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or ArgumentException or
+                                                  System.Security.SecurityException)
+            {
+                // A directory that is still locked stays in place; the caller re-measures free space.
+            }
+        }
+        return reclaimed;
+    }
+
+
     private static bool IsTargetHealthy(string configPath, StudentUpdateTransactionRecord record)
     {
         try
