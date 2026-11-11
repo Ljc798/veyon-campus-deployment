@@ -73,6 +73,7 @@ Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{auto
 Source: "{#UpdateHelperDirectory}\VeyonCampus.UpdateHelper.exe"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#DotNetRuntimeInstallerPath}"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "EdgePolicyExecutor.task.xml"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "StudentCompanion.task.xml"; DestDir: "{tmp}"; Flags: dontcopy
 
 [Registry]
 Root: HKLM64; Subkey: "SOFTWARE\Microsoft\Edge\NativeMessagingHosts\fun.kidscode.veyoncampus.policy"; ValueType: string; ValueName: ""; ValueData: "{app}\EdgeNativeHost\fun.kidscode.veyoncampus.policy.json"; Check: IsEdgeExtensionConfigured; Flags: uninsdeletevalue
@@ -102,6 +103,7 @@ const
   CompiledEdgeExtensionId = '{#EdgeExtensionId}';
   CompiledEdgeExtensionForceInstall = '{#EdgeExtensionForceInstall}';
   EdgePolicyExecutorTaskName = 'Veyon Campus Edge Policy Executor';
+  StudentCompanionTaskName = 'Veyon Campus Student Companion';
   EdgeForceListRegistryKey = 'SOFTWARE\Policies\Microsoft\Edge\ExtensionInstallForcelist';
   EdgeForceListMarkerKey = 'SOFTWARE\VeyonCampus\StudentSetup\EdgeRealtime';
   EdgeStoreUpdateUrl = 'https://edge.microsoft.com/extensionwebstorebase/v1/crx';
@@ -866,33 +868,66 @@ begin
   Log('This Inno Setup build produced no unins000.msg; nothing to preserve.');
 end;
 
-procedure StartInteractiveProgramsAfterSilentUpdate;
+function RegisterStudentCompanionTask(): Boolean;
+var
+  TemplatePath: String;
+  RuntimeTaskPath: String;
+  TaskXml: AnsiString;
+  TaskXmlText: String;
+  CompanionDirectory: String;
+  CompanionPath: String;
+  ResultCode: Integer;
+begin
+  Result := False;
+  RuntimeTaskPath := '';
+  try
+    ExtractTemporaryFile('StudentCompanion.task.xml');
+    TemplatePath := ExpandConstant('{tmp}\StudentCompanion.task.xml');
+    RuntimeTaskPath := ExpandConstant('{tmp}\StudentCompanion-installed.task.xml');
+    if not LoadStringFromFile(TemplatePath, TaskXml) then Exit;
+
+    TaskXmlText := TaskXml;
+    CompanionDirectory := ExpandConstant('{app}\StudentCompanion');
+    CompanionPath := CompanionDirectory + '\VeyonCampus.StudentCompanion.exe';
+    TaskXmlText := ReplaceAll(TaskXmlText, '__COMPANION_COMMAND__', XmlEscapePath(CompanionPath));
+    TaskXmlText := ReplaceAll(TaskXmlText, '__COMPANION_WORKING_DIR__', XmlEscapePath(CompanionDirectory));
+    TaskXml := AnsiString(TaskXmlText);
+    if Pos('__COMPANION_', TaskXmlText) > 0 then Exit;
+    if not SaveStringToFile(RuntimeTaskPath, TaskXml, False) then Exit;
+
+    if not Exec(ExpandConstant('{sys}\schtasks.exe'),
+         '/Create /F /TN "' + StudentCompanionTaskName + '" /XML "' + RuntimeTaskPath + '"',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then Exit;
+    Result := ResultCode = 0;
+  except
+    Log('Student companion scheduled task registration failed: ' + GetExceptionMessage);
+    Result := False;
+  end;
+  if RuntimeTaskPath <> '' then DeleteFile(RuntimeTaskPath);
+end;
+
+procedure RunTrayTaskAfterSilentUpdate(TaskName: String);
 var
   ResultCode: Integer;
-  CompanionPath: String;
-  ExecutorPath: String;
 begin
-  { Silent updates run as SYSTEM through the maintenance service, so the [Run]
-    entries with runasoriginaluser are skipped and no one restarts the tray
-    programs. Start them in the active console session instead; without this a
-    silent update leaves the student without the classroom companion until the
-    next sign-in. }
   if not WizardSilent then
     Exit;
-  CompanionPath := ExpandConstant('{app}\StudentCompanion\VeyonCampus.StudentCompanion.exe');
-  ExecutorPath := ExpandConstant('{app}\EdgePolicyExecutor\VeyonCampus.EdgePolicyExecutor.exe');
-  if FileExists(CompanionPath) then
-  begin
-    if not ShellExecAsUser(CompanionPath, '--startup', ExpandConstant('{app}\StudentCompanion'),
-      SW_SHOWNORMAL, ewNoWait, ResultCode) then
-      Log('Could not start the student companion in the active session after the silent update.');
-  end;
-  if FileExists(ExecutorPath) then
-  begin
-    if not ShellExecAsUser(ExecutorPath, '--startup', ExpandConstant('{app}\EdgePolicyExecutor'),
-      SW_SHOWNORMAL, ewNoWait, ResultCode) then
-      Log('Could not start the Edge policy executor in the active session after the silent update.');
-  end;
+  { A silent update runs as SYSTEM through the maintenance service. The [Run]
+    entries use runasoriginaluser, which SYSTEM cannot satisfy, and the
+    all-users Startup shortcuts only fire at the next sign-in. Running the
+    per-session tasks asks the scheduler to start the tray programs in the
+    sessions that are already signed in. }
+  if not Exec(ExpandConstant('{sys}\schtasks.exe'),
+      '/Run /TN "' + TaskName + '"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('Could not ask the task scheduler to run ' + TaskName + ' after the silent update.')
+  else if ResultCode <> 0 then
+    Log('Running ' + TaskName + ' after the silent update returned exit code ' + IntToStr(ResultCode) + '.');
+end;
+
+procedure StartTrayProgramsAfterSilentUpdate();
+begin
+  RunTrayTaskAfterSilentUpdate(StudentCompanionTaskName);
+  RunTrayTaskAfterSilentUpdate(EdgePolicyExecutorTaskName);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -905,6 +940,8 @@ begin
   begin
     if not RegisterEdgePolicyExecutorTask() then
       Log('Edge policy executor crash recovery task could not be installed; the all-users Startup shortcut remains as a fallback.');
+    if not RegisterStudentCompanionTask() then
+      Log('Student companion session task could not be installed; the all-users Startup shortcut remains as a fallback.');
     if IsEdgeExtensionConfigured() then
     begin
       HostPath := JsonEscapePath(ExpandConstant('{app}\EdgeNativeHost\VeyonCampus.EdgeNativeHost.exe'));
@@ -921,7 +958,7 @@ begin
     if not InstallAndStartMaintenanceService() then
       RaiseException('无法安装或启动独立 Maintenance 后台服务。安装已停止；请查看安装日志 ' +
         '(control/state 退出码) 与 C://ProgramData//VeyonCampus//MaintenanceServiceHost//service.log 后重试。');
-    StartInteractiveProgramsAfterSilentUpdate();
+    StartTrayProgramsAfterSilentUpdate();
   end
   else if CurStep = ssDone then
     { The uninstaller is only guaranteed to exist once Setup reports ssDone. }
