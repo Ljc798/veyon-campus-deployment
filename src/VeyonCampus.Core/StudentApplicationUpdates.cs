@@ -1020,8 +1020,16 @@ public static class StudentApplicationUpdateProcessor
         if (!Directory.Exists(agentSourceDirectory))
             throw new InvalidDataException("当前 StudentSetup 缺少可核验的 Student Agent 文件目录。");
         var agentBytes = StudentUpdateAtomicTransaction.MeasureDirectoryBytes(agentSourceDirectory);
-        var installReserve = Math.Max(256L * 1024 * 1024, checked(installBytes + installerBytes / 2));
-        var configReserve = Math.Max(64L * 1024 * 1024, checked(agentBytes + installerBytes / 4));
+        // The install is a whole-directory replacement: the running version is renamed aside on the
+        // same volume (no extra space), the staged package stays in the config directory, and Inno
+        // Setup unpacks a complete new copy next to it. Peak usage is therefore one full installation
+        // plus the package plus working room. The previous formula only reserved half a package above
+        // the installed size, so a machine with 380 MB free passed the check and then died half way
+        // through, leaving a journal that blocks every later update until it is recovered by hand.
+        // Refusing early is the cheaper failure.
+        var installReserve = Math.Max(512L * 1024 * 1024,
+            checked(installBytes + installerBytes + 128L * 1024 * 1024));
+        var configReserve = Math.Max(128L * 1024 * 1024, checked(agentBytes + installerBytes / 4));
         var sameVolume = string.Equals(installDrive.Name, configDrive.Name, StringComparison.OrdinalIgnoreCase);
         var requiredBytes = sameVolume ? checked(installReserve + configReserve) : Math.Max(installReserve, configReserve);
         if (!HasEnoughFreeSpace())
@@ -1052,7 +1060,7 @@ public static class StudentApplicationUpdateProcessor
                 Path.AltDirectorySeparatorChar);
             return $"学生电脑磁盘空间不足：{volume} 可用 {freeBytes / megabyte} MB，" +
                    $"本次更新需要约 {requiredBytes / megabyte} MB" +
-                   $"（当前版本 {installBytes / megabyte} MB + 暂存包 {installerBytes / megabyte} MB + 新版本预留）。" +
+                   $"（解压新版本约 {installBytes / megabyte} MB + 暂存包 {installerBytes / megabyte} MB + 128 MB 工作余量）。" +
                    "已清理历史更新暂存包；请在该学生机上释放磁盘空间后重新下发，更新不会留下半成品。";
         }
     }
