@@ -885,6 +885,34 @@ public sealed class MainViewModel : INotifyPropertyChanged
         finally { IsSearchingCloudPackages = false; }
     }
 
+    /// <summary>
+    /// Finds a teacher machine sharing a package on the classroom LAN. Used for a first deployment in
+    /// a room where the internet is unavailable or the cloud catalogue is unreachable.
+    /// </summary>
+    public async Task ScanLanPackagesAsync()
+    {
+        if (!CanSearchCloudPackages) return;
+        IsSearchingCloudPackages = true;
+        CloudPackageStatus = "正在扫描教室里的教师机……";
+        CloudPackages.Clear();
+        SelectedCloudPackage = null;
+        try
+        {
+            var result = await LanPackageScanner.FindPackagesAsync();
+            foreach (var item in result.Items) CloudPackages.Add(item);
+            CloudPackageStatus = result.Items.Count == 0
+                ? "教室里没有正在分发配置包的教师机。请确认教师端已点“开始分发”，且两台机器在同一网段。"
+                : $"从教师机获取到 {result.Items.Count} 个校区配置。下载后会自动验证。";
+            SelectedCloudPackage = CloudPackages.FirstOrDefault();
+        }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                          InvalidDataException or IOException or InvalidOperationException)
+        {
+            CloudPackageStatus = "局域网扫描失败：" + exception.Message;
+        }
+        finally { IsSearchingCloudPackages = false; }
+    }
+
     public void ReportCloudPackageError(string message) => CloudPackageStatus = message;
 
     public async Task LoadSelectedCloudPackageAsync()

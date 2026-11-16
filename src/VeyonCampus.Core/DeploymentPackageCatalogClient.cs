@@ -281,12 +281,18 @@ public sealed class DeploymentPackageCatalogClient
     {
         uri = null!;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var parsed)) return false;
-        if (parsed.Scheme != Uri.UriSchemeHttps) return false;
-        // A query is legitimate: GitCode's raw file endpoint carries the branch as ?ref=. Fragments
-        // and embedded credentials are not, and a long query on a fixed host is a sign of tampering.
         if (!string.IsNullOrEmpty(parsed.UserInfo) || !string.IsNullOrEmpty(parsed.Fragment) ||
             parsed.Query.Length > 200)
             return false;
+        // A classroom teacher machine serves over plain HTTP on a private address. Anything else has
+        // to be HTTPS on one of the publishing hosts.
+        if (parsed.Scheme == Uri.UriSchemeHttp)
+        {
+            if (!DeploymentPackageLanDistribution.IsLanPackageUri(parsed)) return false;
+            uri = parsed;
+            return true;
+        }
+        if (parsed.Scheme != Uri.UriSchemeHttps) return false;
         if (!AllowedDownloadHosts.Contains(parsed.Host, StringComparer.OrdinalIgnoreCase)) return false;
         uri = parsed;
         return true;

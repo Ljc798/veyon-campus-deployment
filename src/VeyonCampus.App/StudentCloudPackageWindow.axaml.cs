@@ -21,6 +21,9 @@ public partial class StudentCloudPackageWindow : Window
     private async void SearchPackages(object? sender, RoutedEventArgs e) =>
         await _model.SearchCloudPackagesAsync();
 
+    private async void ScanLanPackages(object? sender, RoutedEventArgs e) =>
+        await _model.ScanLanPackagesAsync();
+
     private async void SearchQueryKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None) return;

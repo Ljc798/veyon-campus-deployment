@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.RegularExpressions;
 
 namespace VeyonCampus.Core;
@@ -9,7 +10,10 @@ namespace VeyonCampus.Core;
 public enum DeploymentCatalogKind
 {
     GitCode,
-    GitHub
+    GitHub,
+
+    /// <summary>A teacher machine on the classroom LAN. No owner, no repository: one explicit URL.</summary>
+    Local
 }
 
 /// <summary>
@@ -17,7 +21,8 @@ public enum DeploymentCatalogKind
 /// mainland China; GitHub stays as a second attempt for networks that block the former.
 /// </summary>
 public sealed record DeploymentCatalogSource(
-    DeploymentCatalogKind Kind, string Owner, string Repository, string Reference = "develop")
+    DeploymentCatalogKind Kind, string Owner, string Repository, string Reference = "develop",
+    Uri? DirectCatalogUri = null)
 {
     public const string CatalogFileName = "deployment-catalog.json";
     public const string PackageDirectoryName = "packages";
@@ -28,7 +33,16 @@ public sealed record DeploymentCatalogSource(
     private static readonly Regex ReferencePattern = new(
         "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public Uri CatalogUri => new(RawUrl($"{PackageDirectoryName}/{CatalogFileName}"), UriKind.Absolute);
+    /// <summary>A classroom teacher machine serving its own package over the LAN.</summary>
+    public static DeploymentCatalogSource Local(IPAddress address) =>
+        new(DeploymentCatalogKind.Local, "", "", "",
+            DeploymentPackageLanDistribution.CatalogUri(address));
+
+    public static DeploymentCatalogSource Local(string host) =>
+        new(DeploymentCatalogKind.Local, "", "", "", DeploymentPackageLanDistribution.CatalogUri(host));
+
+    public Uri CatalogUri => DirectCatalogUri ??
+        new(RawUrl($"{PackageDirectoryName}/{CatalogFileName}"), UriKind.Absolute);
 
     public Uri PackageUri(Guid packageId) =>
         new(RawUrl($"{PackageDirectoryName}/{packageId:D}.zip"), UriKind.Absolute);
@@ -39,10 +53,15 @@ public sealed record DeploymentCatalogSource(
     /// placeholder SVG. GitHub's dedicated raw host is the one shape that omits the `/raw/` segment.
     /// The publishing script builds the same URLs, so both sides must agree here.
     /// </summary>
-    private string RawUrl(string relativePath) => Kind == DeploymentCatalogKind.GitHub
-        ? $"https://raw.githubusercontent.com/{Owner}/{Repository}/{Uri.EscapeDataString(Reference)}/{relativePath}"
-        : $"https://api.gitcode.com/api/v5/repos/{Owner}/{Repository}/raw/{relativePath}" +
-          $"?ref={Uri.EscapeDataString(Reference)}";
+    private string RawUrl(string relativePath)
+    {
+        if (Kind == DeploymentCatalogKind.Local)
+            throw new InvalidOperationException("局域网来源只有一条显式目录地址，不能按仓库路径拼接。");
+        return Kind == DeploymentCatalogKind.GitHub
+            ? $"https://raw.githubusercontent.com/{Owner}/{Repository}/{Uri.EscapeDataString(Reference)}/{relativePath}"
+            : $"https://api.gitcode.com/api/v5/repos/{Owner}/{Repository}/raw/{relativePath}" +
+              $"?ref={Uri.EscapeDataString(Reference)}";
+    }
 
     /// <summary>Parses a "kind:owner/repository[@reference]" entry.</summary>
     public static DeploymentCatalogSource Parse(string value)
@@ -74,9 +93,12 @@ public sealed record DeploymentCatalogSource(
         return new DeploymentCatalogSource(kind, parts[0], parts[1], reference);
     }
 
-    public override string ToString() =>
-        (Kind == DeploymentCatalogKind.GitCode ? "gitcode:" : "github:") + Owner + "/" + Repository +
-        "@" + Reference;
+    public override string ToString() => Kind switch
+    {
+        DeploymentCatalogKind.Local => "local:" + DirectCatalogUri?.Authority,
+        DeploymentCatalogKind.GitHub => "github:" + Owner + "/" + Repository + "@" + Reference,
+        _ => "gitcode:" + Owner + "/" + Repository + "@" + Reference
+    };
 }
 
 /// <summary>

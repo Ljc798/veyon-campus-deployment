@@ -2954,6 +2954,15 @@ public partial class TeacherWindow : Window
     private async void ReplaceWebsiteSigningKey(object? sender, RoutedEventArgs e) =>
         await _model.GenerateStudentPackageAsync(replaceUnavailableSigningKey: true);
     private async void PublishStudentPackage(object? sender, RoutedEventArgs e) => await _model.PublishStudentPackageAsync();
+
+    private async void StartLanSharing(object? sender, RoutedEventArgs e) =>
+        await _model.LanSharing.StartAsync(_model.PublishPackageDirectory);
+
+    private async void StopLanSharing(object? sender, RoutedEventArgs e) =>
+        await _model.LanSharing.StopAsync();
+
+    private async void ScanLanMachines(object? sender, RoutedEventArgs e) =>
+        await _model.LanSharing.ScanAsync();
     private async void ChoosePublishPackageDirectory(object? sender, RoutedEventArgs e)
     {
         if (!StorageProvider.CanPickFolder) return;

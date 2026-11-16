@@ -70,6 +70,7 @@ Name: "{autodesktop}\Veyon Campus 教师控制台"; Filename: "{app}\VeyonCampus
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusStudentUpdate"" dir=in action=allow protocol=TCP localport=39175 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileControl"" dir=in action=allow protocol=TCP localport=39176 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileBootstrap"" dir=in action=allow protocol=TCP localport=39177 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
+Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusPackageShare"" dir=in action=allow protocol=TCP localport=39178 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallDelete]

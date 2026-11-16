@@ -238,7 +238,50 @@
           </Border>
           <Border Classes="card" IsVisible="{Binding HasPackageOutput}">
             <StackPanel Spacing="10">
-              <TextBlock Text="发布到云端（可选）" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Text="局域网分发" FontSize="18" FontWeight="SemiBold" />
+              <TextBlock Classes="muted" TextWrapping="Wrap"
+                         Text="在教师机开启临时服务，教室里已联网的机器可直接取走这个配置包。不需要外网，也不需要发布到任何服务器，下课关掉即可。" />
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <Button Classes="primary" Content="开始分发" Click="RequestStartLanSharing"
+                        IsEnabled="{Binding !LanSharing.IsSharing}" />
+                <Button Content="停止分发" Click="RequestStopLanSharing"
+                        IsEnabled="{Binding LanSharing.CanStop}" />
+                <Button Content="扫描教室机器" Click="RequestScanLanMachines"
+                        IsEnabled="{Binding LanSharing.CanScan}" />
+              </StackPanel>
+              <TextBlock Text="{Binding LanSharing.Status}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding LanSharing.HasStatus}" />
+              <Border Classes="status-panel success" Padding="12"
+                      IsVisible="{Binding LanSharing.HasShareAddress}">
+                <StackPanel Spacing="6">
+                  <TextBlock Text="学生端获取地址（也可直接在学生端选择“局域网”）" FontWeight="SemiBold"
+                             TextWrapping="Wrap" />
+                  <TextBox Text="{Binding LanSharing.ShareAddress}" IsReadOnly="True" />
+                </StackPanel>
+              </Border>
+              <TextBlock Text="{Binding LanSharing.DownloadSummary}" Classes="muted"
+                         TextWrapping="Wrap" IsVisible="{Binding LanSharing.HasDownloads}" />
+              <TextBlock Text="{Binding LanSharing.ScanStatus}" Classes="muted" TextWrapping="Wrap"
+                         IsVisible="{Binding LanSharing.HasScanStatus}" />
+              <ItemsControl ItemsSource="{Binding LanSharing.Machines}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate>
+                    <Border Classes="card" Padding="10" Margin="0,0,0,6">
+                      <StackPanel Spacing="2">
+                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                        <TextBlock Text="{Binding Address}" Classes="muted" />
+                        <TextBlock Text="{Binding Status}" />
+                        <TextBlock Text="{Binding Detail}" Classes="muted" TextWrapping="Wrap" />
+                      </StackPanel>
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+              </ItemsControl>
+            </StackPanel>
+          </Border>
+          <Border Classes="card" IsVisible="{Binding HasPackageOutput}">
+            <StackPanel Spacing="10">
+              <TextBlock Text="发布到云端目录（需管理员提交）" FontSize="18" FontWeight="SemiBold" />
               <TextBlock Classes="muted" TextWrapping="Wrap"
                          Text="发布后学生端可以按校区名称搜索，并输入教师手机号后四位完成绑定。不发布也不影响离线部署。" />
               <TextBlock Text="配置包文件夹" FontWeight="SemiBold" />

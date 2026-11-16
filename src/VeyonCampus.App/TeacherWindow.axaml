@@ -49,7 +49,10 @@
           ImportMacVeyonPrivateKeyRequested="ChooseMacVeyonPrivateKey"
           ChooseStudentPackageOutputDirectoryRequested="ChooseStudentPackageOutputDirectory"
           PublishStudentPackageRequested="PublishStudentPackage"
-          ChoosePublishPackageDirectoryRequested="ChoosePublishPackageDirectory" />
+          ChoosePublishPackageDirectoryRequested="ChoosePublishPackageDirectory"
+          StartLanSharingRequested="StartLanSharing"
+          StopLanSharingRequested="StopLanSharing"
+          ScanLanMachinesRequested="ScanLanMachines" />
     </DataTemplate>
     <DataTemplate x:Key="UpdatesPageTemplate" x:DataType="vm:TeacherViewModel">
       <StackPanel Margin="24,24,24,28" Spacing="20">

@@ -3428,6 +3428,12 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             PackagePublishResult = "";
         }
     }
+    /// <summary>
+    /// Classroom-local package sharing. The teacher machine serves the folder it just generated so a
+    /// first deployment works with no internet. Kept in its own object because it owns a listener.
+    /// </summary>
+    public LanPackageSharingViewModel LanSharing { get; } = new();
+
     public string PublishCampusName
     {
         get => CampusId;

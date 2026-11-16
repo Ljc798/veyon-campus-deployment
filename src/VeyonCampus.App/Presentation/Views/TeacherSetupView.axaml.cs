@@ -25,6 +25,9 @@ public partial class TeacherSetupView : UserControl
     public event EventHandler<RoutedEventArgs>? ImportMacVeyonPrivateKeyRequested;
     public event EventHandler<RoutedEventArgs>? ChooseStudentPackageOutputDirectoryRequested;
     public event EventHandler<RoutedEventArgs>? PublishStudentPackageRequested;
+    public event EventHandler<RoutedEventArgs>? StartLanSharingRequested;
+    public event EventHandler<RoutedEventArgs>? StopLanSharingRequested;
+    public event EventHandler<RoutedEventArgs>? ScanLanMachinesRequested;
     public event EventHandler<RoutedEventArgs>? ChoosePublishPackageDirectoryRequested;
 
     private void RequestTeacherSetupStep1(object? sender, RoutedEventArgs e) =>
@@ -83,4 +86,13 @@ public partial class TeacherSetupView : UserControl
 
     private void RequestChoosePublishPackageDirectory(object? sender, RoutedEventArgs e) =>
         ChoosePublishPackageDirectoryRequested?.Invoke(sender, e);
+
+    private void RequestStartLanSharing(object? sender, RoutedEventArgs e) =>
+        StartLanSharingRequested?.Invoke(sender, e);
+
+    private void RequestStopLanSharing(object? sender, RoutedEventArgs e) =>
+        StopLanSharingRequested?.Invoke(sender, e);
+
+    private void RequestScanLanMachines(object? sender, RoutedEventArgs e) =>
+        ScanLanMachinesRequested?.Invoke(sender, e);
 }

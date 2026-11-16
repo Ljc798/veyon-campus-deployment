@@ -52,6 +52,13 @@ if (args is ["--deployment-package-catalog-fixtures"])
     return;
 }
 
+if (args is ["--deployment-package-lan-fixtures"])
+{
+    await DeploymentPackageLanDistributionChecks.RunAsync();
+    Console.WriteLine("PASS classroom LAN package distribution and installed-machine discovery");
+    return;
+}
+
 if (args is ["--live-deployment-catalog-check"])
 {
     // Exercises the production catalogue against the real hosts. Proves three things the fixtures
@@ -877,6 +884,8 @@ Check("Veyon 地点 UUID 投影、同名不同身份与按 UUID 选择（R19/R20
     CheckLocationIdentityProjection);
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("配置包静态目录：搜索语义、摘要校验、来源白名单与 API 回退", DeploymentPackageCatalogChecks.Run);
+await CheckAsync("配置包局域网分发：教师机发布、学生机拉取、摘要校验与已装机器探测",
+    DeploymentPackageLanDistributionChecks.RunAsync);
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
 await CheckAsync("教师端名单恢复、重启倒计时、稳定重试状态和更新服务错误提示", TeacherRestartRegressionChecks.RunAsync);
 Check("低敏运维汇总默认关闭、HKT 聚合、幂等待发队列与固定上报字段", CampusOperationsTelemetryChecks.Run);
