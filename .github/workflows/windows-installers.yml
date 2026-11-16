@@ -643,7 +643,13 @@ jobs:
             --installer "${{ steps.assets.outputs.student }}" \
             --agent-target "${{ steps.assets.outputs.student }}.agent-target.json" \
             --output "$catalog"
-          gh release upload "$tag" "$catalog" --clobber
+          # Published releases are immutable, so the catalogue is attached once and never replaced.
+          # A rerun of this job finds it already there and leaves it alone.
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx release-catalog.json; then
+            echo 'release-catalog.json is already attached; leaving the published assets untouched.'
+          else
+            gh release upload "$tag" "$catalog"
+          fi
 
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v')

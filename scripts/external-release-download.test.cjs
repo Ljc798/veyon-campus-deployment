@@ -176,7 +176,7 @@ test('StudentSetup publication binds its separately signed Agent target to the e
 test('release workflow leaves GitCode uploads to the local workstation', () => {
   const workflow = fs.readFileSync(path.join(__dirname, '../.github/workflows/windows-installers.yml'), 'utf8');
   const github = workflow.indexOf('- name: Publish or verify GitHub Release assets');
-  const metadata = workflow.indexOf('- name: Publish signed version metadata to CloudBase');
+  const metadata = workflow.indexOf('- name: Publish the signed release catalogue to the release');
   assert.ok(github >= 0 && metadata > github);
   assert.match(workflow, /GitCode\/AtomGit 附件由维护者在本机上传/);
   assert.doesNotMatch(workflow, /GITCODE_TOKEN|publish-gitcode-release\.cjs|mirror-gitcode-develop\.sh|Sync beta source commit to GitCode/);

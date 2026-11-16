@@ -102,4 +102,12 @@ jobs:
             --role StudentSetup --version "$RELEASE_VERSION" --tag "$tag" \
             --installer "artifacts/VeyonCampus-Student-Setup-${RELEASE_VERSION}-win-x64.exe" \
             --output "$catalog"
-          gh release upload "$tag" "$catalog" --clobber
+          # Published releases are immutable: this workflow only fills in a catalogue that the
+          # original build never attached. A catalogue that exists but is wrong is a release defect,
+          # and the fix for that is a new version, not a silent replacement.
+          if gh release view "$tag" --json assets --jq '.assets[].name' | grep -qx release-catalog.json; then
+            echo "v${RELEASE_VERSION} already carries a release catalogue; published assets are immutable." >&2
+            echo 'Publish a new version if the catalogue itself has to change.' >&2
+            exit 1
+          fi
+          gh release upload "$tag" "$catalog"
