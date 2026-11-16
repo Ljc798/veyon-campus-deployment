@@ -28,7 +28,7 @@ public sealed record DeploymentCatalogSource(
     private static readonly Regex ReferencePattern = new(
         "^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public Uri CatalogUri => new(RawUrl(CatalogFileName), UriKind.Absolute);
+    public Uri CatalogUri => new(RawUrl($"{PackageDirectoryName}/{CatalogFileName}"), UriKind.Absolute);
 
     public Uri PackageUri(Guid packageId) =>
         new(RawUrl($"{PackageDirectoryName}/{packageId:D}.zip"), UriKind.Absolute);

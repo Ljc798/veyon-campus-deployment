@@ -7909,7 +7909,14 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         }
         catch (Exception exception)
         {
-            PackagePublisherError = "发布失败：" + exception.Message;
+            PackagePublisherError = exception is HttpRequestException { StatusCode: { } status } &&
+                                    status is System.Net.HttpStatusCode.PaymentRequired or
+                                        System.Net.HttpStatusCode.ServiceUnavailable or
+                                        System.Net.HttpStatusCode.BadGateway or
+                                        System.Net.HttpStatusCode.NotFound
+                ? "云端发布接口已停用（配置包服务下线）。请把配置包文件夹交给管理员，用 " +
+                  "scripts/publish-deployment-package.cjs 发布到静态目录；学生端会从该目录搜索到它。"
+                : "发布失败：" + exception.Message;
         }
         finally { EndExclusiveTask(); }
     }

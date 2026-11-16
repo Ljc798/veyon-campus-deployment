@@ -52,6 +52,35 @@ if (args is ["--deployment-package-catalog-fixtures"])
     return;
 }
 
+if (args is ["--live-deployment-catalog-check"])
+{
+    // Exercises the production catalogue against the real hosts. Proves three things the fixtures
+    // cannot: the raw endpoint serves bytes (not an HTML preview), the branch name in ?ref= is right,
+    // and the digest a client computes matches what the publisher wrote.
+    var client = new DeploymentPackageCatalogClient();
+    foreach (var source in client.CatalogSources)
+        Console.WriteLine($"source: {source} -> {source.CatalogUri}");
+    var result = await client.SearchAsync("");
+    Console.WriteLine($"items={result.Items.Count} hasMore={result.HasMore}");
+    foreach (var item in result.Items)
+    {
+        var archive = await client.DownloadAsync(item.PackageId, "0000");
+        var directory = Path.Combine(Path.GetTempPath(), "veyon-catalog-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var context = CampusConfigurationArchive.ExtractToStore(archive, directory);
+            Console.WriteLine($"package: {item.PackageId:D} {item.CampusName} " +
+                              $"bytes={archive.Length} verified campus={context.Campus}");
+        }
+        finally
+        {
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch (IOException) { }
+        }
+    }
+    return;
+}
+
 if (args is ["--first-deployment-fixtures"])
 {
     TeacherWorkflowChecks.RunFirstRunLaunch();
