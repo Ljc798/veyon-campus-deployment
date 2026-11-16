@@ -9148,6 +9148,15 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                             : $" · hosts 兜底落后（r{hostsRevision}，当前 r{summary.WebsiteRevision}）"
                         : " · hosts 兜底未上报"
                 : "") +
+            (summary.WebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined
+                ? summary.NetworkBlockError is { Length: > 0 } networkError
+                    ? $" · 网络层封禁失败：{networkError}"
+                    : summary.NetworkBlockAddresses is { } networkAddresses
+                        ? summary.NetworkBlockRevision == summary.WebsiteRevision
+                            ? $" · 网络层已封 {networkAddresses} 个地址（含直连 IP）"
+                            : $" · 网络层封禁落后（r{summary.NetworkBlockRevision}，当前 r{summary.WebsiteRevision}）"
+                        : " · 网络层封禁未上报"
+                : "") +
             (summary.EdgeProfileCount is { } edgeCount
                 ? $" · Edge Profile 降级 {summary.EdgeDegradedProfileCount}/{edgeCount}"
                 : " · Edge 策略回执未提供");

@@ -39,7 +39,14 @@ public sealed record StudentAgentRuntimeSummary(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     long? HostsRevision = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? HostsError = null);
+    string? HostsError = null,
+    /// <summary>Revision the outbound firewall rules were built for, or null when nothing was blocked.</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    long? NetworkBlockRevision = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    int? NetworkBlockAddresses = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? NetworkBlockError = null);
 
 /// <summary>Short-lived InputGuard state included only in runtime-summary schema v2.</summary>
 public sealed record StudentInputGuardRuntimeSnapshot(int SchemaVersion, bool Supported,

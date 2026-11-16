@@ -190,7 +190,10 @@ internal static class VeyonCampusUninstallDataCleanup
     private static void DeleteOwnedFile(string parent, string name)
     {
         var path = Path.GetFullPath(Path.Combine(parent, name));
-        if (!string.Equals(Path.GetDirectoryName(path), Path.GetFullPath(parent), StringComparison.OrdinalIgnoreCase))
+        // Path.GetTempPath() ends with a separator by design, and Path.GetDirectoryName() never
+        // does, so comparing them raw called every temporary file an escape attempt.
+        var expectedParent = Path.TrimEndingDirectorySeparator(Path.GetFullPath(parent));
+        if (!string.Equals(Path.GetDirectoryName(path), expectedParent, StringComparison.OrdinalIgnoreCase))
             throw new IOException("Veyon Campus 数据清理文件路径超出本机数据目录。");
         if (!TryGetAttributes(path, out var attributes)) return;
         RejectPathChain(path);

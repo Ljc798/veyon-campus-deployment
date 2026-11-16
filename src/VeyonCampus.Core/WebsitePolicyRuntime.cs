@@ -4743,6 +4743,9 @@ public sealed class WebsitePolicyAgent
         await TryExpirePolicyAsync(configPath, config.CampusId, applicationPolicyAgent, studentSystemPolicyAgent,
             edgePolicyRefreshSignal, cancellationToken).ConfigureAwait(false);
         ReconcileRefreshQueueAtStartup(configPath, config.CampusId, edgePolicyRefreshSignal);
+        // The firewall keeps its rules across reboots, but the addresses behind them drift, and a
+        // machine that was offline for a week should not start the day blocking last week's IPs.
+        WebsitePolicyRegistryStore.RefreshNetworkBlock();
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var teacherChannelSupervisor = new StudentAgentTeacherChannelSupervisor();
         var classroomStatus = new ClassroomStatusAgentState();
@@ -4775,6 +4778,7 @@ public sealed class WebsitePolicyAgent
             }
         }, CancellationToken.None);
         using var expiryTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        var expiryTicks = 0;
         var nextRequest = listener.GetContextAsync();
         var nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         while (!shutdown.IsCancellationRequested)
@@ -4801,6 +4805,9 @@ public sealed class WebsitePolicyAgent
             try { await TryExpirePolicyAsync(configPath, config.CampusId, applicationPolicyAgent,
                 studentSystemPolicyAgent, edgePolicyRefreshSignal, shutdown.Token).ConfigureAwait(false); }
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
+            // Every twentieth tick is ten minutes: often enough to follow a CDN rotation, rare enough
+            // that a thousand-domain list does not keep the resolver busy all day.
+            if (++expiryTicks % 20 == 0) WebsitePolicyRegistryStore.RefreshNetworkBlock();
             nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         }
     }
@@ -5448,7 +5455,8 @@ public sealed class WebsitePolicyAgent
                         edgeWebsite?.Profiles.Count, edgeWebsite?.Profiles.Count(profile => profile.Status == "degraded"),
                         updateState, StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
                         inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId(),
-                        website.HostsRevision, website.HostsError);
+                        website.HostsRevision, website.HostsError,
+                        website.NetworkBlockRevision, website.NetworkBlockAddresses, website.NetworkBlockError);
                     var signedSummary = StudentAgentResponseCryptography.Sign(summary, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSummary),
                         "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
@@ -6201,6 +6209,9 @@ public static class WebsitePolicyRegistryStore
     ];
     private const string AgentKey = @"SOFTWARE\VeyonCampus\WebsitePolicy";
 
+    /// <summary>Only one resolution pass runs at a time; a newer push supersedes rather than queues.</summary>
+    private static readonly SemaphoreSlim NetworkBlockGate = new(1, 1);
+
     [SupportedOSPlatform("windows")]
     public static long ReadRevision(string campusId)
     {
@@ -6275,7 +6286,16 @@ public static class WebsitePolicyRegistryStore
             key.GetValue("HostsRevision", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is long hostsRevision
                 ? hostsRevision
                 : null,
-            key.GetValue("HostsError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string);
+            key.GetValue("HostsError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
+            key.GetValue("NetworkBlockRevision", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                is long networkRevision
+                ? networkRevision
+                : null,
+            key.GetValue("NetworkBlockAddresses", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                is int networkAddresses
+                ? networkAddresses
+                : null,
+            key.GetValue("NetworkBlockError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string);
 
         DateTimeOffset? ReadUtc(string valueName)
         {
@@ -6438,6 +6458,9 @@ public static class WebsitePolicyRegistryStore
                 throw new IOException($"{browser.Name} 存在网址策略，但本工具没有所有权记录；没有删除该策略或空状态。" );
         }
         root.DeleteSubKey(AgentKey, throwOnMissingSubKey: false);
+        // Nothing recorded a policy, but an interrupted run can still leave marked rules behind, and
+        // they would keep blocking sites on a machine this product no longer manages.
+        ClearNetworkBlock();
     }
 
     [SupportedOSPlatform("windows")]
@@ -6465,6 +6488,7 @@ public static class WebsitePolicyRegistryStore
             RemovedOwnedBrowser(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before)));
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Remove, before, after);
         ClearHostsFallback();
+        ClearNetworkBlock();
     }
 
     private static WebsitePolicyBrowserRegistrySnapshot RemovedOwnedBrowser(
@@ -6502,7 +6526,8 @@ public static class WebsitePolicyRegistryStore
 
         var allowedAgentValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "EdgeExecutionMode",
-                "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError", "PendingTransactionJson" };
+                "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError",
+                "NetworkBlockRevision", "NetworkBlockAddresses", "NetworkBlockError", "PendingTransactionJson" };
         if (agentKey.GetValueNames().Any(name => !allowedAgentValues.Contains(name)) ||
             agentKey.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
             throw new IOException("网站策略代理注册表包含未知值或子项；卸载没有修改浏览器策略。" );
@@ -6602,6 +6627,7 @@ public static class WebsitePolicyRegistryStore
         };
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Expire, before, after);
         ClearHostsFallback();
+        ClearNetworkBlock();
         return true;
     }
 
@@ -6654,6 +6680,7 @@ public static class WebsitePolicyRegistryStore
             manageEdge: executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry);
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
         ApplyHostsFallback(document);
+        QueueNetworkBlock(document);
         return executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry &&
                (!SameList(before.Edge.PolicyBlocklist, after.Edge.PolicyBlocklist) ||
                 !SameList(before.Edge.PolicyAllowlist, after.Edge.PolicyAllowlist) ||
@@ -6705,6 +6732,148 @@ public static class WebsitePolicyRegistryStore
                 key.DeleteValue("HostsRevision", throwOnMissingValue: false);
                 var message = result.Error ?? "hosts 兜底写入失败。";
                 key.SetValue("HostsError", message.Length <= 512 ? message : message[..512], RegistryValueKind.String);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              System.Security.SecurityException) { }
+    }
+
+    /// <summary>
+    /// Enforces the blocklist at the packet layer.
+    ///
+    /// Everything above this point is name-level: a browser reads machine policy, or a program asks
+    /// the system resolver and gets the hosts answer. A page opened by literal IP, a client with a
+    /// hard-coded resolver, or a browser with encrypted DNS turned on never asks either question.
+    /// Resolving the blocked names once and refusing outbound connections to those addresses is the
+    /// only layer that covers all three, and it is the only one that can be verified from outside
+    /// the browser.
+    ///
+    /// Resolution costs a round trip per domain, so this never runs on the policy request thread: a
+    /// push response must not wait on DNS for a thousand entries.
+    /// </summary>
+    private static void QueueNetworkBlock(WebsitePolicyDocument document)
+    {
+        var blocked = document.Mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined
+            ? document.Domains.ToArray()
+            : Array.Empty<string>();
+        if (blocked.Length == 0)
+        {
+            ClearNetworkBlock();
+            return;
+        }
+        // In combined mode the allowlist is exactly the set of sites that must keep working, so it
+        // doubles as the shared-address exemption: a CDN address serving an allowed site is never
+        // blocked just because a blocked site also sits behind it.
+        var exempt = document.Mode == WebsitePolicyMode.Combined
+            ? (document.AllowedDomains ?? Array.Empty<string>()).ToArray()
+            : Array.Empty<string>();
+        ApplyNetworkBlockInBackground(document.Revision, blocked, exempt);
+    }
+
+    private static void ApplyNetworkBlockInBackground(long revision, IReadOnlyList<string> blocked,
+        IReadOnlyList<string> exempt)
+    {
+        _ = Task.Run(async () =>
+        {
+            // A second push while the first is still resolving is dropped rather than queued: the
+            // newer revision applies on its own pass, and stacking them would multiply DNS traffic.
+            if (!NetworkBlockGate.Wait(0)) return;
+            try
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                var plan = await WebsiteNetworkBlockPlanner.BuildAsync(blocked, exempt,
+                    new SystemWebsiteAddressResolver(), timeout.Token).ConfigureAwait(false);
+                var result = WebsiteNetworkBlock.Apply(revision, plan);
+                // A domain that never answered is left out of the plan rather than failing the run,
+                // so a slow resolver must be visible as a partial block instead of a clean success.
+                if (timeout.IsCancellationRequested && result.Applied && result.Error is null)
+                    result = result with
+                    {
+                        Error = $"解析超时，本次只封禁了已解析的 {result.AddressCount} 个地址；未解析的网站仍可访问。"
+                    };
+                if (result.Applied && result.AddressCount > 0 && !timeout.IsCancellationRequested)
+                {
+                    var reachable = await WebsiteNetworkBlock.VerifyEnforcementAsync(plan.Addresses, 3,
+                        timeout.Token).ConfigureAwait(false);
+                    if (reachable.Count > 0)
+                        result = result with
+                        {
+                            Error = $"网络层封禁未生效：仍能连接 {string.Join("、", reachable)}。" +
+                                    "可能有其他防火墙或代理接管了出站流量。"
+                        };
+                }
+                RecordNetworkBlockState(result);
+            }
+            catch (Exception exception) when (exception is OperationCanceledException or IOException or
+                UnauthorizedAccessException or InvalidOperationException or
+                System.Security.SecurityException or System.Runtime.InteropServices.COMException)
+            {
+                RecordNetworkBlockState(WebsiteNetworkBlockResult.Failed(revision, exception.Message));
+            }
+            finally { NetworkBlockGate.Release(); }
+        }, CancellationToken.None);
+    }
+
+    /// <summary>
+    /// Re-resolves the stored policy on a timer. CDN addresses rotate, and a block that was correct
+    /// when the teacher pressed apply can silently cover nothing a day later.
+    /// </summary>
+    internal static void RefreshNetworkBlock()
+    {
+        try
+        {
+            WebsitePolicyDocument? document;
+            using (var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64))
+            using (var key = root.OpenSubKey(AgentKey, writable: false))
+            {
+                if (key?.GetValue("PolicyDocumentJson", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                    is not string json)
+                    return;
+                document = WebsitePolicyCompiler.Deserialize(Encoding.UTF8.GetBytes(json));
+            }
+            if (document.Mode is WebsitePolicyMode.Disabled) return;
+            QueueNetworkBlock(document);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                              UnauthorizedAccessException or System.Security.SecurityException)
+        {
+            RecordNetworkBlockState(WebsiteNetworkBlockResult.Failed(0, "刷新网络层封禁失败：" + exception.Message));
+        }
+    }
+
+    private static void ClearNetworkBlock() => RecordNetworkBlockState(WebsiteNetworkBlock.Clear());
+
+    private static void RecordNetworkBlockState(WebsiteNetworkBlockResult result)
+    {
+        try
+        {
+            using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var key = root.OpenSubKey(AgentKey, writable: true);
+            if (key is null) return;
+            if (result.Applied && result.AddressCount > 0)
+            {
+                key.SetValue("NetworkBlockRevision", result.Revision, RegistryValueKind.QWord);
+                key.SetValue("NetworkBlockAddresses", result.AddressCount, RegistryValueKind.DWord);
+                // Applied but still reachable is worth reporting: the rules exist, yet traffic flows.
+                if (result.Error is { Length: > 0 } warning)
+                    key.SetValue("NetworkBlockError", warning.Length <= 512 ? warning : warning[..512],
+                        RegistryValueKind.String);
+                else
+                    key.DeleteValue("NetworkBlockError", throwOnMissingValue: false);
+            }
+            else if (result.Applied)
+            {
+                key.DeleteValue("NetworkBlockRevision", throwOnMissingValue: false);
+                key.DeleteValue("NetworkBlockAddresses", throwOnMissingValue: false);
+                key.DeleteValue("NetworkBlockError", throwOnMissingValue: false);
+            }
+            else
+            {
+                key.DeleteValue("NetworkBlockRevision", throwOnMissingValue: false);
+                key.DeleteValue("NetworkBlockAddresses", throwOnMissingValue: false);
+                var message = result.Error ?? "网络层封禁写入失败。";
+                key.SetValue("NetworkBlockError", message.Length <= 512 ? message : message[..512],
+                    RegistryValueKind.String);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or

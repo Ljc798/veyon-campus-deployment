@@ -785,7 +785,8 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
         {
             var allowedValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "EdgeExecutionMode",
-                    "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError", TransactionValue };
+                    "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError",
+                    "NetworkBlockRevision", "NetworkBlockAddresses", "NetworkBlockError", TransactionValue };
             if (agent.GetValueNames().Any(name => !allowedValues.Contains(name)) ||
                 agent.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
                 throw new IOException("网站策略 Agent 注册表包含未知内容；事务没有修改浏览器策略。");

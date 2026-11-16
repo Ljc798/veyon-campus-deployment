@@ -14,7 +14,11 @@ public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? BlockedDomains = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedDomains = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? HostsRevision = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HostsError = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HostsError = null,
+    /// <summary>Revision the outbound firewall rules were built for, which is what reaches literal IPs.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? NetworkBlockRevision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NetworkBlockAddresses = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NetworkBlockError = null);
 public sealed record ApplicationPolicyReportedState(bool Supported, long? Revision,
     ApplicationPolicyMode? Mode, DateTimeOffset? ExpiresUtc);
 public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revision,
