@@ -58,6 +58,8 @@ campus.json
 !/packaging/third-party/veyon-4.11.2.0-win64-setup.exe
 *.msi
 *.zip
+# 已发布的校区配置包必须进版本库：学生端直接从 packages/ 读取这些字节
+!/packages/*.zip
 *.7z
 *.log
 
