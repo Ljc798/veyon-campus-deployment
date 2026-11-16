@@ -488,7 +488,16 @@ internal static class ApplicationReleaseChecks
                     Content = new StringContent(body, Encoding.UTF8, "application/json")
                 });
             }
-            if (uri.AbsolutePath.EndsWith("/" + ReleaseCatalogSource.CatalogAssetName, StringComparison.Ordinal))
+            // GitCode answers an asset request with a redirect to its CDN, so the catalogue has to be
+            // read through a hop. Serving the JSON directly here would hide a broken client.
+            if (uri.Host == "gitcode.com" &&
+                uri.AbsolutePath.EndsWith("/" + ReleaseCatalogSource.CatalogAssetName, StringComparison.Ordinal))
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.Redirect);
+                response.Headers.Location = new Uri("https://file-cdn.gitcode.com/fixture/release-catalog.json");
+                return Task.FromResult(response);
+            }
+            if (uri.Host == "file-cdn.gitcode.com")
                 return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
                     Content = new StringContent(catalogJson, Encoding.UTF8, "application/json")

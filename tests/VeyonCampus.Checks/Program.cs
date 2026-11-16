@@ -6,6 +6,38 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--live-release-check"])
+{
+    // Exercises the production discovery path against the real release hosts. Requires the pinned
+    // public key to be embedded, so build with -p:VeyonCampusReleasePublicKeyPath=<pem>.
+    var client = new ApplicationReleaseClient();
+    foreach (var role in new[] { ApplicationReleaseRole.TeacherConsole, ApplicationReleaseRole.StudentSetup })
+    {
+        var result = await client.CheckLatestAsync(role, "1.1.0");
+        Console.WriteLine($"{role}: latest={result.Release?.Manifest.Version ?? "none"} " +
+                          $"newer={result.IsNewer} mirrors={result.MirrorDownloadUrls?.Count ?? 0} " +
+                          $"host={result.Release?.Manifest.DownloadUrl.Split('/')[2] ?? "-"}");
+        if (role == ApplicationReleaseRole.TeacherConsole && result.Release is not null)
+        {
+            var directory = Path.Combine(Path.GetTempPath(), "veyon-live-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var path = await client.DownloadAsync(result.Release, role, directory,
+                    mirrorDownloadUrls: result.MirrorDownloadUrls);
+                Console.WriteLine($"download: {new FileInfo(path).Length} bytes verified");
+            }
+            finally
+            {
+                try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+                catch (IOException) { }
+            }
+        }
+    }
+    var notes = await client.ReadReleaseNotesAsync("1.1.81");
+    Console.WriteLine($"notes: {notes?.Length ?? 0} chars");
+    return;
+}
+
 if (args is ["--application-release-fixtures"])
 {
     ApplicationReleaseChecks.Run();

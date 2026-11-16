@@ -138,11 +138,7 @@ public sealed partial class ApplicationReleaseClient
     private async Task<ReleaseIndexResponse?> ReadIndexAsync(ReleaseCatalogSource source, Uri uri,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.UserAgent.ParseAdd("VeyonCampus/" + typeof(ApplicationReleaseClient).Assembly.GetName().Version);
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken).ConfigureAwait(false);
+        using var response = await SendMetadataAsync(uri, cancellationToken).ConfigureAwait(false);
         if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Forbidden) return null;
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException($"{source} 发布索引返回 {(int)response.StatusCode}。", null,
@@ -162,10 +158,7 @@ public sealed partial class ApplicationReleaseClient
     private async Task<ReleaseCatalogDocument?> ReadCatalogDocumentAsync(Uri uri,
         CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        using var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken).ConfigureAwait(false);
+        using var response = await SendMetadataAsync(uri, cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("发布目录暂时不可用。", null, response.StatusCode);
         var bytes = await ReadBoundedAsync(response.Content, MaximumCatalogBytes, cancellationToken)
@@ -178,6 +171,38 @@ public sealed partial class ApplicationReleaseClient
         {
             throw new InvalidDataException("发布目录格式无效。", exception);
         }
+    }
+
+
+    /// <summary>
+    /// The shared client never follows redirects by itself, because the installer download verifies
+    /// every hop. Release-host API calls do redirect (a GitCode asset URL answers 302 to its CDN), so
+    /// metadata reads follow up to three HTTPS hops here and fail closed on anything else.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendMetadataAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        var current = uri;
+        for (var hop = 0; hop < 4; hop++)
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, current);
+            request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            request.Headers.UserAgent.ParseAdd("VeyonCampus/" + typeof(ApplicationReleaseClient).Assembly.GetName().Version);
+            var response = await _client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken).ConfigureAwait(false);
+            if (response.StatusCode is not (HttpStatusCode.MovedPermanently or HttpStatusCode.Found or
+                    HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect) ||
+                response.Headers.Location is not { } location)
+                return response;
+
+            Uri next;
+            try { next = location.IsAbsoluteUri ? location : new Uri(current, location); }
+            finally { response.Dispose(); }
+            if (next.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(next.UserInfo) ||
+                !string.IsNullOrEmpty(next.Fragment))
+                throw new InvalidDataException("版本目录重定向必须指向无凭据的 HTTPS 地址。");
+            current = next;
+        }
+        throw new InvalidDataException("版本目录重定向次数过多。");
     }
 
     private sealed record ReleaseIndexResponse(
