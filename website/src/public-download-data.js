@@ -65,7 +65,7 @@ async function readLatestRelease(source, signal) {
     if (!STABLE_TAG.test(tag) || payload?.prerelease === true) return null;
     const version = tag.slice(1);
     const root = `${source.origin}/${source.owner}/veyon-campus-deployment`;
-    return {
+    const record = {
       source: source.source,
       version,
       tag,
@@ -76,6 +76,8 @@ async function readLatestRelease(source, signal) {
         ? payload.created_at
         : new Date().toISOString()
     };
+    // Guard the link shapes the page renders; a malformed record is worse than no record.
+    return validSource(record) ? record : null;
   } catch (error) {
     if (error?.name === 'AbortError') throw error;
     return null;
