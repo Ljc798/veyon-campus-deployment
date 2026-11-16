@@ -18,7 +18,9 @@ public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode
     /// <summary>Revision the outbound firewall rules were built for, which is what reaches literal IPs.</summary>
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? NetworkBlockRevision = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NetworkBlockAddresses = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NetworkBlockError = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NetworkBlockError = null,
+    /// <summary>Browsers whose encrypted DNS a school pinned on, which makes hosts ineffective there.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SecureDnsConflict = null);
 public sealed record ApplicationPolicyReportedState(bool Supported, long? Revision,
     ApplicationPolicyMode? Mode, DateTimeOffset? ExpiresUtc);
 public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revision,

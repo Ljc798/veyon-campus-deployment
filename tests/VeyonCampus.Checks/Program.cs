@@ -314,6 +314,13 @@ if (args is ["--website-network-block-fixtures"])
     return;
 }
 
+if (args is ["--website-secure-dns-fixtures"])
+{
+    WebsiteSecureDnsChecks.Run();
+    Console.WriteLine("PASS encrypted DNS ownership, journal round-trip and conflict reporting");
+    return;
+}
+
 if (args is ["--edge-policy-refresh-fixtures"])
 {
     EdgePolicyRefreshChecks.Run();
@@ -842,7 +849,6 @@ if (args is ["--student-setup-fixtures"])
     Check("学生工具新旧入口清理及教师包拒绝", CheckStudentSetupCleanup);
     Check("网站代理任务 ACL 只允许 SYSTEM 和管理员", CheckTaskAclDescriptors);
     Check("网站策略卸载处理缺失任务及多校区孤立配置", CheckAgentRemovalDecisions);
-    Check("网络层封禁：地址分类、共享地址豁免与写回校验", WebsiteNetworkBlockChecks.Run);
     Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
     Check("教师逐台推送结果本机保留、脱敏并限制为最近 50 次", CheckWebsitePolicyHistory);
     Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
@@ -1082,6 +1088,8 @@ Check("网站策略推送目标校验与去重", () =>
     Reject(() => WebsitePolicySigningKeyStore.ValidateCampusId(" 校园"));
 });
 Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
+Check("网络层封禁：地址分类、共享地址豁免与写回校验", WebsiteNetworkBlockChecks.Run);
+Check("加密 DNS 关闭的所有权、日志往返与冲突上报", WebsiteSecureDnsChecks.Run);
 Check("机房 150 条唯一清单和起始边界", () =>
 {
     var names = MachineNaming.CreateRange("A-PC-", "1", "150");

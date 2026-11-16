@@ -379,6 +379,12 @@ internal static class WebsitePolicyRegistryTransactionChecks
             VerifyValue(WebsitePolicyRegistryTransactions.ManagedGameRestriction(State.Chrome),
                 WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.Before.Chrome),
                 WebsitePolicyRegistryTransactions.ManagedGameRestriction(transaction.After.Chrome));
+            VerifyValue(WebsitePolicyRegistryTransactions.SecureDns(State.Edge),
+                WebsitePolicyRegistryTransactions.SecureDns(transaction.Before.Edge),
+                WebsitePolicyRegistryTransactions.SecureDns(transaction.After.Edge));
+            VerifyValue(WebsitePolicyRegistryTransactions.ManagedSecureDns(State.Edge),
+                WebsitePolicyRegistryTransactions.ManagedSecureDns(transaction.Before.Edge),
+                WebsitePolicyRegistryTransactions.ManagedSecureDns(transaction.After.Edge));
 
             static void Verify(WebsitePolicyRegistryListSnapshot current, WebsitePolicyRegistryListSnapshot before,
                 WebsitePolicyRegistryListSnapshot after)
@@ -445,6 +451,8 @@ internal static class WebsitePolicyRegistryTransactionChecks
             Set(browserName, Current(browserName) with { ManagedAllowlist = target.ManagedAllowlist });
             Set(browserName, Current(browserName) with { PolicyGameRestriction = target.PolicyGameRestriction });
             Set(browserName, Current(browserName) with { ManagedGameRestriction = target.ManagedGameRestriction });
+            Set(browserName, Current(browserName) with { PolicySecureDns = target.PolicySecureDns });
+            Set(browserName, Current(browserName) with { ManagedSecureDns = target.ManagedSecureDns });
             Set(browserName, Current(browserName) with { Initialized = target.Initialized });
         }
 

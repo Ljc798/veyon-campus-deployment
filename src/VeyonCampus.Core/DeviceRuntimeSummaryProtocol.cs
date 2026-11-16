@@ -46,7 +46,10 @@ public sealed record StudentAgentRuntimeSummary(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     int? NetworkBlockAddresses = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? NetworkBlockError = null);
+    string? NetworkBlockError = null,
+    /// <summary>Browsers still resolving over their own encrypted DNS, where hosts cannot reach.</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? SecureDnsConflict = null);
 
 /// <summary>Short-lived InputGuard state included only in runtime-summary schema v2.</summary>
 public sealed record StudentInputGuardRuntimeSnapshot(int SchemaVersion, bool Supported,

@@ -4583,13 +4583,13 @@ public sealed class WebsitePolicyAgent
     public const string StudentUpdateTimingPathV2 = "/v2/update-timings";
     public const string StudentUpdateTimingPathV3 = "/v3/update-timings";
     public const string PolicyAppliedAcknowledgement =
-        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 已禁止所有下载并关闭冲浪游戏，Chrome 小恐龙也已关闭。相关浏览器需重启后生效。";
+        "policy applied; 网站策略已写入 Edge、Chrome 和 Firefox 机器策略；Edge 已禁止所有下载并关闭冲浪游戏，Chrome 小恐龙也已关闭。加密 DNS 已关闭，浏览器不再能用自己的解析器绕开 hosts。相关浏览器需重启后生效。";
     public const string PolicyAppliedWithoutEdgeChangeAcknowledgement =
-        "policy applied; 网站策略已写入机器策略；Edge 已禁止所有下载并关闭冲浪游戏，Chrome 小恐龙也已关闭。相关浏览器需重启后生效。";
+        "policy applied; 网站策略已写入机器策略；Edge 已禁止所有下载并关闭冲浪游戏，Chrome 小恐龙也已关闭。加密 DNS 已关闭，浏览器不再能用自己的解析器绕开 hosts。相关浏览器需重启后生效。";
     public const string PolicyAcceptedRealtimeAcknowledgement =
         "policy accepted; Chrome 和 Firefox 网站策略已写入，Edge 网站策略已进入实时扩展同步；Edge 下载和冲浪游戏、Chrome 小恐龙已通过机器策略禁用，需重启浏览器后生效。";
     public const string PolicyDisabledAcknowledgement =
-        "policy disabled; 网站名单限制已解除，并已撤销本工具写入的 Edge 下载和浏览器游戏限制。其他来源设置的浏览器策略保持不变。";
+        "policy disabled; 网站名单限制已解除，并已撤销本工具写入的 Edge 下载和浏览器游戏限制；本工具关闭的加密 DNS 已恢复。其他来源设置的浏览器策略保持不变。";
     public const string EdgeRealtimeMigrationAcknowledgement =
         "Edge 实时策略迁移已提交；由实时扩展同步 Edge 策略。请读取逐台状态确认扩展已应用。如果未生效，请手动重启浏览器。";
     public const string EdgeLegacyRestoreAcknowledgement =
@@ -5456,7 +5456,8 @@ public sealed class WebsitePolicyAgent
                         updateState, StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
                         inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId(),
                         website.HostsRevision, website.HostsError,
-                        website.NetworkBlockRevision, website.NetworkBlockAddresses, website.NetworkBlockError);
+                        website.NetworkBlockRevision, website.NetworkBlockAddresses, website.NetworkBlockError,
+                        website.SecureDnsConflict);
                     var signedSummary = StudentAgentResponseCryptography.Sign(summary, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSummary),
                         "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
@@ -6295,7 +6296,8 @@ public static class WebsitePolicyRegistryStore
                 is int networkAddresses
                 ? networkAddresses
                 : null,
-            key.GetValue("NetworkBlockError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string);
+            key.GetValue("NetworkBlockError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
+            WebsitePolicyRegistryTransactions.SecureDnsConflict(snapshot));
 
         DateTimeOffset? ReadUtc(string valueName)
         {
@@ -6502,6 +6504,10 @@ public static class WebsitePolicyRegistryStore
             WebsitePolicyRegistryTransactions.ManagedGameRestriction(before).Exists
                 ? EmptyValue()
                 : WebsitePolicyRegistryTransactions.GameRestriction(before),
+            EmptyValue(),
+            WebsitePolicyRegistryTransactions.ManagedSecureDns(before).Exists
+                ? EmptyValue()
+                : WebsitePolicyRegistryTransactions.SecureDns(before),
             EmptyValue());
 
     private static void ValidateOwnedState(RegistryKey root, string campusId)
@@ -6687,7 +6693,12 @@ public static class WebsitePolicyRegistryStore
                 WebsitePolicyRegistryTransactions.DownloadRestrictions(before.Edge) !=
                 WebsitePolicyRegistryTransactions.DownloadRestrictions(after.Edge) ||
                 WebsitePolicyRegistryTransactions.GameRestriction(before.Edge) !=
-                WebsitePolicyRegistryTransactions.GameRestriction(after.Edge));
+                WebsitePolicyRegistryTransactions.GameRestriction(after.Edge) ||
+                // Encrypted DNS is read at browser start as well, so it needs the same restart.
+                WebsitePolicyRegistryTransactions.SecureDns(before.Edge) !=
+                WebsitePolicyRegistryTransactions.SecureDns(after.Edge) ||
+                WebsitePolicyRegistryTransactions.SecureDns(before.Chrome) !=
+                WebsitePolicyRegistryTransactions.SecureDns(after.Chrome));
     }
 
     private static bool SameList(WebsitePolicyRegistryListSnapshot left, WebsitePolicyRegistryListSnapshot right) =>
@@ -6994,9 +7005,16 @@ public static class WebsitePolicyRegistryStore
         edge = ApplyEdgeDownloadRestriction(before.Edge, edge,
             policyEnabled);
         edge = WebsitePolicyRegistryTransactions.ApplyGameRestriction(before.Edge, edge, policyEnabled, "Edge");
+        // Edge in extension mode enforces inside the browser itself, so its registry is left alone
+        // there; the other two always get their encrypted DNS turned off while a policy is active.
+        if (manageEdge)
+            edge = WebsitePolicyRegistryTransactions.ApplySecureDns(before.Edge, edge, policyEnabled, "off", "Edge");
         var chrome = CreateBrowserPolicy(chromeCompiled);
         chrome = WebsitePolicyRegistryTransactions.ApplyGameRestriction(before.Chrome, chrome, policyEnabled, "Chrome");
+        chrome = WebsitePolicyRegistryTransactions.ApplySecureDns(before.Chrome, chrome, policyEnabled, "off", "Chrome");
         var firefox = CreateBrowserPolicy(firefoxCompiled);
+        firefox = WebsitePolicyRegistryTransactions.ApplySecureDns(before.Firefox ?? firefox, firefox, policyEnabled,
+            "5", "Firefox");
         return before with
         {
             AgentKeyExists = true,
@@ -7081,7 +7099,11 @@ public static class WebsitePolicyRegistryStore
         PolicyGameRestriction = WebsitePolicyRegistryTransactions.ManagedGameRestriction(before).Exists
             ? EmptyValue()
             : WebsitePolicyRegistryTransactions.GameRestriction(before),
-        ManagedGameRestriction = EmptyValue()
+        ManagedGameRestriction = EmptyValue(),
+        PolicySecureDns = WebsitePolicyRegistryTransactions.ManagedSecureDns(before).Exists
+            ? EmptyValue()
+            : WebsitePolicyRegistryTransactions.SecureDns(before),
+        ManagedSecureDns = EmptyValue()
     };
 
     private static WebsitePolicyRegistryListSnapshot CreatePolicyList(IReadOnlyList<string> values)

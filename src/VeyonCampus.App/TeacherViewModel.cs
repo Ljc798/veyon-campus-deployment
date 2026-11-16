@@ -9157,6 +9157,11 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                             : $" · 网络层封禁落后（r{summary.NetworkBlockRevision}，当前 r{summary.WebsiteRevision}）"
                         : " · 网络层封禁未上报"
                 : "") +
+            (summary.WebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined or WebsitePolicyMode.Allowlist
+                ? summary.SecureDnsConflict is { Length: > 0 } secureDnsConflict
+                    ? $" · {secureDnsConflict} 仍启用加密 DNS（hosts 在那失效）"
+                    : ""
+                : "") +
             (summary.EdgeProfileCount is { } edgeCount
                 ? $" · Edge Profile 降级 {summary.EdgeDegradedProfileCount}/{edgeCount}"
                 : " · Edge 策略回执未提供");

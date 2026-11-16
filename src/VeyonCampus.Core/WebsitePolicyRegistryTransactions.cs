@@ -32,7 +32,9 @@ internal sealed record WebsitePolicyBrowserRegistrySnapshot(
     WebsitePolicyRegistryValueSnapshot? PolicyDownloadRestrictions = null,
     WebsitePolicyRegistryValueSnapshot? ManagedDownloadRestrictions = null,
     WebsitePolicyRegistryValueSnapshot? PolicyGameRestriction = null,
-    WebsitePolicyRegistryValueSnapshot? ManagedGameRestriction = null);
+    WebsitePolicyRegistryValueSnapshot? ManagedGameRestriction = null,
+    WebsitePolicyRegistryValueSnapshot? PolicySecureDns = null,
+    WebsitePolicyRegistryValueSnapshot? ManagedSecureDns = null);
 
 internal sealed record WebsitePolicyRegistrySnapshot(
     bool AgentKeyExists,
@@ -179,6 +181,14 @@ internal static class WebsitePolicyRegistryTransactions
         WebsitePolicyBrowserRegistrySnapshot snapshot) =>
         snapshot.ManagedGameRestriction ?? new WebsitePolicyRegistryValueSnapshot(false, null);
 
+    internal static WebsitePolicyRegistryValueSnapshot SecureDns(
+        WebsitePolicyBrowserRegistrySnapshot snapshot) =>
+        snapshot.PolicySecureDns ?? new WebsitePolicyRegistryValueSnapshot(false, null);
+
+    internal static WebsitePolicyRegistryValueSnapshot ManagedSecureDns(
+        WebsitePolicyBrowserRegistrySnapshot snapshot) =>
+        snapshot.ManagedSecureDns ?? new WebsitePolicyRegistryValueSnapshot(false, null);
+
     internal static WebsitePolicyBrowserRegistrySnapshot ApplyGameRestriction(
         WebsitePolicyBrowserRegistrySnapshot before, WebsitePolicyBrowserRegistrySnapshot target,
         bool enabled, string browser)
@@ -221,6 +231,74 @@ internal static class WebsitePolicyRegistryTransactions
             PolicyGameRestriction = TextValue("0"),
             ManagedGameRestriction = TextValue("0")
         };
+    }
+
+    /// <summary>
+    /// Turns the browser's own encrypted-DNS setting off while a website policy is active.
+    ///
+    /// hosts only answers questions put to the system resolver. A browser with secure DNS enabled
+    /// asks a resolver of its own over HTTPS, so every name-level layer above silently stops
+    /// applying. The value is written only when this tool owns it, and a school that pinned DoH on
+    /// purpose keeps it: their choice wins over a stronger block, and the list, hosts and address
+    /// rules still apply.
+    /// </summary>
+    internal static WebsitePolicyBrowserRegistrySnapshot ApplySecureDns(
+        WebsitePolicyBrowserRegistrySnapshot before, WebsitePolicyBrowserRegistrySnapshot target,
+        bool disable, string disabledValue, string browser)
+    {
+        var currentPolicy = SecureDns(before);
+        var currentOwner = ManagedSecureDns(before);
+        if (!disable)
+        {
+            // Remove only what this tool wrote; a value someone else set is left in place.
+            return target with
+            {
+                PolicySecureDns = currentOwner.Exists && currentPolicy == currentOwner ? EmptyValue() : currentPolicy,
+                ManagedSecureDns = EmptyValue()
+            };
+        }
+
+        if (currentOwner.Exists)
+        {
+            // Someone changed it behind us: it is theirs now, so keep their value and drop ownership.
+            if (currentPolicy != currentOwner)
+                return target with { PolicySecureDns = currentPolicy, ManagedSecureDns = EmptyValue() };
+            return target with { PolicySecureDns = currentOwner, ManagedSecureDns = currentOwner };
+        }
+
+        if (currentPolicy.Exists)
+        {
+            // Already pinned by the school (off or something stronger). Do not claim it, do not fight it.
+            return target with { PolicySecureDns = currentPolicy, ManagedSecureDns = EmptyValue() };
+        }
+
+        return target with
+        {
+            PolicySecureDns = TextValue(disabledValue),
+            ManagedSecureDns = TextValue(disabledValue)
+        };
+    }
+
+    /// <summary>
+    /// Names the browsers whose encrypted DNS a school pinned to something other than off. Those are
+    /// the ones where hosts and the name-level layers stop applying, so the teacher console has to
+    /// be able to say which browser is the hole rather than claim the policy is complete.
+    /// </summary>
+    internal static string? SecureDnsConflict(WebsitePolicyRegistrySnapshot snapshot)
+    {
+        ArgumentNullException.ThrowIfNull(snapshot);
+        var conflicts = new List<string>();
+        Inspect("Edge", snapshot.Edge, "off");
+        Inspect("Chrome", snapshot.Chrome, "off");
+        Inspect("Firefox", FirefoxSnapshot(snapshot), "5");
+        return conflicts.Count == 0 ? null : string.Join("、", conflicts);
+
+        void Inspect(string browser, WebsitePolicyBrowserRegistrySnapshot state, string disabled)
+        {
+            var value = SecureDns(state);
+            if (value.Exists && !string.Equals(value.Value, disabled, StringComparison.OrdinalIgnoreCase))
+                conflicts.Add(browser);
+        }
     }
 
     private static WebsitePolicyRegistryValueSnapshot TextValue(string value) => new(true, value);
@@ -510,7 +588,9 @@ internal static class WebsitePolicyRegistryTransactions
         PolicyBlocklist = EmptyList(),
         PolicyAllowlist = EmptyList(),
         ManagedBlocklist = EmptyList(),
-        ManagedAllowlist = EmptyList()
+        ManagedAllowlist = EmptyList(),
+        PolicySecureDns = ManagedSecureDns(before).Exists ? EmptyValue() : SecureDns(before),
+        ManagedSecureDns = EmptyValue()
     };
 
     private static WebsitePolicyRegistryListSnapshot EmptyList() => new(false, []);
@@ -663,7 +743,9 @@ internal static class WebsitePolicyRegistryTransactions
         DownloadRestrictions(left) == DownloadRestrictions(right) &&
         ManagedDownloadRestrictions(left) == ManagedDownloadRestrictions(right) &&
         GameRestriction(left) == GameRestriction(right) &&
-        ManagedGameRestriction(left) == ManagedGameRestriction(right);
+        ManagedGameRestriction(left) == ManagedGameRestriction(right) &&
+        SecureDns(left) == SecureDns(right) &&
+        ManagedSecureDns(left) == ManagedSecureDns(right);
 
     private static bool Equivalent(WebsitePolicyRegistryListSnapshot left, WebsitePolicyRegistryListSnapshot right) =>
         left.Exists == right.Exists && left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
@@ -671,7 +753,8 @@ internal static class WebsitePolicyRegistryTransactions
     private static bool Empty(WebsitePolicyBrowserRegistrySnapshot snapshot) =>
         !snapshot.PolicyBlocklist.Exists && !snapshot.PolicyAllowlist.Exists &&
         !snapshot.ManagedBlocklist.Exists && !snapshot.ManagedAllowlist.Exists && !snapshot.Initialized.Exists &&
-        !ManagedDownloadRestrictions(snapshot).Exists && !ManagedGameRestriction(snapshot).Exists;
+        !ManagedDownloadRestrictions(snapshot).Exists && !ManagedGameRestriction(snapshot).Exists &&
+        !ManagedSecureDns(snapshot).Exists;
 
     private static void ValidateOwnedSnapshot(WebsitePolicyRegistrySnapshot snapshot)
     {
@@ -700,19 +783,22 @@ internal static class WebsitePolicyRegistryTransactions
                 ManagedDownloadRestrictions(browser).Exists &&
                 DownloadRestrictions(browser) != ManagedDownloadRestrictions(browser) ||
                 ManagedGameRestriction(browser).Exists &&
-                GameRestriction(browser) != ManagedGameRestriction(browser))
+                GameRestriction(browser) != ManagedGameRestriction(browser) ||
+                ManagedSecureDns(browser).Exists && SecureDns(browser) != ManagedSecureDns(browser))
                 throw new InvalidDataException("网站策略事务名单与其所有权记录不一致。");
             return;
         }
         if (browser.PolicyBlocklist.Exists || browser.PolicyAllowlist.Exists ||
             browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists ||
-            ManagedDownloadRestrictions(browser).Exists || ManagedGameRestriction(browser).Exists)
+            ManagedDownloadRestrictions(browser).Exists || ManagedGameRestriction(browser).Exists ||
+            ManagedSecureDns(browser).Exists)
             throw new InvalidDataException("网站策略事务试图接管没有完整所有权记录的浏览器策略。");
     }
 
     private static bool HasOwner(WebsitePolicyBrowserRegistrySnapshot browser) =>
         browser.Initialized.Exists || browser.ManagedBlocklist.Exists || browser.ManagedAllowlist.Exists ||
-        ManagedDownloadRestrictions(browser).Exists || ManagedGameRestriction(browser).Exists;
+        ManagedDownloadRestrictions(browser).Exists || ManagedGameRestriction(browser).Exists ||
+        ManagedSecureDns(browser).Exists;
 
     private static void ValidateUtcValue(WebsitePolicyRegistryValueSnapshot value)
     {
@@ -742,6 +828,9 @@ internal static class WebsitePolicyRegistryTransactions
             browser + " 游戏策略");
         EnsureValueMayBe(ManagedGameRestriction(current), ManagedGameRestriction(before),
             ManagedGameRestriction(after), browser + " 游戏策略所有权值");
+        EnsureValueMayBe(SecureDns(current), SecureDns(before), SecureDns(after), browser + " 加密 DNS 策略");
+        EnsureValueMayBe(ManagedSecureDns(current), ManagedSecureDns(before), ManagedSecureDns(after),
+            browser + " 加密 DNS 所有权值");
     }
 
     private static void EnsureValueMayBe(WebsitePolicyRegistryValueSnapshot current,
@@ -764,7 +853,15 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
     IWebsitePolicyRegistryTransactionBackend, IDisposable
 {
     private sealed record Browser(string Name, string Key, string BlocklistName, string AllowlistName,
-        string? DownloadRestrictionsName = null, string? GameRestrictionName = null);
+        string? DownloadRestrictionsName = null, string? GameRestrictionName = null,
+        SecureDnsTarget? SecureDns = null);
+
+    /// <summary>
+    /// Where a browser keeps its encrypted-DNS mode. Chromium browsers use a string value under
+    /// their policy key; Firefox exposes it as a preference through its own policy subkey, which is
+    /// why the key path travels with the target instead of being derived from the browser key.
+    /// </summary>
+    private sealed record SecureDnsTarget(string Key, string ValueName, bool IsDword, string DisabledValue);
     private const string AgentKey = @"SOFTWARE\VeyonCampus\WebsitePolicy";
     private const string TransactionValue = "PendingTransactionJson";
     private const int ErrorFileNotFound = 2;
@@ -773,9 +870,12 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
 
     private static readonly Browser[] Browsers =
     [
-        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist", "DownloadRestrictions", "AllowSurfGame"),
-        new("Chrome", @"SOFTWARE\Policies\Google\Chrome", "URLBlocklist", "URLAllowlist", GameRestrictionName: "AllowDinosaurEasterEgg"),
-        new("Firefox", @"SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter", "Block", "Exceptions")
+        new("Edge", @"SOFTWARE\Policies\Microsoft\Edge", "URLBlocklist", "URLAllowlist", "DownloadRestrictions", "AllowSurfGame",
+            new SecureDnsTarget(@"SOFTWARE\Policies\Microsoft\Edge", "DnsOverHttpsMode", false, "off")),
+        new("Chrome", @"SOFTWARE\Policies\Google\Chrome", "URLBlocklist", "URLAllowlist", GameRestrictionName: "AllowDinosaurEasterEgg",
+            SecureDns: new SecureDnsTarget(@"SOFTWARE\Policies\Google\Chrome", "DnsOverHttpsMode", false, "off")),
+        new("Firefox", @"SOFTWARE\Policies\Mozilla\Firefox\WebsiteFilter", "Block", "Exceptions",
+            SecureDns: new SecureDnsTarget(@"SOFTWARE\Policies\Mozilla\Firefox\Preferences", "network.trr.mode", true, "5"))
     ];
 
     public WebsitePolicyRegistrySnapshot ReadSnapshot()
@@ -855,6 +955,14 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
                 WriteManagedDword(browser.Name, "GameRestriction",
                     WebsitePolicyRegistryTransactions.ManagedGameRestriction(before),
                     WebsitePolicyRegistryTransactions.ManagedGameRestriction(after), browser.Name + "游戏限制");
+            if (browser.SecureDns is { } secureDns)
+            {
+                WritePolicySecureDns(secureDns, WebsitePolicyRegistryTransactions.SecureDns(before),
+                    WebsitePolicyRegistryTransactions.SecureDns(after), browser.Name + " 加密 DNS");
+                WriteManagedText(browser.Name, "SecureDns",
+                    WebsitePolicyRegistryTransactions.ManagedSecureDns(before),
+                    WebsitePolicyRegistryTransactions.ManagedSecureDns(after), browser.Name + " 加密 DNS");
+            }
             WriteInitialized(browser.Name, before.Initialized, after.Initialized);
         }
 
@@ -908,6 +1016,7 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
                 { "Initialized", "URLBlocklist", "URLAllowlist" };
             if (browser == "Edge") allowedValues.Add("DownloadRestrictions");
             if (browserDefinition.GameRestrictionName is not null) allowedValues.Add("GameRestriction");
+            if (browserDefinition.SecureDns is not null) allowedValues.Add("SecureDns");
             if (managed.GetValueNames().Any(name => !allowedValues.Contains(name)) || managed.SubKeyCount != 0)
                 throw new IOException($"{browser} 网站策略所有权记录包含未知内容；事务没有修改浏览器策略。");
         }
@@ -922,7 +1031,9 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
             browserDefinition.GameRestrictionName is { } gameName
                 ? ReadDwordValue(policy, gameName) : null,
             browserDefinition.GameRestrictionName is not null
-                ? ReadDwordValue(managed, "GameRestriction") : null);
+                ? ReadDwordValue(managed, "GameRestriction") : null,
+            browserDefinition.SecureDns is not null ? ReadSecureDnsValue(browserDefinition.SecureDns) : null,
+            browserDefinition.SecureDns is not null ? ReadStringValue(managed, "SecureDns") : null);
     }
 
     private void ReplacePolicyList(string policyPath, string browser, string listKind, string listName,
@@ -1104,6 +1215,73 @@ internal sealed class WindowsWebsitePolicyRegistryTransactionBackend :
             managed.SetValue(name, int.Parse(after.Value!, CultureInfo.InvariantCulture), RegistryValueKind.DWord);
         else
             managed.DeleteValue(name, throwOnMissingValue: false);
+        managed.Flush();
+    }
+
+    private WebsitePolicyRegistryValueSnapshot ReadSecureDnsValue(SecureDnsTarget target)
+    {
+        using var key = _root.OpenSubKey(target.Key, writable: false);
+        return target.IsDword ? ReadDwordValue(key, target.ValueName) : ReadStringValue(key, target.ValueName);
+    }
+
+    private void WritePolicySecureDns(SecureDnsTarget target, WebsitePolicyRegistryValueSnapshot before,
+        WebsitePolicyRegistryValueSnapshot after, string description)
+    {
+        using var parent = _root.OpenSubKey(target.Key, writable: true) ??
+            (after.Exists ? _root.CreateSubKey(target.Key, writable: true) : null);
+        if (parent is null)
+        {
+            if (before.Exists) throw new IOException($"{description} 在事务恢复前消失。");
+            return;
+        }
+
+        var current = target.IsDword
+            ? ReadDwordValue(parent, target.ValueName)
+            : ReadStringValue(parent, target.ValueName);
+        if (current == after) return;
+        if (current != before) throw new IOException($"{description} 被外部修改；保留外部值并停止恢复。");
+        if (after.Exists)
+        {
+            if (target.IsDword)
+                parent.SetValue(target.ValueName, int.Parse(after.Value!, CultureInfo.InvariantCulture),
+                    RegistryValueKind.DWord);
+            else
+                parent.SetValue(target.ValueName, after.Value!, RegistryValueKind.String);
+        }
+        else parent.DeleteValue(target.ValueName, throwOnMissingValue: false);
+        parent.Flush();
+    }
+
+    private void WriteManagedText(string browser, string name,
+        WebsitePolicyRegistryValueSnapshot before, WebsitePolicyRegistryValueSnapshot after, string description)
+    {
+        using var agent = _root.OpenSubKey(AgentKey, writable: true) ??
+            (after.Exists ? _root.CreateSubKey(AgentKey, writable: true) : null);
+        if (agent is null)
+        {
+            if (before.Exists) throw new IOException($"网站策略 {description} 所有权记录在事务期间消失。");
+            return;
+        }
+        using var managedRoot = agent.OpenSubKey("Managed", writable: true) ??
+            (after.Exists ? agent.CreateSubKey("Managed", writable: true) : null);
+        if (managedRoot is null)
+        {
+            if (before.Exists) throw new IOException($"网站策略 {description} 所有权记录在事务期间消失。");
+            return;
+        }
+        using var managed = managedRoot.OpenSubKey(browser, writable: true) ??
+            (after.Exists ? managedRoot.CreateSubKey(browser, writable: true) : null);
+        if (managed is null)
+        {
+            if (before.Exists) throw new IOException($"网站策略 {description} 所有权记录在事务期间消失。");
+            return;
+        }
+
+        var current = ReadStringValue(managed, name);
+        if (current == after) return;
+        if (current != before) throw new IOException($"网站策略 {description} 所有权值被外部修改；保留外部值并停止恢复。");
+        if (after.Exists) managed.SetValue(name, after.Value!, RegistryValueKind.String);
+        else managed.DeleteValue(name, throwOnMissingValue: false);
         managed.Flush();
     }
 
