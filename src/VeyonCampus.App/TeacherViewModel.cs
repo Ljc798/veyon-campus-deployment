@@ -9125,6 +9125,15 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         PolicySummary = $"网站 r{summary.WebsiteRevision}：{websiteMode}" +
             (summary.ApplicationSupported ? $" · 应用 {summary.ApplicationMode} r{summary.ApplicationRevision}" : " · 应用策略未启用") +
             (summary.SystemPolicySupported ? summary.SystemPolicyPending == true ? " · Windows 策略待处理" : " · Agent 已报告 Windows 策略（效果待核验）" : " · Windows 策略未启用") +
+            (summary.WebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined
+                ? summary.HostsError is { Length: > 0 } hostsError
+                    ? $" · hosts 兜底失败：{hostsError}"
+                    : summary.HostsRevision is { } hostsRevision
+                        ? hostsRevision == summary.WebsiteRevision
+                            ? $" · hosts 兜底 r{hostsRevision}（覆盖 360 等不读策略的浏览器）"
+                            : $" · hosts 兜底落后（r{hostsRevision}，当前 r{summary.WebsiteRevision}）"
+                        : " · hosts 兜底未上报"
+                : "") +
             (summary.EdgeProfileCount is { } edgeCount
                 ? $" · Edge Profile 降级 {summary.EdgeDegradedProfileCount}/{edgeCount}"
                 : " · Edge 策略回执未提供");

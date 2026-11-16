@@ -5447,7 +5447,8 @@ public sealed class WebsitePolicyAgent
                         edgeWebsite?.ExecutionMode, edgeWebsite?.Revision,
                         edgeWebsite?.Profiles.Count, edgeWebsite?.Profiles.Count(profile => profile.Status == "degraded"),
                         updateState, StudentApplicationUpdateProcessor.TryReadInstalledStudentSetupVersion(),
-                        inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId());
+                        inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId(),
+                        website.HostsRevision, website.HostsError);
                     var signedSummary = StudentAgentResponseCryptography.Sign(summary, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSummary),
                         "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
@@ -6270,7 +6271,11 @@ public static class WebsitePolicyRegistryStore
         }
         return new WebsitePolicyReportedState(revision, mode, expires, expired,
             includeDomains ? Array.AsReadOnly(blockedDomains) : null,
-            includeDomains ? Array.AsReadOnly(allowedDomains) : null);
+            includeDomains ? Array.AsReadOnly(allowedDomains) : null,
+            key.GetValue("HostsRevision", null, RegistryValueOptions.DoNotExpandEnvironmentNames) is long hostsRevision
+                ? hostsRevision
+                : null,
+            key.GetValue("HostsError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string);
 
         DateTimeOffset? ReadUtc(string valueName)
         {
@@ -6459,6 +6464,7 @@ public static class WebsitePolicyRegistryStore
             RemovedOwnedBrowser(before.Edge), RemovedOwnedBrowser(before.Chrome),
             RemovedOwnedBrowser(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before)));
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Remove, before, after);
+        ClearHostsFallback();
     }
 
     private static WebsitePolicyBrowserRegistrySnapshot RemovedOwnedBrowser(
@@ -6496,7 +6502,7 @@ public static class WebsitePolicyRegistryStore
 
         var allowedAgentValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "EdgeExecutionMode",
-                "PolicyDocumentJson", "EdgeExtensionId", "PendingTransactionJson" };
+                "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError", "PendingTransactionJson" };
         if (agentKey.GetValueNames().Any(name => !allowedAgentValues.Contains(name)) ||
             agentKey.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
             throw new IOException("网站策略代理注册表包含未知值或子项；卸载没有修改浏览器策略。" );
@@ -6595,6 +6601,7 @@ public static class WebsitePolicyRegistryStore
             Firefox = ClearedBrowserPolicy(WebsitePolicyRegistryTransactions.FirefoxSnapshot(before))
         };
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Expire, before, after);
+        ClearHostsFallback();
         return true;
     }
 
@@ -6646,6 +6653,7 @@ public static class WebsitePolicyRegistryStore
         var after = CreateAppliedSnapshot(before, document, edgeCompiled, chromeCompiled, firefoxCompiled,
             manageEdge: executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry);
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Apply, before, after);
+        ApplyHostsFallback(document);
         return executionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry &&
                (!SameList(before.Edge.PolicyBlocklist, after.Edge.PolicyBlocklist) ||
                 !SameList(before.Edge.PolicyAllowlist, after.Edge.PolicyAllowlist) ||
@@ -6657,6 +6665,51 @@ public static class WebsitePolicyRegistryStore
 
     private static bool SameList(WebsitePolicyRegistryListSnapshot left, WebsitePolicyRegistryListSnapshot right) =>
         left.Exists == right.Exists && left.Values.SequenceEqual(right.Values, StringComparer.Ordinal);
+
+    /// <summary>
+    /// Mirrors the blocked domains into the hosts file. Chromium policy is only honoured by
+    /// browsers that implement it, so this is the only layer that reaches 360, QQ, Sogou and
+    /// similar vendor browsers. A failure here must never fail the whole policy: the registry
+    /// transaction is already committed, and rolling Edge/Chrome/Firefox back would remove the
+    /// coverage that does work. The outcome is recorded so the teacher console can report it.
+    /// </summary>
+    private static void ApplyHostsFallback(WebsitePolicyDocument document)
+    {
+        var blocked = document.Mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined
+            ? document.Domains
+            : Array.Empty<string>();
+        RecordHostsFallbackState(HostsFileWebsitePolicy.Apply(document.Revision, document.CampusId, blocked));
+    }
+
+    private static void ClearHostsFallback() => RecordHostsFallbackState(HostsFileWebsitePolicy.Clear());
+
+    private static void RecordHostsFallbackState(HostsFilePolicyResult result)
+    {
+        try
+        {
+            using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
+            using var key = root.OpenSubKey(AgentKey, writable: true);
+            if (key is null) return;
+            if (result.Applied && result.Revision > 0)
+            {
+                key.SetValue("HostsRevision", result.Revision, RegistryValueKind.QWord);
+                key.DeleteValue("HostsError", throwOnMissingValue: false);
+            }
+            else if (result.Applied)
+            {
+                key.DeleteValue("HostsRevision", throwOnMissingValue: false);
+                key.DeleteValue("HostsError", throwOnMissingValue: false);
+            }
+            else
+            {
+                key.DeleteValue("HostsRevision", throwOnMissingValue: false);
+                var message = result.Error ?? "hosts 兜底写入失败。";
+                key.SetValue("HostsError", message.Length <= 512 ? message : message[..512], RegistryValueKind.String);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              System.Security.SecurityException) { }
+    }
 
     private static void ReconcilePendingTransaction()
     {

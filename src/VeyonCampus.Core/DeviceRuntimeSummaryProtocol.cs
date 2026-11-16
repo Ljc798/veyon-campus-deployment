@@ -34,7 +34,12 @@ public sealed record StudentAgentRuntimeSummary(
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     StudentInputGuardRuntimeSnapshot? InputGuard = null,
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? BootId = null);
+    string? BootId = null,
+    /// <summary>Revision of the managed hosts block, which is what reaches browsers that ignore machine policy.</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    long? HostsRevision = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? HostsError = null);
 
 /// <summary>Short-lived InputGuard state included only in runtime-summary schema v2.</summary>
 public sealed record StudentInputGuardRuntimeSnapshot(int SchemaVersion, bool Supported,

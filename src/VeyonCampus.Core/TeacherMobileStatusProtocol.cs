@@ -12,7 +12,9 @@ public sealed record WebsitePolicyStatusRequest(int SchemaVersion, string Purpos
 public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode Mode,
     DateTimeOffset? ExpiresUtc, DateTimeOffset? ExpiredUtc,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? BlockedDomains = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedDomains = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] IReadOnlyList<string>? AllowedDomains = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] long? HostsRevision = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? HostsError = null);
 public sealed record ApplicationPolicyReportedState(bool Supported, long? Revision,
     ApplicationPolicyMode? Mode, DateTimeOffset? ExpiresUtc);
 public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revision,
