@@ -9,3 +9,4 @@ scripts/legacy/add_computer_v1.txt linguist-language=PowerShell
 *.mp4 binary
 *.exe binary
 *.zip binary
+*.pem -text
