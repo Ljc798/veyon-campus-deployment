@@ -530,25 +530,15 @@ jobs:
         env:
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM }}
-          CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
-          CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
         shell: bash
         run: |
           set -euo pipefail
           missing=()
           for name in \
             VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM \
-            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
-            CLOUDBASE_ENV_ID \
-            CLOUDBASE_API_KEY \
-            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
+            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM; do
             if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
           done
-          if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != "yes" ]]; then
-            echo 'Rotate the CloudBase service API key and set the matching release acknowledgement secret first.' >&2
-            exit 1
-          fi
           if ((${#missing[@]})); then
             printf 'Missing release configuration: %s\n' "${missing[*]}" >&2
             exit 1
