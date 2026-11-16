@@ -764,5 +764,6 @@ module.exports = {
   MAX_ARCHIVE_BYTES,
   canonicalizeArchive,
   canonicalizeFolderFiles,
+  makeZip,
   parseJson
 };

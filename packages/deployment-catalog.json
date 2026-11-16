@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-11-16T07:07:09.328Z",
+  "packages": [
+    {
+      "packageId": "b747bb33-f048-4118-9a4d-a7dcd298b919",
+      "campusId": null,
+      "campusName": "智学前程-1019-1",
+      "displayName": "智学前程-1019-1",
+      "computerPrefix": "PC-",
+      "schemaVersion": 7,
+      "targetOs": "windows",
+      "architecture": "x64",
+      "fileName": "campus-package.zip",
+      "sizeBytes": 5855,
+      "sha256": "F9C00856E8530C1CEC1957EF435F458BB110162B79B2C19A1B97F12861C0B56D",
+      "downloadUrl": "https://api.gitcode.com/api/v5/repos/ljc_1126/veyon-campus-deployment/raw/packages/b747bb33-f048-4118-9a4d-a7dcd298b919.zip?ref=develop",
+      "mirrors": [
+        "https://raw.githubusercontent.com/Ljc798/veyon-campus-deployment/develop/packages/b747bb33-f048-4118-9a4d-a7dcd298b919.zip"
+      ],
+      "downloadCount": 0,
+      "publishedAt": "2026-11-16T07:07:09.327Z",
+      "requiresPhoneLast4": false,
+      "status": "published"
+    }
+  ]
+}

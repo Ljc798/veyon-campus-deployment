@@ -45,6 +45,13 @@ if (args is ["--application-release-fixtures"])
     return;
 }
 
+if (args is ["--deployment-package-catalog-fixtures"])
+{
+    DeploymentPackageCatalogChecks.Run();
+    Console.WriteLine("PASS deployment package catalogue search, digest verification and API fallback");
+    return;
+}
+
 if (args is ["--first-deployment-fixtures"])
 {
     TeacherWorkflowChecks.RunFirstRunLaunch();
@@ -840,6 +847,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 Check("Veyon 地点 UUID 投影、同名不同身份与按 UUID 选择（R19/R20/R21）",
     CheckLocationIdentityProjection);
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
+Check("配置包静态目录：搜索语义、摘要校验、来源白名单与 API 回退", DeploymentPackageCatalogChecks.Run);
 Check("更新诊断错误分类、隐私字段、手动导出与存储容量上限", UpdateDiagnosticsChecks.Run);
 await CheckAsync("教师端名单恢复、重启倒计时、稳定重试状态和更新服务错误提示", TeacherRestartRegressionChecks.RunAsync);
 Check("低敏运维汇总默认关闭、HKT 聚合、幂等待发队列与固定上报字段", CampusOperationsTelemetryChecks.Run);
