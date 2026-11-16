@@ -68,6 +68,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly DispatcherTimer _studentAgentInstallProgressTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
+    private CancellationTokenSource? _lanScanCancellation;
+    private bool _lanScanAttempted;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
@@ -864,6 +866,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     public async Task SearchCloudPackagesAsync()
     {
         if (!CanSearchCloudPackages) return;
+        // An explicit cloud search overrides the automatic LAN sweep; leaving it running would fill
+        // the list with teacher-machine results after the user asked for the internet catalogue.
+        _lanScanCancellation?.Cancel();
         IsSearchingCloudPackages = true;
         CloudPackageStatus = "正在搜索校区配置……";
         CloudPackages.Clear();
@@ -886,31 +891,53 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
+    /// Runs the classroom sweep the first time the package window opens. A technician opening that
+    /// window is about to look for a package, and on a first deployment the teacher machine is both
+    /// the fastest and the only reachable source - so it is worth spending a few seconds before the
+    /// window finishes painting.
+    /// </summary>
+    public async Task EnsureLanPackagesAsync()
+    {
+        if (_lanScanAttempted) return;
+        await ScanLanPackagesAsync();
+    }
+
+    /// <summary>
     /// Finds a teacher machine sharing a package on the classroom LAN. Used for a first deployment in
     /// a room where the internet is unavailable or the cloud catalogue is unreachable.
     /// </summary>
     public async Task ScanLanPackagesAsync()
     {
         if (!CanSearchCloudPackages) return;
+        _lanScanCancellation?.Cancel();
+        using var cancellation = new CancellationTokenSource();
+        _lanScanCancellation = cancellation;
         IsSearchingCloudPackages = true;
-        CloudPackageStatus = "正在扫描教室里的教师机……";
+        CloudPackageStatus = "正在查找教室里的教师机……";
         CloudPackages.Clear();
         SelectedCloudPackage = null;
         try
         {
-            var result = await LanPackageScanner.FindPackagesAsync();
+            var result = await LanPackageScanner.FindPackagesAsync("", cancellation.Token);
+            if (cancellation.IsCancellationRequested) return;
+            _lanScanAttempted = true;
             foreach (var item in result.Items) CloudPackages.Add(item);
             CloudPackageStatus = result.Items.Count == 0
-                ? "教室里没有正在分发配置包的教师机。请确认教师端已点“开始分发”，且两台机器在同一网段。"
-                : $"从教师机获取到 {result.Items.Count} 个校区配置。下载后会自动验证。";
+                ? "教室里没有正在分发配置包的教师机。可点“搜索”从云端获取，或请教师在教师端点“开始分发”。"
+                : $"已发现教师机分发的 {result.Items.Count} 个校区配置。下载后会自动验证。";
             SelectedCloudPackage = CloudPackages.FirstOrDefault();
         }
+        catch (OperationCanceledException) { }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
                                           InvalidDataException or IOException or InvalidOperationException)
         {
             CloudPackageStatus = "局域网扫描失败：" + exception.Message;
         }
-        finally { IsSearchingCloudPackages = false; }
+        finally
+        {
+            if (ReferenceEquals(_lanScanCancellation, cancellation)) _lanScanCancellation = null;
+            IsSearchingCloudPackages = false;
+        }
     }
 
     public void ReportCloudPackageError(string message) => CloudPackageStatus = message;

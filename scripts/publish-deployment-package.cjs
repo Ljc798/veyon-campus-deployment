@@ -41,8 +41,31 @@ const {
 const ARGUMENTS = new Set([
   '--package-dir', '--output-dir', '--display-name', '--campus-id', '--withdraw',
   '--owner', '--repo', '--ref', '--mirror-owner', '--mirror-repo',
-  '--published-at', '--dry-run'
+  '--published-at', '--dry-run', '--help'
 ]);
+
+const USAGE = `发布一个学生配置包到静态目录。
+
+用法：
+  node scripts/publish-deployment-package.cjs --package-dir <配置包文件夹> [选项]
+  node scripts/publish-deployment-package.cjs --withdraw <packageId>
+
+Windows 上更省事：把配置包文件夹直接拖到 scripts\\publish-package.cmd 上。
+
+选项：
+  --package-dir <路径>   学生配置包文件夹（含 manifest.json）
+  --output-dir <路径>    输出目录，默认 packages
+  --display-name <名称>  学生端列表里显示的名称，默认用校区名
+  --campus-id <数字>     关联正式校区编号（可选）
+  --mirror-owner <owner> GitHub 镜像账号，需同时给 --mirror-repo
+  --mirror-repo <repo>   GitHub 镜像仓库
+  --published-at <时间>  覆盖发布时间（ISO 8601）
+  --dry-run              只校验并打印结果，不写文件
+  --withdraw <packageId> 撤回一个已发布的配置包
+
+发布后还需要提交并推送，学生端才会看到：
+  git add packages && git commit -m "Publish campus package" && git push
+`;
 
 function parseArguments(args) {
   const options = {};
@@ -201,7 +224,12 @@ function publish(options) {
 }
 
 function main() {
-  const options = parseArguments(process.argv.slice(2));
+  const args = process.argv.slice(2);
+  if (args.length === 0 || args.includes('--help')) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  const options = parseArguments(args);
   const result = publish(options);
   process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
   if (!result.dryRun) {
