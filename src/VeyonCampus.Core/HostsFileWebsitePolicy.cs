@@ -41,7 +41,7 @@ public static class HostsFileWebsitePolicy
         var path = hostsPath ?? DefaultPath;
         if (!File.Exists(path)) return null;
         string[] lines;
-        try { lines = File.ReadAllLines(path); }
+        try { (lines, _) = ReadHosts(path); }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         { return null; }
 
@@ -93,7 +93,7 @@ public static class HostsFileWebsitePolicy
         try
         {
             var inside = false;
-            foreach (var line in File.ReadAllLines(path))
+            foreach (var line in ReadHosts(path).Lines)
             {
                 var trimmed = line.Trim();
                 if (trimmed == BeginMarker) { inside = true; continue; }
@@ -137,9 +137,11 @@ public static class HostsFileWebsitePolicy
                 $"hosts 兜底最多允许 {MaximumDomains} 个域名（每个域名展开为两条记录）。");
 
         string[] existing;
+        Encoding encoding;
         try
         {
-            existing = File.Exists(path) ? File.ReadAllLines(path) : [];
+            if (File.Exists(path)) (existing, encoding) = ReadHosts(path);
+            else (existing, encoding) = ([], Utf8NoBom);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -166,7 +168,7 @@ public static class HostsFileWebsitePolicy
         var temporaryPath = path + ".veyoncampus.tmp";
         try
         {
-            File.WriteAllText(temporaryPath, content, Utf8NoBom);
+            File.WriteAllText(temporaryPath, content, encoding);
             File.Move(temporaryPath, path, overwrite: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -179,6 +181,32 @@ public static class HostsFileWebsitePolicy
         _ = DnsFlushResolverCache();
         return new HostsFilePolicyResult(true, revision, entries.Count, null);
     }
+
+    /// <summary>
+    /// Reads the hosts file without changing its encoding. A school machine may carry GBK comments
+    /// left by another tool; decoding those as UTF-8 and writing them back would corrupt them, so
+    /// invalid UTF-8 falls back to Latin-1, which round-trips every byte unchanged.
+    /// </summary>
+    private static (string[] Lines, Encoding Encoding) ReadHosts(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+        try
+        {
+            var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+            var text = strictUtf8.GetString(bytes);
+            if (text.Length > 0 && text[0] == '\uFEFF') text = text[1..];
+            return (SplitLines(text), Utf8NoBom);
+        }
+        catch (DecoderFallbackException)
+        {
+            var latin1 = Encoding.Latin1;
+            return (SplitLines(latin1.GetString(bytes)), latin1);
+        }
+    }
+
+    private static string[] SplitLines(string text) => text.Length == 0
+        ? []
+        : text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace('\r', '\n').Split('\n');
 
     private static List<string> StripManagedBlock(IReadOnlyList<string> lines)
     {

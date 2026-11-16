@@ -50,11 +50,45 @@ internal static class HostsFilePolicyChecks
             var created = HostsFileWebsitePolicy.Apply(11, "campus-b", ["blocked.example"], missingPath);
             Expect(created.Applied && HostsFileWebsitePolicy.ReadAppliedRevision(missingPath) == 11,
                 "hosts block was not created for a missing hosts file.");
+
+            // Schools often carry a hosts file written in the local ANSI code page. Those bytes must
+            // survive a block write unchanged; decoding them as UTF-8 would replace them.
+            var legacyPath = Path.Combine(directory, "hosts-legacy");
+            var legacyBytes = new byte[] { 0xB7, 0xFE, 0xCE, 0xF1 };
+            File.WriteAllBytes(legacyPath,
+            [
+                .. System.Text.Encoding.ASCII.GetBytes("127.0.0.1 localhost\r\n# "),
+                .. legacyBytes,
+                .. System.Text.Encoding.ASCII.GetBytes("\r\n")
+            ]);
+            var legacyApplied = HostsFileWebsitePolicy.Apply(13, "campus-c", ["blocked.example"], legacyPath);
+            Expect(legacyApplied.Applied, "hosts block was not applied to an ANSI encoded hosts file.");
+            Expect(ContainsSequence(File.ReadAllBytes(legacyPath), legacyBytes),
+                "hosts write corrupted bytes that were not valid UTF-8.");
+            HostsFileWebsitePolicy.Clear(legacyPath);
+            Expect(ContainsSequence(File.ReadAllBytes(legacyPath), legacyBytes),
+                "clearing the hosts block corrupted bytes that were not valid UTF-8.");
         }
         finally
         {
             try { Directory.Delete(directory, recursive: true); } catch { }
         }
+    }
+
+    private static bool ContainsSequence(byte[] haystack, byte[] needle)
+    {
+        for (var index = 0; index + needle.Length <= haystack.Length; index++)
+        {
+            var matched = true;
+            for (var offset = 0; offset < needle.Length; offset++)
+            {
+                if (haystack[index + offset] == needle[offset]) continue;
+                matched = false;
+                break;
+            }
+            if (matched) return true;
+        }
+        return false;
     }
 
     private static int CountOccurrences(string text, string value)
