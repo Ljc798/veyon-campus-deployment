@@ -26,6 +26,16 @@ if (-not (Test-Path (Join-Path $distRoot 'index.html'))) {
     throw "没有找到 $distRoot\index.html，请先构建。"
 }
 
+# Every route except '/' and '/docs' is a clean URL with no file behind it, so a host that does not
+# fall back to index.html answers /product and /download with 404. EdgeOne Pages reads this file;
+# object storage gets the same behaviour from its "error document" setting instead.
+$edgeOneConfig = Join-Path $distRoot 'edgeone.json'
+if (-not (Test-Path $edgeOneConfig)) {
+    $edgeOneSource = Join-Path $siteRoot 'public\edgeone.json'
+    if (Test-Path $edgeOneSource) { Copy-Item -LiteralPath $edgeOneSource -Destination $edgeOneConfig }
+    else { throw "缺少 public\edgeone.json：EdgeOne 部署后刷新 /product 这类路由会返回 404。" }
+}
+
 # The admin module is tree-shaken out in static-only mode; catching it here means nobody ships a
 # console whose every request returns 402 from a retired environment.
 $adminLeak = Get-ChildItem -Path (Join-Path $distRoot 'assets') -Filter '*.js' -File |
