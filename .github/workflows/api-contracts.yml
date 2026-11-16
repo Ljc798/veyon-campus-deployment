@@ -76,6 +76,7 @@ jobs:
           node --check scripts/release-signing-key.test.cjs
           node --check scripts/apply-cloudbase-release-migrations.test.cjs
           node --check scripts/publish-application-release.cjs
+          node --check scripts/build-release-catalog.cjs
           bash -n scripts/apply-cloudbase-release-migrations.sh
       - name: Test release signing key generation and offline verification
         run: node --test scripts/release-signing-key.test.cjs

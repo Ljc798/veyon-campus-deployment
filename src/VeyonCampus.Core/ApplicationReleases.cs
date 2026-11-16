@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Runtime.ExceptionServices;
 using System.Numerics;
 using System.Security.Cryptography;
 using System.Text;
@@ -60,7 +61,9 @@ public sealed record ApplicationReleaseCheckResult(
     ApplicationReleaseEnvelope? Release,
     bool IsNewer,
     string CurrentVersion,
-    ApplicationReleaseAgentTargetEnvelope? StudentAgentTarget = null);
+    ApplicationReleaseAgentTargetEnvelope? StudentAgentTarget = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    IReadOnlyList<string>? MirrorDownloadUrls = null);
 
 public static class ApplicationReleaseCompatibility
 {
@@ -148,7 +151,7 @@ public static class ApplicationReleaseTrust
     }
 }
 
-public sealed class ApplicationReleaseClient
+public sealed partial class ApplicationReleaseClient
 {
     public const long MaximumArtifactBytes = 512L * 1024 * 1024;
     private const int MaximumMetadataBytes = 64 * 1024;
@@ -174,15 +177,25 @@ public sealed class ApplicationReleaseClient
     private readonly Uri _apiBaseAddress;
     private readonly HttpClient _client;
     private readonly string _publicKeyPem;
+    private readonly IReadOnlyList<ReleaseCatalogSource> _catalogSources;
+    private readonly bool _legacyApiEnabled;
     public Uri ApiBaseAddress => _apiBaseAddress;
 
+    /// <summary>
+    /// Production path: the published release catalogue is the only source, because the previous
+    /// CloudBase-hosted API is gone. The legacy <c>/v4/releases/latest</c> shape stays reachable for a
+    /// self-hosted API or an offline test that sets its own base address explicitly.
+    /// </summary>
     public ApplicationReleaseClient()
         : this(DeploymentPackageApiConfiguration.GetApiBaseAddress(), SharedClient,
-            ApplicationReleaseTrust.LoadPinnedPublicKeyPem())
+            ApplicationReleaseTrust.LoadPinnedPublicKeyPem(), ReleaseCatalogConfiguration.Resolve(),
+            legacyApiEnabled: !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable("VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL")))
     {
     }
 
-    public ApplicationReleaseClient(Uri apiBaseAddress, HttpClient client, string publicKeyPem)
+    public ApplicationReleaseClient(Uri apiBaseAddress, HttpClient client, string publicKeyPem,
+        IReadOnlyList<ReleaseCatalogSource>? catalogSources = null, bool legacyApiEnabled = true)
     {
         ArgumentNullException.ThrowIfNull(apiBaseAddress);
         ArgumentNullException.ThrowIfNull(client);
@@ -196,6 +209,8 @@ public sealed class ApplicationReleaseClient
         _apiBaseAddress = apiBaseAddress;
         _client = client;
         _publicKeyPem = publicKeyPem;
+        _catalogSources = catalogSources ?? [];
+        _legacyApiEnabled = legacyApiEnabled;
         using var publicKey = ImportPublicKey(publicKeyPem);
     }
 
@@ -203,6 +218,11 @@ public sealed class ApplicationReleaseClient
         string currentVersion, CancellationToken cancellationToken = default)
     {
         _ = ParseVersion(currentVersion);
+        var catalogEntry = await TryReadCatalogEntryAsync(role, cancellationToken).ConfigureAwait(false);
+        if (catalogEntry is not null)
+            return EvaluateLatest(catalogEntry.Release, role, currentVersion, catalogEntry.StudentAgentTarget,
+                catalogEntry.MirrorDownloadUrls);
+        if (!_legacyApiEnabled) return new(null, false, currentVersion);
         var roleName = RoleName(role);
         var releaseApiVersion = role == ApplicationReleaseRole.MaintenanceService ? 5 : 4;
         var url = new Uri(_apiBaseAddress,
@@ -237,6 +257,9 @@ public sealed class ApplicationReleaseClient
         CancellationToken cancellationToken = default)
     {
         _ = ParseVersion(version);
+        var catalogNotes = await TryReadCatalogNotesAsync(version, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(catalogNotes)) return catalogNotes;
+        if (!_legacyApiEnabled) return null;
         var url = new Uri(_apiBaseAddress,
             $"v1/releases/notes?version={Uri.EscapeDataString(version)}");
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
@@ -266,7 +289,8 @@ public sealed class ApplicationReleaseClient
 
     public ApplicationReleaseCheckResult EvaluateLatest(ApplicationReleaseEnvelope? release,
         ApplicationReleaseRole role, string currentVersion,
-        ApplicationReleaseAgentTargetEnvelope? studentAgentTarget = null)
+        ApplicationReleaseAgentTargetEnvelope? studentAgentTarget = null,
+        IReadOnlyList<string>? mirrorDownloadUrls = null)
     {
         _ = ParseVersion(currentVersion);
         if (release is null) return new(null, false, currentVersion);
@@ -279,7 +303,7 @@ public sealed class ApplicationReleaseClient
             VerifyStudentAgentTarget(studentAgentTarget, release, _publicKeyPem);
         }
         return new(release, CompareVersions(release.Manifest.Version, currentVersion) > 0, currentVersion,
-            studentAgentTarget);
+            studentAgentTarget, mirrorDownloadUrls is { Count: > 0 } ? mirrorDownloadUrls : null);
     }
 
     public static byte[] CreateCanonicalStudentAgentTargetPayload(ApplicationReleaseAgentTargetManifest manifest)
@@ -332,7 +356,8 @@ public sealed class ApplicationReleaseClient
         ApplicationReleaseRole expectedRole, string destinationDirectory,
         CancellationToken cancellationToken = default,
         IProgress<InstallerResourceProgress>? progress = null, Action<bool>? cacheStatus = null,
-        Action<long>? networkBytesProgress = null)
+        Action<long>? networkBytesProgress = null,
+        IReadOnlyList<string>? mirrorDownloadUrls = null)
     {
         ArgumentNullException.ThrowIfNull(release);
         ArgumentException.ThrowIfNullOrWhiteSpace(destinationDirectory);
@@ -367,82 +392,124 @@ public sealed class ApplicationReleaseClient
         var temporaryPath = Path.Combine(targetDirectory, "." + Guid.NewGuid().ToString("N") + ".partial");
         var envelopeTemporaryPath = temporaryPath + ".release.json";
         var artifactMoved = false;
+        var failures = new List<(string Host, Exception Error)>();
+        var sources = BuildDownloadSources(release, mirrorDownloadUrls);
 
-        try
+        for (var attempt = 0; attempt < sources.Count; attempt++)
         {
-            using var response = await SendArtifactRequestAsync(new Uri(release.Manifest.DownloadUrl),
-                cancellationToken).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-                throw new HttpRequestException("安装器下载暂时不可用。", null, response.StatusCode);
-            if (response.Content.Headers.ContentLength is { } contentLength &&
-                contentLength != release.Manifest.SizeBytes)
-                throw new InvalidDataException("安装器大小与已签名发布清单不符。");
-
-            progress?.Report(new InstallerResourceProgress(0, release.Manifest.SizeBytes));
-            ReportNetworkBytes(networkBytesProgress, 0);
-            using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
-                             FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
-            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
+            var endpoint = sources[attempt];
+            try
             {
-                var buffer = new byte[64 * 1024];
-                long totalBytes = 0, lastReportedBytes = 0;
-                int bytesRead;
-                while ((bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+                using var response = await SendArtifactRequestAsync(endpoint,
+                        cancellationToken).ConfigureAwait(false);
+                if (!response.IsSuccessStatusCode)
+                    throw new HttpRequestException("安装器下载暂时不可用。", null, response.StatusCode);
+                if (response.Content.Headers.ContentLength is { } contentLength &&
+                    contentLength != release.Manifest.SizeBytes)
+                    throw new InvalidDataException("安装器大小与已签名发布清单不符。");
+
+                progress?.Report(new InstallerResourceProgress(0, release.Manifest.SizeBytes));
+                ReportNetworkBytes(networkBytesProgress, 0);
+                using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                await using (var target = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write,
+                                 FileShare.None, 64 * 1024, FileOptions.Asynchronous | FileOptions.WriteThrough))
+                await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    totalBytes += bytesRead;
-                    if (totalBytes > release.Manifest.SizeBytes || totalBytes > MaximumArtifactBytes)
-                        throw new InvalidDataException("安装器超过已签名清单声明的大小。");
-                    digest.AppendData(buffer, 0, bytesRead);
-                    await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
-                    if (totalBytes < release.Manifest.SizeBytes &&
-                        totalBytes - lastReportedBytes >= 1024 * 1024)
+                    var buffer = new byte[64 * 1024];
+                    long totalBytes = 0, lastReportedBytes = 0;
+                    int bytesRead;
+                    while ((bytesRead = await source.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
                     {
-                        progress?.Report(new InstallerResourceProgress(totalBytes, release.Manifest.SizeBytes));
-                        lastReportedBytes = totalBytes;
+                        totalBytes += bytesRead;
+                        if (totalBytes > release.Manifest.SizeBytes || totalBytes > MaximumArtifactBytes)
+                            throw new InvalidDataException("安装器超过已签名清单声明的大小。");
+                        digest.AppendData(buffer, 0, bytesRead);
+                        await target.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken).ConfigureAwait(false);
+                        if (totalBytes < release.Manifest.SizeBytes &&
+                            totalBytes - lastReportedBytes >= 1024 * 1024)
+                        {
+                            progress?.Report(new InstallerResourceProgress(totalBytes, release.Manifest.SizeBytes));
+                            lastReportedBytes = totalBytes;
+                        }
+                        ReportNetworkBytes(networkBytesProgress, totalBytes);
                     }
-                    ReportNetworkBytes(networkBytesProgress, totalBytes);
+                    await target.FlushAsync(cancellationToken).ConfigureAwait(false);
+                    if (totalBytes != release.Manifest.SizeBytes)
+                        throw new InvalidDataException("安装器下载不完整。");
                 }
-                await target.FlushAsync(cancellationToken).ConfigureAwait(false);
-                if (totalBytes != release.Manifest.SizeBytes)
-                    throw new InvalidDataException("安装器下载不完整。");
-            }
 
-            var actualSha256 = Convert.ToHexString(digest.GetHashAndReset());
-            if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualSha256),
-                    Encoding.ASCII.GetBytes(release.Manifest.Sha256)))
-                throw new InvalidDataException("安装器 SHA-256 与已签名发布清单不符。");
-            await using (var envelopeStream = new FileStream(envelopeTemporaryPath, FileMode.CreateNew,
-                             FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
-            {
-                await JsonSerializer.SerializeAsync(envelopeStream, release, JsonOptions, cancellationToken)
-                    .ConfigureAwait(false);
-                await envelopeStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                var actualSha256 = Convert.ToHexString(digest.GetHashAndReset());
+                if (!CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actualSha256),
+                        Encoding.ASCII.GetBytes(release.Manifest.Sha256)))
+                    throw new InvalidDataException("安装器 SHA-256 与已签名发布清单不符。");
+                await using (var envelopeStream = new FileStream(envelopeTemporaryPath, FileMode.CreateNew,
+                                 FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous | FileOptions.WriteThrough))
+                {
+                    await JsonSerializer.SerializeAsync(envelopeStream, release, JsonOptions, cancellationToken)
+                        .ConfigureAwait(false);
+                    await envelopeStream.FlushAsync(cancellationToken).ConfigureAwait(false);
+                }
+                artifactMoved = TryMoveStagedFile(temporaryPath, targetPath);
+                TryMoveStagedFile(envelopeTemporaryPath, envelopePath);
+                progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
+                    release.Manifest.SizeBytes));
+                ReportNetworkBytes(networkBytesProgress, release.Manifest.SizeBytes);
+                ReportCacheStatus(cacheStatus, cacheHit: false);
+                return targetPath;
             }
-            artifactMoved = TryMoveStagedFile(temporaryPath, targetPath);
-            TryMoveStagedFile(envelopeTemporaryPath, envelopePath);
-            progress?.Report(new InstallerResourceProgress(release.Manifest.SizeBytes,
-                release.Manifest.SizeBytes));
-            ReportNetworkBytes(networkBytesProgress, release.Manifest.SizeBytes);
-            ReportCacheStatus(cacheStatus, cacheHit: false);
-            return targetPath;
-        }
-        catch
-        {
-            try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            try { if (File.Exists(envelopeTemporaryPath)) File.Delete(envelopeTemporaryPath); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            if (artifactMoved)
+            catch (Exception exception) when (exception is HttpRequestException or IOException or InvalidDataException)
             {
-                try { if (File.Exists(targetPath)) File.Delete(targetPath); }
+                try { if (File.Exists(temporaryPath)) File.Delete(temporaryPath); }
                 catch (IOException) { }
                 catch (UnauthorizedAccessException) { }
+                try { if (File.Exists(envelopeTemporaryPath)) File.Delete(envelopeTemporaryPath); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+                if (artifactMoved)
+                {
+                    try { if (File.Exists(targetPath)) File.Delete(targetPath); }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                    artifactMoved = false;
+                }
+                if (cancellationToken.IsCancellationRequested) throw;
+                failures.Add((endpoint.Host, exception));
             }
-            throw;
         }
+
+        // An integrity failure is not a transport problem: the bytes arrived but did not match the
+        // signed digest. Surfacing it as such keeps the caller's existing handling intact, and a mirror
+        // has already had its chance to supply correct bytes.
+        var integrityFailure = failures.Select(failure => failure.Error).OfType<InvalidDataException>()
+            .FirstOrDefault();
+        if (integrityFailure is not null) ExceptionDispatchInfo.Capture(integrityFailure).Throw();
+        if (failures.Count == 1) ExceptionDispatchInfo.Capture(failures[0].Error).Throw();
+        throw new HttpRequestException(failures.Count == 0
+            ? "安装器下载失败：没有可用的下载来源。"
+            : "安装器下载失败：" + string.Join("；", failures.Select(failure =>
+                $"{failure.Host}: {failure.Error.Message}")));
+    }
+
+    /// <summary>
+    /// Ordered download endpoints: the signed primary URL first, then the mirrors the catalogue listed.
+    /// A mirror is only a transport alternative - the downloaded bytes still have to match the signed
+    /// size and SHA-256 before anything is staged.
+    /// </summary>
+    private static List<Uri> BuildDownloadSources(ApplicationReleaseEnvelope release,
+        IReadOnlyList<string>? mirrorDownloadUrls)
+    {
+        var sources = new List<Uri> { new(release.Manifest.DownloadUrl) };
+        foreach (var mirror in mirrorDownloadUrls ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(mirror)) continue;
+            if (!Uri.TryCreate(mirror.Trim(), UriKind.Absolute, out var uri) ||
+                uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo) ||
+                !string.IsNullOrEmpty(uri.Fragment) || !string.IsNullOrEmpty(uri.Query)) continue;
+            if (sources.Exists(existing => string.Equals(existing.AbsoluteUri, uri.AbsoluteUri,
+                    StringComparison.OrdinalIgnoreCase))) continue;
+            sources.Add(uri);
+        }
+        return sources;
     }
 
     /// <summary>
@@ -714,16 +781,7 @@ public sealed class ApplicationReleaseClient
             (manifest.SchemaVersion is 1 or 2 or 3 && manifest.ReleaseChannel is not null))
             throw new InvalidDataException("发布清单的角色、版本、文件或签名元数据无效。");
 
-        if (!Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||
-            downloadUri.Scheme != apiBaseAddress.Scheme ||
-            !string.Equals(downloadUri.Authority, apiBaseAddress.Authority, StringComparison.OrdinalIgnoreCase) ||
-            !string.IsNullOrEmpty(downloadUri.UserInfo) || !string.IsNullOrEmpty(downloadUri.Fragment))
-            throw new InvalidDataException("发布清单下载地址不属于固定的版本 API 来源。");
-        var pathSegments = downloadUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (pathSegments.Length != 4 || pathSegments[0] != "v1" || pathSegments[1] != "releases" ||
-            pathSegments[3] != "artifact" || !Guid.TryParse(pathSegments[2], out var releaseId) || releaseId == Guid.Empty ||
-            !string.IsNullOrEmpty(downloadUri.Query))
-            throw new InvalidDataException("发布清单下载地址路径无效。");
+        ValidateDownloadUrl(manifest, apiBaseAddress);
 
         byte[] signature;
         try
@@ -745,6 +803,52 @@ public sealed class ApplicationReleaseClient
             throw new InvalidDataException(isLocalTest
                 ? "本地测试发行签名无效；已拒绝此版本。"
                 : "Developer Release 签名无效；已拒绝此版本。");
+    }
+
+    /// <summary>
+    /// The two public release hosts that may carry installers. Naming them here keeps the "a signed
+    /// manifest cannot point somewhere unexpected" property after the CloudBase API went away, without
+    /// pretending the client can guess an arbitrary CDN host.
+    /// </summary>
+    private static readonly string[] ReleaseAssetHosts = ["gitcode.com", "github.com"];
+
+    private static readonly Regex ReleaseAssetTagPattern = new(
+        "^(?:v|beta-v)(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.]+)?$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// A signed manifest may name either the legacy catalogue path
+    /// (<c>{apiBase}/v1/releases/{guid}/artifact</c>) or an asset on a pinned release host
+    /// (<c>https://{host}/{owner}/{repo}/releases/download/{tag}/{fileName}</c>). The signature already
+    /// covers the exact URL; this check only keeps the destination within places we publish to.
+    /// </summary>
+    private static void ValidateDownloadUrl(ApplicationReleaseManifest manifest, Uri apiBaseAddress)
+    {
+        if (!Uri.TryCreate(manifest.DownloadUrl, UriKind.Absolute, out var downloadUri) ||
+            !string.IsNullOrEmpty(downloadUri.UserInfo) || !string.IsNullOrEmpty(downloadUri.Fragment) ||
+            !string.IsNullOrEmpty(downloadUri.Query))
+            throw new InvalidDataException("发布清单下载地址不属于固定的版本来源。");
+
+        var segments = downloadUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        var legacyOrigin = downloadUri.Scheme == apiBaseAddress.Scheme &&
+            string.Equals(downloadUri.Authority, apiBaseAddress.Authority, StringComparison.OrdinalIgnoreCase);
+        if (legacyOrigin)
+        {
+            if (segments.Length != 4 || segments[0] != "v1" || segments[1] != "releases" ||
+                segments[3] != "artifact" || !Guid.TryParse(segments[2], out var releaseId) ||
+                releaseId == Guid.Empty)
+                throw new InvalidDataException("发布清单下载地址路径无效。");
+            return;
+        }
+
+        if (downloadUri.Scheme != Uri.UriSchemeHttps ||
+            !ReleaseAssetHosts.Contains(downloadUri.Host, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidDataException("发布清单下载地址不属于固定的版本来源。");
+        // {owner}/{repo}/releases/download/{tag}/{fileName}
+        if (segments.Length != 6 || segments[2] != "releases" || segments[3] != "download" ||
+            !ReleaseAssetTagPattern.IsMatch(segments[4]) ||
+            !string.Equals(segments[5], manifest.FileName, StringComparison.Ordinal))
+            throw new InvalidDataException("发布清单下载地址路径无效。");
     }
 
     private async Task<HttpResponseMessage> SendArtifactRequestAsync(Uri requestUri,

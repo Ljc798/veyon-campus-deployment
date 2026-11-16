@@ -633,22 +633,27 @@ jobs:
           fi
           args+=( "$RUNNER_TEMP/release-notes.md" )
           node scripts/publish-github-release.cjs "${args[@]}"
-      - name: Publish signed version metadata to CloudBase after GitHub assets are verified
+      - name: Publish the signed release catalogue to the release
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
-          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
-          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
         run: |
           set -euo pipefail
-          node scripts/publish-application-release.cjs \
-            --role TeacherConsole --version "${{ steps.assets.outputs.version }}" \
-            --installer "${{ steps.assets.outputs.teacher }}" --confirm-publication
-          node scripts/publish-application-release.cjs \
-            --role StudentSetup --version "${{ steps.assets.outputs.version }}" \
-            --installer "${{ steps.assets.outputs.student }}" --confirm-publication
+          version="${{ steps.assets.outputs.version }}"
+          tag="v${version}"
+          catalog="$RUNNER_TEMP/release-catalog.json"
+          # The catalogue replaces the retired CloudBase discovery API: clients read it off the newest
+          # release and verify the same signature the installer carries.
+          node scripts/build-release-catalog.cjs \
+            --role TeacherConsole --version "$version" --tag "$tag" \
+            --installer "${{ steps.assets.outputs.teacher }}" --output "$catalog"
+          node scripts/build-release-catalog.cjs \
+            --role StudentSetup --version "$version" --tag "$tag" \
+            --installer "${{ steps.assets.outputs.student }}" \
+            --agent-target "${{ steps.assets.outputs.student }}.agent-target.json" \
+            --output "$catalog"
+          gh release upload "$tag" "$catalog" --clobber
 
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v')

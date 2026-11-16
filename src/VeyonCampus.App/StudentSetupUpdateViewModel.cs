@@ -11,6 +11,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
     private readonly ApplicationReleaseClient? _releaseClient;
     private readonly string? _releaseClientError;
     private ApplicationReleaseEnvelope? _latestRelease;
+    private IReadOnlyList<string>? _latestReleaseMirrors;
     private ApplicationReleaseEnvelope? _stagedRelease;
     private string? _stagedInstallerPath;
     private bool _updateAvailable;
@@ -89,6 +90,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         if (!CanCheckLatest || releaseClient is null) return;
         IsBusy = true;
         _latestRelease = null;
+        _latestReleaseMirrors = null;
         _updateAvailable = false;
         _latestHasRequiredPolicyCapabilities = false;
         NotifyActions();
@@ -98,6 +100,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         {
             var result = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, CurrentVersion);
             _latestRelease = result.Release;
+            _latestReleaseMirrors = result.MirrorDownloadUrls;
             _updateAvailable = result.IsNewer;
             _latestHasRequiredPolicyCapabilities = result.Release is not null &&
                 HasRequiredPolicyCapabilities(result.Release.Manifest);
@@ -113,6 +116,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             _latestRelease = null;
+            _latestReleaseMirrors = null;
             _updateAvailable = false;
             _latestHasRequiredPolicyCapabilities = false;
             var failure = RecordFailure(UpdateDiagnosticOperation.Check, null, exception);
@@ -139,7 +143,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             var updateDirectory = GetUpdateDirectory();
             var installerPath = await releaseClient.DownloadAsync(latestRelease,
                 ApplicationReleaseRole.StudentSetup, updateDirectory,
-                progress: CreateDownloadProgress());
+                progress: CreateDownloadProgress(),
+                mirrorDownloadUrls: _latestReleaseMirrors);
             ProgressText = "下载完成，正在核对签名和安装包……";
             var verified = ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
                 ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
@@ -183,7 +188,8 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             var updateDirectory = GetUpdateDirectory();
             var sourceInstallerPath = await releaseClient.DownloadAsync(latestRelease,
                 ApplicationReleaseRole.StudentSetup, updateDirectory,
-                progress: CreateDownloadProgress());
+                progress: CreateDownloadProgress(),
+                mirrorDownloadUrls: _latestReleaseMirrors);
             ProgressText = "下载完成，正在验证并导出离线包……";
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(

@@ -2850,6 +2850,7 @@ public sealed partial class TeacherViewModel
         {
             var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, AppVersion);
             _teacherUpdateRelease = result.Release;
+            _teacherUpdateReleaseMirrors = result.MirrorDownloadUrls;
             TeacherUpdateLatestVersion = result.Release?.Manifest.Version ?? "暂无可用版本";
             _teacherUpdateAvailable = result.IsNewer && result.Release is not null &&
                                       HasRequiredPolicyCapabilities(result.Release.Manifest);
@@ -2867,6 +2868,7 @@ public sealed partial class TeacherViewModel
         catch (Exception exception)
         {
             _teacherUpdateRelease = null;
+            _teacherUpdateReleaseMirrors = null;
             _teacherUpdateAvailable = false;
             TeacherUpdateLatestVersion = "获取失败";
             var failure = RecordUpdateFailure(UpdateDiagnosticModule.TeacherConsole,
@@ -2939,7 +2941,8 @@ public sealed partial class TeacherViewModel
                 "VeyonCampus", "Updates");
             var installerPath = await _releaseClient.DownloadAsync(release,
                 ApplicationReleaseRole.TeacherConsole, updateDirectory,
-                progress: new Progress<InstallerResourceProgress>(SetTeacherResourceProgress));
+                progress: new Progress<InstallerResourceProgress>(SetTeacherResourceProgress),
+                mirrorDownloadUrls: _teacherUpdateReleaseMirrors);
             failureStage = "复核安装包并启动更新助手";
             SetTeacherUpdateProgress(true, true, 100, "下载完成，正在复核安装包并启动更新助手……");
             var verificationProgress = new Progress<InstallerResourceProgress>(SetTeacherResourceProgress);
@@ -3008,7 +3011,8 @@ public sealed partial class TeacherViewModel
             var updateDirectory = Path.Combine(VeyonCampusPaths.GetLocalApplicationDataDirectory(),
                 "VeyonCampus", "Updates");
             var downloadedPath = await _releaseClient.DownloadAsync(release,
-                ApplicationReleaseRole.TeacherConsole, updateDirectory);
+                ApplicationReleaseRole.TeacherConsole, updateDirectory,
+                mirrorDownloadUrls: _teacherUpdateReleaseMirrors);
             var publicKeyPem = ApplicationReleaseTrust.LoadPinnedPublicKeyPem();
             var exportedPath = await Task.Run(() => ApplicationReleaseClient.StageVerifiedOfflineRelease(downloadedPath,
                 destinationDirectory, ApplicationReleaseRole.TeacherConsole, _releaseClient.ApiBaseAddress, publicKeyPem));

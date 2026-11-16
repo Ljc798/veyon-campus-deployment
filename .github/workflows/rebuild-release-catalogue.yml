@@ -1,4 +1,4 @@
-name: Publish existing release to CloudBase
+name: Rebuild the signed release catalogue
 
 on:
   workflow_dispatch:
@@ -9,14 +9,14 @@ on:
         type: string
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  publish-cloudbase:
+  rebuild-catalogue:
     runs-on: ubuntu-latest
     environment: production-release
     concurrency:
-      group: cloudbase-release-${{ inputs.version }}
+      group: release-catalogue-${{ inputs.version }}
       cancel-in-progress: false
     env:
       GH_TOKEN: ${{ github.token }}
@@ -50,31 +50,21 @@ jobs:
           )
           test -s "artifacts/VeyonCampus-Teacher-Setup-${RELEASE_VERSION}-win-x64.exe"
           test -s "artifacts/VeyonCampus-Student-Setup-${RELEASE_VERSION}-win-x64.exe"
-      - name: Prepare signing keys and validate release credentials
+      - name: Prepare the release signing keys
         env:
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM }}
-          CLOUDBASE_ENV_ID: ${{ secrets.CLOUDBASE_ENV_ID }}
-          CLOUDBASE_API_KEY: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
         shell: bash
         run: |
           set -euo pipefail
           for name in \
             VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM \
-            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM \
-            CLOUDBASE_ENV_ID \
-            CLOUDBASE_API_KEY \
-            CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW; do
+            VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM; do
             if [[ -z "${!name:-}" ]]; then
               echo "Missing required release configuration: $name" >&2
               exit 1
             fi
           done
-          if [[ "$CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW" != 'yes' ]]; then
-            echo 'The CloudBase service API key rotation acknowledgement is missing.' >&2
-            exit 1
-          fi
           private_key_path="$RUNNER_TEMP/veyon-campus-release-private.pem"
           public_key_path="$RUNNER_TEMP/veyon-campus-release-public.pem"
           printf '%s' "$VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM" > "$private_key_path"
@@ -84,22 +74,32 @@ jobs:
             printf 'VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH=%s\n' "$private_key_path"
             printf 'VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=%s\n' "$public_key_path"
           } >> "$GITHUB_ENV"
-      - name: Publish teacher and student update metadata
+      - name: Download the existing catalogue so the Agent sidecar can be carried over
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh release download "v${RELEASE_VERSION}" --repo "$GITHUB_REPOSITORY" --dir artifacts \
+            --pattern release-catalog.json || true
+      - name: Rebuild and re-upload the signed release catalogue
         env:
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
-          CloudBase__EnvId: ${{ secrets.CLOUDBASE_ENV_ID }}
-          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW }}
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/publish-application-release.cjs \
-            --role TeacherConsole --version "$RELEASE_VERSION" \
+          tag="v${RELEASE_VERSION}"
+          catalog="artifacts/release-catalog.json"
+          if [[ ! -s "$catalog" ]]; then
+            printf '{"schemaVersion":1,"tag":"%s","roles":{}}\n' "$tag" > "$catalog"
+          fi
+          node scripts/build-release-catalog.cjs \
+            --role TeacherConsole --version "$RELEASE_VERSION" --tag "$tag" \
             --installer "artifacts/VeyonCampus-Teacher-Setup-${RELEASE_VERSION}-win-x64.exe" \
-            --confirm-publication
-          node scripts/publish-application-release.cjs \
-            --role StudentSetup --version "$RELEASE_VERSION" \
+            --output "$catalog"
+          node scripts/build-release-catalog.cjs \
+            --role StudentSetup --version "$RELEASE_VERSION" --tag "$tag" \
             --installer "artifacts/VeyonCampus-Student-Setup-${RELEASE_VERSION}-win-x64.exe" \
-            --confirm-publication
+            --output "$catalog"
+          gh release upload "$tag" "$catalog" --clobber

@@ -12,6 +12,7 @@ internal static class ApplicationReleaseChecks
         CheckReleaseNotesPlainText();
         CheckSelfUpdateRollback();
         CheckSignedReleaseMetadataAndDownloadAsync().GetAwaiter().GetResult();
+        CheckReleaseCatalogAsync().GetAwaiter().GetResult();
     }
 
     private static void CheckSelfUpdateRollback()
@@ -350,6 +351,157 @@ internal static class ApplicationReleaseChecks
         try { _ = await action(); }
         catch (InvalidDataException) { return; }
         throw new InvalidOperationException("Invalid application release artifact was accepted.");
+    }
+
+    /// <summary>
+    /// The CloudBase discovery API is gone; releases are now discovered through a release asset on
+    /// GitCode with GitHub as a mirror. These fixtures pin the two properties that matter: the signature
+    /// is still required, and a mirror can only ever deliver bytes that match the signed digest.
+    /// </summary>
+    private static async Task CheckReleaseCatalogAsync()
+    {
+        using var signingKey = RSA.Create(2048);
+        var publicKeyPem = signingKey.ExportSubjectPublicKeyInfoPem();
+        var apiBase = new Uri("https://release-fixture.invalid/");
+        var version = "1.10.0";
+        var fileName = "VeyonCampus-Teacher-Setup-1.10.0-win-x64.exe";
+        var artifactBytes = Encoding.ASCII.GetBytes("synthetic catalogue artifact");
+        var primaryUrl = $"https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v{version}/{fileName}";
+        var mirrorUrl = $"https://github.com/Ljc798/veyon-campus-deployment/releases/download/v{version}/{fileName}";
+        var manifest = new ApplicationReleaseManifest(3, "VeyonCampus.TeacherConsole", "TeacherConsole", version,
+            "win-x64", fileName, artifactBytes.LongLength, Convert.ToHexString(SHA256.HashData(artifactBytes)),
+            primaryUrl, new ApplicationReleasePolicyCapabilities(1, 1));
+        var release = Sign(manifest, signingKey);
+        ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem);
+
+        // scripts/build-release-catalog.cjs signs the same manifest from Node. Both languages have to
+        // produce byte-identical canonical JSON or the published catalogue would never verify, so this
+        // literal is the output of canonicalPayload() for exactly these values.
+        var canonical = Encoding.UTF8.GetString(ApplicationReleaseClient.CreateCanonicalPayload(manifest));
+        Expect(canonical == """
+            {"schemaVersion":3,"product":"VeyonCampus.TeacherConsole","role":"TeacherConsole","version":"1.10.0","architecture":"win-x64","fileName":"VeyonCampus-Teacher-Setup-1.10.0-win-x64.exe","sizeBytes":28,"sha256":"2F58BD1AE2FC8F3CCFA203DD28ECFB0D1481A6B13048C93F9E040E36FB5556AF","downloadUrl":"https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v1.10.0/VeyonCampus-Teacher-Setup-1.10.0-win-x64.exe","policyCapabilities":{"applicationPolicy":1,"studentSystemPolicy":1}}
+            """);
+
+        // A release-asset URL is only acceptable on the two hosts we publish to, and only for the exact
+        // file the signed manifest names.
+        var unknownHost = manifest with
+        {
+            DownloadUrl = $"https://mirror.invalid/ljc_1126/veyon-campus-deployment/releases/download/v{version}/{fileName}"
+        };
+        Reject(() => ApplicationReleaseClient.Verify(Sign(unknownHost, signingKey),
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
+        var wrongFileName = manifest with
+        {
+            DownloadUrl = $"https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v{version}/other.exe"
+        };
+        Reject(() => ApplicationReleaseClient.Verify(Sign(wrongFileName, signingKey),
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
+        var plainHttp = manifest with
+        {
+            DownloadUrl = $"http://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v{version}/{fileName}"
+        };
+        Reject(() => ApplicationReleaseClient.Verify(Sign(plainHttp, signingKey),
+            ApplicationReleaseRole.TeacherConsole, apiBase, publicKeyPem));
+
+        var catalogJson = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            tag = "v" + version,
+            roles = new Dictionary<string, object?>
+            {
+                ["TeacherConsole"] = new { release, mirrors = new[] { mirrorUrl } }
+            }
+        });
+        var source = new ReleaseCatalogSource(ReleaseCatalogKind.GitCode, "ljc_1126", "veyon-campus-deployment");
+        using var client = new HttpClient(new CatalogFixtureHandler(catalogJson, version, fileName, artifactBytes));
+        var releaseClient = new ApplicationReleaseClient(apiBase, client, publicKeyPem, [source],
+            legacyApiEnabled: false);
+
+        var result = await releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.9.0");
+        var catalogRelease = result.Release ?? throw new InvalidOperationException("Catalogue release missing.");
+        Expect(result.IsNewer && catalogRelease.Manifest.Version == version);
+        Expect(result.MirrorDownloadUrls is { Count: 1 } mirrors && mirrors[0] == mirrorUrl);
+
+        // The primary asset answers 500 in the fixture, so only the mirror can supply the bytes.
+        var stagingDirectory = Path.Combine(CanonicalTempRoot(),
+            "veyon-release-catalog-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var downloaded = await releaseClient.DownloadAsync(catalogRelease,
+                ApplicationReleaseRole.TeacherConsole, stagingDirectory,
+                mirrorDownloadUrls: result.MirrorDownloadUrls);
+            Expect(File.Exists(downloaded));
+            Expect(Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(downloaded)))
+                == manifest.Sha256);
+        }
+        finally
+        {
+            try { if (Directory.Exists(stagingDirectory)) Directory.Delete(stagingDirectory, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+
+        // A catalogue whose manifest no longer matches its signature must not be offered to the user.
+        var tampered = manifest with { SizeBytes = manifest.SizeBytes + 1 };
+        var tamperedCatalog = JsonSerializer.Serialize(new
+        {
+            schemaVersion = 1,
+            tag = "v" + version,
+            roles = new Dictionary<string, object?>
+            {
+                ["TeacherConsole"] = new { release = release with { Manifest = tampered }, mirrors = new[] { mirrorUrl } }
+            }
+        });
+        using var tamperedClient = new HttpClient(
+            new CatalogFixtureHandler(tamperedCatalog, version, fileName, artifactBytes));
+        var tamperedReleaseClient = new ApplicationReleaseClient(apiBase, tamperedClient, publicKeyPem, [source],
+            legacyApiEnabled: false);
+        try
+        {
+            await tamperedReleaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.9.0");
+            throw new InvalidOperationException("A tampered catalogue manifest was accepted.");
+        }
+        catch (InvalidDataException)
+        {
+        }
+    }
+
+    private sealed class CatalogFixtureHandler(string catalogJson, string version, string fileName,
+        byte[] artifactBytes) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri ?? throw new InvalidOperationException("Fixture request URL missing.");
+            if (uri.AbsolutePath.EndsWith("/releases/latest", StringComparison.Ordinal))
+            {
+                var catalogUrl = $"https://gitcode.com/ljc_1126/veyon-campus-deployment/releases/download/v{version}/" +
+                                 ReleaseCatalogSource.CatalogAssetName;
+                var body = JsonSerializer.Serialize(new
+                {
+                    tag_name = "v" + version,
+                    prerelease = false,
+                    assets = new[] { new { name = ReleaseCatalogSource.CatalogAssetName, browser_download_url = catalogUrl } }
+                });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                });
+            }
+            if (uri.AbsolutePath.EndsWith("/" + ReleaseCatalogSource.CatalogAssetName, StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(catalogJson, Encoding.UTF8, "application/json")
+                });
+            if (uri.Host == "gitcode.com")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError));
+            if (uri.Host == "github.com" && uri.AbsolutePath.EndsWith("/" + fileName, StringComparison.Ordinal))
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(artifactBytes)
+                });
+            throw new InvalidOperationException($"Unexpected catalogue fixture request: {uri}");
+        }
     }
 
     private sealed class FixtureHandler(Uri apiBase, ApplicationReleaseEnvelope release, byte[] artifactBytes,

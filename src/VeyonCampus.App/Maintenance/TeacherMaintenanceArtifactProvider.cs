@@ -4,7 +4,8 @@ using VeyonCampus.Core.Maintenance;
 namespace VeyonCampus.App.Maintenance;
 
 public sealed record TeacherMaintenanceRelease(ApplicationReleaseEnvelope Release,
-    string? StudentAgentVersion, MaintenanceReleaseChannel Channel);
+    string? StudentAgentVersion, MaintenanceReleaseChannel Channel,
+    IReadOnlyList<string>? MirrorDownloadUrls = null);
 
 /// <summary>Resolves only the teacher-selected release channel and stages its verified StudentSetup artifact.</summary>
 public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArtifactProvider,
@@ -50,7 +51,7 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
             applicationPolicyRequired: true, studentSystemPolicyRequired: true);
         return new TeacherMaintenanceRelease(stableRelease,
             stableRelease.Manifest.StudentAgentVersion ?? check.StudentAgentTarget?.Manifest.StudentAgentVersion,
-            channel);
+            channel, check.MirrorDownloadUrls);
     }
 
     public async Task<LegacyStudentSetupArtifact> GetVerifiedArtifactAsync(MaintenancePlan plan,
@@ -76,7 +77,8 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
                 updateDirectory, ApplicationReleaseRole.StudentSetup, _releaseClient.ApiBaseAddress, publicKeyPem),
                 cancellationToken).ConfigureAwait(false)
             : await _releaseClient.DownloadAsync(latest.Release, ApplicationReleaseRole.StudentSetup,
-                updateDirectory, cancellationToken).ConfigureAwait(false);
+                updateDirectory, cancellationToken,
+                mirrorDownloadUrls: latest.MirrorDownloadUrls).ConfigureAwait(false);
         var staged = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(installerPath,
             ApplicationReleaseRole.StudentSetup, _releaseClient.ApiBaseAddress, publicKeyPem), cancellationToken)
             .ConfigureAwait(false);
@@ -119,7 +121,8 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
             if (latest.Release is null || !latest.IsNewer) return null;
             release = latest.Release;
             installerPath = await _releaseClient.DownloadAsync(release, ApplicationReleaseRole.MaintenanceService,
-                updateDirectory, cancellationToken).ConfigureAwait(false);
+                updateDirectory, cancellationToken,
+                mirrorDownloadUrls: latest.MirrorDownloadUrls).ConfigureAwait(false);
         }
         ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.MaintenanceService,
             _releaseClient.ApiBaseAddress, publicKeyPem);

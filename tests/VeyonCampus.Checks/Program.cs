@@ -6,6 +6,13 @@ using VeyonCampus.Companion;
 using VeyonCampus.Core;
 using VeyonCampus.Checks;
 
+if (args is ["--application-release-fixtures"])
+{
+    ApplicationReleaseChecks.Run();
+    Console.WriteLine("PASS application release signature, catalogue discovery and mirror download fixtures");
+    return;
+}
+
 if (args is ["--first-deployment-fixtures"])
 {
     TeacherWorkflowChecks.RunFirstRunLaunch();

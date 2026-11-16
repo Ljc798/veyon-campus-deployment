@@ -418,6 +418,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private TeacherCampusHeartbeatState? _teacherHeartbeatState;
     private string? _pendingReleaseNotice;
     private ApplicationReleaseEnvelope? _teacherUpdateRelease;
+    private IReadOnlyList<string>? _teacherUpdateReleaseMirrors;
     private ApplicationReleaseEnvelope? _offlineTeacherUpdateRelease;
     private string? _offlineTeacherInstallerPath;
     private bool _teacherUpdateAvailable;
