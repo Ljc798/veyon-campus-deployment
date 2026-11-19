@@ -117,16 +117,41 @@ jobs:
           fi
           CloudBase__EnvId="$(node -p "require('./cloudbaserc.json').envId")"
           export CloudBase__EnvId
+          base="$(node -p "require('./cloudbaserc.json').functions.find(f => f.name === 'veyon-api').envVariables.CloudBase__ApplicationReleasePublicBaseUrl.replace(/\/$/, '')")"
           version="${RELEASE_TAG#v}"
           teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
           student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
           test -s "$teacher"
           test -s "$student"
-          node scripts/publish-application-release.cjs --confirm-publication \
-            --role TeacherConsole --version "$version" --installer "$teacher"
-          node scripts/publish-application-release.cjs --confirm-publication \
-            --role StudentSetup --version "$version" --installer "$student" \
-            --agent-target "${student}.agent-target.json"
+
+          # Re-registering an identical installer would re-sign the student agent descriptor with a
+          # fresh salt and CloudBase rejects that as a conflict, so a role whose live release already
+          # matches this exact digest is left untouched. That keeps the workflow safe to rerun.
+          already_registered() {
+            local role="$1" installer="$2" live live_version live_sha
+            live="$(curl -sf --max-time 30 "${base}/v4/releases/latest?role=${role}&architecture=win-x64" || true)"
+            [[ -n "$live" ]] || return 1
+            live_version="$(printf '%s' "$live" | python3 -c 'import sys,json;print(json.load(sys.stdin)["release"]["manifest"]["version"])' 2>/dev/null || true)"
+            live_sha="$(printf '%s' "$live" | python3 -c 'import sys,json;print(json.load(sys.stdin)["release"]["manifest"]["sha256"])' 2>/dev/null || true)"
+            local digest
+            digest="$(sha256sum "$installer" | cut -d' ' -f1)"
+            [[ "$live_version" == "$version" && "$live_sha" == "${digest^^}" ]]
+          }
+
+          if already_registered TeacherConsole "$teacher"; then
+            echo "TeacherConsole ${version} is already registered with this digest; skipping."
+          else
+            node scripts/publish-application-release.cjs --confirm-publication \
+              --role TeacherConsole --version "$version" --installer "$teacher"
+          fi
+
+          if already_registered StudentSetup "$student"; then
+            echo "StudentSetup ${version} is already registered with this digest; skipping."
+          else
+            node scripts/publish-application-release.cjs --confirm-publication \
+              --role StudentSetup --version "$version" --installer "$student" \
+              --agent-target "${student}.agent-target.json"
+          fi
       - name: Show what the cloud now serves
         run: |
           set -euo pipefail
