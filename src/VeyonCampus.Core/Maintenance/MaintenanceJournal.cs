@@ -85,6 +85,22 @@ public sealed class MaintenanceJournal
             DesiredConfigurations, ReportedConfigurations, PendingConfigurations);
     }
 
+    /// <summary>
+    /// The student signs its status with a coarser stamp than the transaction state machine: the
+    /// "inProgress" observation and the "committed" observation that follows it can carry the same
+    /// stamp. Refusing that replacement stranded the run - and every later click for that device was
+    /// rejected with "该设备已有活动维护操作" until the journal file was edited by hand. A forward
+    /// observation is therefore allowed to replace an equal-stamped "inProgress" one; anything else
+    /// with the same stamp stays a rewrite of recorded history and is still rejected.
+    /// </summary>
+    private static bool IsForwardTransactionObservation(MaintenanceRun existing, MaintenanceRun replacement)
+    {
+        if (!string.Equals(existing.VerifiedUpdateTransactionState, "inProgress", StringComparison.Ordinal))
+            return false;
+        return replacement.VerifiedUpdateTransactionState is "committed" or "rolledBack" or "notFound" or
+            "needsReview" or "superseded";
+    }
+
     public MaintenanceJournal Update(MaintenanceRun replacement, DateTimeOffset nowUtc)
     {
         ArgumentNullException.ThrowIfNull(replacement);
@@ -102,10 +118,9 @@ public sealed class MaintenanceJournal
                 !IsValidNextPhaseCommand(existing, replacement) ||
             existing.VerifiedStatusUtc is not null &&
             (replacement.VerifiedStatusUtc is null || replacement.VerifiedStatusUtc < existing.VerifiedStatusUtc) ||
+            existing.VerifiedStatusUtc is not null &&
             existing.VerifiedStatusUtc == replacement.VerifiedStatusUtc &&
-            (existing.VerifiedCurrentVersions != replacement.VerifiedCurrentVersions ||
-             !string.Equals(existing.VerifiedUpdateTransactionState,
-                 replacement.VerifiedUpdateTransactionState, StringComparison.Ordinal)) ||
+            !IsForwardTransactionObservation(existing, replacement) ||
             existing.VerifiedStatusUtc is null && replacement.VerifiedStatusUtc is null &&
             (replacement.VerifiedCurrentVersions is not null || replacement.VerifiedUpdateTransactionState is not null) ||
             existing.Plan is not null && !SameIntent(existing.Plan, replacement.Plan))

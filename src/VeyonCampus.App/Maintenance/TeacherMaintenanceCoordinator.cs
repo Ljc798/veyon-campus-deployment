@@ -169,6 +169,23 @@ public sealed class TeacherMaintenanceCoordinator
         return manual;
     }
 
+    /// <summary>
+    /// Closes an attempt the student has already forgotten. When the Agent keeps no record of the
+    /// command and still runs the old StudentSetup, the previous click is dead - but the journal held
+    /// the run at PendingVerification, and every later click for that device was rejected with
+    /// "该设备已有活动维护操作". Marking it failed makes the retry possible and records why.
+    /// </summary>
+    public async Task<MaintenanceRun> AbandonStaleAttemptAsync(Guid operationId, string reason,
+        CancellationToken cancellationToken = default)
+    {
+        var run = await RequireRunAsync(operationId, cancellationToken).ConfigureAwait(false);
+        if (run.IsTerminal) return run;
+        var abandoned = run.TransitionTo(MaintenanceRunState.Failed, Sanitize(reason), null,
+            DateTimeOffset.UtcNow);
+        await _store.UpdateAsync(abandoned, cancellationToken).ConfigureAwait(false);
+        return abandoned;
+    }
+
     public async Task<IReadOnlyList<MaintenanceResult>> ExecuteAsync(IEnumerable<Guid> operationIds,
         IProgress<MaintenanceCoordinatorProgress>? progress = null,
         CancellationToken cancellationToken = default)

@@ -212,6 +212,23 @@ public sealed class TeacherMaintenanceWorkflow : ITeacherMaintenanceWorkflow
                     executableOperationIds.Add(resumed.OperationId);
                     continue;
                 }
+                // The Agent reports no open transaction while still running the version it had before
+                // the click, so the offered update never took effect. Leaving that run pending made
+                // every later attempt fail with "该设备已有活动维护操作" and reported the device as
+                // "待验证" forever. Close it and plan the retry within this same click.
+                var resumedSetupVersion = resumed.VerifiedCurrentVersions?.StudentSetupVersion ??
+                                          resumed.CurrentVersions?.StudentSetupVersion;
+                if (resumed.VerifiedUpdateTransactionState == "notFound" &&
+                    resumed.Plan?.TargetSetupVersion is { } targetSetupVersion &&
+                    !string.Equals(resumedSetupVersion, targetSetupVersion, StringComparison.Ordinal))
+                {
+                    await _coordinator.AbandonStaleAttemptAsync(resumed.OperationId,
+                        "上一次更新没有被学生端执行：学生端没有该事务记录，安装版本仍是 " +
+                        (resumedSetupVersion ?? "未知") + "。已结束该事务，本次重新下发。",
+                        cancellationToken).ConfigureAwait(false);
+                    retryableDevices.Add(snapshot.Device);
+                    continue;
+                }
                 // The Agent has no record of the previous command, so that attempt never started.
                 // Re-inspect and plan again in this same click instead of leaving the device stuck.
                 if (resumed.State == MaintenanceRunState.Failed && resumed.AgentCommandId is not null)

@@ -1784,11 +1784,7 @@ private void RefreshClassroomSessionProperties()
         Changed(nameof(ClassroomNoticeTargetSummary));
         Changed(nameof(ClassroomOverviewDeviceCount));
         Changed(nameof(ClassroomRoomContextSummary));
-        Changed(nameof(CanStartClassroomQuickControl));
-        Changed(nameof(ClassroomQuickControlBlockedReason));
-        Changed(nameof(HasClassroomQuickControlBlockedReason));
-        Changed(nameof(IsClassroomQuickControlPilotDisabled));
-        Changed(nameof(CanReleaseClassroomQuickControl));
+        NotifyClassroomQuickControlAvailabilityChanged();
         Changed(nameof(HasActiveClassroomEventStatus));
         Changed(nameof(ClassroomSessionActionText));
         Changed(nameof(ClassroomSessionToggleText));

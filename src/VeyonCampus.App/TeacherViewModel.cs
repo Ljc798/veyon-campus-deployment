@@ -919,6 +919,24 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         }
     }
 
+    /// <summary>
+    /// Raises every binding that derives from the quick-control gate. The gate is one expression, but
+    /// its results are surfaced through four separate properties, and a refresh that raised only some
+    /// of them left the "启用网站限制" card grey while the state behind it was already usable - until an
+    /// unrelated action happened to raise the missing one. Always raise the whole set together.
+    /// </summary>
+    internal void NotifyClassroomQuickControlAvailabilityChanged()
+    {
+        Changed(nameof(CanStartClassroomQuickControl));
+        Changed(nameof(ClassroomQuickControlBlockedReason));
+        Changed(nameof(HasClassroomQuickControlBlockedReason));
+        Changed(nameof(CanStartClassroomWebsiteControl));
+        Changed(nameof(CanStartClassroomInputLock));
+        Changed(nameof(CanToggleClassroomInputControl));
+        Changed(nameof(IsClassroomQuickControlPilotDisabled));
+        Changed(nameof(CanReleaseClassroomQuickControl));
+    }
+
     public void SetClassroomQuickControlBusy(bool busy)
     {
         if (_isClassroomQuickControlBusy == busy) return;
@@ -4501,11 +4519,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomOverviewDeviceCount));
         Changed(nameof(ClassroomRoomContextSummary));
         Changed(nameof(ClassroomSessionSummary));
-        Changed(nameof(CanStartClassroomQuickControl));
-        Changed(nameof(ClassroomQuickControlBlockedReason));
-        Changed(nameof(HasClassroomQuickControlBlockedReason));
-        Changed(nameof(CanStartClassroomWebsiteControl));
-        Changed(nameof(CanStartClassroomInputLock));
+        NotifyClassroomQuickControlAvailabilityChanged();
         Changed(nameof(CanSendClassroomNotice));
         Changed(nameof(CanSendClassroomChat));
         Changed(nameof(CanStartClassroomCountdown));

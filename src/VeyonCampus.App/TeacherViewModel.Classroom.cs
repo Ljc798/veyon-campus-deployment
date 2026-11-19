@@ -37,9 +37,7 @@ public sealed partial class TeacherViewModel
                 Changed(nameof(HasSelectedRoomProfile));
                 Changed(nameof(SeatGridTitle));
                 Changed(nameof(ClassroomSessionSummary));
-                Changed(nameof(CanStartClassroomQuickControl));
-                Changed(nameof(ClassroomQuickControlBlockedReason));
-                Changed(nameof(HasClassroomQuickControlBlockedReason));
+                NotifyClassroomQuickControlAvailabilityChanged();
                 Changed(nameof(CanSendClassroomNotice));
                 Changed(nameof(CanSendClassroomChat));
                 Changed(nameof(CanStartClassroomCountdown));
@@ -57,9 +55,7 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomRoomContextSummary));
             Changed(nameof(HasPendingClassroomScopeChange));
             Changed(nameof(CanSwitchClassroomScope));
-            Changed(nameof(CanStartClassroomQuickControl));
-            Changed(nameof(ClassroomQuickControlBlockedReason));
-            Changed(nameof(HasClassroomQuickControlBlockedReason));
+            NotifyClassroomQuickControlAvailabilityChanged();
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -1286,9 +1282,7 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
-            Changed(nameof(CanStartClassroomQuickControl));
-            Changed(nameof(ClassroomQuickControlBlockedReason));
-            Changed(nameof(HasClassroomQuickControlBlockedReason));
+            NotifyClassroomQuickControlAvailabilityChanged();
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
@@ -1328,9 +1322,7 @@ public sealed partial class TeacherViewModel
             Changed(nameof(ClassroomOverviewDeviceCount));
             Changed(nameof(CanToggleClassroomSession));
             Changed(nameof(CanSwitchClassroomScope));
-            Changed(nameof(CanStartClassroomQuickControl));
-            Changed(nameof(ClassroomQuickControlBlockedReason));
-            Changed(nameof(HasClassroomQuickControlBlockedReason));
+            NotifyClassroomQuickControlAvailabilityChanged();
             Changed(nameof(CanSendClassroomNotice));
             Changed(nameof(CanSendClassroomChat));
             Changed(nameof(CanStartClassroomCountdown));
