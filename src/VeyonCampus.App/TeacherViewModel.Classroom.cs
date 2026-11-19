@@ -4417,6 +4417,38 @@ public sealed partial class TeacherViewModel
         return "课堂状态还没有同步完成；先刷新课堂状态，再试一次。";
     }
 
+    /// <summary>
+    /// Drops ledger entries that still claim to be active for a lesson that has already ended.
+    /// ClassroomModeStateStore tolerates only one active entry, so a leftover one makes every later
+    /// lesson fail to record its own state - which in turn leaves the quick-control layer disabled
+    /// with nothing but "旧版策略账本暂不可用" to explain it.
+    /// </summary>
+    private void ReconcileClassroomModeLedger(Guid currentSessionId)
+    {
+        try
+        {
+            foreach (var state in _classroomModeStateStore.ReadAll())
+            {
+                if (!state.Active || state.SessionId == currentSessionId) continue;
+                if (state.OwnedPolicies.Count == 0)
+                {
+                    _classroomModeStateStore.Remove(state.SessionId);
+                    continue;
+                }
+                _classroomModeStateStore.Save(state with
+                {
+                    Active = false,
+                    UpdatedUtc = DateTimeOffset.UtcNow
+                });
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException)
+        {
+            // Starting a lesson reports its own ledger warning; a failed sweep must not block it.
+        }
+    }
+
     public async Task<bool> EndClassroomSessionAsync(Guid expectedSessionId)
     {
         if (expectedSessionId == Guid.Empty || _activeClassroomSession is not { } active ||
@@ -4541,6 +4573,11 @@ public sealed partial class TeacherViewModel
                 string? ledgerWarning = null;
                 try
                 {
+                    // Ending a lesson can leave its ledger entry marked active when that end path is
+                    // interrupted or its save fails. The store refuses to hold two active classrooms,
+                    // so the next lesson would start with the whole quick-control layer disabled, and
+                    // the only visible trace was "旧版策略账本暂不可用". Stale entries are dropped here.
+                    ReconcileClassroomModeLedger(session.SessionId);
                     _classroomModeStateStore.Save(new ClassroomModeSessionState(
                         ClassroomModeStateStore.CurrentSchemaVersion, session.SessionId,
                         ClassroomMode.Normal, true, now, []));

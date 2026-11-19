@@ -659,7 +659,14 @@ public partial class TeacherWindow : Window
         ClassroomQuickControlSnapshot? snapshot = null;
         if (!startsSessionForPolicy)
         {
-            if (expectedSessionId is null) return;
+            if (expectedSessionId is null)
+            {
+                // Returning silently here made the button look broken: no dialog, no status change,
+                // nothing in the per-device list. Say what happened instead.
+                _model.SetClassroomQuickControlSessionNotice(
+                    "课堂会话已失效；请在页面顶部重新开始课堂后再下发。没有发送命令。");
+                return;
+            }
             try
             {
                 snapshot = await Task.Run(() =>
@@ -672,13 +679,25 @@ public partial class TeacherWindow : Window
                 _model.SetClassroomQuickControlSessionNotice("无法读取当前课堂管控状态；没有发送命令。" + exception.Message);
                 return;
             }
-            if (_model.ActiveClassroomSessionId != expectedSessionId || snapshot.SessionId != expectedSessionId)
+            if (_model.ActiveClassroomSessionId != expectedSessionId)
+            {
+                _model.SetClassroomQuickControlSessionNotice(
+                    "课堂会话已切换；请在当前课堂里重新点击，没有发送命令。");
                 return;
+            }
+            if (snapshot.SessionId != expectedSessionId)
+            {
+                _model.SetClassroomQuickControlSessionNotice(
+                    "本机课堂状态与当前课堂不一致；请结束课堂后重新开始，再下发管控。没有发送命令。");
+                return;
+            }
         }
         if (action is not (ClassroomQuickControlAction.Release or
             ClassroomQuickControlAction.ClearWebsiteRestrictions or ClassroomQuickControlAction.UnlockInput) &&
             !TeacherClassroomQuickControlBuildFeatures.PilotEnabled)
         {
+            _model.SetClassroomQuickControlSessionNotice(
+                "当前教师端构建未启用课堂快捷管控；请改用“策略与预设”单独下发。没有发送命令。");
             return;
         }
 
