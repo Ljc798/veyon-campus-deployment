@@ -66,7 +66,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _isInstallingStudentAgent;
     private DateTimeOffset _studentAgentInstallStartedUtc;
     private readonly DispatcherTimer _studentAgentInstallProgressTimer = new() { Interval = TimeSpan.FromSeconds(1) };
-    private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。";
+    private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。", _lanTeacherAddress = "";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private CancellationTokenSource? _lanScanCancellation;
     private bool _lanScanAttempted;
@@ -423,6 +423,22 @@ public sealed class MainViewModel : INotifyPropertyChanged
         : $"{LoadedPackage.Campus}\n电脑名前缀：{LoadedPackage.ComputerPrefix}";
     public ObservableCollection<DeploymentPackageCatalogEntry> CloudPackages { get; } = [];
     public string CloudPackageQuery { get => _cloudPackageQuery; set { value ??= ""; if (_cloudPackageQuery == value) return; _cloudPackageQuery = value; Changed(); } }
+    /// <summary>
+    /// A teacher address typed by the technician. The sweep only covers the subnets this machine is
+    /// attached to, and a NAT'd test VM or a second classroom VLAN is not one of them - so there has to
+    /// be a way to say "it is over there" without a terminal.
+    /// </summary>
+    public string LanTeacherAddress
+    {
+        get => _lanTeacherAddress;
+        set
+        {
+            value ??= "";
+            if (_lanTeacherAddress == value) return;
+            _lanTeacherAddress = value;
+            Changed();
+        }
+    }
     public string CloudPackageTeacherPhoneLast4
     {
         get => _cloudPackageTeacherPhoneLast4;
@@ -913,17 +929,26 @@ public sealed class MainViewModel : INotifyPropertyChanged
         using var cancellation = new CancellationTokenSource();
         _lanScanCancellation = cancellation;
         IsSearchingCloudPackages = true;
-        CloudPackageStatus = "正在查找教室里的教师机……";
+        var manual = ParseLanTeacherAddress();
+        CloudPackageStatus = manual.Length == 0
+            ? "正在查找教室里的教师机……"
+            : $"正在连接教师机 {string.Join("、", manual)}……";
         CloudPackages.Clear();
         SelectedCloudPackage = null;
         try
         {
-            var result = await LanPackageScanner.FindPackagesAsync("", cancellation.Token);
+            var result = await LanPackageScanner.FindPackagesAsync("", manual, cancellation.Token);
             if (cancellation.IsCancellationRequested) return;
             _lanScanAttempted = true;
             foreach (var item in result.Items) CloudPackages.Add(item);
+            var looked = result.Networks.Count == 0
+                ? "本机没有连接到教室网段"
+                : "已扫描 " + string.Join("、",
+                    result.Networks.Select(network => network.SubnetDescription)) +
+                  (manual.Length == 0 ? "" : "，以及 " + string.Join("、", manual));
             CloudPackageStatus = result.Items.Count == 0
-                ? "教室里没有正在分发配置包的教师机。可点“搜索”从云端获取，或请教师在教师端点“开始分发”。"
+                ? $"教室里没有正在分发配置包的教师机（{looked}）。请确认教师端已点“开始分发”，" +
+                  "或在上方填写教师机 IP 后重试。"
                 : $"已发现教师机分发的 {result.Items.Count} 个校区配置。下载后会自动验证。";
             SelectedCloudPackage = CloudPackages.FirstOrDefault();
         }
@@ -938,6 +963,31 @@ public sealed class MainViewModel : INotifyPropertyChanged
             if (ReferenceEquals(_lanScanCancellation, cancellation)) _lanScanCancellation = null;
             IsSearchingCloudPackages = false;
         }
+    }
+
+    /// <summary>
+    /// Accepts what a technician actually types: an address, several separated by spaces or commas,
+    /// or a full catalogue URL copied from the teacher panel.
+    /// </summary>
+    private string[] ParseLanTeacherAddress()
+    {
+        var raw = LanTeacherAddress.Trim();
+        if (raw.Length == 0) return [];
+        var parts = raw.Split([' ', ',', ';', '，', '；', '/', '\\', '\t'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var addresses = new List<string>();
+        foreach (var part in parts)
+        {
+            if (part.Length == 0) continue;
+            var candidate = part;
+            var colon = candidate.IndexOf(':');
+            if (colon > 0) candidate = candidate[..colon];
+            if (!System.Net.IPAddress.TryParse(candidate, out var parsed) ||
+                parsed.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                continue;
+            if (!addresses.Contains(candidate, StringComparer.OrdinalIgnoreCase)) addresses.Add(candidate);
+        }
+        return addresses.ToArray();
     }
 
     public void ReportCloudPackageError(string message) => CloudPackageStatus = message;

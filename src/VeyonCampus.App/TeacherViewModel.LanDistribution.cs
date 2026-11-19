@@ -176,8 +176,8 @@ public sealed class LanPackageSharingViewModel : INotifyPropertyChanged
     public async Task ScanAsync()
     {
         if (IsScanning) return;
-        var local = FindLocalClassroomAddress();
-        if (local is null)
+        var networks = DeploymentPackageLanDiscovery.FindClassroomNetworks();
+        if (networks.Count == 0)
         {
             ScanStatus = "未找到教室私有网段；请确认本机已连接到教室网络。";
             return;
@@ -186,9 +186,17 @@ public sealed class LanPackageSharingViewModel : INotifyPropertyChanged
         Machines.Clear();
         try
         {
-            var targets = DeploymentPackageLanDiscovery.EnumerateClassroomTargets(local);
-            ScanStatus = $"正在扫描 {targets.Count} 个地址（本机 {local}）……";
-            var probes = await DeploymentPackageLanDiscovery.ProbeAsync(targets, 48).ConfigureAwait(true);
+            // Gateways plus the /24 around each local address: the same fast pass the student uses.
+            // Walking a /20 virtual switch in full would take minutes and finds nothing a teacher cares about.
+            var targets = networks
+                .SelectMany(network => DeploymentPackageLanDiscovery
+                    .EnumerateClassroomTargets(network.Address, 24)
+                    .Concat(network.Gateway is null ? [] : [network.Gateway.ToString()]))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            ScanStatus = $"正在扫描 {targets.Length} 个地址（" +
+                         string.Join("、", networks.Select(network => network.SubnetDescription)) + "）……";
+            var probes = await DeploymentPackageLanDiscovery.ProbeAsync(targets, 64).ConfigureAwait(true);
             var responsive = probes
                 .Where(probe => probe.HasAgent || probe.HasProvider)
                 .OrderBy(probe => probe.HasProvider ? 0 : 1)
@@ -208,15 +216,6 @@ public sealed class LanPackageSharingViewModel : INotifyPropertyChanged
         }
         finally { IsScanning = false; }
     }
-
-    private static IPAddress? FindLocalClassroomAddress() =>
-        NetworkInterface.GetAllNetworkInterfaces()
-            .Where(networkInterface => networkInterface.OperationalStatus == OperationalStatus.Up)
-            .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
-            .Select(unicastAddress => unicastAddress.Address)
-            .FirstOrDefault(address => address.AddressFamily == AddressFamily.InterNetwork &&
-                                       !IPAddress.IsLoopback(address) &&
-                                       StudentApplicationUpdateCryptography.IsPrivateLanAddress(address));
 
     private void Raise([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));

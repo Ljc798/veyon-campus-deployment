@@ -28,6 +28,15 @@ public partial class StudentCloudPackageWindow : Window
     private async void ScanLanPackages(object? sender, RoutedEventArgs e) =>
         await _model.ScanLanPackagesAsync();
 
+    private async void LanAddressKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None) return;
+        e.Handled = true;
+        if (!_model.CanSearchCloudPackages) return;
+        if (sender is TextBox address) _model.LanTeacherAddress = address.Text ?? "";
+        await _model.ScanLanPackagesAsync();
+    }
+
     private async void SearchQueryKeyDown(object? sender, KeyEventArgs e)
     {
         if (e.Key != Key.Enter || e.KeyModifiers != KeyModifiers.None) return;

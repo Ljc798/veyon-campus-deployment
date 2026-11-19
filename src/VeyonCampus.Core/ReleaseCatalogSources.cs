@@ -65,11 +65,26 @@ public static class ReleaseCatalogConfiguration
 {
     public const string SourcesEnvironmentVariable = "VEYONCAMPUS_RELEASE_CATALOG_SOURCES";
 
+    /// <summary>
+    /// Set to 1 to switch the CloudBase fallback off, for the case the subscription lapses again or a
+    /// build has to run entirely against the public catalogues.
+    /// </summary>
+    public const string CloudApiDisabledEnvironmentVariable = "VEYONCAMPUS_RELEASE_API_DISABLED";
+
     private static readonly ReleaseCatalogSource[] DefaultSources =
     [
         new(ReleaseCatalogKind.GitCode, "ljc_1126", "veyon-campus-deployment"),
         new(ReleaseCatalogKind.GitHub, "Ljc798", "veyon-campus-deployment")
     ];
+
+    /// <summary>
+    /// The CloudBase API is reachable again, so it goes back in as the fallback behind the signed
+    /// catalogue: the catalogue stays authoritative because it is the copy every release publishes,
+    /// while the API keeps a client updating when GitCode and GitHub are both unreachable.
+    /// </summary>
+    public static bool CloudApiFallbackEnabled =>
+        !string.Equals(Environment.GetEnvironmentVariable(CloudApiDisabledEnvironmentVariable)?.Trim(),
+            "1", StringComparison.Ordinal);
 
     public static IReadOnlyList<ReleaseCatalogSource> Resolve()
     {

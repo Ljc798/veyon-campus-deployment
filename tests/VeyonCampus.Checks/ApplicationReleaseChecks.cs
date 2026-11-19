@@ -464,6 +464,49 @@ internal static class ApplicationReleaseChecks
         catch (InvalidDataException)
         {
         }
+
+        // CloudBase is back. When both catalogue hosts are unreachable the client has to reach the API
+        // rather than fail the dialog - that fallback is the whole point of keeping the old shape.
+        Expect(ReleaseCatalogConfiguration.CloudApiFallbackEnabled);
+        using var fallbackHttp = new HttpClient(new CatalogDownApiUpHandler(apiBase, release));
+        var fallbackClient = new ApplicationReleaseClient(apiBase, fallbackHttp, publicKeyPem, [source]);
+        var fallback = await fallbackClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.9.0");
+        Expect(fallback.IsNewer && fallback.Release?.Manifest.Version == version);
+
+        // With the fallback deliberately off, the same failure must surface as an error instead of
+        // being silently reported as "already up to date".
+        using var offlineHttp = new HttpClient(new CatalogDownApiUpHandler(apiBase, release));
+        var offlineClient = new ApplicationReleaseClient(apiBase, offlineHttp, publicKeyPem, [source],
+            legacyApiEnabled: false);
+        try
+        {
+            await offlineClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole, "1.9.0");
+            throw new InvalidOperationException("A dead catalogue was reported as an up-to-date client.");
+        }
+        catch (HttpRequestException)
+        {
+        }
+    }
+
+    /// <summary>Catalogue hosts answer 502; the CloudBase API answers normally.</summary>
+    private sealed class CatalogDownApiUpHandler(Uri apiBase, ApplicationReleaseEnvelope release) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            var requestUri = request.RequestUri ?? throw new InvalidOperationException("Fixture request URL missing.");
+            if (requestUri.Host is "api.gitcode.com" or "api.github.com")
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.BadGateway));
+            if (requestUri.AbsolutePath == "/v4/releases/latest")
+            {
+                var body = JsonSerializer.Serialize(new { release, studentAgentTarget = (object?)null });
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(body, Encoding.UTF8, "application/json")
+                });
+            }
+            throw new InvalidOperationException($"Unexpected fallback fixture request: {requestUri}");
+        }
     }
 
     private sealed class CatalogFixtureHandler(string catalogJson, string version, string fileName,

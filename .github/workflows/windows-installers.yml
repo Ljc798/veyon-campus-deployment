@@ -650,6 +650,34 @@ jobs:
           else
             gh release upload "$tag" "$catalog"
           fi
+      # The CloudBase subscription is active again, so the release is registered there as well. Clients
+      # read the signed catalogue first and only call this API when GitCode and GitHub are both
+      # unreachable - keeping it current is what makes that fallback worth having. Skipped, with a
+      # notice, when the key is not configured: GitCode/GitHub remain the authoritative channel.
+      - name: Register the release with CloudBase
+        continue-on-error: true
+        env:
+          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ vars.CLOUDBASE_API_KEY_ROTATED }}
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CloudBase__ApiKey}" ]]; then
+            echo '::notice::CLOUDBASE_API_KEY is not configured; skipping the CloudBase registration.'
+            exit 0
+          fi
+          CloudBase__EnvId="$(node -p "require('./cloudbaserc.json').envId")"
+          export CloudBase__EnvId
+          version="${{ steps.assets.outputs.version }}"
+          node scripts/publish-application-release.cjs --confirm-publication \
+            --role TeacherConsole --version "$version" \
+            --installer "${{ steps.assets.outputs.teacher }}"
+          node scripts/publish-application-release.cjs --confirm-publication \
+            --role StudentSetup --version "$version" \
+            --installer "${{ steps.assets.outputs.student }}" \
+            --agent-target "${{ steps.assets.outputs.student }}.agent-target.json"
 
   publish-beta-release:
     if: startsWith(github.ref, 'refs/tags/beta-v') || startsWith(github.ref, 'refs/heads/beta-v')

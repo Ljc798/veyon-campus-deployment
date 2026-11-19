@@ -182,15 +182,15 @@ public sealed partial class ApplicationReleaseClient
     public Uri ApiBaseAddress => _apiBaseAddress;
 
     /// <summary>
-    /// Production path: the published release catalogue is the only source, because the previous
-    /// CloudBase-hosted API is gone. The legacy <c>/v4/releases/latest</c> shape stays reachable for a
-    /// self-hosted API or an offline test that sets its own base address explicitly.
+    /// Production path: the signed release catalogue published with every release, with the CloudBase
+    /// API behind it. The catalogue answers first because it is the copy the release itself carries;
+    /// the API is what keeps an update flowing when GitCode and GitHub are both unreachable. The
+    /// fallback can be switched off with <see cref="ReleaseCatalogConfiguration.CloudApiDisabledEnvironmentVariable"/>.
     /// </summary>
     public ApplicationReleaseClient()
         : this(DeploymentPackageApiConfiguration.GetApiBaseAddress(), SharedClient,
             ApplicationReleaseTrust.LoadPinnedPublicKeyPem(), ReleaseCatalogConfiguration.Resolve(),
-            legacyApiEnabled: !string.IsNullOrWhiteSpace(
-                Environment.GetEnvironmentVariable("VEYONCAMPUS_DEPLOYMENT_PACKAGES_API_BASE_URL")))
+            legacyApiEnabled: ReleaseCatalogConfiguration.CloudApiFallbackEnabled)
     {
     }
 
@@ -218,11 +218,44 @@ public sealed partial class ApplicationReleaseClient
         string currentVersion, CancellationToken cancellationToken = default)
     {
         _ = ParseVersion(currentVersion);
-        var catalogEntry = await TryReadCatalogEntryAsync(role, cancellationToken).ConfigureAwait(false);
+        ReleaseCatalogEntry? catalogEntry = null;
+        Exception? catalogFailure = null;
+        try
+        {
+            catalogEntry = await TryReadCatalogEntryAsync(role, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidDataException or
+                                          IOException or JsonException)
+        {
+            // The catalogue is the preferred source but not the only one: a school network that blocks
+            // GitCode and GitHub still reaches the CloudBase API, which is why the fallback exists.
+            catalogFailure = exception;
+        }
         if (catalogEntry is not null)
             return EvaluateLatest(catalogEntry.Release, role, currentVersion, catalogEntry.StudentAgentTarget,
                 catalogEntry.MirrorDownloadUrls);
-        if (!_legacyApiEnabled) return new(null, false, currentVersion);
+        if (!_legacyApiEnabled)
+        {
+            if (catalogFailure is not null) throw catalogFailure;
+            return new(null, false, currentVersion);
+        }
+        try
+        {
+            return await CheckLatestFromApiAsync(role, currentVersion, cancellationToken).ConfigureAwait(false);
+        }
+        catch (HttpRequestException exception) when (catalogFailure is not null)
+        {
+            // Both sources are down. Say so once, and keep the catalogue's reason: it names the host
+            // that failed, which is what a technician needs to decide between a proxy and a reinstall.
+            throw new HttpRequestException(
+                "版本目录暂时不可用：" + catalogFailure.Message + "；云端接口：" + exception.Message,
+                exception);
+        }
+    }
+
+    private async Task<ApplicationReleaseCheckResult> CheckLatestFromApiAsync(ApplicationReleaseRole role,
+        string currentVersion, CancellationToken cancellationToken)
+    {
         var roleName = RoleName(role);
         var releaseApiVersion = role == ApplicationReleaseRole.MaintenanceService ? 5 : 4;
         var url = new Uri(_apiBaseAddress,
@@ -257,7 +290,17 @@ public sealed partial class ApplicationReleaseClient
         CancellationToken cancellationToken = default)
     {
         _ = ParseVersion(version);
-        var catalogNotes = await TryReadCatalogNotesAsync(version, cancellationToken).ConfigureAwait(false);
+        string? catalogNotes = null;
+        try
+        {
+            catalogNotes = await TryReadCatalogNotesAsync(version, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or InvalidDataException or
+                                          IOException or JsonException)
+        {
+            // Notes are informational. Losing the catalogue is a reason to ask the API, not to fail
+            // the update dialog.
+        }
         if (!string.IsNullOrWhiteSpace(catalogNotes)) return catalogNotes;
         if (!_legacyApiEnabled) return null;
         var url = new Uri(_apiBaseAddress,

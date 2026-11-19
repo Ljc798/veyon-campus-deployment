@@ -158,15 +158,15 @@ public sealed class DeploymentPackageLanServer : IAsyncDisposable
         return new Guid(guidBytes);
     }
 
+    /// <summary>
+    /// Every private IPv4 the machine can be reached on, with the classroom NIC first. A teacher
+    /// machine that also hosts WSL, Hyper-V or a VPN has several, and the one shown to the class has
+    /// to be the one a student can actually route to - so an address that owns a default gateway and
+    /// sits on a real adapter is ranked above a virtual switch.
+    /// </summary>
     private static IPAddress[] NetworkInterfaceAddresses() =>
-        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
-            .Where(networkInterface => networkInterface.OperationalStatus ==
-                System.Net.NetworkInformation.OperationalStatus.Up)
-            .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
-            .Select(unicastAddress => unicastAddress.Address)
-            .Where(address => address.AddressFamily == AddressFamily.InterNetwork &&
-                              !IPAddress.IsLoopback(address) &&
-                              StudentApplicationUpdateCryptography.IsPrivateLanAddress(address))
+        DeploymentPackageLanDiscovery.FindClassroomNetworks()
+            .Select(network => network.Address)
             .Distinct()
             .ToArray();
 
@@ -347,42 +347,147 @@ public sealed class DeploymentPackageLanServer : IAsyncDisposable
 /// the Agent's health endpoint says "this machine runs Veyon Campus", the distribution endpoint says
 /// "this machine is offering a package right now".
 /// </summary>
+/// <summary>One private IPv4 network this machine is attached to, with the gateway that fronts it.</summary>
+public sealed record ClassroomNetwork(IPAddress Address, int PrefixLength, IPAddress? Gateway)
+{
+    /// <summary>"192.168.31.0/24", for status text a technician can compare against ipconfig.</summary>
+    public string SubnetDescription
+    {
+        get
+        {
+            var bytes = Address.GetAddressBytes();
+            var prefix = PrefixLength is >= 8 and <= 30 ? PrefixLength : 24;
+            var mask = uint.MaxValue << (32 - prefix);
+            var host = (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
+            var network = host & mask;
+            return $"{(network >> 24) & 0xFF}.{(network >> 16) & 0xFF}.{(network >> 8) & 0xFF}.{network & 0xFF}/{prefix}";
+        }
+    }
+}
+
 public static class DeploymentPackageLanDiscovery
 {
     private static readonly TimeSpan ProbeTimeout = TimeSpan.FromSeconds(2);
 
     /// <summary>
-    /// The 254 hosts of the local /24. A classroom is one subnet, and the teacher machine cannot read
-    /// the Veyon directory's addresses reliably before the first deployment has run - so the sweep is
-    /// address-based rather than directory-based.
+    /// A classroom subnet is a /24 or /23. The ceiling here is a /20, which is what a Hyper-V or
+    /// VMware host-only switch hands out - walking all 4094 hosts is slow but it is the difference
+    /// between discovering the teacher machine and silently scanning the wrong 254 addresses.
     /// </summary>
-    public static IReadOnlyList<string> EnumerateClassroomTargets(IPAddress localAddress)
+    private const int MaximumSweepHosts = 4094;
+
+    /// <summary>
+    /// The private IPv4 networks this machine can reach a classroom through, best candidate first.
+    /// Virtual switches (WSL, Hyper-V's Default Switch, VMware host-only) are private too, and on a
+    /// machine that has one they are frequently the address the operating system enumerates first.
+    /// Picking that one and sweeping its /24 is the single most common reason a student never finds
+    /// the teacher, so the ranking prefers an adapter that owns a default gateway and is not virtual.
+    /// </summary>
+    public static IReadOnlyList<ClassroomNetwork> FindClassroomNetworks()
+    {
+        var candidates = new List<(int Rank, ClassroomNetwork Network)>();
+        foreach (var networkInterface in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+        {
+            if (networkInterface.OperationalStatus != System.Net.NetworkInformation.OperationalStatus.Up)
+                continue;
+            if (networkInterface.NetworkInterfaceType is System.Net.NetworkInformation.NetworkInterfaceType.Loopback
+                or System.Net.NetworkInformation.NetworkInterfaceType.Tunnel)
+                continue;
+            var properties = networkInterface.GetIPProperties();
+            var gateway = properties.GatewayAddresses
+                .Select(candidate => candidate.Address)
+                .FirstOrDefault(candidate => candidate.AddressFamily == AddressFamily.InterNetwork &&
+                                             !candidate.Equals(IPAddress.Any));
+            var realAdapter = networkInterface.NetworkInterfaceType is
+                System.Net.NetworkInformation.NetworkInterfaceType.Ethernet or
+                System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211 or
+                System.Net.NetworkInformation.NetworkInterfaceType.GigabitEthernet;
+            foreach (var unicast in properties.UnicastAddresses)
+            {
+                var address = unicast.Address;
+                if (address.AddressFamily != AddressFamily.InterNetwork) continue;
+                if (IPAddress.IsLoopback(address)) continue;
+                if (!StudentApplicationUpdateCryptography.IsPrivateLanAddress(address)) continue;
+                var rank = (gateway is null ? 10 : 0) + (realAdapter ? 0 : 5);
+                candidates.Add((rank, new ClassroomNetwork(address, unicast.PrefixLength, gateway)));
+            }
+        }
+        return candidates
+            .OrderBy(candidate => candidate.Rank)
+            .ThenBy(candidate => candidate.Network.Address.ToString(), StringComparer.Ordinal)
+            .Select(candidate => candidate.Network)
+            .GroupBy(network => network.Address)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    /// <summary>
+    /// The hosts of the subnet the given address belongs to. A classroom is one subnet, and the
+    /// teacher machine cannot read the Veyon directory's addresses reliably before the first
+    /// deployment has run - so the sweep is address-based rather than directory-based.
+    /// </summary>
+    public static IReadOnlyList<string> EnumerateClassroomTargets(IPAddress localAddress, int prefixLength)
     {
         ArgumentNullException.ThrowIfNull(localAddress);
         if (localAddress.AddressFamily != AddressFamily.InterNetwork)
             throw new InvalidDataException("局域网扫描只支持 IPv4。");
         if (!StudentApplicationUpdateCryptography.IsPrivateLanAddress(localAddress))
             throw new InvalidDataException("局域网扫描只接受校区内网地址。");
+
+        var prefix = prefixLength is >= 8 and <= 30 ? prefixLength : 24;
         var bytes = localAddress.GetAddressBytes();
-        var targets = new List<string>(254);
-        for (var host = 1; host <= 254; host++)
+        var host = (uint)(bytes[0] << 24 | bytes[1] << 16 | bytes[2] << 8 | bytes[3]);
+        var mask = uint.MaxValue << (32 - prefix);
+        var network = host & mask;
+        var broadcast = network | ~mask;
+        if (broadcast - network - 1 > MaximumSweepHosts)
         {
-            if (host == bytes[3]) continue;
-            targets.Add($"{bytes[0]}.{bytes[1]}.{bytes[2]}.{host}");
+            // Too large to walk (a /16 corporate VLAN, say). Fall back to the /24 that holds this
+            // machine: that is where a classroom teacher is, if the mask was merely generous.
+            network = host & 0xFFFFFF00;
+            broadcast = network | 0xFF;
+        }
+
+        var targets = new List<string>((int)(broadcast - network - 1));
+        for (var candidate = network + 1; candidate < broadcast; candidate++)
+        {
+            if (candidate == host) continue;
+            targets.Add($"{(candidate >> 24) & 0xFF}.{(candidate >> 16) & 0xFF}.{(candidate >> 8) & 0xFF}.{candidate & 0xFF}");
         }
         return targets;
     }
 
-    private static HttpClient CreateClient() => new(new SocketsHttpHandler
+    /// <summary>The 254 hosts of the /24 the address sits in - the fast first pass.</summary>
+    public static IReadOnlyList<string> EnumerateClassroomTargets(IPAddress localAddress) =>
+        EnumerateClassroomTargets(localAddress, 24);
+
+    /// <summary>Every candidate address across the given networks; the gateways come first.</summary>
+    public static IReadOnlyList<string> EnumerateClassroomTargets(IReadOnlyList<ClassroomNetwork> networks)
     {
-        UseProxy = false,
-        AllowAutoRedirect = false,
-        UseCookies = false,
-        ConnectTimeout = ProbeTimeout
-    })
+        ArgumentNullException.ThrowIfNull(networks);
+        var targets = new List<string>();
+        foreach (var network in networks)
+        {
+            if (network.Gateway is { } gateway) targets.Add(gateway.ToString());
+            targets.AddRange(EnumerateClassroomTargets(network.Address, network.PrefixLength));
+        }
+        return targets.Distinct(StringComparer.Ordinal).ToArray();
+    }
+
+    private static HttpClient CreateClient(TimeSpan? timeout = null)
     {
-        Timeout = ProbeTimeout
-    };
+        var connect = timeout ?? ProbeTimeout;
+        return new HttpClient(new SocketsHttpHandler
+        {
+            UseProxy = false,
+            AllowAutoRedirect = false,
+            UseCookies = false,
+            ConnectTimeout = connect
+        })
+        {
+            Timeout = connect
+        };
+    }
 
     public static async Task<DeploymentPackageLanProbe> ProbeAsync(string target,
         CancellationToken cancellationToken = default)
@@ -467,14 +572,59 @@ public static class DeploymentPackageLanDiscovery
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
         if (distinct.Length == 0) return [];
+        return await SweepAsync(distinct, parallelism, ProbeTimeout, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Finds a teacher machine sharing a package across every network this machine is attached to.
+    /// Gateways and the local /24 are asked first: on a bridged classroom that is the entire sweep, and
+    /// in a NAT'd test VM the gateway is the host - which is usually the teacher itself. A generous
+    /// mask (the /20 a virtual switch hands out) is only walked in full when the fast pass finds
+    /// nothing, so the common case still finishes in about two seconds.
+    /// </summary>
+    public static async Task<IReadOnlyList<DeploymentPackageLanProvider>> FindProvidersAsync(
+        IReadOnlyList<ClassroomNetwork> networks, IEnumerable<string>? extraTargets = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(networks);
+        var nearby = new List<string>();
+        var remaining = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in extraTargets ?? [])
+        {
+            if (string.IsNullOrWhiteSpace(target)) continue;
+            var trimmed = target.Trim();
+            if (seen.Add(trimmed)) nearby.Add(trimmed);
+        }
+        foreach (var network in networks)
+        {
+            if (network.Gateway is { } gateway && seen.Add(gateway.ToString()))
+                nearby.Add(gateway.ToString());
+            foreach (var target in EnumerateClassroomTargets(network.Address, 24))
+                if (seen.Add(target)) nearby.Add(target);
+            if (network.PrefixLength is >= 16 and < 24)
+                foreach (var target in EnumerateClassroomTargets(network.Address, network.PrefixLength))
+                    if (seen.Add(target)) remaining.Add(target);
+        }
+        if (nearby.Count == 0 && remaining.Count == 0) return [];
+
+        var fast = await SweepAsync(nearby, 128, ProbeTimeout, cancellationToken).ConfigureAwait(false);
+        if (fast.Count > 0 || remaining.Count == 0) return fast;
+        return await SweepAsync(remaining, 128, TimeSpan.FromMilliseconds(800), cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    private static async Task<IReadOnlyList<DeploymentPackageLanProvider>> SweepAsync(
+        IReadOnlyList<string> targets, int parallelism, TimeSpan timeout, CancellationToken cancellationToken)
+    {
         var providers = new System.Collections.Concurrent.ConcurrentBag<DeploymentPackageLanProvider>();
         using var throttle = new SemaphoreSlim(Math.Clamp(parallelism, 1, 128));
-        var tasks = distinct.Select(async target =>
+        var tasks = targets.Select(async target =>
         {
             await throttle.WaitAsync(cancellationToken).ConfigureAwait(false);
             try
             {
-                var provider = await ProbeProviderAsync(target, cancellationToken).ConfigureAwait(false);
+                var provider = await ProbeProviderAsync(target, timeout, cancellationToken).ConfigureAwait(false);
                 if (provider is not null) providers.Add(provider);
             }
             finally { throttle.Release(); }
@@ -483,13 +633,13 @@ public static class DeploymentPackageLanDiscovery
         return providers.OrderBy(provider => provider.Address.ToString(), StringComparer.Ordinal).ToArray();
     }
 
-    private static async Task<DeploymentPackageLanProvider?> ProbeProviderAsync(string target,
+    private static async Task<DeploymentPackageLanProvider?> ProbeProviderAsync(string target, TimeSpan timeout,
         CancellationToken cancellationToken)
     {
         if (!IPAddress.TryParse(target, out var address) ||
             !StudentApplicationUpdateCryptography.IsPrivateLanAddress(address))
             return null;
-        using var client = CreateClient();
+        using var client = CreateClient(timeout);
         try
         {
             using var response = await client.GetAsync(
@@ -521,16 +671,9 @@ public static class DeploymentPackageLanDiscovery
         await FindProvidersAsync(EnumerateClassroomTargets(localAddress), 48, cancellationToken)
             .ConfigureAwait(false);
 
-    /// <summary>The first active private IPv4 on this machine, or null when it is not on a classroom LAN.</summary>
+    /// <summary>The best private IPv4 for a classroom, or null when this machine is not on one.</summary>
     public static IPAddress? FindLocalClassroomAddress() =>
-        System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
-            .Where(networkInterface =>
-                networkInterface.OperationalStatus == System.Net.NetworkInformation.OperationalStatus.Up)
-            .SelectMany(networkInterface => networkInterface.GetIPProperties().UnicastAddresses)
-            .Select(unicastAddress => unicastAddress.Address)
-            .FirstOrDefault(address => address.AddressFamily == AddressFamily.InterNetwork &&
-                                       !IPAddress.IsLoopback(address) &&
-                                       StudentApplicationUpdateCryptography.IsPrivateLanAddress(address));
+        FindClassroomNetworks().FirstOrDefault()?.Address;
     public static async Task<IReadOnlyList<DeploymentPackageLanProbe>> ProbeAsync(
         IEnumerable<string> targets, int parallelism = 24, CancellationToken cancellationToken = default)
     {
@@ -569,6 +712,17 @@ public sealed record DeploymentPackageLanDownload(string ClientAddress, Guid Pac
 /// reads their catalogues through the same client the internet path uses. A first deployment in a
 /// room with no internet is exactly the case this exists for.
 /// </summary>
+/// <summary>The result of a classroom sweep, including where it looked so the status text can say so.</summary>
+public sealed record LanPackageScanResult(
+    IReadOnlyList<DeploymentPackageCatalogEntry> Items,
+    IReadOnlyList<ClassroomNetwork> Networks,
+    int Providers);
+
+/// <summary>
+/// Student-side entry point: sweeps the classroom for teacher machines that are sharing a package and
+/// reads their catalogues through the same client the internet path uses. A first deployment in a
+/// room with no internet is exactly the case this exists for.
+/// </summary>
 public static class LanPackageScanner
 {
     private static readonly HttpClient Client = new(new SocketsHttpHandler
@@ -581,13 +735,22 @@ public static class LanPackageScanner
         Timeout = TimeSpan.FromSeconds(20)
     };
 
-    public static async Task<DeploymentPackageCatalogSearchResult> FindPackagesAsync(
-        string query = "", CancellationToken cancellationToken = default)
+    /// <param name="manualTargets">
+    /// Addresses the technician typed in. They are probed first, which is the only way out when the
+    /// student and the teacher sit on different subnets (a NAT'd test VM, two classroom VLANs).
+    /// </param>
+    public static async Task<LanPackageScanResult> FindPackagesAsync(string query = "",
+        IEnumerable<string>? manualTargets = null, CancellationToken cancellationToken = default)
     {
-        var local = DeploymentPackageLanDiscovery.FindLocalClassroomAddress();
-        if (local is null) return new DeploymentPackageCatalogSearchResult([], 20, 0, false);
-        var providers = await DeploymentPackageLanDiscovery.FindProvidersAsync(local, cancellationToken)
-            .ConfigureAwait(false);
+        var networks = DeploymentPackageLanDiscovery.FindClassroomNetworks();
+        var manual = (manualTargets ?? [])
+            .Where(target => !string.IsNullOrWhiteSpace(target))
+            .Select(target => target.Trim())
+            .ToArray();
+        if (networks.Count == 0 && manual.Length == 0) return new LanPackageScanResult([], [], 0);
+
+        var providers = await DeploymentPackageLanDiscovery
+            .FindProvidersAsync(networks, manual, cancellationToken).ConfigureAwait(false);
         var items = new List<DeploymentPackageCatalogEntry>();
         foreach (var provider in providers)
         {
@@ -596,6 +759,6 @@ public static class LanPackageScanner
             var result = await client.SearchAsync(query, null, cancellationToken).ConfigureAwait(false);
             items.AddRange(result.Items);
         }
-        return new DeploymentPackageCatalogSearchResult(items, 20, 0, false);
+        return new LanPackageScanResult(items, networks, providers.Count);
     }
 }

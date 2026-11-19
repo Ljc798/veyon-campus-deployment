@@ -26,9 +26,22 @@ internal static class DeploymentPackageLanDistributionChecks
         }
 
         RejectsAddressesOutsideTheClassroom();
+        EnumeratesTheWholeSubnet();
 
         var downloads = new List<DeploymentPackageLanDownload>();
-        await using var shared = DeploymentPackageLanServer.Start(sample, new Capture(downloads));
+        DeploymentPackageLanServer shared;
+        try
+        {
+            shared = DeploymentPackageLanServer.Start(sample, new Capture(downloads));
+        }
+        catch (SocketException)
+        {
+            // A developer machine with the teacher console open already owns 39178. CI never does, so
+            // this is a skip rather than a failure - the enumeration checks above already ran.
+            Console.WriteLine("SKIP classroom LAN distribution: port 39178 is already in use.");
+            return;
+        }
+        await using var _ = shared;
         Expect(shared.Addresses.Count > 0, "the server bound no LAN address");
         Expect(shared.CatalogUrls.All(url => url.StartsWith("http://", StringComparison.Ordinal)),
             "the catalogue was not published over the LAN scheme");
@@ -104,6 +117,39 @@ internal static class DeploymentPackageLanDistributionChecks
         Expect(DeploymentPackageLanDistribution.IsLanPackageUri(
                 new Uri("http://192.168.1.5:39178/v1/packages/b747bb33-f048-4118-9a4d-a7dcd298b919.zip")),
             "a classroom archive URL was rejected");
+    }
+
+    /// <summary>
+    /// The sweep has to cover the subnet the machine is actually on. A student inside a NAT'd test VM
+    /// sits on a /20 whose teacher (the host) is in the neighbouring /24 - assuming /24 is exactly how
+    /// discovery "works" in the lab and finds nothing on the bench.
+    /// </summary>
+    private static void EnumeratesTheWholeSubnet()
+    {
+        var slash24 = DeploymentPackageLanDiscovery.EnumerateClassroomTargets(IPAddress.Parse("192.168.31.39"), 24);
+        Expect(slash24.Count == 253, "a /24 did not enumerate 253 peers");
+        Expect(!slash24.Contains("192.168.31.39"), "the sweep probed the machine it runs on");
+        Expect(!slash24.Contains("192.168.31.0") && !slash24.Contains("192.168.31.255"),
+            "the sweep probed the network or broadcast address");
+
+        var slash23 = DeploymentPackageLanDiscovery.EnumerateClassroomTargets(IPAddress.Parse("10.1.2.7"), 23);
+        Expect(slash23.Count == 509, "a /23 did not enumerate 509 peers");
+        Expect(slash23.Contains("10.1.3.1"), "a /23 missed the second half of its own subnet");
+
+        var slash20 = DeploymentPackageLanDiscovery.EnumerateClassroomTargets(IPAddress.Parse("172.21.161.5"), 20);
+        Expect(slash20.Count == 4093, "a /20 did not enumerate 4093 peers");
+        Expect(slash20.Contains("172.21.160.1"), "a /20 missed the gateway that sits in the neighbouring /24");
+
+        var slash16 = DeploymentPackageLanDiscovery.EnumerateClassroomTargets(IPAddress.Parse("10.8.9.10"), 16);
+        Expect(slash16.Count == 253, "a /16 was walked in full instead of falling back to the local /24");
+        Expect(slash16.All(target => target.StartsWith("10.8.9.", StringComparison.Ordinal)),
+            "the /16 fallback left the machine's own /24");
+
+        var networks = DeploymentPackageLanDiscovery.FindClassroomNetworks();
+        Expect(networks.All(network => network.PrefixLength is >= 8 and <= 30),
+            "a classroom network reported an implausible prefix length");
+        Expect(networks.All(network => network.SubnetDescription.Contains('/')),
+            "a classroom network could not describe its subnet");
     }
 
     private sealed class Capture(List<DeploymentPackageLanDownload> sink) : IProgress<DeploymentPackageLanDownload>

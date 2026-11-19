@@ -5,14 +5,24 @@
         x:Class="VeyonCampus.App.StudentCloudPackageWindow" x:DataType="vm:MainViewModel"
         Title="获取校区配置" Width="720" Height="680" CanResize="False"
         WindowStartupLocation="CenterOwner" Background="#F5F7FA">
-  <Grid RowDefinitions="Auto,*,Auto" Margin="26" RowSpacing="18">
+  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="18">
     <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
       <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称，按 Enter 搜索" KeyDown="SearchQueryKeyDown" />
       <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
       <Button Grid.Column="2" Classes="secondary" Content="局域网获取" IsEnabled="{Binding CanSearchCloudPackages}" Click="ScanLanPackages" />
     </Grid>
 
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Grid.Row="1" Spacing="5">
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+        <TextBox Text="{Binding LanTeacherAddress, Mode=TwoWay}"
+                 PlaceholderText="教师机 IP（找不到时手填，例如 192.168.1.20）" KeyDown="LanAddressKeyDown" />
+        <Button Grid.Column="1" Classes="secondary" Content="连接该地址" IsEnabled="{Binding CanSearchCloudPackages}" Click="ScanLanPackages" />
+      </Grid>
+      <TextBlock Classes="muted" TextWrapping="Wrap"
+                 Text="留空时自动扫描本机所在的教室网段：先问默认网关，再扫本地网段。" />
+    </StackPanel>
+
+    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="12">
       <ListBox ItemsSource="{Binding CloudPackages}" SelectedItem="{Binding SelectedCloudPackage, Mode=TwoWay}"
                IsEnabled="{Binding IsStudentControlsEnabled}" Height="220" ScrollViewer.VerticalScrollBarVisibility="Hidden">
@@ -42,7 +52,7 @@
     </StackPanel>
 
     </ScrollViewer>
-    <Border Grid.Row="2" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+    <Border Grid.Row="3" BorderBrush="#E1E7EB" BorderThickness="0,1,0,0" Padding="0,14,0,0">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
         <Button Classes="secondary" Content="取消" Click="Cancel" HorizontalAlignment="Left" />
         <Button Grid.Column="1" Classes="primary" Content="下载并使用" IsEnabled="{Binding CanLoadSelectedCloudPackage}" Click="LoadPackage" />
