@@ -36,8 +36,11 @@ public static class StudentSystemPolicyTransport
             validatedPolicies.Keys.Any(target => !validated.Contains(target, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("逐台系统策略信封必须完整匹配每一台目标电脑。");
         using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback: true);
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(8) };
-        using var limit = new SemaphoreSlim(16, 16);
+        // Same reasoning as the website policy transport: the acknowledgement follows the agent's
+        // own write, and a classroom switch cannot serve sixteen parallel pushes without slowing
+        // each of them past the deadline.
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+        using var limit = new SemaphoreSlim(8, 8);
         var tasks = validated.Select(async target =>
         {
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -101,7 +104,13 @@ public static class StudentSystemPolicyTransport
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
             catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or UriFormatException or IOException or InvalidDataException)
             {
-                return new StudentSystemPolicyDeliveryResult(target, false, exception.Message, NeedsReview: true);
+                // The raw HttpClient timeout text ("the request was canceled...") told the teacher
+                // nothing about what to do next; name the machine and the realistic cause instead.
+                var endpoint = $"{target}:{WebsitePolicyAgent.Port}";
+                return new StudentSystemPolicyDeliveryResult(target, false, exception is TaskCanceledException or IOException
+                    ? $"连接 {endpoint} 超时。学生端可能仍在应用上一条策略，请等十几秒后再推送一次。"
+                    : $"无法连接 {endpoint}：{exception.Message} 请检查电脑名/IP、学生端 Agent 以及局域网防火墙。",
+                    NeedsReview: true);
             }
             finally { limit.Release(); }
         }).ToArray();

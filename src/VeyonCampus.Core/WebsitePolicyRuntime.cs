@@ -4348,8 +4348,13 @@ public static class WebsitePolicyTransport
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         using var handler = new StudentAgentChannelHttpMessageHandler(campusId,
             allowLegacyDirectFallback: true, allowDirectFallbackWhenChannelOffline: true);
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(6) };
-        using var limit = new SemaphoreSlim(16, 16);
+        // A student acknowledges only after the policy is written, so the deadline has to cover the
+        // agent's own work on a busy classroom machine. At six seconds a machine that is still
+        // applying Edge policy answered too late, the push was reported as failed, and a retry then
+        // hit the revision check as "not newer" - which looked like "sometimes it works".
+        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
+        // Sixteen simultaneous pushes saturate one classroom switch and slow every agent down.
+        using var limit = new SemaphoreSlim(8, 8);
         var tasks = validated.Select(async target =>
         {
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -4404,7 +4409,7 @@ public static class WebsitePolicyTransport
             {
                 var endpoint = $"{target}:{WebsitePolicyAgent.Port}";
                 return new WebsitePolicyPushResult(target, false, exception is TaskCanceledException
-                    ? $"连接 {endpoint} 超时。请确认学生端代理已通过部署后核验、电脑名可解析，且双方处于允许通信的局域网。"
+                    ? $"连接 {endpoint} 超时。学生端可能仍在应用上一条策略，请等十几秒后再推送一次；若持续超时，请确认学生端代理已通过部署后核验、电脑名可解析，且双方处于允许通信的局域网。"
                     : $"无法连接 {endpoint}：{exception.Message} 请检查电脑名/IP、学生端代理以及当前网络的防火墙规则。", NeedsReview: true);
             }
             finally { limit.Release(); }

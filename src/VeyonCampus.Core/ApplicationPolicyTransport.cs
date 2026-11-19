@@ -30,6 +30,12 @@ public static class ApplicationPolicyTransport
         UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow
     };
 
+    // Delivery waits for the agent's acknowledgement, which arrives after the policy is written, so
+    // it needs a longer deadline than the read-only inventory calls that share SendAsync. The lower
+    // parallelism keeps one classroom switch from being saturated by sixteen simultaneous pushes.
+    private static readonly TimeSpan PolicyPushTimeout = TimeSpan.FromSeconds(20);
+    private const int PolicyPushParallelism = 8;
+
     public static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> PushAsync(IEnumerable<string> targets,
         string signedPolicyJson, string campusId, CancellationToken cancellationToken = default)
     {
@@ -37,7 +43,7 @@ public static class ApplicationPolicyTransport
         ArgumentException.ThrowIfNullOrWhiteSpace(signedPolicyJson);
         WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
         return await SendAsync(validated, WebsitePolicyAgent.ApplicationPolicyPath, signedPolicyJson,
-            campusId, cancellationToken, maximumResponseBytes: 8192).ConfigureAwait(false);
+            campusId, cancellationToken, PolicyPushTimeout, 8192, PolicyPushParallelism).ConfigureAwait(false);
     }
 
     public static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> PushAsync(IEnumerable<string> targets,
@@ -53,7 +59,7 @@ public static class ApplicationPolicyTransport
             throw new InvalidDataException("逐台应用策略签名与目标清单不匹配。");
         return await SendAsync(validated, WebsitePolicyAgent.ApplicationPolicyPath,
             target => signedPolicyJsonByTarget[target], campusId, cancellationToken,
-            maximumResponseBytes: 8192).ConfigureAwait(false);
+            PolicyPushTimeout, 8192, PolicyPushParallelism).ConfigureAwait(false);
     }
 
     public static async Task<IReadOnlyList<ApplicationPolicyAuditDeliveryResult>> ReadAuditAsync(
@@ -234,17 +240,18 @@ public static class ApplicationPolicyTransport
 
     private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(
         IReadOnlyList<string> targets, string path, string body, string campusId, CancellationToken cancellationToken,
-        TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
+        TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024, int parallelism = 16)
         => await SendAsync(targets, path, _ => body, campusId, cancellationToken, timeout,
-            maximumResponseBytes).ConfigureAwait(false);
+            maximumResponseBytes, parallelism).ConfigureAwait(false);
 
     private static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> SendAsync(
         IReadOnlyList<string> targets, string path, Func<string, string> bodyForTarget, string campusId,
-        CancellationToken cancellationToken, TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024)
+        CancellationToken cancellationToken, TimeSpan? timeout = null, int maximumResponseBytes = 64 * 1024,
+        int parallelism = 16)
     {
         using var handler = new StudentAgentChannelHttpMessageHandler(campusId, allowLegacyDirectFallback: true);
         using var client = new HttpClient(handler) { Timeout = timeout ?? TimeSpan.FromSeconds(6) };
-        using var limit = new SemaphoreSlim(16, 16);
+        using var limit = new SemaphoreSlim(Math.Clamp(parallelism, 1, 32), Math.Clamp(parallelism, 1, 32));
         var tasks = targets.Select(async target =>
         {
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -296,7 +303,7 @@ public static class ApplicationPolicyTransport
             {
                 var endpoint = $"{target}:{WebsitePolicyAgent.Port}";
                 return new ApplicationPolicyDeliveryResult(target, false, exception is TaskCanceledException
-                    ? $"连接 {endpoint} 超时。请确认学生端 Agent 已安装且电脑处于可通信状态。"
+                    ? $"连接 {endpoint} 超时。学生端可能仍在应用上一条策略，请等十几秒后再推送一次；若持续超时，请确认学生端 Agent 已安装且电脑处于可通信状态。"
                     : $"无法连接 {endpoint}：{exception.Message} 请检查电脑名/IP、学生端 Agent 以及局域网防火墙。", NeedsReview: true);
             }
             finally { limit.Release(); }
