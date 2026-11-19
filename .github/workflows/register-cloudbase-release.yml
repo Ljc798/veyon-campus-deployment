@@ -130,8 +130,10 @@ jobs:
       - name: Show what the cloud now serves
         run: |
           set -euo pipefail
-          env_id="$(node -p "require('./cloudbaserc.json').envId")"
+          # The public HTTP domain carries a project suffix, so it is read from the function
+          # configuration rather than rebuilt from the environment id.
+          base="$(node -p "require('./cloudbaserc.json').functions.find(f => f.name === 'veyon-api').envVariables.CloudBase__ApplicationReleasePublicBaseUrl.replace(/\/$/, '')")"
           for role in TeacherConsole StudentSetup; do
-            curl -s --max-time 30 "https://${env_id}.ap-shanghai.app.tcloudbase.com/v4/releases/latest?role=${role}&architecture=win-x64" \
+            curl -sf --max-time 30 "${base}/v4/releases/latest?role=${role}&architecture=win-x64" \
               | python3 -c "import sys,json; m=json.load(sys.stdin)['release']['manifest']; print(f'cloud {m[\"role\"]}: {m[\"version\"]}')"
           done
