@@ -658,7 +658,11 @@ jobs:
         continue-on-error: true
         env:
           CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
-          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ vars.CLOUDBASE_API_KEY_ROTATED }}
+          # The flag lives in the environment secrets since the 2026-09-30 key rotation; the variable
+          # name is a fallback for setups that kept it as a variable instead. Reading only the
+          # variable made every run fail here with "rotate the key first", while the secret was in
+          # fact present - the release still shipped, silently without the CloudBase fallback.
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW || vars.CLOUDBASE_API_KEY_ROTATED }}
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-private.pem
           VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH: ${{ runner.temp }}/veyon-campus-release-public.pem
           VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}

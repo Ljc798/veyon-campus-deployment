@@ -150,10 +150,23 @@ function readRelease(tag, githubCli) {
   return release;
 }
 
+// The catalogue and the student-agent evidence are attached by later steps of the release
+// workflow, after this script has run. A rerun of that job must tolerate them instead of
+// aborting with "unexpected asset" - otherwise a release whose CloudBase registration failed
+// can never be recovered without deleting published files first.
+function isDownstreamAsset(name) {
+  return name === 'release-catalog.json' || name.endsWith('.agent-target.json');
+}
+
 function indexReleaseAssets(release, expected) {
-  const result = new Map(release.assets.map(asset => [asset.name, asset]));
-  for (const name of result.keys()) {
-    if (!expected.has(name)) throw new Error(`GitHub Release contains an unexpected asset: ${name}.`);
+  const result = new Map();
+  for (const asset of release.assets) {
+    if (expected.has(asset.name)) {
+      result.set(asset.name, asset);
+      continue;
+    }
+    if (isDownstreamAsset(asset.name)) continue;
+    throw new Error(`GitHub Release contains an unexpected asset: ${asset.name}.`);
   }
   return result;
 }

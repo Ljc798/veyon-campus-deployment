@@ -1,0 +1,131 @@
+name: Register release with CloudBase
+
+# Recovery path for a release that shipped to GitHub/GitCode but never reached CloudBase.
+# The registration normally runs as the last step of "Windows installers"; that step is
+# non-blocking, so a transient failure there leaves the cloud fallback pointing at an older
+# version while the release itself looks successful. This workflow re-runs just that step
+# against the artefacts the tag's build already produced - nothing is rebuilt, re-signed or
+# re-uploaded to GitHub or GitCode.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing stable release tag to register, for example v1.1.85'
+        required: true
+        type: string
+      build_run_id:
+        description: 'Optional: id of the "Windows installers" run that built the tag'
+        required: false
+        type: string
+
+run-name: Register ${{ inputs.tag }} with CloudBase
+
+jobs:
+  register:
+    runs-on: ubuntu-latest
+    environment: production-release
+    permissions:
+      contents: read
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+      - uses: actions/setup-node@v7
+        with:
+          package-manager-cache: false
+          node-version: '20.19.x'
+      - name: Locate the build run for the tag
+        id: build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="$RELEASE_TAG"
+          if [[ ! "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo 'Only stable vX.Y.Z tags carry a CloudBase release.' >&2
+            exit 1
+          fi
+          run_id="${{ inputs.build_run_id }}"
+          if [[ -z "$run_id" ]]; then
+            run_id="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&per_page=100" \
+              --jq ".workflow_runs[] | select(.head_branch == \"${tag}\" and .name == \"Windows installers\" and .conclusion == \"success\") | .id" \
+              | head -1)"
+          fi
+          if [[ -z "$run_id" ]]; then
+            echo "No successful Windows installers run found for ${tag}; pass build_run_id explicitly." >&2
+            exit 1
+          fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Using build run $run_id for $tag"
+      - name: Download the signed installers and agent evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          run_id="${{ steps.build.outputs.run_id }}"
+          gh run download "$run_id" --name "windows-installers-${run_id}" --dir artifacts
+          ls -l artifacts
+      - name: Prepare signing keys
+        env:
+          VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM: ${{ vars.VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM }}
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for name in VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM; do
+            if [[ -z "${!name:-}" ]]; then missing+=("$name"); fi
+          done
+          if ((${#missing[@]})); then
+            printf 'Missing release configuration: %s\n' "${missing[*]}" >&2
+            exit 1
+          fi
+          private_key_path="$RUNNER_TEMP/veyon-campus-release-private.pem"
+          public_key_path="$RUNNER_TEMP/veyon-campus-release-public.pem"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PRIVATE_KEY_PEM" > "$private_key_path"
+          printf '%s' "$VEYONCAMPUS_RELEASE_PUBLIC_KEY_PEM" > "$public_key_path"
+          chmod 600 "$private_key_path" "$public_key_path"
+          {
+            printf 'VEYONCAMPUS_RELEASE_PRIVATE_KEY_PATH=%s\n' "$private_key_path"
+            printf 'VEYONCAMPUS_RELEASE_PUBLIC_KEY_PATH=%s\n' "$public_key_path"
+          } >> "$GITHUB_ENV"
+      - name: Register the release
+        env:
+          CloudBase__ApiKey: ${{ secrets.CLOUDBASE_API_KEY }}
+          CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW: ${{ secrets.CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW || vars.CLOUDBASE_API_KEY_ROTATED }}
+          VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.VEYONCAMPUS_RELEASE_PRIVATE_KEY_PASSPHRASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${CloudBase__ApiKey:-}" ]]; then
+            echo 'CLOUDBASE_API_KEY is not configured for the production-release environment.' >&2
+            exit 1
+          fi
+          if [[ "${CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW:-}" != 'yes' ]]; then
+            echo 'CLOUDBASE_SERVICE_ROLE_KEY_ROTATED_AFTER_20260930_REVIEW must be "yes"; the publish script refuses to sign with an unrotated key.' >&2
+            exit 1
+          fi
+          CloudBase__EnvId="$(node -p "require('./cloudbaserc.json').envId")"
+          export CloudBase__EnvId
+          version="${RELEASE_TAG#v}"
+          teacher="artifacts/VeyonCampus-Teacher-Setup-${version}-win-x64.exe"
+          student="artifacts/VeyonCampus-Student-Setup-${version}-win-x64.exe"
+          test -s "$teacher"
+          test -s "$student"
+          node scripts/publish-application-release.cjs --confirm-publication \
+            --role TeacherConsole --version "$version" --installer "$teacher"
+          node scripts/publish-application-release.cjs --confirm-publication \
+            --role StudentSetup --version "$version" --installer "$student" \
+            --agent-target "${student}.agent-target.json"
+      - name: Show what the cloud now serves
+        run: |
+          set -euo pipefail
+          env_id="$(node -p "require('./cloudbaserc.json').envId")"
+          for role in TeacherConsole StudentSetup; do
+            curl -s --max-time 30 "https://${env_id}.ap-shanghai.app.tcloudbase.com/v4/releases/latest?role=${role}&architecture=win-x64" \
+              | python3 -c "import sys,json; m=json.load(sys.stdin)['release']['manifest']; print(f'cloud {m[\"role\"]}: {m[\"version\"]}')"
+          done
