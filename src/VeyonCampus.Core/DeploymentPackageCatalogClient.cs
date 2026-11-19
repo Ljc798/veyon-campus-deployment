@@ -51,6 +51,11 @@ public sealed class DeploymentPackageCatalogClient
     private readonly IReadOnlyList<DeploymentCatalogSource> _catalogSources;
     private readonly Uri? _apiBaseAddress;
     private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, DeploymentPackageCatalogEntry> _recentEntries = new();
+    /// <summary>
+    /// Entries whose bytes only the CloudBase API can serve. The static catalogue has no download URL
+    /// for a package it never heard of, so the download has to go back through the authenticated POST.
+    /// </summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, byte> _cloudOnlyEntries = new();
 
     public DeploymentPackageCatalogClient()
         : this(DeploymentCatalogConfiguration.Resolve(),
@@ -88,9 +93,52 @@ public sealed class DeploymentPackageCatalogClient
             throw new InvalidDataException("校区编号必须是正整数。");
 
         var staticResult = await TrySearchCatalogAsync(query, campusId, cancellationToken).ConfigureAwait(false);
-        if (staticResult is not null) return staticResult;
-        if (!CanUseApi) throw new HttpRequestException("配置包目录暂时不可用，请检查网络后重试。");
-        return await SearchApiAsync(query, campusId, cancellationToken).ConfigureAwait(false);
+        if (staticResult is null)
+        {
+            if (!CanUseApi) throw new HttpRequestException("配置包目录暂时不可用，请检查网络后重试。");
+            var cloudOnly = await SearchApiAsync(query, campusId, cancellationToken).ConfigureAwait(false);
+            foreach (var item in cloudOnly.Items)
+            {
+                _recentEntries[item.PackageId] = item;
+                _cloudOnlyEntries[item.PackageId] = 0;
+            }
+            return cloudOnly;
+        }
+
+        // The static catalogue is authoritative for what it lists - including withdrawals - but a
+        // package published from a teacher machine only exists in the cloud. Merging by id keeps both
+        // true: cloud-only packages become searchable, and a withdrawn entry never comes back.
+        var items = staticResult.Result.Items.ToList();
+        if (CanUseApi)
+        {
+            try
+            {
+                var cloud = await SearchApiAsync(query, campusId, cancellationToken).ConfigureAwait(false);
+                foreach (var item in cloud.Items)
+                {
+                    if (staticResult.KnownIds.Contains(item.PackageId)) continue;
+                    if (items.Any(existing => existing.PackageId == item.PackageId)) continue;
+                    items.Add(item);
+                    _recentEntries[item.PackageId] = item;
+                    // No public archive URL exists for this one, so the download has to go back
+                    // through the authenticated API even though it is shown in the same list.
+                    _cloudOnlyEntries[item.PackageId] = 0;
+                }
+            }
+            catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
+                                              InvalidDataException or JsonException)
+            {
+                // The cloud is an addition, not a dependency: a school network that blocks the API
+                // still gets everything the static catalogue carries.
+            }
+        }
+        var ordered = items
+            .OrderByDescending(item => item.PublishedAt)
+            .ThenBy(item => item.PackageId)
+            .ToList();
+        var hasMore = staticResult.Result.HasMore || ordered.Count > CatalogPageSize;
+        return new DeploymentPackageCatalogSearchResult(ordered.Take(CatalogPageSize).ToList(), CatalogPageSize, 0,
+            hasMore);
     }
 
     public async Task<byte[]> DownloadAsync(
@@ -103,7 +151,14 @@ public sealed class DeploymentPackageCatalogClient
             throw new InvalidDataException("教师手机号后四位必须是 4 位数字。");
 
         var (entry, catalogAnswered) = await FindEntryAsync(packageId, cancellationToken).ConfigureAwait(false);
-        if (entry is not null) return await DownloadFromCatalogAsync(entry, cancellationToken).ConfigureAwait(false);
+        if (entry is not null)
+        {
+            // A package the static catalogue never listed has no public archive URL; its bytes live
+            // behind the authenticated API, so the phone check still applies.
+            if (_cloudOnlyEntries.ContainsKey(entry.PackageId))
+                return await DownloadFromApiAsync(packageId, teacherPhoneLast4, cancellationToken).ConfigureAwait(false);
+            return await DownloadFromCatalogAsync(entry, cancellationToken).ConfigureAwait(false);
+        }
         if (catalogAnswered || !CanUseApi)
             throw new InvalidDataException("找不到此部署包，可能已撤回。");
         return await DownloadFromApiAsync(packageId, teacherPhoneLast4, cancellationToken).ConfigureAwait(false);
@@ -116,7 +171,14 @@ public sealed class DeploymentPackageCatalogClient
     /// with an empty catalogue is authoritative: falling through to the retired API would resurrect
     /// packages a teacher deliberately withdrew.
     /// </summary>
-    private async Task<DeploymentPackageCatalogSearchResult?> TrySearchCatalogAsync(
+    /// <summary>
+    /// What one static source said: the page the caller asked for, plus every id the document lists.
+    /// The full id set is what keeps a cloud-only merge from resurrecting a withdrawn package.
+    /// </summary>
+    private sealed record CatalogSearchOutcome(
+        DeploymentPackageCatalogSearchResult Result, IReadOnlySet<Guid> KnownIds);
+
+    private async Task<CatalogSearchOutcome?> TrySearchCatalogAsync(
         string query, long? campusId, CancellationToken cancellationToken)
     {
         if (_catalogSources.Count == 0) return null;
@@ -138,7 +200,9 @@ public sealed class DeploymentPackageCatalogClient
             if (document is null) continue;
 
             var needle = query.Trim();
-            var matched = (document.Packages ?? [])
+            var all = document.Packages ?? [];
+            var knownIds = all.Select(entry => entry.PackageId).ToHashSet();
+            var matched = all
                 .Where(entry => !entry.IsWithdrawn)
                 .Where(entry => campusId is null || entry.CampusId == campusId)
                 .Where(entry => Matches(entry, needle))
@@ -150,7 +214,8 @@ public sealed class DeploymentPackageCatalogClient
             if (hasMore) page.RemoveAt(page.Count - 1);
             var items = page.Select(entry => entry.ToCatalogEntry()).ToList();
             foreach (var item in items) _recentEntries[item.PackageId] = item;
-            return new DeploymentPackageCatalogSearchResult(items, CatalogPageSize, 0, hasMore);
+            return new CatalogSearchOutcome(
+                new DeploymentPackageCatalogSearchResult(items, CatalogPageSize, 0, hasMore), knownIds);
         }
         if (failures.Count == 0) return null;
         // Every source failed. Hand over to the API when one is configured; otherwise the caller has
@@ -230,7 +295,8 @@ public sealed class DeploymentPackageCatalogClient
         DeploymentPackageCatalogEntry entry, CancellationToken cancellationToken)
     {
         var urls = new List<string> { entry.DownloadUrl };
-        urls.AddRange(entry.Mirrors);
+        // A catalogue entry may omit mirrors entirely; that is not a failure, just one URL.
+        if (entry.Mirrors is { Count: > 0 }) urls.AddRange(entry.Mirrors);
         var failures = new List<string>();
         foreach (var candidate in urls)
         {
@@ -339,7 +405,8 @@ public sealed class DeploymentPackageCatalogClient
         var result = await JsonSerializer.DeserializeAsync<DeploymentPackageCatalogSearchResult>(
                          stream, JsonOptions, cancellationToken).ConfigureAwait(false)
                      ?? throw new InvalidDataException("网站返回的部署包目录格式无效。");
-        foreach (var item in result.Items) _recentEntries[item.PackageId] = item;
+        // No caching here on purpose: a cloud entry carries no download URL, so caching it would
+        // shadow the usable static entry for the same id. Callers cache only what they actually show.
         return result;
     }
 
