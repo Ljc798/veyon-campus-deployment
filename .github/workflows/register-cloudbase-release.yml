@@ -52,12 +52,18 @@ jobs:
           fi
           run_id="${{ inputs.build_run_id }}"
           if [[ -z "$run_id" ]]; then
-            run_id="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&per_page=100" \
-              --jq ".workflow_runs[] | select(.head_branch == \"${tag}\" and .name == \"Windows installers\" and .conclusion == \"success\") | .id" \
-              | head -1)"
+            # A run whose publish job was retried ends up marked "failure" even though the build
+            # and the release are fine, so success is preferred but not required - the newest run
+            # for the tag is used otherwise, and a missing artefact fails the download step.
+            candidates="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/runs?event=push&per_page=100" \
+              --jq ".workflow_runs[] | select(.head_branch == \"${tag}\" and .name == \"Windows installers\") | \"\(.conclusion) \(.id)\"")"
+            run_id="$(printf '%s\n' "$candidates" | awk '$1 == "success" { print $2; exit }')"
+            if [[ -z "$run_id" ]]; then
+              run_id="$(printf '%s\n' "$candidates" | awk 'NF == 2 { print $2; exit }')"
+            fi
           fi
           if [[ -z "$run_id" ]]; then
-            echo "No successful Windows installers run found for ${tag}; pass build_run_id explicitly." >&2
+            echo "No Windows installers run found for ${tag}; pass build_run_id explicitly." >&2
             exit 1
           fi
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
