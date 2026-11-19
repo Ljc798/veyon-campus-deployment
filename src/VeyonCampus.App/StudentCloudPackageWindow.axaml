@@ -5,22 +5,26 @@
         x:Class="VeyonCampus.App.StudentCloudPackageWindow" x:DataType="vm:MainViewModel"
         Title="获取校区配置" Width="720" Height="680" CanResize="False"
         WindowStartupLocation="CenterOwner" Background="#F5F7FA">
-  <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="18">
-    <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
-      <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称，按 Enter 搜索" KeyDown="SearchQueryKeyDown" />
-      <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
-      <Button Grid.Column="2" Classes="secondary" Content="局域网获取" IsEnabled="{Binding CanSearchCloudPackages}" Click="ScanLanPackages" />
-    </Grid>
-
-    <StackPanel Grid.Row="1" Spacing="5">
+    <Grid RowDefinitions="Auto,Auto,*,Auto" Margin="26" RowSpacing="14">
       <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
-        <TextBox Text="{Binding LanTeacherAddress, Mode=TwoWay}"
-                 PlaceholderText="教师机 IP（找不到时手填，例如 192.168.1.20）" KeyDown="LanAddressKeyDown" />
-        <Button Grid.Column="1" Classes="secondary" Content="连接该地址" IsEnabled="{Binding CanSearchCloudPackages}" Click="ScanLanPackages" />
+        <TextBox Text="{Binding CloudPackageQuery, Mode=TwoWay}" PlaceholderText="输入校区名称，按 Enter 搜索" KeyDown="SearchQueryKeyDown" />
+        <Button Grid.Column="1" Classes="secondary" Content="搜索" IsEnabled="{Binding CanSearchCloudPackages}" Click="SearchPackages" />
       </Grid>
-      <TextBlock Classes="muted" TextWrapping="Wrap"
-                 Text="留空时自动扫描本机所在的教室网段：先问默认网关，再扫本地网段。" />
-    </StackPanel>
+
+      <!-- Classroom distribution is a deliberate choice, not something that happens when the dialog
+           opens: a technician who came here to search by campus name must not be turned into a
+           254-address sweep behind their back. -->
+      <Expander Grid.Row="1" Header="教室里直接获取（教师机正在分发时）">
+        <StackPanel Spacing="7" Margin="0,8,0,0">
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+            <TextBox Text="{Binding LanTeacherAddress, Mode=TwoWay}"
+                     PlaceholderText="教师机 IP（可留空自动扫描，例如 192.168.1.20）" KeyDown="LanAddressKeyDown" />
+            <Button Grid.Column="1" Classes="secondary" Content="开始查找" IsEnabled="{Binding CanSearchCloudPackages}" Click="ScanLanPackages" />
+          </Grid>
+          <TextBlock Classes="muted" TextWrapping="Wrap"
+                     Text="留空时扫描本机所在的教室网段：先问默认网关，再扫本地网段。教师机跨网段时，填它的 IP 更直接。" />
+        </StackPanel>
+      </Expander>
 
     <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled">
     <StackPanel Spacing="12">

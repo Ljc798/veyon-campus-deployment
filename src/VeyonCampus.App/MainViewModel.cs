@@ -69,7 +69,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string _cloudPackageQuery = "", _cloudPackageTeacherPhoneLast4 = "", _cloudPackageStatus = "输入校区名称，搜索云端已发布的配置包。", _lanTeacherAddress = "";
     private bool _isSearchingCloudPackages, _isDownloadingCloudPackage;
     private CancellationTokenSource? _lanScanCancellation;
-    private bool _lanScanAttempted;
     private DeploymentPackageCatalogEntry? _selectedCloudPackage;
     private string _installerStatus = "";
     private string _veyonStatusText = "正在读取本机 Veyon 安装状态……", _veyonStatusSummary = "正在检查 Veyon…";
@@ -907,18 +906,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     /// <summary>
-    /// Runs the classroom sweep the first time the package window opens. A technician opening that
-    /// window is about to look for a package, and on a first deployment the teacher machine is both
-    /// the fastest and the only reachable source - so it is worth spending a few seconds before the
-    /// window finishes painting.
-    /// </summary>
-    public async Task EnsureLanPackagesAsync()
-    {
-        if (_lanScanAttempted) return;
-        await ScanLanPackagesAsync();
-    }
-
-    /// <summary>
     /// Finds a teacher machine sharing a package on the classroom LAN. Used for a first deployment in
     /// a room where the internet is unavailable or the cloud catalogue is unreachable.
     /// </summary>
@@ -939,7 +926,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             var result = await LanPackageScanner.FindPackagesAsync("", manual, cancellation.Token);
             if (cancellation.IsCancellationRequested) return;
-            _lanScanAttempted = true;
             foreach (var item in result.Items) CloudPackages.Add(item);
             var looked = result.Networks.Count == 0
                 ? "本机没有连接到教室网段"

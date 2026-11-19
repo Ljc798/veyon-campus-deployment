@@ -16,10 +16,8 @@ public partial class StudentCloudPackageWindow : Window
         _model = model;
         InitializeComponent();
         DataContext = model;
-        // Sweep as soon as the window is up. On a first deployment the teacher machine in the room is
-        // the source that actually answers, so the list is usually populated before the technician has
-        // finished reading the dialog.
-        Opened += async (_, _) => await _model.EnsureLanPackagesAsync();
+        // No sweep on open. Opening this dialog means "I want a campus configuration"; sweeping the
+        // classroom is a separate intention and lives behind the expander, one click away.
     }
 
     private async void SearchPackages(object? sender, RoutedEventArgs e) =>
