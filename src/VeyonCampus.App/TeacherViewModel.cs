@@ -113,6 +113,14 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
             ClassroomQuickControlPhase.Unsupported => "当前设备暂不支持此操作",
             _ => "管控已解除"
         };
+        // The phase label alone says "需核对" without saying what could not be verified, so the row
+        // looked identical whether the student never answered, refused ownership, or answered with an
+        // unreadable guard state. The recorded reason is what the teacher can act on, so show it here
+        // instead of hiding it behind the expander.
+        if (snapshot.Phase is ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Conflict
+                or ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unsupported &&
+            !string.IsNullOrWhiteSpace(snapshot.Detail))
+            Summary += " · " + Shorten(snapshot.Detail, 60);
         (StatusText, StatusBrush, StatusBackground) = snapshot.Phase switch
         {
             ClassroomQuickControlPhase.NotStarted => Status("尚未操作", NeutralBrush, NeutralSubtleBrush),
@@ -136,6 +144,13 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
 
     private static (string, IBrush, IBrush) Status(string label, IBrush foreground, IBrush background) =>
         (label, foreground, background);
+
+    private static string Shorten(string value, int limit)
+    {
+        var singleLine = string.Join(' ', value.Split(['\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        return singleLine.Length <= limit ? singleLine : singleLine[..limit] + "…";
+    }
 
     private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
@@ -384,6 +399,11 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private DateTimeOffset? _websiteDeadlineDate = new DateTimeOffset(DefaultWebsiteDeadlineLocal.Date);
     private TimeSpan? _websiteDeadlineTime = DefaultWebsiteDeadlineLocal.TimeOfDay;
     private TimeSpan? _quickControlDeadlineTime = CreateDefaultQuickControlDeadlineTime();
+    // The default deadline is "one hour from now", but it used to be computed once at process start.
+    // A console opened at 08:35 therefore kept 09:35 as its deadline all morning, and a lesson started
+    // at 09:30 had its restrictions lifted five minutes later, looking like the tool released by itself.
+    // The default now follows the lesson; only a time the operator picked is kept as-is.
+    private bool _quickControlDeadlineChosenByOperator;
     private bool _lastQuickControlDeadlineValid = true;
     private string _applicationStudentSids = "", _applicationRules = "", _applicationPolicyResult = "", _applicationPolicyResultDetails = "", _applicationPolicyError = "", _applicationPolicyHistoryText = "", _applicationAuditResult = "";
     private string _studentSystemPolicyResult = "", _studentSystemPolicyDetails = "", _studentSystemPolicyError = "";
@@ -832,8 +852,36 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             if (_quickControlDeadlineTime == value) return;
             _quickControlDeadlineTime = value;
+            _quickControlDeadlineChosenByOperator = value is not null;
             NotifyQuickControlDeadlineChanged();
         }
+    }
+
+    /// <summary>
+    /// Re-anchors the <em>derived default</em> deadline when a lesson starts. The default is only a
+    /// fallback for teachers who never touched the time picker; whatever the teacher picked - 15:30,
+    /// the end of a double period, or any other custom deadline - is authoritative and is never
+    /// moved here, not even if it has already passed (that case is reported by the blocked reason).
+    /// Without this, a console opened at 08:20 carried 09:20 into a lesson that began at 09:10 and
+    /// lifted restrictions ten minutes later.
+    /// </summary>
+    internal void RefreshDefaultQuickControlDeadline(bool lessonStarting = false)
+    {
+        // The teacher's own deadline wins unconditionally. Never silently replace a custom choice.
+        if (_quickControlDeadlineChosenByOperator) return;
+        // A lesson that already published a deadline keeps it. Recomputing here would let a re-push
+        // mid-lesson shorten the countdown the teacher is watching.
+        if (_classroomQuickControlSnapshot is { } snapshot &&
+            snapshot.SessionId == ActiveClassroomSessionId &&
+            snapshot.ControlExpiresUtc is { } scheduled && scheduled > DateTimeOffset.UtcNow)
+            return;
+        // Outside a lesson start the periodic tick only repairs a default that has already expired;
+        // rewriting a still-valid default every second would make the time picker drift on screen.
+        if (!lessonStarting && HasValidClassroomQuickControlDeadline) return;
+        var refreshed = CreateDefaultQuickControlDeadlineTime();
+        if (_quickControlDeadlineTime == refreshed) return;
+        _quickControlDeadlineTime = refreshed;
+        NotifyQuickControlDeadlineChanged();
     }
     public bool HasValidClassroomQuickControlDeadline => TryGetClassroomQuickControlDeadlineUtc(
         DateTimeOffset.UtcNow, out _, out _);

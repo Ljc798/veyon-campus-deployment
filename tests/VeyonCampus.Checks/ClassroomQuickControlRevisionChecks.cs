@@ -20,6 +20,12 @@ internal static class ClassroomQuickControlRevisionChecks
             var reapplyExpires = now.AddMinutes(45);
             Expect(TeacherClassroomQuickControlService.ResolveControlExpiry(reapplyExpires, expires, now) ==
                    reapplyExpires);
+            // A mobile Apply carries no deadline: it must keep the teacher's custom deadline for
+            // this lesson instead of silently replacing it with "now + 1h". An expired deadline
+            // must never be reused, otherwise the old expiry timer would undo the new policy.
+            Expect(TeacherClassroomQuickControlService.ResolveControlExpiry(null, expires, now) == expires);
+            Expect(TeacherClassroomQuickControlService.ResolveControlExpiry(null, now.AddMinutes(-1), now) ==
+                   TeacherClassroomQuickControlService.ResolveControlExpiry(null, now));
             var initialDevice = new ClassroomQuickControlDeviceState(targetId, DeviceControlMode.None,
                 ClassroomQuickControlPhase.NotStarted, null, null, null, null, now,
                 "尚未执行快捷管控。");

@@ -39,8 +39,9 @@ public static class StudentSystemPolicyTransport
         // Same reasoning as the website policy transport: the acknowledgement follows the agent's
         // own write, and a classroom switch cannot serve sixteen parallel pushes without slowing
         // each of them past the deadline.
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
-        using var limit = new SemaphoreSlim(8, 8);
+        using var client = new HttpClient(handler) { Timeout = StudentPolicyDeliveryTuning.PushTimeout };
+        using var limit = new SemaphoreSlim(StudentPolicyDeliveryTuning.PushParallelism,
+            StudentPolicyDeliveryTuning.PushParallelism);
         var tasks = validated.Select(async target =>
         {
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);

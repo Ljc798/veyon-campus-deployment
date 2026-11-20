@@ -299,7 +299,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         DateTimeOffset? requestedControlExpiry = null;
         if (action is ClassroomQuickControlAction.EnableWebsiteRestriction or ClassroomQuickControlAction.LockInput)
         {
-            var expires = ResolveControlExpiry(controlExpiresUtc, DateTimeOffset.UtcNow);
+            // Reuse the current lesson's still-future deadline when the caller did not supply one
+            // (notably mobile Apply): the teacher's custom 15:30 must not silently become "now + 1h".
+            var expires = ResolveControlExpiry(controlExpiresUtc, initialControlExpiry, DateTimeOffset.UtcNow);
             ValidateControlExpiry(expires, DateTimeOffset.UtcNow);
             requestedControlExpiry = expires;
         }
@@ -425,13 +427,22 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
 
     internal static DateTimeOffset ResolveControlExpiry(DateTimeOffset? requestedUtc, DateTimeOffset nowUtc)
     {
-        // A new Apply starts a new deadline. Reusing the previous value lets its old expiry timer
-        // undo the newly applied policy later; mobile Apply requests also arrive without a deadline.
+        // One hour is only a fallback when neither the teacher nor the lesson supplied a deadline.
+        // The teacher's picked time flows in through controlExpiresUtc and is returned unchanged.
         return (requestedUtc ?? nowUtc.Add(DefaultWebsiteLifetime)).ToUniversalTime();
     }
 
     internal static DateTimeOffset ResolveControlExpiry(DateTimeOffset? requestedUtc,
-        DateTimeOffset? previousExpiryUtc, DateTimeOffset nowUtc) => ResolveControlExpiry(requestedUtc, nowUtc);
+        DateTimeOffset? previousExpiryUtc, DateTimeOffset nowUtc)
+    {
+        if (requestedUtc is not null) return ResolveControlExpiry(requestedUtc, nowUtc);
+        // Only a *future* deadline from this same lesson is reusable. The old implementation always
+        // fell back to "now + 1h", so a phone-side Apply overwrote a custom teacher deadline while
+        // the desktop page still displayed the original time.
+        if (previousExpiryUtc is { } previous && previous.ToUniversalTime() > nowUtc.ToUniversalTime())
+            return previous.ToUniversalTime();
+        return ResolveControlExpiry(null, nowUtc);
+    }
 
     private static void ValidateControlExpiry(DateTimeOffset expiresUtc, DateTimeOffset nowUtc)
     {
@@ -588,7 +599,8 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             return action switch
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => await EnableWebsiteAsync(context,
-                    binding, previous, website!, guardResult, cancellationToken, allowEndedRestore).ConfigureAwait(false),
+                    binding, previous, website!, guardResult, cancellationToken, allowEndedRestore,
+                    readback.Website.Status?.CollectedUtc).ConfigureAwait(false),
                 ClassroomQuickControlAction.LockInput => await LockInputAsync(context, binding, previous,
                     website, guardResult, cancellationToken, allowEndedRestore).ConfigureAwait(false),
                 ClassroomQuickControlAction.UnlockInput => await UnlockInputAsync(context, binding, previous,
@@ -908,7 +920,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, WebsitePolicyReportedState website,
         StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken,
-        bool allowEndedRestore = false)
+        bool allowEndedRestore = false, DateTimeOffset? agentUtc = null)
     {
         if (HasWebsiteOwnership(previous) &&
             website.Mode != WebsitePolicyMode.Disabled && previous.WebsiteRevision != website.Revision)
@@ -959,10 +971,20 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         var now = DateTimeOffset.UtcNow;
         var expires = _stateStore.Read(context.SessionId)?.ControlExpiresUtc ?? now.Add(DefaultWebsiteLifetime);
         ValidateControlExpiry(expires, now);
+        // The signed document is checked against the student machine's own clock. Translate both
+        // timestamps by the offset measured from its signed status response: without this, a machine
+        // one hour fast treats a policy that expires at teacher-time+1h as already expired on arrival,
+        // and the restriction "lifts by itself" a few seconds after being written.
+        var clockOffset = agentUtc is { } agentNow ? agentNow - now : TimeSpan.Zero;
+        if (clockOffset > TimeSpan.FromHours(12) || clockOffset < TimeSpan.FromHours(-12) ||
+            Math.Abs(clockOffset.TotalSeconds) < 30)
+            clockOffset = TimeSpan.Zero;
+        var issuedForAgent = now + clockOffset;
+        var expiresForAgent = expires + clockOffset;
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var revision = WebsitePolicyRevisionStore.Next(context.CampusId, website.Revision);
         var document = WebsitePolicyCompiler.Create(context.CampusId, revision, mode,
-            domains, now, expires, policyAllowedDomains, website.Revision);
+            domains, issuedForAgent, expiresForAgent, policyAllowedDomains, website.Revision);
         var signed = WebsitePolicyCryptography.Sign(document, signingKey.PrivateKey);
         var applying = previous with
         {
@@ -1020,6 +1042,10 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         if (!guardResult.Succeeded || guardResult.Status is null)
             detail += " 键鼠 Guard 状态未读回；这不影响网站策略，未发送键鼠命令。";
         if (degraded) detail += " Edge 有降级项，请查看“设备与更新”。";
+        if (clockOffset != TimeSpan.Zero)
+            detail += $" 已按该机时间偏差（{(clockOffset > TimeSpan.Zero ? "快" : "慢")}" +
+                      $"{Math.Abs(Math.Round(clockOffset.TotalMinutes)):0} 分钟）调整策略时间，" +
+                      "避免学生机提前到期解除；请校正该机时间。";
         var applied = applying with
         {
             WebsitePhase = phase,
@@ -1770,6 +1796,32 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         if (website.Mode == WebsitePolicyMode.Disabled &&
             website.Revision >= Math.Max(device.WebsiteRevision ?? 0, device.PendingWebsiteRevision ?? 0))
         {
+            // A policy the lesson still wants must not be retired just because the student agent
+            // answered "disabled". That answer used to end the restriction outright: the row turned
+            // into 已解除 in the middle of a lesson and nothing pushed it back, so a class lost its
+            // website restriction a few minutes after it started. Only a release task - or a deadline
+            // that really passed - may drop the ownership; anything else is queued for re-delivery.
+            if (RetainsWebsiteRestriction(context, device, out var deadline))
+            {
+                SaveDevice(context, device with
+                {
+                    WebsitePhase = ClassroomQuickControlPhase.WebsiteApplying,
+                    Phase = device.InputLeaseId is null
+                        ? ClassroomQuickControlPhase.WebsiteApplying : device.Phase,
+                    PendingWebsiteRevision = null,
+                    UpdatedUtc = DateTimeOffset.UtcNow,
+                    Detail = "学生端报告网站限制已不存在，但本堂课仍在进行（截止 " +
+                             deadline.ToLocalTime().ToString("HH:mm") +
+                             "），已重新下发。" +
+                             (website.ExpiredUtc is { } expiredUtc
+                                 ? $" 学生端记录的到期时间是 {expiredUtc.ToLocalTime().ToString("HH:mm:ss")}"
+                                   + "（本机未到截止时间，说明学生机时间偏快）。"
+                                 : "") +
+                             DescribeStudentClockOffset(result.Status)
+                }, "restriction-lost-reapply");
+                EnsureWebsiteCatchUpLoop();
+                return;
+            }
             SaveDevice(context, ClearWebsiteControl(device, "网站限制已解除或已到期。"),
                 "agent-status-poll");
             return;
@@ -1788,6 +1840,40 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             Mode = matches ? GetMode(revision, null, device.InputLeaseId) : device.Mode,
             Phase = device.InputLeaseId is null ? phase : device.Phase
         }, "agent-status-poll");
+    }
+
+    /// <summary>
+    /// Decides whether a "disabled" answer from the student agent may retire the classroom
+    /// restriction. Ownership survives while the lesson is running, an Apply is still the wanted
+    /// action, and its deadline has not passed; only a release task or a real deadline ends it.
+    /// </summary>
+    private bool RetainsWebsiteRestriction(TeacherClassroomEventContext context,
+        ClassroomQuickControlDeviceState device, out DateTimeOffset deadline)
+    {
+        deadline = default;
+        var session = _stateStore.Read(context.SessionId);
+        if (session is not { Active: true, ClosedUtc: null }) return false;
+        if (device.DesiredAction != ClassroomQuickControlAction.EnableWebsiteRestriction) return false;
+        var scheduled = device.WebsiteExpiresUtc ?? session.ControlExpiresUtc;
+        if (scheduled is not { } expires || expires <= DateTimeOffset.UtcNow) return false;
+        deadline = expires;
+        return true;
+    }
+
+    /// <summary>
+    /// A student machine whose clock runs ahead expires the signed policy early, which looks exactly
+    /// like "the restriction lifted by itself". Say so instead of leaving the teacher guessing.
+    /// </summary>
+    private static string DescribeStudentClockOffset(StudentAgentStatusResponse? status)
+    {
+        if (status is not { } value) return "";
+        var offset = value.CollectedUtc - DateTimeOffset.UtcNow;
+        if (offset >= TimeSpan.FromMinutes(2))
+            return $" 该机时间比教师机快约 {(int)Math.Round(offset.TotalMinutes)} 分钟，" +
+                   "自动解除会提前触发，请校正学生机时间。";
+        if (offset <= TimeSpan.FromMinutes(-2))
+            return $" 该机时间比教师机慢约 {(int)Math.Round(-offset.TotalMinutes)} 分钟，请校正学生机时间。";
+        return "";
     }
 
     private static DeviceControlMode GetMode(long? websiteRevision, long? pendingWebsiteRevision,
@@ -1999,14 +2085,23 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                                 await RefreshWebsiteStateAsync(context, binding, current, _shutdown.Token)
                                     .ConfigureAwait(false);
                                 var refreshed = TryReadDevice(context.SessionId, item.TargetId);
-                                if (refreshed is not null &&
+                                if (refreshed is null ||
                                     !ClassroomQuickControlDesiredState.NeedsCatchUp(refreshed))
+                                {
                                     ClearCatchUpRetry(context.SessionId, item.TargetId,
                                         item.DesiredRevision, item.TaskId);
-                                else
+                                    return;
+                                }
+                                // The status read can discover that the policy is gone while the lesson
+                                // still wants it. That is a fresh delivery, not a failure to back off
+                                // from: push it in this pass instead of waiting out a retry interval.
+                                if (refreshed.Phase != ClassroomQuickControlPhase.WebsiteApplying ||
+                                    refreshed.DesiredAction != ClassroomQuickControlAction.EnableWebsiteRestriction)
+                                {
                                     RecordCatchUpFailure(context.SessionId, item.TargetId,
                                         item.DesiredRevision, item.TaskId);
-                                return;
+                                    return;
+                                }
                             }
                             _ = await ExecuteTargetAsync(context, binding, item.Action, _shutdown.Token,
                                 item.DesiredRevision, item.TaskId, item.Context.IsEndedRestore)

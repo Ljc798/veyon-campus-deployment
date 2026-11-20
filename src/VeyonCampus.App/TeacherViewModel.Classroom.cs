@@ -4385,6 +4385,24 @@ public sealed partial class TeacherViewModel
         if (IsClassroomCountdownRunning) EndClassroomCountdown();
     }
 
+    /// <summary>
+    /// The mode ledger and the quick-control record are two views of the same ownership. A restore that
+    /// finished without a verified readback clears the quick-control record (Mode None) but can leave the
+    /// ledger row in place, and the end-of-lesson check then refuses to close the lesson for good.
+    /// Rows the quick-control record no longer owns are dropped here; rows it still owns keep blocking,
+    /// because those are exactly the devices that may still hold a policy.
+    /// </summary>
+    private ClassroomModeSessionState? ReconcileLedgerWithQuickControl(ClassroomModeSessionState? state)
+    {
+        if (state is null || state.OwnedPolicies.Count == 0) return state;
+        if (_classroomQuickControlSnapshot is not { } snapshot || snapshot.SessionId != state.SessionId)
+            return state;
+        var ownedTargets = snapshot.Devices.Where(device => device.Mode != DeviceControlMode.None)
+            .Select(device => device.TargetId).ToHashSet();
+        var kept = state.OwnedPolicies.Where(policy => ownedTargets.Contains(policy.TargetId)).ToArray();
+        return kept.Length == state.OwnedPolicies.Count ? state : state with { OwnedPolicies = kept };
+    }
+
     /// <summary>Explains, in the operator's words, why the running lesson still cannot be closed.</summary>
     public string DescribeClassroomEndBlocker()
     {
@@ -4397,6 +4415,7 @@ public sealed partial class TeacherViewModel
         try
         {
             var state = _classroomModeStateStore.Read(active.SessionId);
+            state = ReconcileLedgerWithQuickControl(state);
             if (state?.OwnedPolicies.Count > 0)
                 return $"还有 {state.OwnedPolicies.Count} 台电脑的课堂策略（网站限制或键鼠锁定）未解除；" +
                        "先在课堂页点「恢复全部学生电脑」，再结束课堂。";
@@ -4456,7 +4475,8 @@ public sealed partial class TeacherViewModel
         {
             var closeResult = await Task.Run(() =>
             {
-                var modeState = _classroomModeStateStore.Read(expectedSessionId);
+                var modeState = ReconcileLedgerWithQuickControl(
+                    _classroomModeStateStore.Read(expectedSessionId));
                 if (modeState?.OwnedPolicies.Count > 0) return (Ended: false, LedgerWarning: (string?)null);
                 var ended = _classroomSessionStore.EndSession(expectedSessionId, DateTimeOffset.UtcNow);
                 if (ended is null) return (Ended: false, LedgerWarning: (string?)null);
@@ -4589,6 +4609,11 @@ public sealed partial class TeacherViewModel
             }
             await LoadClassroomSessionProgressAsync(started.Session.SessionId).ConfigureAwait(true);
             RefreshClassroomSessionProperties();
+            // The quick-control deadline is derived from "now + one hour", and it used to be computed
+            // once when the console process started. A console opened at 08:20 therefore carried
+            // 09:20 into a lesson that began at 09:10, and the restrictions lifted ten minutes later
+            // with no teacher action. Anchor the default to the lesson instead.
+            RefreshDefaultQuickControlDeadline(lessonStarting: true);
             ClassroomDeliveryStatus = "课堂保持进行中；正在通知当前学生电脑。";
             await PublishClassroomStatusAsync(started.Session, started.Session);
         }

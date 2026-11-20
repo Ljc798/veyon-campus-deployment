@@ -4352,9 +4352,9 @@ public static class WebsitePolicyTransport
         // agent's own work on a busy classroom machine. At six seconds a machine that is still
         // applying Edge policy answered too late, the push was reported as failed, and a retry then
         // hit the revision check as "not newer" - which looked like "sometimes it works".
-        using var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(20) };
-        // Sixteen simultaneous pushes saturate one classroom switch and slow every agent down.
-        using var limit = new SemaphoreSlim(8, 8);
+        using var client = new HttpClient(handler) { Timeout = StudentPolicyDeliveryTuning.PushTimeout };
+        using var limit = new SemaphoreSlim(StudentPolicyDeliveryTuning.PushParallelism,
+            StudentPolicyDeliveryTuning.PushParallelism);
         var tasks = validated.Select(async target =>
         {
             await limit.WaitAsync(cancellationToken).ConfigureAwait(false);

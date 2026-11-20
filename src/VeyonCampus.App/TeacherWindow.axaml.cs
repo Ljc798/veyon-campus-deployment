@@ -410,6 +410,7 @@ public partial class TeacherWindow : Window
         }
         if (!SupportsTeacherClassroomPolicyState ||
             _model.ActiveClassroomSessionId is not { } expectedSession) return;
+        _model.RefreshDefaultQuickControlDeadline();
         _model.RefreshClassroomQuickControlDeadlineState();
         if (_isRefreshingQuickControlSnapshot) return;
         _isRefreshingQuickControlSnapshot = true;
@@ -786,8 +787,14 @@ public partial class TeacherWindow : Window
         Guid expectedSessionId, int expectedTargetCount) => snapshot.SessionId == expectedSessionId &&
         snapshot.Devices.Count == expectedTargetCount && expectedTargetCount > 0 &&
         snapshot.ControlExpiresUtc is null && snapshot.Devices.All(device =>
-            device.Mode == DeviceControlMode.None && (device.Phase is
-                ClassroomQuickControlPhase.NotStarted or ClassroomQuickControlPhase.NoneVerified));
+            // A device this record still owns blocks the end: its policy may still be applied, and the
+            // next lesson would inherit an untracked restriction. A device the record no longer owns is
+            // a different case - the release was attempted, the readback stayed ambiguous, and the row
+            // says 需核对. Keeping that blocking meant a whole classroom could never be ended, because
+            // nothing on the teacher side can turn an ambiguous readback into a verified one.
+            device.Mode == DeviceControlMode.None && device.Phase is
+                ClassroomQuickControlPhase.NotStarted or ClassroomQuickControlPhase.NoneVerified or
+                ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Unsupported);
 
     private async void ToggleClassroomSession(object? sender, RoutedEventArgs e)
     {

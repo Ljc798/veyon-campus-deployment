@@ -120,7 +120,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _updateAvailable = false;
             _latestHasRequiredPolicyCapabilities = false;
             var failure = RecordFailure(UpdateDiagnosticOperation.Check, null, exception);
-            Status = "检查更新失败：" + failure.ToUserMessage();
+            Status = "检查更新失败：" + failure.ToUserMessage() + FailureDetail(exception);
         }
         finally
         {
@@ -164,7 +164,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             var failure = RecordFailure(UpdateDiagnosticOperation.DownloadAndInstall, latestRelease.Manifest.Version, exception);
-            Status = "下载或启动更新失败：" + failure.ToUserMessage();
+            Status = "下载或启动更新失败：" + failure.ToUserMessage() + FailureDetail(exception);
             return false;
         }
         finally
@@ -205,7 +205,7 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
         catch (Exception exception)
         {
             var failure = RecordFailure(UpdateDiagnosticOperation.OfflineExport, latestRelease.Manifest.Version, exception);
-            Status = "离线更新包导出失败：" + failure.ToUserMessage();
+            Status = "离线更新包导出失败：" + failure.ToUserMessage() + FailureDetail(exception);
         }
         finally
         {
@@ -285,13 +285,30 @@ public sealed class StudentSetupUpdateViewModel : INotifyPropertyChanged
             _stagedInstallerPath = null;
             _stagedHasRequiredPolicyCapabilities = false;
             var failure = RecordFailure(UpdateDiagnosticOperation.OfflineInstall, targetVersion, exception);
-            OfflineStatus = "离线更新未启动：" + failure.ToUserMessage();
+            OfflineStatus = "离线更新未启动：" + failure.ToUserMessage() + FailureDetail(exception);
             NotifyActions();
             return false;
         }
     }
 
     public void ReportOfflineUpdateError(string message) => OfflineStatus = message;
+
+    /// <summary>
+    /// The catalogue maps any exception to a stable code plus generic guidance, which is correct for the
+    /// exported diagnostics - they must never carry paths or server text. The operator in front of the
+    /// dialog still needs the one line that says what actually failed: "更新配置或固定签名公钥不可用"
+    /// covers a missing pinned key, a held install lease and an update helper that never took over, and
+    /// those three have completely different fixes.
+    /// </summary>
+    private static string FailureDetail(Exception exception)
+    {
+        var message = exception.Message;
+        if (string.IsNullOrWhiteSpace(message)) return "";
+        var singleLine = string.Join(' ', message.Split(['\r', '\n'],
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        if (singleLine.Length == 0) return "";
+        return " 详情：" + (singleLine.Length > 160 ? singleLine[..160] + "…" : singleLine);
+    }
 
     public void ReportDiagnosticExportFailure() =>
             DiagnosticsStatus = "无法保存诊断文件。";

@@ -33,8 +33,8 @@ public static class ApplicationPolicyTransport
     // Delivery waits for the agent's acknowledgement, which arrives after the policy is written, so
     // it needs a longer deadline than the read-only inventory calls that share SendAsync. The lower
     // parallelism keeps one classroom switch from being saturated by sixteen simultaneous pushes.
-    private static readonly TimeSpan PolicyPushTimeout = TimeSpan.FromSeconds(20);
-    private const int PolicyPushParallelism = 8;
+    private static readonly TimeSpan PolicyPushTimeout = StudentPolicyDeliveryTuning.PushTimeout;
+    private const int PolicyPushParallelism = StudentPolicyDeliveryTuning.PushParallelism;
 
     public static async Task<IReadOnlyList<ApplicationPolicyDeliveryResult>> PushAsync(IEnumerable<string> targets,
         string signedPolicyJson, string campusId, CancellationToken cancellationToken = default)

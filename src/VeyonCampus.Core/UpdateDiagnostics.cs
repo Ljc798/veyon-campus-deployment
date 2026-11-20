@@ -101,7 +101,8 @@ public static class UpdateDiagnosticCatalog
         PlatformNotSupportedException or NotSupportedException =>
             new("UPDATE_UNSUPPORTED", UpdateDiagnosticSeverity.Error, false, "此系统不支持该更新，请使用受支持的 Windows x64 版本。"),
         InvalidOperationException =>
-            new("UPDATE_CONFIGURATION", UpdateDiagnosticSeverity.Error, false, "更新配置或固定签名公钥不可用，请安装正式构建。"),
+            new("UPDATE_CONFIGURATION", UpdateDiagnosticSeverity.Error, false,
+                "更新配置不可用：可能是安装包没有嵌入固定签名公钥、另一个安装/更新事务仍在占用，或更新助手未能接管。请先用离线更新包升级，再重试在线更新。"),
         IOException =>
             new("UPDATE_LOCAL_IO", UpdateDiagnosticSeverity.Warning, true,
                 "更新暂存文件或本机更新助手读写失败。请检查更新目录权限、文件占用和磁盘空间；若失败阶段是“启动更新助手”，可先使用离线更新包或重新安装当前版本。"),
