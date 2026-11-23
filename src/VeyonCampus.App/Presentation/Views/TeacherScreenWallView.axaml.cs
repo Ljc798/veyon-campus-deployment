@@ -14,6 +14,8 @@ public partial class TeacherScreenWallView : UserControl
     {
         InitializeComponent();
         SizeChanged += OnSizeChanged;
+        // The template may be measured (or hidden at zero width) before the data context arrives.
+        DataContextChanged += (_, _) => UpdateMetrics(Bounds.Width);
     }
 
     /// <summary>Raised when the teacher asks for the keyboard/mouse lease on one card.</summary>
@@ -25,10 +27,11 @@ public partial class TeacherScreenWallView : UserControl
     /// <summary>Raised when the teacher opens one card in its own window.</summary>
     public event Action<ClassroomScreenTileViewModel>? OpenDetailRequested;
 
-    private void OnSizeChanged(object? sender, SizeChangedEventArgs e)
+    private void OnSizeChanged(object? sender, SizeChangedEventArgs e) => UpdateMetrics(e.NewSize.Width);
+
+    private void UpdateMetrics(double width)
     {
         if (DataContext is not TeacherViewModel { ClassroomScreenWall: { } wall }) return;
-        var width = e.NewSize.Width;
         if (width <= 0) return;
         var columns = Math.Clamp((int)Math.Floor((width + TileSpacing) / TargetTileWidth), 2, 6);
         var slot = Math.Max(160, (width - TileSpacing * (columns - 1)) / columns);
