@@ -43,7 +43,19 @@
         <ScrollViewer VerticalScrollBarVisibility="Auto">
           <StackPanel Spacing="12">
             <StackPanel Spacing="4">
-              <TextBlock Text="实时画面" Classes="section-title" FontSize="14" />
+              <TextBlock Text="学生与电脑" Classes="section-title" FontSize="14" />
+              <TextBlock Text="{Binding StudentDisplayName}" FontWeight="SemiBold" FontSize="13" />
+              <TextBlock Text="{Binding ComputerName}" Classes="muted" FontSize="12" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="{Binding SeatText}" Classes="muted" FontSize="12" />
+                <TextBlock Text="·" Classes="muted" FontSize="12" />
+                <TextBlock Text="{Binding SeatCoordinateText}" Classes="muted" FontSize="12" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="Host：" Classes="muted" FontSize="11" />
+                <TextBlock Text="{Binding HostText}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              </StackPanel>
+              <TextBlock Text="实时画面" FontWeight="SemiBold" FontSize="12.5" Margin="0,8,0,0" />
               <TextBlock Text="{Binding FrameInfoText}" Classes="muted" FontSize="12" />
             </StackPanel>
             <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="10,8">
@@ -51,13 +63,24 @@
             </Border>
 
             <StackPanel Spacing="6">
-              <TextBlock Text="课堂管控（只作用于这台电脑）" FontWeight="SemiBold" FontSize="12.5" />
+              <TextBlock Text="课堂管控与状态" FontWeight="SemiBold" FontSize="12.5" />
+              <TextBlock Text="{Binding WebsiteStatusDetail}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <TextBlock Text="{Binding InputStatusDetail}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="截止时间：" Classes="muted" FontSize="11" />
+                <TextBlock Text="{Binding ControlExpiryText}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              </StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="4">
+                <TextBlock Text="最近核验：" Classes="muted" FontSize="11" />
+                <TextBlock Text="{Binding LastControlUpdateText}" Classes="muted" FontSize="11" TextWrapping="Wrap" />
+              </StackPanel>
+              <TextBlock Text="{Binding ControlDetailText}" FontSize="11" TextWrapping="Wrap" />
               <Border Background="{Binding InputBadgeBackground}" CornerRadius="8" Padding="9,5">
                 <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}" FontSize="12" />
               </Border>
               <Button Content="{Binding InputButtonText}" Classes="secondary" HorizontalAlignment="Stretch"
                       HorizontalContentAlignment="Center" Click="ToggleInputLock"
-                      ToolTip.Tip="锁定后由学生端 Guard 维持，按课堂截止时间自动解除；教师端断线 20 秒内也会释放。" />
+                      ToolTip.Tip="通过学生端 Input Guard 锁定或解除键鼠；截止时间与状态以学生端核验结果为准。" />
               <Border Background="{Binding WebsiteBadgeBackground}" CornerRadius="8" Padding="9,5">
                 <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}" FontSize="12" />
               </Border>

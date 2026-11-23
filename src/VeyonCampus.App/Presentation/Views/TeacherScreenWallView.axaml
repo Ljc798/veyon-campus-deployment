@@ -3,102 +3,175 @@
              xmlns:vm="using:VeyonCampus.App"
              x:Class="VeyonCampus.App.Presentation.Views.TeacherScreenWallView"
              x:DataType="vm:TeacherViewModel">
-  <!-- 屏幕墙：只显示真实学生机画面；没有画面就显示原因，不用占位图。 -->
-  <Grid RowDefinitions="Auto,*" RowSpacing="8">
-    <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="9"
-            Padding="11,9" IsVisible="{Binding ClassroomScreenWall.HasWebApiWarning}">
-      <StackPanel Spacing="3">
-        <TextBlock Text="屏幕墙需要本机 WebAPI" FontWeight="SemiBold" FontSize="12.5" />
-        <TextBlock Text="{Binding ClassroomScreenWall.WebApiWarning}" TextWrapping="Wrap" FontSize="11.5" />
-        <TextBlock Text="{Binding ClassroomScreenWall.KeyHint}" Classes="muted" FontSize="11"
-                   TextWrapping="Wrap" />
-      </StackPanel>
+  <UserControl.Styles>
+    <Style Selector="Border.classroom-tile.compact">
+      <Setter Property="Padding" Value="5" />
+    </Style>
+  </UserControl.Styles>
+  <Grid RowDefinitions="Auto,*" Background="#EDF5F8">
+    <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.WarningSubtle}"
+            CornerRadius="8" Padding="10,7" Margin="8,8,8,0"
+            IsVisible="{Binding ClassroomScreenWall.HasWebApiWarning}">
+      <TextBlock Text="{Binding ClassroomScreenWall.WebApiWarning}" FontSize="12"
+                 Foreground="{DynamicResource Teacher.Color.Warning}" TextWrapping="Wrap" />
     </Border>
 
-    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                  IsVisible="{Binding ClassroomScreenWall.HasTiles}">
-      <ItemsControl x:Name="TileHost" ItemsSource="{Binding ClassroomScreenWall.Tiles}">
-        <ItemsControl.ItemsPanel>
-          <ItemsPanelTemplate>
-            <WrapPanel ItemWidth="{Binding ClassroomScreenWall.TileWidth}"
-                       ItemHeight="{Binding ClassroomScreenWall.TileHeight}" />
-          </ItemsPanelTemplate>
-        </ItemsControl.ItemsPanel>
-        <ItemsControl.ItemTemplate>
-          <DataTemplate x:DataType="vm:ClassroomScreenTileViewModel">
-            <Border Background="{DynamicResource Teacher.Color.Surface}"
-                    BorderBrush="{Binding CardBorderBrush}" BorderThickness="{Binding CardBorderThickness}"
-                    CornerRadius="10" Margin="0,0,8,8" Padding="8">
-              <Grid RowDefinitions="Auto,*,Auto,Auto" RowSpacing="6">
-                <!-- 第一层：姓名 + 座位 + 链路状态 -->
-                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="6">
-                  <StackPanel Spacing="1" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
-                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
-                    <TextBlock Text="{Binding SeatText}" Classes="muted" FontSize="10.5"
-                               TextTrimming="CharacterEllipsis" />
-                  </StackPanel>
-                  <Border Grid.Column="1" Background="{Binding LinkStatusBackground}" CornerRadius="9"
-                          Padding="6,2" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}"
-                               FontSize="10.5" FontWeight="SemiBold" />
-                  </Border>
-                </Grid>
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Spacing="12" Margin="8,10,8,14">
+        <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+          <TextBlock Text="{Binding ClassroomScreenWall.SummaryText}" Classes="muted"
+                     VerticalAlignment="Center" TextWrapping="Wrap" />
+          <TextBlock Grid.Column="1" Text="{Binding ClassroomScreenWall.FilterSummary}"
+                     Classes="muted" VerticalAlignment="Center" />
+        </Grid>
 
-                <!-- 第二层：真实画面（16:9 容器，不裁切） -->
-                <Border Grid.Row="1" Background="#101C24" CornerRadius="6" ClipToBounds="True"
-                        PointerPressed="TilePressed" DoubleTapped="TileDoubleTapped"
-                        ToolTip.Tip="{Binding DetailText}">
-                  <Grid>
-                    <Image Source="{Binding Image}" Stretch="Uniform" />
-                    <TextBlock Text="{Binding LinkStatusText}" IsVisible="{Binding !HasFrame}"
-                               Foreground="#9FB3C0" FontSize="11.5" HorizontalAlignment="Center"
-                               VerticalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
-                               Margin="8" />
-                    <Border Background="#B0101C24" CornerRadius="5" Padding="5,2" Margin="5"
-                            HorizontalAlignment="Left" VerticalAlignment="Bottom"
-                            IsVisible="{Binding HasFrame}">
-                      <TextBlock Text="{Binding FrameInfoText}" Foreground="#D6E4EC" FontSize="10" />
+        <ItemsControl ItemsSource="{Binding ClassroomScreenWall.SeatedTiles}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="{Binding ClassroomScreenWall.GridColumns}" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate x:DataType="vm:ClassroomScreenTileViewModel">
+              <Border Background="{DynamicResource Teacher.Color.Surface}"
+                      BorderBrush="{Binding CardBorderBrush}" BorderThickness="{Binding CardBorderThickness}"
+                      Classes="classroom-tile" Classes.compact="{Binding IsCompact}"
+                      CornerRadius="12" Margin="0,0,8,8" Padding="8"
+                      PointerPressed="TilePressed" DoubleTapped="TileDoubleTapped">
+                <Border.ContextMenu>
+                  <ContextMenu x:CompileBindings="False" Opening="DeviceContextMenuOpening">
+                    <MenuItem Header="查看实时屏幕" Tag="ViewLiveScreen" Click="RequestDeviceAction" />
+                    <MenuItem Header="在座位图中定位" Tag="LocateInSeatMap" Click="RequestDeviceAction" />
+                    <Separator />
+                    <MenuItem Header="推送当前网站策略…" Tag="PushWebsitePolicy" Click="RequestDeviceAction" />
+                    <MenuItem Header="恢复该设备网站访问" Tag="RestoreWebsiteAccess" Click="RequestDeviceAction" />
+                    <MenuItem Header="查看网站策略状态" Tag="ShowWebsiteStatus" Click="RequestDeviceAction" />
+                    <Separator />
+                    <MenuItem Header="锁定该设备键鼠…" Tag="LockInput" Click="RequestDeviceAction"
+                              IsEnabled="{Binding CanLockInput}" />
+                    <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
+                              IsEnabled="{Binding CanUnlockInput}" />
+                    <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                    <Separator />
+                    <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
+                    <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
+                  </ContextMenu>
+                </Border.ContextMenu>
+                <Grid RowDefinitions="Auto,Auto,Auto,Auto" RowSpacing="7">
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                    <StackPanel Spacing="2" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
+                                 TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
+                      <TextBlock Text="{Binding IdentitySummaryText}" Classes="muted" FontSize="10.5"
+                                 TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding HostText}" />
+                    </StackPanel>
+                    <Border Grid.Column="1" Background="{Binding LinkStatusBackground}" CornerRadius="9"
+                            Padding="6,3" VerticalAlignment="Center">
+                      <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}"
+                                 FontSize="10.5" FontWeight="SemiBold" />
                     </Border>
-                    <Button Content="放大" Classes="secondary" FontSize="10" Padding="6,1"
-                            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5"
-                            Click="OpenDetail" ToolTip.Tip="打开独立窗口查看这台电脑的实时画面" />
+                  </Grid>
+
+                  <Border Grid.Row="1" Height="{Binding PictureHeight}" Background="#101C24"
+                          CornerRadius="7" ClipToBounds="True" ToolTip.Tip="{Binding DetailText}">
+                    <Grid>
+                      <Image Source="{Binding Image}" Stretch="Uniform" />
+                      <TextBlock Text="{Binding LinkStatusText}" IsVisible="{Binding !HasFrame}"
+                                 Foreground="#D6E4EC" FontSize="12" HorizontalAlignment="Center"
+                                 VerticalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                                 Margin="10" />
+                      <Border Background="#B0101C24" CornerRadius="5" Padding="5,2" Margin="5"
+                              HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                              IsVisible="{Binding HasFrame}">
+                        <TextBlock Text="{Binding FrameInfoText}" Foreground="#D6E4EC" FontSize="10" />
+                      </Border>
+                      <Button Content="放大" Classes="secondary" FontSize="10" Padding="7,2"
+                              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5"
+                              Click="OpenDetail" ToolTip.Tip="打开独立窗口查看这台电脑的实时画面" />
+                    </Grid>
+                  </Border>
+
+                  <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="5">
+                    <Border Background="{Binding InputBadgeBackground}" CornerRadius="7" Padding="5,3">
+                      <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}"
+                                 FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    </Border>
+                    <Border Grid.Column="1" Background="{Binding WebsiteBadgeBackground}" CornerRadius="7" Padding="5,3">
+                      <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}"
+                                 FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                    </Border>
+                  </Grid>
+
+                  <TextBlock Grid.Row="3" Text="右键查看设备操作" Classes="muted" FontSize="10"
+                             IsVisible="{Binding !IsCompact}" VerticalAlignment="Center" />
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <Border Background="{DynamicResource Teacher.Color.Surface}" CornerRadius="12" Padding="18"
+                IsVisible="{Binding ClassroomScreenWall.HasNoTiles}">
+          <StackPanel Spacing="6" HorizontalAlignment="Center" MaxWidth="440">
+            <TextBlock Text="等待课堂设备" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding ClassroomScreenWall.EmptyHintText}" Classes="muted"
+                       TextWrapping="Wrap" TextAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <Border Background="{DynamicResource Teacher.Color.Surface}" CornerRadius="12" Padding="18"
+                IsVisible="{Binding ClassroomScreenWall.HasTiles}">
+          <TextBlock Text="没有设备符合当前搜索或状态筛选。清除筛选条件后重试。"
+                     IsVisible="{Binding !ClassroomScreenWall.HasFilteredTiles}"
+                     Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" />
+        </Border>
+
+        <StackPanel Spacing="7" IsVisible="{Binding ClassroomScreenWall.HasFilteredUnseatedTiles}">
+          <TextBlock Text="未排座设备" FontSize="15" FontWeight="SemiBold" Margin="2,4,0,0" />
+          <TextBlock Text="这些设备仍属于当前课堂，尚未绑定到教室座位。" Classes="muted" FontSize="12" />
+          <ItemsControl ItemsSource="{Binding ClassroomScreenWall.UnseatedTiles}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate><UniformGrid Columns="{Binding ClassroomScreenWall.GridColumns}" /></ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:ClassroomScreenTileViewModel">
+                <Border Background="{DynamicResource Teacher.Color.Surface}"
+                        BorderBrush="{Binding CardBorderBrush}" BorderThickness="{Binding CardBorderThickness}"
+                        CornerRadius="10" Margin="0,0,8,8" Padding="9"
+                        PointerPressed="TilePressed" DoubleTapped="TileDoubleTapped">
+                  <Border.ContextMenu>
+                    <ContextMenu x:CompileBindings="False" Opening="DeviceContextMenuOpening">
+                      <MenuItem Header="查看实时屏幕" Tag="ViewLiveScreen" Click="RequestDeviceAction" />
+                      <MenuItem Header="在座位图中定位" Tag="LocateInSeatMap" Click="RequestDeviceAction" />
+                      <Separator />
+                      <MenuItem Header="推送当前网站策略…" Tag="PushWebsitePolicy" Click="RequestDeviceAction" />
+                      <MenuItem Header="恢复该设备网站访问" Tag="RestoreWebsiteAccess" Click="RequestDeviceAction" />
+                      <MenuItem Header="查看网站策略状态" Tag="ShowWebsiteStatus" Click="RequestDeviceAction" />
+                      <Separator />
+                      <MenuItem Header="锁定该设备键鼠…" Tag="LockInput" Click="RequestDeviceAction"
+                                IsEnabled="{Binding CanLockInput}" />
+                      <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
+                                IsEnabled="{Binding CanUnlockInput}" />
+                      <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                      <Separator />
+                      <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
+                      <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
+                    </ContextMenu>
+                  </Border.ContextMenu>
+                  <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                    <StackPanel Spacing="3">
+                      <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding ComputerName}" Classes="muted" FontSize="11" TextTrimming="CharacterEllipsis" />
+                      <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}" FontSize="11" />
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="查看屏幕" Classes="secondary" Padding="9,5"
+                            Click="OpenDetail" VerticalAlignment="Center" />
                   </Grid>
                 </Border>
-
-                <!-- 第三层：管控状态（来自学生端核验结果，不是本地猜测） -->
-                <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="4">
-                  <Border Background="{Binding InputBadgeBackground}" CornerRadius="7" Padding="5,2">
-                    <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}"
-                               FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                  </Border>
-                  <Border Grid.Column="1" Background="{Binding WebsiteBadgeBackground}" CornerRadius="7" Padding="5,2">
-                    <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}"
-                               FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                  </Border>
-                </Grid>
-
-                <!-- 第四层：这张卡片的两个课堂功能 -->
-                <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="4">
-                  <Button Content="{Binding InputButtonText}" Classes="secondary" FontSize="11"
-                          Padding="4,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                          Click="ToggleInputLock"
-                          ToolTip.Tip="只对这台电脑申请键鼠锁定/解除；由学生端 Guard 核验，锁定按课堂截止时间自动解除。" />
-                  <Button Grid.Column="1" Content="{Binding WebsiteButtonText}" Classes="secondary" FontSize="11"
-                          Padding="4,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                          Click="ToggleWebsitePolicy"
-                          ToolTip.Tip="只对这台电脑应用/恢复已保存的网站名单；其他电脑不受影响。" />
-                </Grid>
-              </Grid>
-            </Border>
-          </DataTemplate>
-        </ItemsControl.ItemTemplate>
-      </ItemsControl>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+      </StackPanel>
     </ScrollViewer>
-
-    <TextBlock Grid.Row="1" Text="{Binding ClassroomScreenWall.EmptyHintText}" Classes="muted"
-               MaxWidth="420" TextWrapping="Wrap" TextAlignment="Center"
-               IsVisible="{Binding ClassroomScreenWall.HasNoTiles}" VerticalAlignment="Center"
-               HorizontalAlignment="Center" />
   </Grid>
 </UserControl>

@@ -236,9 +236,12 @@ public partial class TeacherWindow : Window
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession) or
             nameof(TeacherViewModel.IsClassroomScreenWallMode) or
+            nameof(TeacherViewModel.IsClassroomSeatMapMode) or
+            nameof(TeacherViewModel.IsClassroomListMode) or
             nameof(TeacherViewModel.HasCurrentClassroomQuickControlDeadline))
             SyncClassroomVisualTimers();
-        if (e.PropertyName is nameof(TeacherViewModel.IsClassroomScreenWallMode))
+        if (e.PropertyName is nameof(TeacherViewModel.IsClassroomScreenWallMode) or
+            nameof(TeacherViewModel.IsClassroomSeatMapMode) or nameof(TeacherViewModel.IsClassroomListMode))
             SyncContentScrollForClassroom();
         if (e.PropertyName is nameof(TeacherViewModel.SelectedCampusProfile) or
             nameof(TeacherViewModel.SelectedRoomProfile) or nameof(TeacherViewModel.RoomProfiles))
@@ -254,6 +257,7 @@ public partial class TeacherWindow : Window
         {
             _model.ReportClassroomScreenPreviewBindingRefreshFailure(exception.Message);
         }
+        SyncClassroomScreenWall();
     }
 
     private void SyncTeacherPageTemplate()
@@ -704,6 +708,11 @@ public partial class TeacherWindow : Window
             "启用课堂网站限制", "将对当前课堂内所有学生电脑应用已保存的网站名单。每台电脑会单独核验；若设备已有其他策略，系统会保留原策略并报告冲突。");
 
     [SupportedOSPlatform("windows")]
+    private async void RestoreClassroomWebsiteAccess(object? sender, RoutedEventArgs e) =>
+        await RunClassroomQuickControlAsync(ClassroomQuickControlAction.ClearWebsiteRestrictions,
+            "恢复全班网站访问", "只清除本工具在当前课堂设备上写入且能够核验归属的网站限制；其他来源的策略保持不变。");
+
+    [SupportedOSPlatform("windows")]
     private async void LockClassroomInput(object? sender, RoutedEventArgs e)
     {
         if (_model.IsClassroomInputControlActive || _model.HasUnverifiedClassroomInputControl)
@@ -722,6 +731,86 @@ public partial class TeacherWindow : Window
     private async void UnlockDeviceInput(Guid targetId) =>
         await RunDeviceInputAsync(targetId, ClassroomQuickControlAction.UnlockInput);
 
+    [SupportedOSPlatform("windows")]
+    private void HandleClassroomDeviceAction(Guid targetId, ClassroomDeviceAction action)
+    {
+        var tile = _screenWall.Tiles.FirstOrDefault(item => item.TargetId == targetId);
+        switch (action)
+        {
+            case ClassroomDeviceAction.ViewLiveScreen:
+            case ClassroomDeviceAction.ShowWebsiteStatus:
+            case ClassroomDeviceAction.ShowInputGuardStatus:
+            case ClassroomDeviceAction.ShowDeviceInfo:
+                if (tile is not null) OpenScreenDetail(tile);
+                break;
+            case ClassroomDeviceAction.LocateInSeatMap:
+                _model.LocateClassroomTarget(targetId);
+                SyncClassroomScreenWall();
+                TeacherPageHost.GetVisualDescendants().OfType<TeacherClassroomView>()
+                    .FirstOrDefault()?.ScrollToClassroomTarget(targetId);
+                break;
+            case ClassroomDeviceAction.PushWebsitePolicy:
+                _ = RunDeviceWebsiteAsync(targetId, ClassroomQuickControlAction.EnableWebsiteRestriction);
+                break;
+            case ClassroomDeviceAction.RestoreWebsiteAccess:
+                _ = RunDeviceWebsiteAsync(targetId, ClassroomQuickControlAction.ClearWebsiteRestrictions);
+                break;
+            case ClassroomDeviceAction.LockInput:
+                LockDeviceInput(targetId);
+                break;
+            case ClassroomDeviceAction.UnlockInput:
+                UnlockDeviceInput(targetId);
+                break;
+            case ClassroomDeviceAction.ShowDiagnostics:
+                if (tile is not null) ShowClassroomDeviceDiagnostics(tile);
+                break;
+        }
+    }
+
+    private void ShowClassroomDeviceDiagnostics(ClassroomScreenTileViewModel tile)
+    {
+        var control = _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == tile.TargetId);
+        var details = string.Join("\n", new[]
+        {
+            $"学生：{(string.IsNullOrWhiteSpace(tile.StudentName) ? "未关联" : tile.StudentName)}",
+            $"电脑：{tile.ComputerName}",
+            $"座位：{tile.SeatText}（第 {tile.Row} 行 · 第 {tile.Column} 列）",
+            $"TargetId：{tile.TargetId:D}",
+            $"Veyon Host：{tile.HostText}",
+            $"屏幕连接：{tile.LinkStatusText}",
+            $"最近画面：{tile.FrameInfoText}",
+            $"连接详情：{tile.DetailText}",
+            $"网站限制：{tile.WebsiteBadgeText}",
+            $"键鼠限制：{tile.InputBadgeText}",
+            $"最近管控记录：{control?.UpdatedText ?? "尚无本机记录"}",
+            $"管控结果：{control?.Detail ?? "尚未收到该设备的课堂管控回执"}",
+            $"WebAPI：{(_screenWall.WebApiWarning.Length == 0 ? "已就绪" : _screenWall.WebApiWarning)}",
+            $"Veyon 凭据：{_screenWall.KeyHint}"
+        });
+        var window = new Window
+        {
+            Title = $"设备诊断 · {tile.ComputerName}",
+            Width = 620,
+            Height = 520,
+            MinWidth = 480,
+            MinHeight = 360,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White,
+            Content = new ScrollViewer
+            {
+                Margin = new Avalonia.Thickness(20),
+                Content = new TextBlock
+                {
+                    Text = details,
+                    FontSize = 13,
+                    TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+                    LineHeight = 22
+                }
+            }
+        };
+        window.Show(this);
+    }
+
     /// <summary>
     /// Starts, stops and re-targets the screen wall with the classroom page. The wall is the default
     /// right-hand view, so this runs on every classroom visual sync; a fingerprint keeps it from
@@ -729,25 +818,38 @@ public partial class TeacherWindow : Window
     /// </summary>
     private void SyncClassroomScreenWall()
     {
-        var active = IsClassroomExperienceVisible && _model.IsClassroomScreenWallMode;
-        if (active != _screenWallWasActive)
+        var pageVisible = IsClassroomExperienceVisible;
+        var captureActive = pageVisible && (_model.IsClassroomScreenWallMode || _screenDetailWindow is not null);
+        if (captureActive != _screenWallWasActive)
         {
-            _screenWallWasActive = active;
-            _screenWall.SetActive(active);
-            if (!active)
-            {
-                _screenDetailWindow?.Close();
-                return;
-            }
+            _screenWallWasActive = captureActive;
+            _screenWall.SetActive(captureActive);
         }
 
-        if (!active || _model.ActiveClassroomSessionId is not { } sessionId) return;
+        if (!pageVisible)
+        {
+            _screenDetailWindow?.Close();
+            return;
+        }
+
+        if (_model.ActiveClassroomSessionId is not { } sessionId)
+        {
+            if (_screenWallFingerprint == "inactive-classroom") return;
+            _screenWallFingerprint = "inactive-classroom";
+            _screenWallEmptyRetryUtc = DateTimeOffset.MinValue;
+            _model.SynchronizeClassroomTargets([]);
+            _ = ApplyScreenWallAsync(Array.Empty<ClassroomScreenTarget>());
+            return;
+        }
+
         var targets = _mobileControl.ReadClassroomScreenTargets(sessionId);
         var fingerprint = sessionId.ToString("N") + "|" + string.Join(";", targets.Select(target =>
-            $"{target.TargetId:N}:{target.HostAddress}:{target.SeatNumber}:{target.StudentName}:" +
+            $"{target.TargetId:N}:{target.HostAddress}:{target.SeatNumber}:{target.Row}:{target.Column}:{target.StudentName}:" +
             $"{target.ComputerName}"));
         var emptyRetryDue = targets.Count == 0 && DateTimeOffset.UtcNow >= _screenWallEmptyRetryUtc;
-        if (string.Equals(fingerprint, _screenWallFingerprint, StringComparison.Ordinal) && !emptyRetryDue)
+        var readinessRetryDue = DateTimeOffset.UtcNow - _screenWallReadinessUtc > TimeSpan.FromSeconds(20);
+        if (string.Equals(fingerprint, _screenWallFingerprint, StringComparison.Ordinal) &&
+            !emptyRetryDue && !readinessRetryDue)
             return;
         _screenWallFingerprint = fingerprint;
         _screenWallEmptyRetryUtc = targets.Count == 0
@@ -768,6 +870,8 @@ public partial class TeacherWindow : Window
 
             await _screenWall.SyncAsync(targets);
             _screenWall.ApplyControlState(_model.ClassroomQuickControlDevices);
+            _model.SynchronizeClassroomTargets(targets.Select(target => target.TargetId));
+            _model.RebuildClassroomSeatWorkspaceCells();
         }
         catch (Exception exception) when (exception is IOException or InvalidOperationException or
                                            ObjectDisposedException or OperationCanceledException)
@@ -783,11 +887,13 @@ public partial class TeacherWindow : Window
         _screenDetailWindow?.Close();
         var window = new TeacherScreenDetailWindow(tile, LockOrUnlockDeviceInput, ApplyDeviceWebsitePolicy);
         _screenDetailWindow = window;
+        SyncClassroomScreenWall();
         _screenWall.SetFocused(tile.TargetId);
         window.Closed += (_, _) =>
         {
             if (ReferenceEquals(_screenDetailWindow, window)) _screenDetailWindow = null;
             _screenWall.SetFocused(null);
+            SyncClassroomScreenWall();
         };
         window.Show(this);
     }
@@ -832,9 +938,14 @@ public partial class TeacherWindow : Window
         var device = _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == targetId);
         var name = string.IsNullOrWhiteSpace(device?.DisplayName) ? "该设备" : device!.DisplayName;
         var enabling = action == ClassroomQuickControlAction.EnableWebsiteRestriction;
+        var policySummary = _model.ClassroomQuickControlPresetSummary;
+        var deadlineSummary = _model.HasCurrentClassroomQuickControlDeadline
+            ? _model.CurrentClassroomQuickControlDeadlineText
+            : _model.ClassroomQuickControlDeadlineSummary;
         if (!await ConfirmProfileActionAsync(enabling ? "应用网站策略" : "恢复网站访问",
                 enabling
-                    ? $"将对 {name} 应用当前课堂已保存的网站名单，其他学生电脑不受影响。\n\n" +
+                    ? $"目标设备：{name}\n当前名单：{policySummary}\n截止时间：{deadlineSummary}\n\n" +
+                      "将对这台电脑应用当前课堂已保存的网站名单，其他学生电脑不受影响。\n\n" +
                       "学生端需要在线并运行网站策略组件；若该设备已有其他来源的策略，会保留并报告冲突。\n" +
                       "这一步只作用于这一台，不会改动全班的自动解除时间。"
                     : $"将解除 {name} 上由本工具写入的网站限制；其他设备保持不变。",
