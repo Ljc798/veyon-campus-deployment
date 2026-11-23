@@ -28,15 +28,29 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
 
     private Bitmap? _image;
     private string _displayName;
+    private string _studentName;
     private string _seatText;
     private string _hostText;
+    private string _computerName;
+    private int _seatNumber;
+    private int _row;
+    private int _column;
+    private double _pictureHeight = 120;
     private string _linkStatusText = "待连接";
     private IBrush _linkStatusBrush = NeutralBrush;
     private IBrush _linkStatusBackground = NeutralSubtleBrush;
     private string _frameInfoText = "尚无画面";
     private string _detailText = "";
+    private string _websiteStatusDetail = "网站状态尚未核验";
+    private string _inputStatusDetail = "键鼠状态尚未核验";
+    private string _controlExpiryText = "尚未核验截止时间";
+    private string _lastControlUpdateText = "尚无本机管控记录";
+    private string _controlDetailText = "尚未收到课堂管控回执";
     private bool _hasFrame;
     private bool _isSelected;
+    private bool _isLocated;
+    private bool _isCompact;
+    private bool _isFilteredOut;
     private bool _isInputLocked;
     private bool _isInputUnverified;
     private bool _isWebsiteRestricted;
@@ -52,17 +66,31 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
     {
         TargetId = target.TargetId;
         _displayName = target.BuildDisplayName();
-        _seatText = target.SeatNumber > 0
-            ? $"{target.SeatNumber.ToString("00", CultureInfo.InvariantCulture)} 号位"
-            : "未排座位";
+        _studentName = target.StudentName;
+        _computerName = string.IsNullOrWhiteSpace(target.ComputerName) ? target.HostAddress : target.ComputerName;
+        _seatNumber = target.SeatNumber;
+        _row = target.Row;
+        _column = target.Column;
+        _seatText = BuildSeatText(target.SeatNumber, target.Row, target.Column);
         _hostText = target.HostAddress;
         _detailText = string.IsNullOrWhiteSpace(target.ComputerName) ? target.HostAddress : target.ComputerName;
     }
 
     public Guid TargetId { get; }
     public string DisplayName { get => _displayName; private set => Set(ref _displayName, value); }
+    public string StudentName { get => _studentName; private set => Set(ref _studentName, value); }
+    public string IdentitySummaryText => $"{ComputerName} · {SeatText}";
+    public string StudentDisplayName => string.IsNullOrWhiteSpace(StudentName) ? "未关联学生姓名" : StudentName;
     public string SeatText { get => _seatText; private set => Set(ref _seatText, value); }
     public string HostText { get => _hostText; private set => Set(ref _hostText, value); }
+    public string ComputerName { get => _computerName; private set => Set(ref _computerName, value); }
+    public int SeatNumber { get => _seatNumber; private set => Set(ref _seatNumber, value); }
+    public int Row { get => _row; private set => Set(ref _row, value); }
+    public int Column { get => _column; private set => Set(ref _column, value); }
+    public bool HasSeatAssignment => SeatNumber > 0 || Row > 0 && Column > 0;
+    public string SeatCoordinateText => Row > 0 && Column > 0
+        ? $"第 {Row} 行 · 第 {Column} 列" : "未关联到物理座位";
+    public double PictureHeight { get => _pictureHeight; internal set => Set(ref _pictureHeight, value); }
     public Bitmap? Image { get => _image; private set => Set(ref _image, value); }
     public bool HasFrame { get => _hasFrame; private set => Set(ref _hasFrame, value); }
     public string LinkStatusText { get => _linkStatusText; private set => Set(ref _linkStatusText, value); }
@@ -75,6 +103,29 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
 
     public string FrameInfoText { get => _frameInfoText; private set => Set(ref _frameInfoText, value); }
     public string DetailText { get => _detailText; private set => Set(ref _detailText, value); }
+    public string WebsiteStatusDetail { get => _websiteStatusDetail; private set => Set(ref _websiteStatusDetail, value); }
+    public string InputStatusDetail { get => _inputStatusDetail; private set => Set(ref _inputStatusDetail, value); }
+    public string ControlExpiryText { get => _controlExpiryText; private set => Set(ref _controlExpiryText, value); }
+    public string LastControlUpdateText { get => _lastControlUpdateText; private set => Set(ref _lastControlUpdateText, value); }
+    public string ControlDetailText { get => _controlDetailText; private set => Set(ref _controlDetailText, value); }
+
+    public string ConnectionSummary => _linkState switch
+    {
+        ScreenWallLinkState.Live => "在线 · 屏幕实时更新",
+        ScreenWallLinkState.Connecting or ScreenWallLinkState.AwaitingFirstFrame => "正在连接学生电脑",
+        ScreenWallLinkState.Stale => "连接正常，画面暂未更新",
+        ScreenWallLinkState.Offline => "学生电脑离线或不可达",
+        ScreenWallLinkState.AuthenticationFailed => "Veyon 认证失败",
+        ScreenWallLinkState.Unavailable => "本机 Veyon WebAPI 未就绪",
+        ScreenWallLinkState.FormatUnsupported => "屏幕画面格式不受支持",
+        _ => "等待屏幕连接"
+    };
+
+    public string SearchText => $"{DisplayName} {ComputerName} {HostText} {SeatText} {TargetId:N}";
+    public string ConnectionFilterKey => _linkState is ScreenWallLinkState.Live ? "在线"
+        : _linkState is ScreenWallLinkState.Offline or ScreenWallLinkState.AuthenticationFailed or
+            ScreenWallLinkState.Unavailable or ScreenWallLinkState.FormatUnsupported or ScreenWallLinkState.Stale
+            ? "异常" : "连接中";
 
     public bool IsSelected
     {
@@ -87,12 +138,28 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
         }
     }
 
-    public IBrush CardBorderBrush => IsSelected ? SelectedBorderBrush : CardBorderBrushDefault;
-    public Avalonia.Thickness CardBorderThickness => IsSelected ? new Avalonia.Thickness(2) : new Avalonia.Thickness(1);
+    public bool IsLocated
+    {
+        get => _isLocated;
+        internal set
+        {
+            if (!Set(ref _isLocated, value)) return;
+            Raise(nameof(CardBorderBrush));
+            Raise(nameof(CardBorderThickness));
+        }
+    }
+
+    public bool IsCompact { get => _isCompact; internal set => Set(ref _isCompact, value); }
+    public bool IsFilteredOut { get => _isFilteredOut; internal set => Set(ref _isFilteredOut, value); }
+
+    public IBrush CardBorderBrush => IsSelected || IsLocated ? SelectedBorderBrush : CardBorderBrushDefault;
+    public Avalonia.Thickness CardBorderThickness => IsLocated ? new Avalonia.Thickness(3)
+        : IsSelected ? new Avalonia.Thickness(2) : new Avalonia.Thickness(1);
 
     public bool IsInputLocked => _isInputLocked;
     public bool IsInputUnverified => _isInputUnverified;
-    public bool CanLockInput => !_isInputLocked;
+    public bool CanLockInput => !_isInputLocked && !_isInputUnverified;
+    public bool CanUnlockInput => _isInputLocked || _isInputUnverified;
     public string InputButtonText => _isInputLocked ? "解除键鼠" : "锁定键鼠";
     public string InputBadgeText => _isInputLocked ? "键鼠已锁" : _isInputUnverified ? "键鼠待核验" : "键鼠未锁";
     public IBrush InputBadgeBrush => _isInputLocked ? InfoBrush : _isInputUnverified ? WarningBrush : NeutralBrush;
@@ -116,12 +183,23 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
     internal void ApplyTarget(ClassroomScreenTarget target)
     {
         DisplayName = target.BuildDisplayName();
-        SeatText = target.SeatNumber > 0
-            ? $"{target.SeatNumber.ToString("00", CultureInfo.InvariantCulture)} 号位"
-            : "未排座位";
+        StudentName = target.StudentName;
+        Raise(nameof(StudentDisplayName));
+        ComputerName = string.IsNullOrWhiteSpace(target.ComputerName) ? target.HostAddress : target.ComputerName;
+        SeatNumber = target.SeatNumber;
+        Row = target.Row;
+        Column = target.Column;
+        SeatText = BuildSeatText(target.SeatNumber, target.Row, target.Column);
+        Raise(nameof(SeatCoordinateText));
+        Raise(nameof(IdentitySummaryText));
+        Raise(nameof(HasSeatAssignment));
         HostText = target.HostAddress;
         DetailText = string.IsNullOrWhiteSpace(target.ComputerName) ? target.HostAddress : target.ComputerName;
     }
+
+    private static string BuildSeatText(int seatNumber, int row, int column) => seatNumber > 0
+        ? $"{seatNumber.ToString("00", CultureInfo.InvariantCulture)} 号位"
+        : row > 0 && column > 0 ? $"第 {row} 行 · 第 {column} 列" : "未排座位";
 
     internal void ApplyState(ScreenWallLinkState state, string detail)
     {
@@ -138,10 +216,12 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
             ScreenWallLinkState.FormatUnsupported => ("格式不支持", DangerBrush, DangerSubtleBrush),
             _ => ("待连接", NeutralBrush, NeutralSubtleBrush)
         };
-        // A live connection should not replace the card's seat/address subtitle with "连接正常";
-        // problem states are exactly where the teacher needs the reason on the card.
-        if (!string.IsNullOrWhiteSpace(detail) && state != ScreenWallLinkState.Live)
+        if (state == ScreenWallLinkState.Live)
+            DetailText = string.IsNullOrWhiteSpace(ComputerName) ? HostText : ComputerName;
+        else if (!string.IsNullOrWhiteSpace(detail))
             DetailText = detail;
+        Raise(nameof(ConnectionSummary));
+        Raise(nameof(ConnectionFilterKey));
     }
 
     internal void ApplyFrame(ScreenWallUpdate update)
@@ -181,6 +261,11 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
 
     internal void ApplyControlState(TeacherClassroomQuickControlDeviceItem? device)
     {
+        WebsiteStatusDetail = device?.WebsiteControlStatus ?? "网站状态尚未核验";
+        InputStatusDetail = device?.InputControlStatus ?? "键鼠状态尚未核验";
+        ControlExpiryText = device?.ExpiresText ?? "尚未核验截止时间";
+        LastControlUpdateText = device?.UpdatedText ?? "尚无本机管控记录";
+        ControlDetailText = device?.Detail ?? "尚未收到课堂管控回执";
         var locked = device?.IsDeviceInputLocked ?? false;
         var unverified = device?.IsDeviceInputUnverified ?? false;
         if (_isInputLocked != locked || _isInputUnverified != unverified)
@@ -190,6 +275,7 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
             Raise(nameof(IsInputLocked));
             Raise(nameof(IsInputUnverified));
             Raise(nameof(CanLockInput));
+            Raise(nameof(CanUnlockInput));
             Raise(nameof(InputButtonText));
             Raise(nameof(InputBadgeText));
             Raise(nameof(InputBadgeBrush));
@@ -218,6 +304,7 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
         WebsiteBadgeText = text;
         WebsiteBadgeBrush = brush;
         WebsiteBadgeBackground = background;
+        Raise(nameof(SearchText));
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

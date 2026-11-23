@@ -7,7 +7,7 @@ namespace VeyonCampus.App;
 /// never re-derives seats or identities on its own.
 /// </summary>
 internal sealed record ClassroomScreenTarget(Guid TargetId, string HostAddress, int SeatNumber,
-    string StudentName, string ComputerName)
+    int Row, int Column, string StudentName, string ComputerName)
 {
     internal string BuildDisplayName()
     {

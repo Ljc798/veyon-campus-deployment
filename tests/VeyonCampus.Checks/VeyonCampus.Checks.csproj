@@ -16,6 +16,7 @@
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.cs" Link="TeacherViewModel.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.Classroom.cs" Link="TeacherViewModel.Classroom.cs" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.RestoredMembers.cs" Link="TeacherViewModel.RestoredMembers.cs" />
+    <Compile Include="../../src/VeyonCampus.App/ScreenWall/**/*.cs" LinkBase="ScreenWall" />
     <Compile Include="../../src/VeyonCampus.App/TeacherViewModel.LanDistribution.cs" Link="TeacherViewModel.LanDistribution.cs" />
     <Compile Include="../../src/VeyonCampus.App/MacVeyonScreenshotCapture.cs" Link="MacVeyonScreenshotCapture.cs" />
     <Compile Include="../../src/VeyonCampus.App/MacTeacherLoginStartService.cs" Link="MacTeacherLoginStartService.cs" />

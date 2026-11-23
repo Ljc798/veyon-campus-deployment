@@ -25,6 +25,14 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     private bool _disposed;
     private double _tileWidth = 240;
     private double _tileHeight = 210;
+    private double _tilePictureHeight = 120;
+    private int _gridColumns = 3;
+    private string _thumbnailSize = "中";
+    private bool _compactMode;
+    private string _searchText = "";
+    private string _statusFilter = "全部状态";
+    private string _sortOrder = "按座位顺序";
+    private Guid? _locatedTargetId;
 
     internal ClassroomScreenWallViewModel(Action<Action> dispatch)
     {
@@ -34,6 +42,11 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     }
 
     public ObservableCollection<ClassroomScreenTileViewModel> Tiles { get; } = [];
+    public ObservableCollection<ClassroomScreenTileViewModel> FilteredTiles { get; } = [];
+    public ObservableCollection<ClassroomScreenTileViewModel> SeatedTiles { get; } = [];
+    public ObservableCollection<ClassroomScreenTileViewModel> UnseatedTiles { get; } = [];
+    public ObservableCollection<ClassroomScreenTileViewModel> AllUnseatedTiles { get; } = [];
+    public event EventHandler? DeviceStateChanged;
 
     public bool HasTiles
     {
@@ -49,22 +62,56 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
 
     public bool HasNoTiles => !_hasTiles;
 
-    /// <summary>
-    /// Empty-state copy that tells the two cases apart: no classroom running at all, versus a running
-    /// classroom whose devices have no seat positions yet (nothing to order the wall by).
-    /// </summary>
     public string EmptyHintText => _controlDeviceCount == 0
         ? "当前教室还没有可调度的学生电脑。先在页面顶部点「开始课堂」。"
-        : $"课堂里有 {_controlDeviceCount} 台学生电脑，但还没有座位位置，无法按座位排列画面。" +
-          "请到左侧「地点与学生名单」排好座位后再回来。";
+        : "当前课堂没有可显示的活动设备。检查教室名单和课堂状态后重试。";
     public double TileWidth { get => _tileWidth; private set => Set(ref _tileWidth, value); }
     public double TileHeight { get => _tileHeight; private set => Set(ref _tileHeight, value); }
+    public double TilePictureHeight { get => _tilePictureHeight; private set => Set(ref _tilePictureHeight, value); }
+    public int GridColumns
+    {
+        get => _gridColumns;
+        set
+        {
+            var next = Math.Clamp(value, 2, 6);
+            if (!Set(ref _gridColumns, next)) return;
+            Raise(nameof(GridColumnsLabel));
+        }
+    }
+    public string GridColumnsLabel => $"{GridColumns} 列";
+    public string ThumbnailSize
+    {
+        get => _thumbnailSize;
+        set
+        {
+            var next = string.IsNullOrWhiteSpace(value) ? "中" : value;
+            if (!Set(ref _thumbnailSize, next)) return;
+            GridColumns = next switch { "小" => 5, "大" => 2, _ => 3 };
+        }
+    }
+    public bool CompactMode
+    {
+        get => _compactMode;
+        set
+        {
+            if (!Set(ref _compactMode, value)) return;
+            foreach (var tile in Tiles) tile.IsCompact = value;
+        }
+    }
     public bool IsWebApiReady { get => _isWebApiReady; private set => Set(ref _isWebApiReady, value); }
     public string WebApiWarning { get => _webApiWarning; private set => Set(ref _webApiWarning, value); }
     public bool HasWebApiWarning => !IsWebApiReady;
     public string KeyHint { get => _keyHint; private set => Set(ref _keyHint, value); }
     public string SummaryText { get => _summaryText; private set => Set(ref _summaryText, value); }
     public bool HasCredentials => _service.HasCredentials;
+
+    public void SetPresentation(string searchText, string statusFilter, string sortOrder)
+    {
+        _searchText = searchText ?? "";
+        _statusFilter = string.IsNullOrWhiteSpace(statusFilter) ? "全部状态" : statusFilter;
+        _sortOrder = string.IsNullOrWhiteSpace(sortOrder) ? "按座位顺序" : sortOrder;
+        RefreshPresentation();
+    }
 
     internal async Task RefreshReadinessAsync(CancellationToken cancellationToken = default)
     {
@@ -83,8 +130,10 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
         CancellationToken cancellationToken = default)
     {
         var fingerprint = string.Join("\n", targets
-            .OrderBy(target => target.SeatNumber)
-            .Select(target => $"{target.TargetId:N}|{target.HostAddress}|{target.SeatNumber}|" +
+            .OrderBy(target => target.Row > 0 && target.Column > 0 ? target.Row : int.MaxValue)
+            .ThenBy(target => target.Row > 0 && target.Column > 0 ? target.Column : int.MaxValue)
+            .ThenBy(target => target.SeatNumber <= 0 ? int.MaxValue : target.SeatNumber)
+            .Select(target => $"{target.TargetId:N}|{target.HostAddress}|{target.SeatNumber}|{target.Row}|{target.Column}|" +
                               $"{target.StudentName}|{target.ComputerName}"));
         if (string.Equals(fingerprint, _fingerprint, StringComparison.Ordinal))
         {
@@ -93,26 +142,49 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
         }
 
         _fingerprint = fingerprint;
-        var ordered = targets.OrderBy(target => target.SeatNumber).ThenBy(target => target.HostAddress,
-            StringComparer.OrdinalIgnoreCase).ToArray();
+        var ordered = targets.OrderBy(target => target.Row > 0 && target.Column > 0 ? target.Row : int.MaxValue)
+            .ThenBy(target => target.Row > 0 && target.Column > 0 ? target.Column : int.MaxValue)
+            .ThenBy(target => target.SeatNumber <= 0 ? int.MaxValue : target.SeatNumber)
+            .ThenBy(target => target.HostAddress, StringComparer.OrdinalIgnoreCase).ToArray();
         var existing = Tiles.ToDictionary(tile => tile.TargetId);
-        Tiles.Clear();
-        foreach (var target in ordered)
+        for (var index = 0; index < ordered.Length; index++)
         {
+            var target = ordered[index];
             if (existing.Remove(target.TargetId, out var tile))
             {
                 tile.ApplyTarget(target);
-                Tiles.Add(tile);
+                tile.IsLocated = target.TargetId == _locatedTargetId;
+                if (index < Tiles.Count)
+                {
+                    if (!ReferenceEquals(Tiles[index], tile))
+                    {
+                        var oldIndex = Tiles.IndexOf(tile);
+                        if (oldIndex >= 0) Tiles.Move(oldIndex, index);
+                        else Tiles.Insert(index, tile);
+                    }
+                }
+                else Tiles.Add(tile);
             }
             else
             {
-                Tiles.Add(new ClassroomScreenTileViewModel(target));
+                var newTile = new ClassroomScreenTileViewModel(target);
+                newTile.IsLocated = target.TargetId == _locatedTargetId;
+                newTile.IsCompact = CompactMode;
+                newTile.PictureHeight = TilePictureHeight;
+                newTile.PropertyChanged += TilePropertyChanged;
+                if (index <= Tiles.Count) Tiles.Insert(index, newTile);
+                else Tiles.Add(newTile);
             }
         }
 
         // Tiles that left the classroom must release their last frame; the collection no longer holds them.
-        foreach (var leftover in existing.Values) leftover.Image?.Dispose();
+        foreach (var leftover in existing.Values)
+        {
+            Tiles.Remove(leftover);
+            leftover.Image?.Dispose();
+        }
         HasTiles = Tiles.Count > 0;
+        RefreshPresentation();
         await _service.SetTargetsAsync(ordered, cancellationToken).ConfigureAwait(true);
         UpdateSummary();
     }
@@ -139,11 +211,25 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
         if (targetId is { } id) _service.RequestImmediate(id);
     }
 
-    internal void SetTileMetrics(double width, double height)
+    internal void SetTileMetrics(double width, double pictureHeight)
     {
-        if (width <= 0 || height <= 0) return;
+        if (width <= 0 || pictureHeight <= 0) return;
         TileWidth = Math.Max(160, Math.Round(width));
-        TileHeight = Math.Max(150, Math.Round(height));
+        TilePictureHeight = Math.Max(90, Math.Round(pictureHeight));
+        TileHeight = TilePictureHeight + (CompactMode ? 88 : 112);
+        foreach (var tile in Tiles) tile.PictureHeight = TilePictureHeight;
+    }
+
+    internal void ApplySelection(IReadOnlySet<Guid> selectedTargetIds)
+    {
+        foreach (var tile in Tiles)
+            tile.IsSelected = selectedTargetIds.Contains(tile.TargetId);
+    }
+
+    internal void MarkLocated(Guid? targetId)
+    {
+        _locatedTargetId = targetId;
+        foreach (var tile in Tiles) tile.IsLocated = tile.TargetId == targetId;
     }
 
     internal void ApplyControlState(IEnumerable<TeacherClassroomQuickControlDeviceItem> devices)
@@ -158,6 +244,8 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
 
         foreach (var tile in Tiles)
             tile.ApplyControlState(byId.GetValueOrDefault(tile.TargetId));
+        RefreshPresentation();
+        DeviceStateChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void ApplyUpdate(ScreenWallUpdate update)
@@ -170,9 +258,76 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
             return;
         }
 
+        var previousState = tile.LinkState;
         if (update.Image is null) tile.ApplyState(update.State, update.Detail);
         else tile.ApplyFrame(update);
+        if (previousState != tile.LinkState) DeviceStateChanged?.Invoke(this, EventArgs.Empty);
+        RefreshPresentation();
         UpdateSummary();
+    }
+
+    private void RefreshPresentation()
+    {
+        var search = _searchText.Trim();
+        bool Matches(ClassroomScreenTileViewModel tile)
+        {
+            if (search.Length > 0 && !tile.SearchText.Contains(search, StringComparison.OrdinalIgnoreCase))
+                return false;
+            return _statusFilter switch
+            {
+                "在线" => tile.ConnectionFilterKey == "在线",
+                "异常" => tile.ConnectionFilterKey == "异常",
+                "网站受限" => tile.IsWebsiteRestricted,
+                "键鼠已锁" => tile.IsInputLocked,
+                "未排座位" => !tile.HasSeatAssignment,
+                _ => true
+            };
+        }
+        foreach (var tile in Tiles) tile.IsFilteredOut = !Matches(tile);
+        var all = _sortOrder switch
+        {
+            "按编号排序" => Tiles.OrderBy(tile => tile.ComputerName, StringComparer.OrdinalIgnoreCase),
+            "按状态排序" => Tiles.OrderBy(tile => tile.ConnectionFilterKey, StringComparer.Ordinal)
+                .ThenBy(tile => tile.Row > 0 && tile.Column > 0 ? tile.Row : int.MaxValue)
+                .ThenBy(tile => tile.Row > 0 && tile.Column > 0 ? tile.Column : int.MaxValue)
+                .ThenBy(tile => tile.SeatNumber <= 0 ? int.MaxValue : tile.SeatNumber),
+            _ => Tiles.OrderBy(tile => tile.Row > 0 && tile.Column > 0 ? tile.Row : int.MaxValue)
+                .ThenBy(tile => tile.Row > 0 && tile.Column > 0 ? tile.Column : int.MaxValue)
+                .ThenBy(tile => tile.SeatNumber <= 0 ? int.MaxValue : tile.SeatNumber)
+        };
+        var ordered = all.ToArray();
+        var result = ordered.Where(Matches).ToArray();
+        Replace(FilteredTiles, result);
+        Replace(SeatedTiles, result.Where(tile => tile.HasSeatAssignment).ToArray());
+        Replace(UnseatedTiles, result.Where(tile => !tile.HasSeatAssignment).ToArray());
+        Replace(AllUnseatedTiles, ordered.Where(tile => !tile.HasSeatAssignment).ToArray());
+        Raise(nameof(HasFilteredTiles));
+        Raise(nameof(HasFilteredUnseatedTiles));
+        Raise(nameof(HasUnseatedDevices));
+        Raise(nameof(FilterSummary));
+    }
+
+    private void TilePropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ClassroomScreenTileViewModel.LinkStatusText) or
+            nameof(ClassroomScreenTileViewModel.IsInputLocked) or
+            nameof(ClassroomScreenTileViewModel.IsWebsiteRestricted))
+            RefreshPresentation();
+    }
+
+    public bool HasFilteredTiles => FilteredTiles.Count > 0;
+    public bool HasFilteredUnseatedTiles => UnseatedTiles.Count > 0;
+    public bool HasUnseatedDevices => AllUnseatedTiles.Count > 0;
+    public string FilterSummary => _searchText.Trim().Length == 0 && _statusFilter == "全部状态"
+        ? $"显示 {Tiles.Count} 台设备"
+        : $"筛选后显示 {FilteredTiles.Count}/{Tiles.Count} 台";
+
+    private static void Replace(ObservableCollection<ClassroomScreenTileViewModel> collection,
+        IReadOnlyList<ClassroomScreenTileViewModel> items)
+    {
+        if (collection.Count == items.Count && collection.SequenceEqual(items)) return;
+        collection.Clear();
+        foreach (var item in items) collection.Add(item);
     }
 
     private void RefreshAges()
@@ -206,11 +361,12 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
-    private void Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
+    private bool Set<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {
-        if (EqualityComparer<T>.Default.Equals(field, value)) return;
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
         field = value;
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        return true;
     }
 
     private void Raise(string propertyName) =>

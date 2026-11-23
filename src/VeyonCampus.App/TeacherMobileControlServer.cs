@@ -708,9 +708,10 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
             context.SessionId != expectedSessionId)
             return Array.Empty<ClassroomScreenTarget>();
         var source = _service ?? _classroomPolicyExecutor;
-        return source.ReadActiveClassroomScreenTargets(context.CampusId, expectedSessionId)
+        return source.ReadActiveClassroomScreenTargets(context.CampusId, expectedSessionId,
+                includeUnseated: true)
             .Select(binding => new ClassroomScreenTarget(binding.TargetId, binding.HostAddress,
-                binding.SeatNumber, binding.StudentName, binding.ComputerName))
+                binding.SeatNumber, binding.Row, binding.Column, binding.StudentName, binding.ComputerName))
             .ToArray();
     }
 
@@ -3176,7 +3177,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    internal IReadOnlyList<ScreenTargetBinding> ReadActiveClassroomScreenTargets(string campusId, Guid sessionId)
+    internal IReadOnlyList<ScreenTargetBinding> ReadActiveClassroomScreenTargets(string campusId, Guid sessionId,
+        bool includeUnseated = false)
     {
         ClassroomSession? session;
         IReadOnlySet<string> activeTargets;
@@ -3222,8 +3224,26 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 var computerName = location.ComputerName ?? sessionTarget.DeviceLabel;
                 if (IPAddress.TryParse(computerName, out _)) computerName = string.Empty;
                 bindings.Add(new ScreenTargetBinding(targetId, targetId.ToString("N"), normalizedHost,
-                    location.SeatNumber ?? seatOrdinal, location.Row, location.Column,
+                    location.SeatNumber ?? (includeUnseated ? 0 : seatOrdinal), location.Row, location.Column,
                     location.StudentName ?? "", computerName));
+            }
+
+            // Keep unseated devices visible in the desktop teacher screen wall. Mobile screen
+            // preview remains scoped to saved seat bindings unless its caller opts in explicitly.
+            if (includeUnseated)
+            {
+                foreach (var host in activeTargets.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+                {
+                    if (!targetIds.TryGetValue(host, out var targetId) || !usedIds.Add(targetId) ||
+                        !targetById.TryGetValue(targetId, out var sessionTarget))
+                        continue;
+                    var normalizedHost = VeyonHostAddress.NormalizeOverride(host);
+                    var computerName = IPAddress.TryParse(sessionTarget.DeviceLabel, out _)
+                        ? string.Empty
+                        : sessionTarget.DeviceLabel;
+                    bindings.Add(new ScreenTargetBinding(targetId, targetId.ToString("N"), normalizedHost,
+                        0, 0, 0, "", computerName));
+                }
             }
 
             lock (_classroomGate)

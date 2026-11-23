@@ -14,12 +14,36 @@ using VeyonCampus.App.Maintenance;
 
 namespace VeyonCampus.App;
 
+public enum ClassroomWorkspaceView
+{
+    ScreenWall,
+    SeatMap,
+    DeviceList
+}
+
+public enum ClassroomDeviceAction
+{
+    ViewLiveScreen,
+    LocateInSeatMap,
+    PushWebsitePolicy,
+    RestoreWebsiteAccess,
+    ShowWebsiteStatus,
+    LockInput,
+    UnlockInput,
+    ShowInputGuardStatus,
+    ShowDeviceInfo,
+    ShowDiagnostics
+}
+
+public delegate void ClassroomDeviceActionRequestHandler(Guid targetId, ClassroomDeviceAction action);
+
 public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChanged
 {
     private string _displayName = "";
     private string _statusText = "";
     private string _detail = "";
     private string _updatedText = "";
+    private string _expiresText = "尚未核验截止时间";
     private string _summary = "";
     private IBrush _statusBrush = NeutralBrush;
     private IBrush _statusBackground = NeutralSubtleBrush;
@@ -42,6 +66,7 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     public string StatusText { get => _statusText; private set => Set(ref _statusText, value); }
     public string Detail { get => _detail; private set => Set(ref _detail, value); }
     public string UpdatedText { get => _updatedText; private set => Set(ref _updatedText, value); }
+    public string ExpiresText { get => _expiresText; private set => Set(ref _expiresText, value); }
     public string Summary { get => _summary; private set => Set(ref _summary, value); }
     public IBrush StatusBrush { get => _statusBrush; private set => Set(ref _statusBrush, value); }
     public IBrush StatusBackground { get => _statusBackground; private set => Set(ref _statusBackground, value); }
@@ -56,18 +81,24 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     public bool IsExpanded { get => _isExpanded; set => Set(ref _isExpanded, value); }
 
     /// <summary>Batch-selection checkbox for one-click keyboard/mouse lock on many machines.</summary>
-    public bool IsSelectedForInputLock
+    public bool IsSelected
     {
-        get => _isSelectedForInputLock;
+        get => _isSelected;
         set
         {
-            if (_isSelectedForInputLock == value) return;
-            _isSelectedForInputLock = value;
+            if (_isSelected == value) return;
+            _isSelected = value;
+            Raise(nameof(IsSelected));
             Raise(nameof(IsSelectedForInputLock));
             SelectionToggled?.Invoke();
         }
     }
-    private bool _isSelectedForInputLock;
+    public bool IsSelectedForInputLock
+    {
+        get => IsSelected;
+        set => IsSelected = value;
+    }
+    private bool _isSelected;
     public event Action? SelectionToggled;
 
     /// <summary>True when this one device holds an input lease this tool verified.</summary>
@@ -101,6 +132,9 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         DisplayName = snapshot.DisplayName;
         Detail = snapshot.Detail;
         UpdatedText = "记录 " + snapshot.UpdatedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        ExpiresText = snapshot.ExpiresUtc is { } expires
+            ? expires.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)
+            : "尚未核验截止时间";
         WebsiteState = snapshot.WebsiteState;
         Raise(nameof(WebsiteState));
         (WebsiteControlStatus, WebsiteControlStatusBrush, WebsiteControlStatusBackground) =
@@ -272,6 +306,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     private readonly ObservableCollection<TeacherDeviceHealthRow> _deviceHealthRows = [];
     private readonly ObservableCollection<TeacherDeviceHealthAlert> _deviceHealthAlerts = [];
     private readonly ObservableCollection<TeacherClassroomQuickControlDeviceItem> _classroomQuickControlDevices = [];
+    private readonly HashSet<Guid> _classroomSelectedTargetIds = [];
     private readonly Dictionary<string, DeviceRuntimeSummaryPollingState> _deviceRuntimeSummaryPolling =
         new(StringComparer.OrdinalIgnoreCase);
     private const int DeviceHealthPageSize = 12;
@@ -1140,18 +1175,142 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
 
     // 课堂页右栏默认是屏幕墙；列表是并列视图。两者共用同一份设备与管控状态，切换不销毁连接。
     private bool _isClassroomScreenWallMode = true;
+    private bool _isClassroomSeatMapMode;
     public bool IsClassroomScreenWallMode
     {
         get => _isClassroomScreenWallMode;
         set
         {
-            if (_isClassroomScreenWallMode == value) return;
-            _isClassroomScreenWallMode = value;
-            Changed(nameof(IsClassroomScreenWallMode));
-            Changed(nameof(IsClassroomListMode));
+            if (value) SetClassroomWorkspaceView(ClassroomWorkspaceView.ScreenWall);
+            else if (_isClassroomScreenWallMode) SetClassroomWorkspaceView(ClassroomWorkspaceView.DeviceList);
         }
     }
-    public bool IsClassroomListMode => !_isClassroomScreenWallMode;
+    public bool IsClassroomSeatMapMode
+    {
+        get => _isClassroomSeatMapMode;
+        set
+        {
+            if (value) SetClassroomWorkspaceView(ClassroomWorkspaceView.SeatMap);
+            else if (_isClassroomSeatMapMode) SetClassroomWorkspaceView(ClassroomWorkspaceView.DeviceList);
+        }
+    }
+    public bool IsClassroomListMode => !_isClassroomScreenWallMode && !_isClassroomSeatMapMode;
+    private Guid? _locatedClassroomTargetId;
+    public Guid? LocatedClassroomTargetId
+    {
+        get => _locatedClassroomTargetId;
+        private set
+        {
+            if (_locatedClassroomTargetId == value) return;
+            _locatedClassroomTargetId = value;
+            Changed();
+            RebuildClassroomSeatWorkspaceCells();
+            _classroomScreenWall?.MarkLocated(value);
+        }
+    }
+
+    public void SetClassroomWorkspaceView(ClassroomWorkspaceView view)
+    {
+        var wall = view == ClassroomWorkspaceView.ScreenWall;
+        var seatMap = view == ClassroomWorkspaceView.SeatMap;
+        if (_isClassroomScreenWallMode == wall && _isClassroomSeatMapMode == seatMap) return;
+        _isClassroomScreenWallMode = wall;
+        _isClassroomSeatMapMode = seatMap;
+        Changed(nameof(IsClassroomScreenWallMode));
+        Changed(nameof(IsClassroomSeatMapMode));
+        Changed(nameof(IsClassroomListMode));
+    }
+
+    private bool _isClassroomControlDrawerOpen;
+    public bool IsClassroomControlDrawerOpen
+    {
+        get => _isClassroomControlDrawerOpen;
+        set
+        {
+            if (_isClassroomControlDrawerOpen == value) return;
+            _isClassroomControlDrawerOpen = value;
+            Changed();
+        }
+    }
+
+    public void ToggleClassroomControlDrawer() =>
+        IsClassroomControlDrawerOpen = !IsClassroomControlDrawerOpen;
+
+    private bool _isClassroomTaskPanelExpanded;
+    public bool IsClassroomTaskPanelExpanded
+    {
+        get => _isClassroomTaskPanelExpanded;
+        set
+        {
+            if (_isClassroomTaskPanelExpanded == value) return;
+            _isClassroomTaskPanelExpanded = value;
+            Changed();
+            Changed(nameof(ClassroomTaskPanelToggleText));
+        }
+    }
+    public string ClassroomTaskPanelToggleText => IsClassroomTaskPanelExpanded ? "收起任务结果" : "任务与结果";
+
+    private string _classroomSearchText = "";
+    public string ClassroomSearchText
+    {
+        get => _classroomSearchText;
+        set
+        {
+            if (_classroomSearchText == value) return;
+            _classroomSearchText = value;
+            Changed();
+            RefreshClassroomPresentation();
+        }
+    }
+
+    private string _classroomStatusFilter = "全部状态";
+    public string ClassroomStatusFilter
+    {
+        get => _classroomStatusFilter;
+        set
+        {
+            if (_classroomStatusFilter == value) return;
+            _classroomStatusFilter = value;
+            Changed();
+            RefreshClassroomPresentation();
+        }
+    }
+
+    private string _classroomSortOrder = "按座位顺序";
+    public string ClassroomSortOrder
+    {
+        get => _classroomSortOrder;
+        set
+        {
+            if (_classroomSortOrder == value) return;
+            _classroomSortOrder = value;
+            Changed();
+            RefreshClassroomPresentation();
+        }
+    }
+
+    public int ClassroomTaskInProgressCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase is ClassroomQuickControlPhase.WebsiteApplying or ClassroomQuickControlPhase.Switching or
+            ClassroomQuickControlPhase.InputLocking or ClassroomQuickControlPhase.ReleasePending) ?? 0;
+    public int ClassroomTaskSuccessCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase is ClassroomQuickControlPhase.NoneVerified or ClassroomQuickControlPhase.WebsiteReported or
+            ClassroomQuickControlPhase.WebsiteApplied or ClassroomQuickControlPhase.InputLockedVerified) ?? 0;
+    public int ClassroomTaskFailureCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase is ClassroomQuickControlPhase.Unknown or ClassroomQuickControlPhase.Conflict or
+            ClassroomQuickControlPhase.Failed or ClassroomQuickControlPhase.Unsupported) ?? 0;
+    public int ClassroomTaskPendingCount => _classroomQuickControlSnapshot?.Devices.Count(item =>
+        item.Phase == ClassroomQuickControlPhase.WaitingForAgent) ?? 0;
+    public bool HasClassroomTaskActivity => ClassroomTaskInProgressCount + ClassroomTaskSuccessCount +
+        ClassroomTaskFailureCount + ClassroomTaskPendingCount > 0;
+    public string ClassroomTaskSummary =>
+        $"执行中 {ClassroomTaskInProgressCount} · 成功 {ClassroomTaskSuccessCount} · 失败 {ClassroomTaskFailureCount} · 待核验 {ClassroomTaskPendingCount}";
+
+    public IReadOnlyList<int> ClassroomColumnOptions { get; } = [2, 3, 4, 5, 6];
+    public IReadOnlyList<string> ClassroomThumbnailSizeOptions { get; } = ["小", "中", "大"];
+    public IReadOnlyList<string> ClassroomStatusFilterOptions { get; } =
+        ["全部状态", "在线", "异常", "网站受限", "键鼠已锁", "未排座位"];
+    public IReadOnlyList<string> ClassroomSortOptions { get; } = ["按座位顺序", "按编号排序", "按状态排序"];
+    public ObservableCollection<ClassroomSeatWorkspaceCell> ClassroomSeatWorkspaceCells { get; } = [];
 
     private ClassroomScreenWallViewModel? _classroomScreenWall;
     public ClassroomScreenWallViewModel? ClassroomScreenWall
@@ -1160,28 +1319,161 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         internal set
         {
             if (ReferenceEquals(_classroomScreenWall, value)) return;
+            if (_classroomScreenWall is not null)
+                _classroomScreenWall.DeviceStateChanged -= ClassroomScreenWallDeviceStateChanged;
             _classroomScreenWall = value;
             Changed(nameof(ClassroomScreenWall));
+            if (value is not null)
+                value.DeviceStateChanged += ClassroomScreenWallDeviceStateChanged;
+            RefreshClassroomPresentation();
+            value?.ApplySelection(_classroomSelectedTargetIds);
+            value?.MarkLocated(LocatedClassroomTargetId);
+            RebuildClassroomSeatWorkspaceCells();
         }
     }
 
+    private void ClassroomScreenWallDeviceStateChanged(object? sender, EventArgs e) =>
+        RebuildClassroomSeatWorkspaceCells();
+
     // Multi-select batch input control: select many students and lock/unlock them in one action.
-    public int InputLockSelectedCount => _classroomQuickControlDevices.Count(item => item.IsSelectedForInputLock);
+    public IReadOnlySet<Guid> SelectedClassroomTargetIds => _classroomSelectedTargetIds;
+    public int InputLockSelectedCount => _classroomSelectedTargetIds.Count;
     public bool HasInputLockSelection => InputLockSelectedCount > 0;
-    public bool AllInputLockSelected => _classroomQuickControlDevices.Count > 0 &&
-        _classroomQuickControlDevices.All(item => item.IsSelectedForInputLock);
-    public string InputLockSelectionSummary => !HasClassroomQuickControlDevices
+    public int ClassroomSelectableDeviceCount => _classroomScreenWall is { Tiles.Count: > 0 } wall
+        ? wall.Tiles.Count : _classroomQuickControlDevices.Count;
+    public bool AllInputLockSelected => ClassroomSelectableDeviceCount > 0 &&
+        InputLockSelectedCount >= ClassroomSelectableDeviceCount;
+    public string InputLockSelectionSummary => ClassroomSelectableDeviceCount == 0
         ? "没有可选学生"
-        : HasInputLockSelection ? $"已选 {InputLockSelectedCount}/{_classroomQuickControlDevices.Count} 台" :
+        : HasInputLockSelection ? $"已选 {InputLockSelectedCount}/{ClassroomSelectableDeviceCount} 台" :
             "未选择学生（勾选复选框可多选）";
     public Guid[] GetSelectedInputLockTargetIds() =>
-        _classroomQuickControlDevices.Where(item => item.IsSelectedForInputLock)
+        _classroomScreenWall?.Tiles.Where(tile => _classroomSelectedTargetIds.Contains(tile.TargetId))
+            .Select(tile => tile.TargetId).Concat(_classroomSelectedTargetIds.Where(id =>
+                _classroomScreenWall.Tiles.All(tile => tile.TargetId != id))).ToArray()
+        ?? _classroomQuickControlDevices.Where(item => _classroomSelectedTargetIds.Contains(item.TargetId))
             .Select(item => item.TargetId).ToArray();
     public void ToggleAllInputLockSelection(bool selected)
     {
-        foreach (var item in _classroomQuickControlDevices) item.IsSelectedForInputLock = selected;
+        var targetIds = _classroomScreenWall?.Tiles.Select(tile => tile.TargetId).ToArray()
+                        ?? _classroomQuickControlDevices.Select(item => item.TargetId).ToArray();
+        _selectionUpdateInProgress = true;
+        try
+        {
+            foreach (var targetId in targetIds)
+            {
+                if (selected) _classroomSelectedTargetIds.Add(targetId);
+                else _classroomSelectedTargetIds.Remove(targetId);
+            }
+            foreach (var item in _classroomQuickControlDevices)
+                item.IsSelected = _classroomSelectedTargetIds.Contains(item.TargetId);
+        }
+        finally { _selectionUpdateInProgress = false; }
         RaiseInputLockSelectionChanged();
     }
+
+    public void SetClassroomDeviceSelected(Guid targetId, bool selected, bool clearOthers = false)
+    {
+        _selectionUpdateInProgress = true;
+        try
+        {
+            if (clearOthers)
+                _classroomSelectedTargetIds.Clear();
+            if (selected) _classroomSelectedTargetIds.Add(targetId);
+            else _classroomSelectedTargetIds.Remove(targetId);
+            foreach (var item in _classroomQuickControlDevices)
+                item.IsSelected = _classroomSelectedTargetIds.Contains(item.TargetId);
+        }
+        finally { _selectionUpdateInProgress = false; }
+        RaiseInputLockSelectionChanged();
+    }
+
+    public void ToggleClassroomDeviceSelection(Guid targetId, bool extendSelection)
+    {
+        if (_classroomScreenWall?.Tiles.All(tile => tile.TargetId != targetId) == true &&
+            _classroomQuickControlDevices.All(item => item.TargetId != targetId)) return;
+        var wasSelected = _classroomSelectedTargetIds.Contains(targetId);
+        _selectionUpdateInProgress = true;
+        try
+        {
+        if (!extendSelection)
+        {
+                var alreadyOnlySelected = wasSelected && _classroomSelectedTargetIds.Count == 1;
+                _classroomSelectedTargetIds.Clear();
+                if (!alreadyOnlySelected || wasSelected) _classroomSelectedTargetIds.Add(targetId);
+        }
+            else if (wasSelected) _classroomSelectedTargetIds.Remove(targetId);
+            else _classroomSelectedTargetIds.Add(targetId);
+            foreach (var item in _classroomQuickControlDevices)
+                item.IsSelected = _classroomSelectedTargetIds.Contains(item.TargetId);
+        }
+        finally { _selectionUpdateInProgress = false; }
+        RaiseInputLockSelectionChanged();
+    }
+
+    private bool _selectionUpdateInProgress;
+
+    public void SynchronizeClassroomTargets(IEnumerable<Guid> targetIds)
+    {
+        var current = targetIds.ToHashSet();
+        if (_classroomSelectedTargetIds.RemoveWhere(id => !current.Contains(id)) == 0) return;
+        _selectionUpdateInProgress = true;
+        try
+        {
+            foreach (var item in _classroomQuickControlDevices)
+                item.IsSelected = _classroomSelectedTargetIds.Contains(item.TargetId);
+        }
+        finally { _selectionUpdateInProgress = false; }
+        RaiseInputLockSelectionChanged();
+    }
+
+    public void LocateClassroomTarget(Guid targetId)
+    {
+        LocatedClassroomTargetId = targetId;
+        SetClassroomWorkspaceView(ClassroomWorkspaceView.SeatMap);
+        SetClassroomDeviceSelected(targetId, true);
+    }
+
+    private void RefreshClassroomPresentation()
+    {
+        _classroomScreenWall?.SetPresentation(ClassroomSearchText, ClassroomStatusFilter, ClassroomSortOrder);
+        RebuildClassroomSeatWorkspaceCells();
+    }
+
+    public void RebuildClassroomSeatWorkspaceCells()
+    {
+        var tiles = _classroomScreenWall?.Tiles.ToArray() ?? [];
+        var cells = SeatMapCells.OrderBy(cell => cell.Row).ThenBy(cell => cell.Column).Select(seat =>
+        {
+            var tile = seat.IsSeat
+                ? tiles.FirstOrDefault(candidate => !string.IsNullOrWhiteSpace(seat.VeyonHostAddress) &&
+                      string.Equals(NormalizeClassroomHost(candidate.HostText),
+                          NormalizeClassroomHost(seat.VeyonHostAddress), StringComparison.OrdinalIgnoreCase))
+                  ?? tiles.FirstOrDefault(candidate => candidate.Row == seat.Row &&
+                      candidate.Column == seat.Column && candidate.Row > 0 && candidate.Column > 0 &&
+                      (seat.SeatNumber is null or 0 || candidate.SeatNumber == seat.SeatNumber))
+                : null;
+            return new ClassroomSeatWorkspaceCell(seat, tile, ClassroomSearchText, ClassroomStatusFilter,
+                LocatedClassroomTargetId);
+        }).ToArray();
+        if (ClassroomSeatWorkspaceCells.Count == cells.Length &&
+            cells.Select((cell, index) => (cell, current: ClassroomSeatWorkspaceCells[index])).All(pair =>
+                pair.current.Row == pair.cell.Row && pair.current.Column == pair.cell.Column &&
+                pair.current.Seat == pair.cell.Seat && ReferenceEquals(pair.current.Tile, pair.cell.Tile) &&
+                pair.current.IsSelected == pair.cell.IsSelected && pair.current.IsLocated == pair.cell.IsLocated &&
+                pair.current.IsDimmed == pair.cell.IsDimmed && pair.current.StatusText == pair.cell.StatusText &&
+                pair.current.StatusSummary == pair.cell.StatusSummary))
+            return;
+        ClassroomSeatWorkspaceCells.Clear();
+        foreach (var cell in cells) ClassroomSeatWorkspaceCells.Add(cell);
+    }
+
+    private static string NormalizeClassroomHost(string host)
+    {
+        try { return VeyonHostAddress.NormalizeOverride(host); }
+        catch (ArgumentException) { return host.Trim(); }
+    }
+
     public void NotifyInputLockSelectionChanged() => RaiseInputLockSelectionChanged();
     private void RaiseInputLockSelectionChanged()
     {
@@ -1189,6 +1481,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(HasInputLockSelection));
         Changed(nameof(AllInputLockSelected));
         Changed(nameof(InputLockSelectionSummary));
+        _classroomScreenWall?.ApplyControlState(_classroomQuickControlDevices);
+        _classroomScreenWall?.ApplySelection(_classroomSelectedTargetIds);
+        RebuildClassroomSeatWorkspaceCells();
     }
     public string ClassroomQuickControlProgressHeader => _classroomQuickControlSnapshot is { } snapshot
         ? $"逐台执行进度 · {snapshot.Devices.Count} 台"
@@ -1305,7 +1600,13 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             else
             {
                 var item = new TeacherClassroomQuickControlDeviceItem(target);
-                item.SelectionToggled += () => NotifyInputLockSelectionChanged();
+                item.SelectionToggled += () =>
+                {
+                    if (_selectionUpdateInProgress) return;
+                    if (item.IsSelected) _classroomSelectedTargetIds.Add(item.TargetId);
+                    else _classroomSelectedTargetIds.Remove(item.TargetId);
+                    NotifyInputLockSelectionChanged();
+                };
                 _classroomQuickControlDevices.Insert(index, item);
             }
         }
@@ -1338,6 +1639,8 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomOverviewReceiptCount));
         Changed(nameof(ClassroomOverviewPendingCount));
         Changed(nameof(CanStartClassroomInputLock));
+        RaiseInputLockSelectionChanged();
+        NotifyClassroomTaskSummaryChanged();
     }
 
     public void SetClassroomQuickControlSessionNotice(string message, bool clearSnapshot = false)
@@ -1379,6 +1682,18 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         Changed(nameof(ClassroomOverviewReceiptCount));
         Changed(nameof(ClassroomOverviewPendingCount));
         Changed(nameof(CanStartClassroomInputLock));
+        RaiseInputLockSelectionChanged();
+        NotifyClassroomTaskSummaryChanged();
+    }
+
+    private void NotifyClassroomTaskSummaryChanged()
+    {
+        Changed(nameof(ClassroomTaskInProgressCount));
+        Changed(nameof(ClassroomTaskSuccessCount));
+        Changed(nameof(ClassroomTaskFailureCount));
+        Changed(nameof(ClassroomTaskPendingCount));
+        Changed(nameof(HasClassroomTaskActivity));
+        Changed(nameof(ClassroomTaskSummary));
     }
 
     private static string GetClassroomQuickControlSelectionSummary(ClassroomQuickControlSnapshot snapshot)
@@ -2026,6 +2341,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         if (_seatGrid is null)
         {
             SeatMapCells = Array.Empty<TeacherSeatCell>();
+            ClassroomSeatWorkspaceCells.Clear();
             Changed(nameof(SeatGridRowHeaders));
             Changed(nameof(SeatGridColumnHeaders));
             Changed(nameof(CanUndoSeatMapEdit));
@@ -2056,6 +2372,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 IsSeatMapEditing && cell.IsSeat &&
                     (cell.VeyonObjectId is not null || !string.IsNullOrWhiteSpace(cell.VeyonHostAddress)));
         }).ToArray();
+        RebuildClassroomSeatWorkspaceCells();
     }
 
     private static IReadOnlyList<TeacherSeatAssociationChoice> BuildSeatAssociationSeatChoices(
