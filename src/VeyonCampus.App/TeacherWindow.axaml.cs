@@ -29,6 +29,12 @@ public partial class TeacherWindow : Window
 
     private readonly TeacherViewModel _model = new(roomSelectionStore: new TeacherRoomSelectionStore());
     private readonly TeacherMobileControlManager _mobileControl;
+    private readonly ClassroomScreenWallViewModel _screenWall;
+    private TeacherScreenDetailWindow? _screenDetailWindow;
+    private bool _screenWallWasActive;
+    private string _screenWallFingerprint = "";
+    private DateTimeOffset _screenWallReadinessUtc = DateTimeOffset.MinValue;
+    private DateTimeOffset _screenWallEmptyRetryUtc = DateTimeOffset.MinValue;
     private readonly SemaphoreSlim _classroomModeGate = new(1, 1);
     private readonly DispatcherTimer _teacherHeartbeatTimer = new() { Interval = TimeSpan.FromHours(1) };
     private readonly DispatcherTimer _classroomStatusTimer = new() { Interval = TimeSpan.FromSeconds(60) };
@@ -68,6 +74,8 @@ public partial class TeacherWindow : Window
                 ? null
                 : (target, token) => veyonControlPlane.CaptureScreenAsync(_model.CampusId, target, token));
         InitializeComponent();
+        _screenWall = new ClassroomScreenWallViewModel(action => Dispatcher.UIThread.Post(action));
+        _model.ClassroomScreenWall = _screenWall;
         SetUpdatesNavigationActive("status");
         ClassroomChatDraftInput.AddHandler(InputElement.KeyDownEvent, ClassroomChatInputKeyDown,
             RoutingStrategies.Tunnel);
@@ -79,6 +87,11 @@ public partial class TeacherWindow : Window
             Hide();
             _deviceRuntimeSummaryTimer.Stop();
             SyncClassroomVisualTimers();
+        };
+        Closed += (_, _) =>
+        {
+            _screenDetailWindow?.Close();
+            _screenWall.Dispose();
         };
         Activated += (_, _) =>
         {
@@ -222,8 +235,11 @@ public partial class TeacherWindow : Window
         if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession) or
+            nameof(TeacherViewModel.IsClassroomScreenWallMode) or
             nameof(TeacherViewModel.HasCurrentClassroomQuickControlDeadline))
             SyncClassroomVisualTimers();
+        if (e.PropertyName is nameof(TeacherViewModel.IsClassroomScreenWallMode))
+            SyncContentScrollForClassroom();
         if (e.PropertyName is nameof(TeacherViewModel.SelectedCampusProfile) or
             nameof(TeacherViewModel.SelectedRoomProfile) or nameof(TeacherViewModel.RoomProfiles))
             ObserveClassroomScopeChange();
@@ -336,6 +352,7 @@ public partial class TeacherWindow : Window
 
     private void SyncClassroomVisualTimers()
     {
+        SyncClassroomScreenWall();
         if (!IsClassroomExperienceVisible)
         {
             _classroomQuickControlProgressTimer.Stop();
@@ -465,6 +482,8 @@ public partial class TeacherWindow : Window
             _model.ActiveClassroomSessionId is not { } expectedSession) return;
         _model.RefreshDefaultQuickControlDeadline();
         _model.RefreshClassroomQuickControlDeadlineState();
+        _screenWall.ApplyControlState(_model.ClassroomQuickControlDevices);
+        SyncClassroomScreenWall();
         if (_isRefreshingQuickControlSnapshot) return;
         _isRefreshingQuickControlSnapshot = true;
         try
@@ -474,6 +493,7 @@ public partial class TeacherWindow : Window
             if (_model.ActiveClassroomSessionId == expectedSession)
             {
                 _model.UpdateClassroomQuickControlSnapshot(snapshot);
+                _screenWall.ApplyControlState(_model.ClassroomQuickControlDevices);
             }
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
@@ -701,6 +721,152 @@ public partial class TeacherWindow : Window
     [SupportedOSPlatform("windows")]
     private async void UnlockDeviceInput(Guid targetId) =>
         await RunDeviceInputAsync(targetId, ClassroomQuickControlAction.UnlockInput);
+
+    /// <summary>
+    /// Starts, stops and re-targets the screen wall with the classroom page. The wall is the default
+    /// right-hand view, so this runs on every classroom visual sync; a fingerprint keeps it from
+    /// rebuilding connections when nothing about the target set changed.
+    /// </summary>
+    private void SyncClassroomScreenWall()
+    {
+        var active = IsClassroomExperienceVisible && _model.IsClassroomScreenWallMode;
+        if (active != _screenWallWasActive)
+        {
+            _screenWallWasActive = active;
+            _screenWall.SetActive(active);
+            if (!active)
+            {
+                _screenDetailWindow?.Close();
+                return;
+            }
+        }
+
+        if (!active || _model.ActiveClassroomSessionId is not { } sessionId) return;
+        var targets = _mobileControl.ReadClassroomScreenTargets(sessionId);
+        var fingerprint = sessionId.ToString("N") + "|" + string.Join(";", targets.Select(target =>
+            $"{target.TargetId:N}:{target.HostAddress}:{target.SeatNumber}:{target.StudentName}:" +
+            $"{target.ComputerName}"));
+        var emptyRetryDue = targets.Count == 0 && DateTimeOffset.UtcNow >= _screenWallEmptyRetryUtc;
+        if (string.Equals(fingerprint, _screenWallFingerprint, StringComparison.Ordinal) && !emptyRetryDue)
+            return;
+        _screenWallFingerprint = fingerprint;
+        _screenWallEmptyRetryUtc = targets.Count == 0
+            ? DateTimeOffset.UtcNow.AddSeconds(5)
+            : DateTimeOffset.MinValue;
+        _ = ApplyScreenWallAsync(targets);
+    }
+
+    private async Task ApplyScreenWallAsync(IReadOnlyList<ClassroomScreenTarget> targets)
+    {
+        try
+        {
+            if (DateTimeOffset.UtcNow - _screenWallReadinessUtc > TimeSpan.FromSeconds(20))
+            {
+                _screenWallReadinessUtc = DateTimeOffset.UtcNow;
+                await _screenWall.RefreshReadinessAsync();
+            }
+
+            await _screenWall.SyncAsync(targets);
+            _screenWall.ApplyControlState(_model.ClassroomQuickControlDevices);
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or
+                                           ObjectDisposedException or OperationCanceledException)
+        {
+            // The wall is auxiliary: a probe or sync failure must never take the classroom page down.
+        }
+    }
+
+    /// <summary>Opens one card's live picture in its own window and raises that tile's cadence.</summary>
+    private void OpenScreenDetail(ClassroomScreenTileViewModel tile)
+    {
+        if (!_screenWall.Tiles.Any(item => item.TargetId == tile.TargetId)) return;
+        _screenDetailWindow?.Close();
+        var window = new TeacherScreenDetailWindow(tile, LockOrUnlockDeviceInput, ApplyDeviceWebsitePolicy);
+        _screenDetailWindow = window;
+        _screenWall.SetFocused(tile.TargetId);
+        window.Closed += (_, _) =>
+        {
+            if (ReferenceEquals(_screenDetailWindow, window)) _screenDetailWindow = null;
+            _screenWall.SetFocused(null);
+        };
+        window.Show(this);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private void LockOrUnlockDeviceInput(Guid targetId)
+    {
+        var device = _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == targetId);
+        if (device is { CanUnlockDeviceInput: true }) UnlockDeviceInput(targetId);
+        else LockDeviceInput(targetId);
+    }
+
+    /// <summary>
+    /// Applies or removes the saved website list on exactly one machine from its screen-wall card.
+    /// The class-wide deadline is preserved: a single card must not move everyone's countdown.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private void ApplyDeviceWebsitePolicy(Guid targetId)
+    {
+        var device = _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == targetId);
+        var restricted = device?.WebsiteState is "applied" or "reported" or "applying";
+        _ = RunDeviceWebsiteAsync(targetId, restricted
+            ? ClassroomQuickControlAction.ClearWebsiteRestrictions
+            : ClassroomQuickControlAction.EnableWebsiteRestriction);
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async Task RunDeviceWebsiteAsync(Guid targetId, ClassroomQuickControlAction action)
+    {
+        if (TeacherClassroomQuickControlBuildFeatures.PilotEnabled is false)
+        {
+            _model.SetClassroomQuickControlSessionNotice("当前教师端构建未启用课堂快捷管控；没有发送网站策略。");
+            return;
+        }
+
+        if (_model.ActiveClassroomSessionId is not { } sessionId)
+        {
+            _model.SetClassroomQuickControlSessionNotice("当前没有活动课堂；请先在页面顶部开始课堂，再对单台设备应用网站策略。");
+            return;
+        }
+
+        var device = _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == targetId);
+        var name = string.IsNullOrWhiteSpace(device?.DisplayName) ? "该设备" : device!.DisplayName;
+        var enabling = action == ClassroomQuickControlAction.EnableWebsiteRestriction;
+        if (!await ConfirmProfileActionAsync(enabling ? "应用网站策略" : "恢复网站访问",
+                enabling
+                    ? $"将对 {name} 应用当前课堂已保存的网站名单，其他学生电脑不受影响。\n\n" +
+                      "学生端需要在线并运行网站策略组件；若该设备已有其他来源的策略，会保留并报告冲突。\n" +
+                      "这一步只作用于这一台，不会改动全班的自动解除时间。"
+                    : $"将解除 {name} 上由本工具写入的网站限制；其他设备保持不变。",
+                enabling ? "确认应用" : "确认恢复"))
+            return;
+
+        SetClassroomQuickControlBusy(true);
+        try
+        {
+            var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
+                sessionId, action, controlExpiresUtc: null, selectedTargetIds: [targetId],
+                preserveControlExpiry: true));
+            _model.SetClassroomQuickControlSessionNotice(result.Message);
+            var refreshed = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
+            if (_model.ActiveClassroomSessionId == sessionId)
+            {
+                _model.UpdateClassroomQuickControlSnapshot(refreshed);
+                _screenWall.ApplyControlState(_model.ClassroomQuickControlDevices);
+            }
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or
+                                          SocketException)
+        {
+            _model.SetClassroomQuickControlSessionNotice("网站策略没有完成。" + exception.Message);
+        }
+        finally
+        {
+            SetClassroomQuickControlBusy(false);
+        }
+    }
 
     private void ToggleAllInputLockSelection(bool selected) => _model.ToggleAllInputLockSelection(selected);
 

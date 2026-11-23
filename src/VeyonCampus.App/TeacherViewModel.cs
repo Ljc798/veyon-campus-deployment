@@ -46,6 +46,8 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     public IBrush StatusBrush { get => _statusBrush; private set => Set(ref _statusBrush, value); }
     public IBrush StatusBackground { get => _statusBackground; private set => Set(ref _statusBackground, value); }
     public string WebsiteControlStatus { get; private set; } = "网站状态未知";
+    /// <summary>Raw quick-control website state, used by the screen wall card to choose its badge.</summary>
+    public string WebsiteState { get; private set; } = "unknown";
     public IBrush WebsiteControlStatusBrush { get; private set; } = NeutralBrush;
     public IBrush WebsiteControlStatusBackground { get; private set; } = NeutralSubtleBrush;
     public string InputControlStatus { get; private set; } = "键鼠状态未知";
@@ -99,6 +101,8 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         DisplayName = snapshot.DisplayName;
         Detail = snapshot.Detail;
         UpdatedText = "记录 " + snapshot.UpdatedUtc.ToLocalTime().ToString("HH:mm:ss", CultureInfo.CurrentCulture);
+        WebsiteState = snapshot.WebsiteState;
+        Raise(nameof(WebsiteState));
         (WebsiteControlStatus, WebsiteControlStatusBrush, WebsiteControlStatusBackground) =
             snapshot.WebsiteState switch
             {
@@ -1133,6 +1137,33 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         _classroomQuickControlDevices;
     public bool HasClassroomQuickControlDevices => _classroomQuickControlDevices.Count > 0;
     public bool HasNoClassroomQuickControlDevices => !HasClassroomQuickControlDevices;
+
+    // 课堂页右栏默认是屏幕墙；列表是并列视图。两者共用同一份设备与管控状态，切换不销毁连接。
+    private bool _isClassroomScreenWallMode = true;
+    public bool IsClassroomScreenWallMode
+    {
+        get => _isClassroomScreenWallMode;
+        set
+        {
+            if (_isClassroomScreenWallMode == value) return;
+            _isClassroomScreenWallMode = value;
+            Changed(nameof(IsClassroomScreenWallMode));
+            Changed(nameof(IsClassroomListMode));
+        }
+    }
+    public bool IsClassroomListMode => !_isClassroomScreenWallMode;
+
+    private ClassroomScreenWallViewModel? _classroomScreenWall;
+    public ClassroomScreenWallViewModel? ClassroomScreenWall
+    {
+        get => _classroomScreenWall;
+        internal set
+        {
+            if (ReferenceEquals(_classroomScreenWall, value)) return;
+            _classroomScreenWall = value;
+            Changed(nameof(ClassroomScreenWall));
+        }
+    }
 
     // Multi-select batch input control: select many students and lock/unlock them in one action.
     public int InputLockSelectedCount => _classroomQuickControlDevices.Count(item => item.IsSelectedForInputLock);

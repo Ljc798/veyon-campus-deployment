@@ -127,6 +127,8 @@
           LockClassroomInputRequested="LockClassroomInput"
           LockDeviceInputRequested="LockDeviceInput"
           UnlockDeviceInputRequested="UnlockDeviceInput"
+          WebsitePolicyRequested="ApplyDeviceWebsitePolicy"
+          OpenScreenDetailRequested="OpenScreenDetail"
           BatchLockInputRequested="BatchLockInput"
           BatchUnlockInputRequested="BatchUnlockInput"
           ToggleAllInputLockSelectionRequested="ToggleAllInputLockSelection"
@@ -266,6 +268,25 @@
       <Setter Property="Background" Value="#245565" />
       <Setter Property="Foreground" Value="White" />
       <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.SidebarAccent}" />
+    </Style>
+    <Style Selector="Button.wall-tab">
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="Foreground" Value="#526674" />
+      <Setter Property="BorderBrush" Value="Transparent" />
+      <Setter Property="BorderThickness" Value="1" />
+      <Setter Property="CornerRadius" Value="7" />
+      <Setter Property="Padding" Value="13,5" />
+      <Setter Property="FontSize" Value="12" />
+    </Style>
+    <Style Selector="Button.wall-tab:pointerover">
+      <Setter Property="Background" Value="#EAF2FB" />
+      <Setter Property="Foreground" Value="#173447" />
+    </Style>
+    <Style Selector="Button.wall-tab.active">
+      <Setter Property="Background" Value="{DynamicResource Teacher.Color.Surface}" />
+      <Setter Property="Foreground" Value="{DynamicResource Teacher.Color.Primary}" />
+      <Setter Property="BorderBrush" Value="{DynamicResource Teacher.Color.Border}" />
+      <Setter Property="FontWeight" Value="SemiBold" />
     </Style>
     <Style Selector="Button.quick-control-choice">
       <Setter Property="Background" Value="#F7F8FA" />

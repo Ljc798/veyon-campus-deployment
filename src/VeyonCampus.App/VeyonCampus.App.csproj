@@ -69,6 +69,11 @@
     <Compile Remove="Presentation/Views/TeacherRoomView.axaml.cs" />
     <AvaloniaXaml Remove="Presentation/Views/TeacherClassroomView.axaml" />
     <Compile Remove="Presentation/Views/TeacherClassroomView.axaml.cs" />
+    <AvaloniaXaml Remove="Presentation/Views/TeacherScreenWallView.axaml" />
+    <Compile Remove="Presentation/Views/TeacherScreenWallView.axaml.cs" />
+    <AvaloniaXaml Remove="Presentation/Views/TeacherScreenDetailWindow.axaml" />
+    <Compile Remove="Presentation/Views/TeacherScreenDetailWindow.axaml.cs" />
+    <Compile Remove="ScreenWall/**/*.cs" />
     <AvaloniaXaml Remove="Presentation/Views/TeacherHealthView.axaml" />
     <Compile Remove="Presentation/Views/TeacherHealthView.axaml.cs" />
     <AvaloniaXaml Remove="Presentation/Views/TeacherPolicyView.axaml" />

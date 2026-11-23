@@ -686,6 +686,21 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         return ReadClassroomQuickControlSnapshot(context.SessionId);
     }
 
+    /// <summary>
+    /// The active classroom's screen targets in seat order, for the teacher console's screen wall.
+    /// Same projection the mobile preview uses, so seats, names and stable target ids never diverge.
+    /// </summary>
+    internal IReadOnlyList<ClassroomScreenTarget> ReadClassroomScreenTargets(Guid expectedSessionId)
+    {
+        if (expectedSessionId == Guid.Empty || _classroomContext is not { } context ||
+            context.SessionId != expectedSessionId)
+            return Array.Empty<ClassroomScreenTarget>();
+        return _classroomPolicyExecutor.ReadActiveClassroomScreenTargets(context.CampusId, expectedSessionId)
+            .Select(binding => new ClassroomScreenTarget(binding.TargetId, binding.HostAddress,
+                binding.SeatNumber, binding.StudentName, binding.ComputerName))
+            .ToArray();
+    }
+
     internal ClassroomQuickControlSnapshot ReadClassroomQuickControlSnapshot(Guid expectedSessionId)
     {
         if (expectedSessionId == Guid.Empty || _classroomContext is not { } context ||
@@ -1108,7 +1123,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         MobilePairedDeviceView? ApprovedDevice = null);
     private sealed record StudentEventAccessGrant(string CampusId, Guid SessionId, string Target,
         string AgentPublicKeyPem, string AgentFingerprint, DateTimeOffset ExpiresUtc);
-    private sealed record ScreenTargetBinding(Guid TargetId, string TargetKey, string HostAddress,
+    internal sealed record ScreenTargetBinding(Guid TargetId, string TargetKey, string HostAddress,
         int SeatNumber, int Row, int Column, string StudentName, string ComputerName);
     private sealed record ScreenPreviewLease(Guid LeaseId, Guid DeviceId, Guid SessionId,
         string CampusId, IReadOnlySet<string> Targets,
@@ -3148,7 +3163,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         }
     }
 
-    private IReadOnlyList<ScreenTargetBinding> ReadActiveClassroomScreenTargets(string campusId, Guid sessionId)
+    internal IReadOnlyList<ScreenTargetBinding> ReadActiveClassroomScreenTargets(string campusId, Guid sessionId)
     {
         ClassroomSession? session;
         IReadOnlySet<string> activeTargets;

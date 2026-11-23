@@ -7,10 +7,22 @@ namespace VeyonCampus.App.Presentation.Views;
 public delegate void DeviceInputRequestHandler(Guid targetId);
 public delegate void BatchInputRequestHandler(Guid[] targetIds);
 public delegate void ToggleAllSelectionHandler(bool selected);
+public delegate void ScreenDetailRequestHandler(ClassroomScreenTileViewModel tile);
 
 public partial class TeacherClassroomView : UserControl
 {
-    public TeacherClassroomView() => InitializeComponent();
+    public TeacherClassroomView()
+    {
+        InitializeComponent();
+        ScreenWallHost.ToggleInputLockRequested += tile =>
+        {
+            if (tile.IsInputLocked || tile.IsInputUnverified) UnlockDeviceInputRequested?.Invoke(tile.TargetId);
+            else LockDeviceInputRequested?.Invoke(tile.TargetId);
+        };
+        ScreenWallHost.ToggleWebsitePolicyRequested += tile =>
+            WebsitePolicyRequested?.Invoke(tile.TargetId);
+        ScreenWallHost.OpenDetailRequested += tile => OpenScreenDetailRequested?.Invoke(tile);
+    }
 
     /// <summary>
     /// 由外层内容区把可见高度传进来：左右两栏按整屏高度布局，
@@ -35,6 +47,22 @@ public partial class TeacherClassroomView : UserControl
 
     /// <summary>Raised from a single device row: release only that machine's input lease.</summary>
     public event DeviceInputRequestHandler? UnlockDeviceInputRequested;
+
+    /// <summary>Raised from a screen-wall card: apply or remove the saved website list on one machine.</summary>
+    public event DeviceInputRequestHandler? WebsitePolicyRequested;
+
+    /// <summary>Raised from a screen-wall card: open that machine's live picture in its own window.</summary>
+    public event ScreenDetailRequestHandler? OpenScreenDetailRequested;
+
+    private void SwitchToScreenWall(object? sender, RoutedEventArgs e)
+    {
+        if (_model is { } model) model.IsClassroomScreenWallMode = true;
+    }
+
+    private void SwitchToList(object? sender, RoutedEventArgs e)
+    {
+        if (_model is { } model) model.IsClassroomScreenWallMode = false;
+    }
 
     /// <summary>Raised from the batch bar: lock/release every checked machine in one action.</summary>
     public event BatchInputRequestHandler? BatchLockInputRequested;

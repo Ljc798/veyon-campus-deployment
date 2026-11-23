@@ -1,0 +1,78 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:VeyonCampus.App"
+        x:Class="VeyonCampus.App.Presentation.Views.TeacherScreenDetailWindow"
+        x:DataType="vm:ClassroomScreenTileViewModel"
+        Title="学生屏幕" Width="1120" Height="720" MinWidth="760" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        Background="{DynamicResource Teacher.Color.Background}">
+  <Window.Styles>
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Theme/TeacherControls.axaml" />
+    <StyleInclude Source="avares://VeyonCampus.Teacher/Presentation/Components/TeacherComponents.axaml" />
+  </Window.Styles>
+  <Grid Margin="18" RowDefinitions="Auto,*,Auto" RowSpacing="12">
+    <!-- 头部：身份 + 链路状态 -->
+    <Grid Grid.Row="0" ColumnDefinitions="*,Auto,Auto" ColumnSpacing="10">
+      <StackPanel Spacing="2">
+        <TextBlock Text="{Binding DisplayName}" Classes="section-title" />
+        <StackPanel Orientation="Horizontal" Spacing="8">
+          <TextBlock Text="{Binding SeatText}" Classes="muted" FontSize="12" />
+          <TextBlock Text="{Binding HostText}" Classes="muted" FontSize="12" />
+        </StackPanel>
+      </StackPanel>
+      <Border Grid.Column="1" Background="{Binding LinkStatusBackground}" CornerRadius="10" Padding="10,4"
+              VerticalAlignment="Center">
+        <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}"
+                   FontSize="12" FontWeight="SemiBold" />
+      </Border>
+      <Button Grid.Column="2" Content="关闭" Classes="secondary" Click="CloseWindow" VerticalAlignment="Center" />
+    </Grid>
+
+    <!-- 画面 + 右侧信息 -->
+    <Grid Grid.Row="1" ColumnDefinitions="*,286" ColumnSpacing="12">
+      <Border Background="#101C24" CornerRadius="10" ClipToBounds="True">
+        <Grid>
+          <Image Source="{Binding Image}" Stretch="Uniform" />
+          <TextBlock Text="{Binding LinkStatusText}" IsVisible="{Binding !HasFrame}"
+                     Foreground="#9FB3C0" FontSize="13" HorizontalAlignment="Center"
+                     VerticalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center" Margin="24" />
+        </Grid>
+      </Border>
+
+      <Border Grid.Column="1" Classes="card" Padding="14">
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+          <StackPanel Spacing="12">
+            <StackPanel Spacing="4">
+              <TextBlock Text="实时画面" Classes="section-title" FontSize="14" />
+              <TextBlock Text="{Binding FrameInfoText}" Classes="muted" FontSize="12" />
+            </StackPanel>
+            <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8" Padding="10,8">
+              <TextBlock Text="{Binding DetailText}" FontSize="12" TextWrapping="Wrap" />
+            </Border>
+
+            <StackPanel Spacing="6">
+              <TextBlock Text="课堂管控（只作用于这台电脑）" FontWeight="SemiBold" FontSize="12.5" />
+              <Border Background="{Binding InputBadgeBackground}" CornerRadius="8" Padding="9,5">
+                <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}" FontSize="12" />
+              </Border>
+              <Button Content="{Binding InputButtonText}" Classes="secondary" HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center" Click="ToggleInputLock"
+                      ToolTip.Tip="锁定后由学生端 Guard 维持，按课堂截止时间自动解除；教师端断线 20 秒内也会释放。" />
+              <Border Background="{Binding WebsiteBadgeBackground}" CornerRadius="8" Padding="9,5">
+                <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}" FontSize="12" />
+              </Border>
+              <Button Content="{Binding WebsiteButtonText}" Classes="secondary" HorizontalAlignment="Stretch"
+                      HorizontalContentAlignment="Center" Click="ToggleWebsitePolicy"
+                      ToolTip.Tip="应用或恢复当前课堂已保存的网站名单；只影响这台电脑。" />
+            </StackPanel>
+
+            <TextBlock Text="画面来自本机 Veyon WebAPI 的真实学生屏幕。画面大小按窗口等比缩放，不裁切。"
+                       Classes="muted" FontSize="11" TextWrapping="Wrap" />
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+    </Grid>
+
+    <TextBlock Grid.Row="2" Text="{Binding FrameInfoText}" Classes="muted" FontSize="11.5" />
+  </Grid>
+</Window>

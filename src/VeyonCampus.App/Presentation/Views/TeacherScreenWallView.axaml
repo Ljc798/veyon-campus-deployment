@@ -1,0 +1,103 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:VeyonCampus.App"
+             x:Class="VeyonCampus.App.Presentation.Views.TeacherScreenWallView"
+             x:DataType="vm:TeacherViewModel">
+  <!-- 屏幕墙：只显示真实学生机画面；没有画面就显示原因，不用占位图。 -->
+  <Grid RowDefinitions="Auto,*" RowSpacing="8">
+    <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.WarningSubtle}" CornerRadius="9"
+            Padding="11,9" IsVisible="{Binding ClassroomScreenWall.HasWebApiWarning}">
+      <StackPanel Spacing="3">
+        <TextBlock Text="屏幕墙需要本机 WebAPI" FontWeight="SemiBold" FontSize="12.5" />
+        <TextBlock Text="{Binding ClassroomScreenWall.WebApiWarning}" TextWrapping="Wrap" FontSize="11.5" />
+        <TextBlock Text="{Binding ClassroomScreenWall.KeyHint}" Classes="muted" FontSize="11"
+                   TextWrapping="Wrap" />
+      </StackPanel>
+    </Border>
+
+    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                  IsVisible="{Binding ClassroomScreenWall.HasTiles}">
+      <ItemsControl x:Name="TileHost" ItemsSource="{Binding ClassroomScreenWall.Tiles}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <WrapPanel ItemWidth="{Binding ClassroomScreenWall.TileWidth}"
+                       ItemHeight="{Binding ClassroomScreenWall.TileHeight}" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate x:DataType="vm:ClassroomScreenTileViewModel">
+            <Border Background="{DynamicResource Teacher.Color.Surface}"
+                    BorderBrush="{Binding CardBorderBrush}" BorderThickness="{Binding CardBorderThickness}"
+                    CornerRadius="10" Margin="0,0,8,8" Padding="8">
+              <Grid RowDefinitions="Auto,*,Auto,Auto" RowSpacing="6">
+                <!-- 第一层：姓名 + 座位 + 链路状态 -->
+                <Grid Grid.Row="0" ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                  <StackPanel Spacing="1" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding DisplayName}" FontSize="12.5" FontWeight="SemiBold"
+                               TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
+                    <TextBlock Text="{Binding SeatText}" Classes="muted" FontSize="10.5"
+                               TextTrimming="CharacterEllipsis" />
+                  </StackPanel>
+                  <Border Grid.Column="1" Background="{Binding LinkStatusBackground}" CornerRadius="9"
+                          Padding="6,2" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}"
+                               FontSize="10.5" FontWeight="SemiBold" />
+                  </Border>
+                </Grid>
+
+                <!-- 第二层：真实画面（16:9 容器，不裁切） -->
+                <Border Grid.Row="1" Background="#101C24" CornerRadius="6" ClipToBounds="True"
+                        PointerPressed="TilePressed" DoubleTapped="TileDoubleTapped"
+                        ToolTip.Tip="{Binding DetailText}">
+                  <Grid>
+                    <Image Source="{Binding Image}" Stretch="Uniform" />
+                    <TextBlock Text="{Binding LinkStatusText}" IsVisible="{Binding !HasFrame}"
+                               Foreground="#9FB3C0" FontSize="11.5" HorizontalAlignment="Center"
+                               VerticalAlignment="Center" TextWrapping="Wrap" TextAlignment="Center"
+                               Margin="8" />
+                    <Border Background="#B0101C24" CornerRadius="5" Padding="5,2" Margin="5"
+                            HorizontalAlignment="Left" VerticalAlignment="Bottom"
+                            IsVisible="{Binding HasFrame}">
+                      <TextBlock Text="{Binding FrameInfoText}" Foreground="#D6E4EC" FontSize="10" />
+                    </Border>
+                    <Button Content="放大" Classes="secondary" FontSize="10" Padding="6,1"
+                            HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5"
+                            Click="OpenDetail" ToolTip.Tip="打开独立窗口查看这台电脑的实时画面" />
+                  </Grid>
+                </Border>
+
+                <!-- 第三层：管控状态（来自学生端核验结果，不是本地猜测） -->
+                <Grid Grid.Row="2" ColumnDefinitions="*,*" ColumnSpacing="4">
+                  <Border Background="{Binding InputBadgeBackground}" CornerRadius="7" Padding="5,2">
+                    <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}"
+                               FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Border>
+                  <Border Grid.Column="1" Background="{Binding WebsiteBadgeBackground}" CornerRadius="7" Padding="5,2">
+                    <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}"
+                               FontSize="10.5" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                  </Border>
+                </Grid>
+
+                <!-- 第四层：这张卡片的两个课堂功能 -->
+                <Grid Grid.Row="3" ColumnDefinitions="*,*" ColumnSpacing="4">
+                  <Button Content="{Binding InputButtonText}" Classes="secondary" FontSize="11"
+                          Padding="4,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                          Click="ToggleInputLock"
+                          ToolTip.Tip="只对这台电脑申请键鼠锁定/解除；由学生端 Guard 核验，锁定按课堂截止时间自动解除。" />
+                  <Button Grid.Column="1" Content="{Binding WebsiteButtonText}" Classes="secondary" FontSize="11"
+                          Padding="4,4" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                          Click="ToggleWebsitePolicy"
+                          ToolTip.Tip="只对这台电脑应用/恢复已保存的网站名单；其他电脑不受影响。" />
+                </Grid>
+              </Grid>
+            </Border>
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+    </ScrollViewer>
+
+    <TextBlock Grid.Row="1" Text="当前课堂还没有可显示的学生电脑。" Classes="muted"
+               IsVisible="{Binding ClassroomScreenWall.HasNoTiles}" VerticalAlignment="Center"
+               HorizontalAlignment="Center" />
+  </Grid>
+</UserControl>

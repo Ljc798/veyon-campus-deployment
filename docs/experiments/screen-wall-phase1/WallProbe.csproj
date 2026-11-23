@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>WallProbe</AssemblyName>
+    <RootNamespace>WallProbe</RootNamespace>
+    <EnableDefaultCompileItems>true</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Compile the shipped screen-wall transport verbatim so the probe exercises real code. -->
+    <Compile Include="../../../src/VeyonCampus.App/ScreenWall/ClassroomScreenTarget.cs" Link="ScreenWall/ClassroomScreenTarget.cs" />
+    <Compile Include="../../../src/VeyonCampus.App/ScreenWall/VeyonKeyMaterial.cs" Link="ScreenWall/VeyonKeyMaterial.cs" />
+    <Compile Include="../../../src/VeyonCampus.App/ScreenWall/VeyonWebApiClient.cs" Link="ScreenWall/VeyonWebApiClient.cs" />
+    <Compile Include="../../../src/VeyonCampus.App/ScreenWall/ScreenWallConnection.cs" Link="ScreenWall/ScreenWallConnection.cs" />
+  </ItemGroup>
+</Project>

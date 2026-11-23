@@ -183,102 +183,128 @@
       </StackPanel>
     </ScrollViewer>
 
-    <!-- ========== 右栏：学生详细列表（仅此处滚动） ========== -->
+    <!-- ========== 右栏：屏幕墙（默认）/ 学生详细列表 ========== -->
     <Grid Grid.Column="1" RowDefinitions="Auto,*" IsVisible="{Binding HasClassroomQuickControlDevices}">
       <Border Grid.Row="0" BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
               CornerRadius="12" Margin="0,0,0,10" Background="{DynamicResource Teacher.Color.Surface}">
         <StackPanel Spacing="10" Margin="12,11">
-          <TextBlock Text="{Binding ClassroomQuickControlProgressHeader}" Classes="component-title" />
-          <!-- 批量键鼠：多选 + 自定义截止时间。锁定在学生端持久化，重启后仍生效；网站管控是全班级。 -->
-          <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
-            <CheckBox Content="全选" IsChecked="{Binding AllInputLockSelected, Mode=OneWay}"
-                      Click="ToggleAllInputLockSelection" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="1" Text="{Binding InputLockSelectionSummary}" Classes="muted"
-                       VerticalAlignment="Center" TextWrapping="Wrap" />
-            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-              <Button Content="批量锁定所选" Classes="primary" FontSize="12" Padding="12,6"
-                      ToolTip.Tip="锁定期限为下方自定义截止时间" Click="RequestBatchLockInput" />
-              <Button Content="批量解除所选" Classes="secondary" FontSize="12" Padding="12,6"
-                      Click="RequestBatchUnlockInput" />
-            </StackPanel>
+          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+            <TextBlock Text="{Binding ClassroomQuickControlProgressHeader}" Classes="component-title"
+                       VerticalAlignment="Center" />
+            <Border Grid.Column="1" Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="9"
+                    Padding="3" VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <Button Content="屏幕墙" Classes="wall-tab"
+                        Classes.active="{Binding IsClassroomScreenWallMode}" Click="SwitchToScreenWall"
+                        ToolTip.Tip="按座位显示每台学生机的实时屏幕，可在卡片上直接锁定键鼠或应用网站策略。" />
+                <Button Content="列表" Classes="wall-tab"
+                        Classes.active="{Binding IsClassroomListMode}" Click="SwitchToList"
+                        ToolTip.Tip="逐台的管控进度与详细状态；与屏幕墙共用同一份课堂数据。" />
+              </StackPanel>
+            </Border>
           </Grid>
-          <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
-            <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-              <TextBlock Text="键鼠锁定到今天" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-              <TimePicker SelectedTime="{Binding InputLockReleaseTime, Mode=TwoWay}" Width="150" Height="36" />
-            </StackPanel>
-            <TextBlock Grid.Column="1" Text="{Binding InputLockReleaseHint}" Classes="muted" FontSize="12"
-                       TextWrapping="Wrap" VerticalAlignment="Center" />
-          </Grid>
+
+          <TextBlock Text="{Binding ClassroomScreenWall.SummaryText}" Classes="muted" FontSize="12"
+                     IsVisible="{Binding IsClassroomScreenWallMode}" TextWrapping="Wrap" />
+
+          <!-- 列表视图专属：批量键鼠 + 自定义截止时间。屏幕墙模式下隐藏，避免两套选择语义打架。 -->
+          <StackPanel Spacing="10" IsVisible="{Binding IsClassroomListMode}">
+            <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="10">
+              <CheckBox Content="全选" IsChecked="{Binding AllInputLockSelected, Mode=OneWay}"
+                        Click="ToggleAllInputLockSelection" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding InputLockSelectionSummary}" Classes="muted"
+                         VerticalAlignment="Center" TextWrapping="Wrap" />
+              <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
+                <Button Content="批量锁定所选" Classes="primary" FontSize="12" Padding="12,6"
+                        ToolTip.Tip="锁定期限为下方自定义截止时间" Click="RequestBatchLockInput" />
+                <Button Content="批量解除所选" Classes="secondary" FontSize="12" Padding="12,6"
+                        Click="RequestBatchUnlockInput" />
+              </StackPanel>
+            </Grid>
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="12">
+              <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                <TextBlock Text="键鼠锁定到今天" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+                <TimePicker SelectedTime="{Binding InputLockReleaseTime, Mode=TwoWay}" Width="150" Height="36" />
+              </StackPanel>
+              <TextBlock Grid.Column="1" Text="{Binding InputLockReleaseHint}" Classes="muted" FontSize="12"
+                         TextWrapping="Wrap" VerticalAlignment="Center" />
+            </Grid>
+          </StackPanel>
         </StackPanel>
       </Border>
 
-      <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                    BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="12"
-                    Background="{DynamicResource Teacher.Color.Surface}">
-        <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}">
-          <ItemsControl.ItemsPanel>
-            <ItemsPanelTemplate>
-              <VirtualizingStackPanel />
-            </ItemsPanelTemplate>
-          </ItemsControl.ItemsPanel>
-          <ItemsControl.ItemTemplate>
-            <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
-              <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
-                <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
-                  <Expander.Header>
-                    <Grid ColumnDefinitions="Auto,32,*,Auto" ColumnSpacing="12" MinHeight="46">
-                      <CheckBox IsChecked="{Binding IsSelectedForInputLock, Mode=TwoWay}"
-                                VerticalAlignment="Center" ToolTip.Tip="勾选后可批量锁定或解除键鼠" />
-                      <Border Grid.Column="1" Width="32" Height="32" CornerRadius="9" Background="{DynamicResource Teacher.Color.InfoSubtle}" VerticalAlignment="Center">
-                        <Path Data="M2,3 L18,3 L18,14 L2,14 Z M10,14 L10,18 M6,18 L14,18" Width="18" Height="18"
-                              Stretch="Uniform" Stroke="{DynamicResource Teacher.Color.Primary}" StrokeThickness="1.5" />
-                      </Border>
-                      <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center">
-                        <TextBlock Classes="device-row-name" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding Summary}" Classes="supporting-copy" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
-                      </StackPanel>
-                      <StackPanel Grid.Column="3" Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Right">
-                        <Border Background="{Binding StatusBackground}" CornerRadius="12" Padding="9,4" HorizontalAlignment="Right">
-                          <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="12" FontWeight="SemiBold" />
+      <Grid Grid.Row="1">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
+                      IsVisible="{Binding IsClassroomListMode}"
+                      BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1" CornerRadius="12"
+                      Background="{DynamicResource Teacher.Color.Surface}">
+          <ItemsControl ItemsSource="{Binding ClassroomQuickControlDevices}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <VirtualizingStackPanel />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="vm:TeacherClassroomQuickControlDeviceItem">
+                <Border BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="0,0,0,1">
+                  <Expander Theme="{StaticResource App.DetailExpander}" IsExpanded="{Binding IsExpanded, Mode=TwoWay}">
+                    <Expander.Header>
+                      <Grid ColumnDefinitions="Auto,32,*,Auto" ColumnSpacing="12" MinHeight="46">
+                        <CheckBox IsChecked="{Binding IsSelectedForInputLock, Mode=TwoWay}"
+                                  VerticalAlignment="Center" ToolTip.Tip="勾选后可批量锁定或解除键鼠" />
+                        <Border Grid.Column="1" Width="32" Height="32" CornerRadius="9" Background="{DynamicResource Teacher.Color.InfoSubtle}" VerticalAlignment="Center">
+                          <Path Data="M2,3 L18,3 L18,14 L2,14 Z M10,14 L10,18 M6,18 L14,18" Width="18" Height="18"
+                                Stretch="Uniform" Stroke="{DynamicResource Teacher.Color.Primary}" StrokeThickness="1.5" />
                         </Border>
-                        <TextBlock Text="{Binding UpdatedText}" Classes="supporting-copy" FontSize="12"
-                                   ToolTip.Tip="该任务最近一次进度的本机记录时间，不代表设备当前在线。" />
-                      </StackPanel>
-                    </Grid>
-                  </Expander.Header>
-                  <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8"
-                          Padding="14,12" Margin="0,0,0,10" HorizontalAlignment="Stretch">
-                    <StackPanel Spacing="8">
-                      <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
-                        <Border Background="{Binding WebsiteControlStatusBackground}" CornerRadius="8" Padding="9,6">
-                          <TextBlock Text="{Binding WebsiteControlStatus}" Foreground="{Binding WebsiteControlStatusBrush}"
-                                     FontSize="12" TextWrapping="Wrap" />
-                        </Border>
-                        <Border Grid.Column="1" Background="{Binding InputControlStatusBackground}" CornerRadius="8" Padding="9,6">
-                          <TextBlock Text="{Binding InputControlStatus}" Foreground="{Binding InputControlStatusBrush}"
-                                     FontSize="12" TextWrapping="Wrap" />
-                        </Border>
+                        <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center">
+                          <TextBlock Classes="device-row-name" Text="{Binding DisplayName}" TextTrimming="CharacterEllipsis" />
+                          <TextBlock Text="{Binding Summary}" Classes="supporting-copy" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="3" Spacing="5" VerticalAlignment="Center" HorizontalAlignment="Right">
+                          <Border Background="{Binding StatusBackground}" CornerRadius="12" Padding="9,4" HorizontalAlignment="Right">
+                            <TextBlock Text="{Binding StatusText}" Foreground="{Binding StatusBrush}" FontSize="12" FontWeight="SemiBold" />
+                          </Border>
+                          <TextBlock Text="{Binding UpdatedText}" Classes="supporting-copy" FontSize="12"
+                                     ToolTip.Tip="该任务最近一次进度的本机记录时间，不代表设备当前在线。" />
+                        </StackPanel>
                       </Grid>
-                      <TextBlock Text="{Binding Detail}" Classes="supporting-copy" TextWrapping="Wrap" />
-                      <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
-                        <Button Content="锁定此机键盘鼠标" Classes="primary"
-                                IsVisible="{Binding CanLockDeviceInput}"
-                                Click="RequestLockDeviceInput"
-                                ToolTip.Tip="只锁这一台：教师端每 5 秒续租，关闭或断线后最多 20 秒自动释放；按自定义截止时间持续，重启后仍保持。" />
-                        <Button Content="解除此机键鼠锁定" Classes="secondary"
-                                IsVisible="{Binding CanUnlockDeviceInput}"
-                                Click="RequestUnlockDeviceInput"
-                                ToolTip.Tip="只解除这一台由本工具持有的锁定；其他来源的锁定保留。" />
+                    </Expander.Header>
+                    <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="8"
+                            Padding="14,12" Margin="0,0,0,10" HorizontalAlignment="Stretch">
+                      <StackPanel Spacing="8">
+                        <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                          <Border Background="{Binding WebsiteControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                            <TextBlock Text="{Binding WebsiteControlStatus}" Foreground="{Binding WebsiteControlStatusBrush}"
+                                       FontSize="12" TextWrapping="Wrap" />
+                          </Border>
+                          <Border Grid.Column="1" Background="{Binding InputControlStatusBackground}" CornerRadius="8" Padding="9,6">
+                            <TextBlock Text="{Binding InputControlStatus}" Foreground="{Binding InputControlStatusBrush}"
+                                       FontSize="12" TextWrapping="Wrap" />
+                          </Border>
+                        </Grid>
+                        <TextBlock Text="{Binding Detail}" Classes="supporting-copy" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8" HorizontalAlignment="Left">
+                          <Button Content="锁定此机键盘鼠标" Classes="primary"
+                                  IsVisible="{Binding CanLockDeviceInput}"
+                                  Click="RequestLockDeviceInput"
+                                  ToolTip.Tip="只锁这一台：教师端每 5 秒续租，关闭或断线后最多 20 秒自动释放；按自定义截止时间持续，重启后仍保持。" />
+                          <Button Content="解除此机键鼠锁定" Classes="secondary"
+                                  IsVisible="{Binding CanUnlockDeviceInput}"
+                                  Click="RequestUnlockDeviceInput"
+                                  ToolTip.Tip="只解除这一台由本工具持有的锁定；其他来源的锁定保留。" />
+                        </StackPanel>
                       </StackPanel>
-                    </StackPanel>
-                  </Border>
-                </Expander>
-              </Border>
-            </DataTemplate>
-          </ItemsControl.ItemTemplate>
-        </ItemsControl>
-      </ScrollViewer>
+                    </Border>
+                  </Expander>
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </ScrollViewer>
+
+        <views:TeacherScreenWallView x:Name="ScreenWallHost"
+                                     IsVisible="{Binding IsClassroomScreenWallMode}" />
+      </Grid>
     </Grid>
 
     <!-- 没有设备时的占位 -->
