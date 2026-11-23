@@ -20,6 +20,7 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     private string _webApiWarning = "正在检查本机 WebAPI…";
     private string _keyHint = "";
     private string _summaryText = "尚未载入课堂设备";
+    private int _controlDeviceCount;
     private bool _active;
     private bool _disposed;
     private double _tileWidth = 240;
@@ -47,6 +48,15 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     }
 
     public bool HasNoTiles => !_hasTiles;
+
+    /// <summary>
+    /// Empty-state copy that tells the two cases apart: no classroom running at all, versus a running
+    /// classroom whose devices have no seat positions yet (nothing to order the wall by).
+    /// </summary>
+    public string EmptyHintText => _controlDeviceCount == 0
+        ? "当前教室还没有可调度的学生电脑。先在页面顶部点「开始课堂」。"
+        : $"课堂里有 {_controlDeviceCount} 台学生电脑，但还没有座位位置，无法按座位排列画面。" +
+          "请到左侧「地点与学生名单」排好座位后再回来。";
     public double TileWidth { get => _tileWidth; private set => Set(ref _tileWidth, value); }
     public double TileHeight { get => _tileHeight; private set => Set(ref _tileHeight, value); }
     public bool IsWebApiReady { get => _isWebApiReady; private set => Set(ref _isWebApiReady, value); }
@@ -139,6 +149,13 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     internal void ApplyControlState(IEnumerable<TeacherClassroomQuickControlDeviceItem> devices)
     {
         var byId = devices.ToDictionary(device => device.TargetId);
+        if (_controlDeviceCount != byId.Count)
+        {
+            _controlDeviceCount = byId.Count;
+            Raise(nameof(EmptyHintText));
+            if (Tiles.Count == 0) UpdateSummary();
+        }
+
         foreach (var tile in Tiles)
             tile.ApplyControlState(byId.GetValueOrDefault(tile.TargetId));
     }
@@ -170,7 +187,7 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     {
         if (Tiles.Count == 0)
         {
-            SummaryText = "当前课堂还没有可显示的学生电脑";
+            SummaryText = EmptyHintText;
             return;
         }
 

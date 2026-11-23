@@ -96,7 +96,8 @@
       </ItemsControl>
     </ScrollViewer>
 
-    <TextBlock Grid.Row="1" Text="当前课堂还没有可显示的学生电脑。" Classes="muted"
+    <TextBlock Grid.Row="1" Text="{Binding ClassroomScreenWall.EmptyHintText}" Classes="muted"
+               MaxWidth="420" TextWrapping="Wrap" TextAlignment="Center"
                IsVisible="{Binding ClassroomScreenWall.HasNoTiles}" VerticalAlignment="Center"
                HorizontalAlignment="Center" />
   </Grid>

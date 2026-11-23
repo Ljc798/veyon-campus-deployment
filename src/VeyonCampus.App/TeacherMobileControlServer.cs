@@ -389,6 +389,7 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
                 await Task.Run(() => _classroomQuickControlService?.SetClassroomContext(null), cancellationToken);
                 _classroomContext = null;
                 _service?.SetClassroomSession(null, null, null);
+                _classroomPolicyExecutor.SetClassroomSession(null, null, null);
                 ClassroomEventStatus = "当前没有活动课堂。";
                 PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CanStop)));
                 return;
@@ -551,14 +552,25 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     {
         var context = _classroomContext;
         var service = _service;
-        if (context is null || service is null)
+        if (context is null)
         {
             ClassroomEventStatus = "当前没有活动课堂。";
             return;
         }
 
-            service.SetClassroomSession(context.CampusId, context.SessionId, context.Targets,
-                context.TargetIds, context.Session);
+        // The screen wall projects seats through this long-lived executor, which never runs a server of
+        // its own; without the same session it can only ever answer "no targets". Keep it in step even
+        // when the mobile control service has not been started yet.
+        _classroomPolicyExecutor.SetClassroomSession(context.CampusId, context.SessionId, context.Targets,
+            context.TargetIds, context.Session);
+        if (service is null)
+        {
+            ClassroomEventStatus = "当前没有活动课堂。";
+            return;
+        }
+
+        service.SetClassroomSession(context.CampusId, context.SessionId, context.Targets,
+            context.TargetIds, context.Session);
         using var signingKey = WebsitePolicySigningKeyStore.Open(context.CampusId);
         var trustStore = new StudentAgentIdentityTrustStore();
         var grants = new List<ClassroomEventGrantRequest>(context.Targets.Count);
@@ -695,7 +707,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         if (expectedSessionId == Guid.Empty || _classroomContext is not { } context ||
             context.SessionId != expectedSessionId)
             return Array.Empty<ClassroomScreenTarget>();
-        return _classroomPolicyExecutor.ReadActiveClassroomScreenTargets(context.CampusId, expectedSessionId)
+        var source = _service ?? _classroomPolicyExecutor;
+        return source.ReadActiveClassroomScreenTargets(context.CampusId, expectedSessionId)
             .Select(binding => new ClassroomScreenTarget(binding.TargetId, binding.HostAddress,
                 binding.SeatNumber, binding.StudentName, binding.ComputerName))
             .ToArray();
