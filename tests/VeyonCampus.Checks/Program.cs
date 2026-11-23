@@ -623,6 +623,35 @@ void CheckLocationIdentityProjection()
     Expect(nameOnly.Count == 1 && nameOnly[0].ObjectId is null &&
            nameOnly[0].Targets.SequenceEqual(new[] { "pc-01" }));
 }
+void CheckClassroomScreenWallProjection()
+{
+    var targetId = Guid.Parse("33333333-3333-3333-3333-333333333333");
+    var target = new ClassroomScreenTarget(targetId, "192.0.2.33", 0, 2, 3,
+        "林同学", "PC-33");
+    var tile = new ClassroomScreenTileViewModel(target);
+    tile.ApplyState(ScreenWallLinkState.Live, "");
+    tile.IsSelected = true;
+
+    var seat = new TeacherSeatCell(2, 3, null, "林同学", "PC-33", true, true);
+    var cell = new ClassroomSeatWorkspaceCell(seat, tile, "", "全部状态", targetId);
+    Expect(tile.TargetId == targetId && tile.HasSeatAssignment &&
+           tile.SeatCoordinateText == "第 2 行 · 第 3 列");
+    Expect(cell.HasActiveDevice && cell.IsSelected && cell.IsLocated &&
+           cell.Row == 2 && cell.Column == 3 && cell.StudentName == "林同学");
+
+    var filtered = new ClassroomSeatWorkspaceCell(seat, tile, "不存在的设备", "全部状态", null);
+    Expect(filtered.IsDimmed);
+
+    // A computer name suffix is not a seat assignment; only saved seat fields count.
+    var unseated = new ClassroomScreenTileViewModel(new ClassroomScreenTarget(
+        Guid.Parse("44444444-4444-4444-4444-444444444444"), "192.0.2.44", 0, 0, 0,
+        "", "PC-44"));
+    Expect(!unseated.HasSeatAssignment && unseated.SeatCoordinateText == "未关联到物理座位");
+
+    var aisle = new ClassroomSeatWorkspaceCell(
+        new TeacherSeatCell(2, 4, null, "", "", false, false), null, "", "全部状态", null);
+    Expect(aisle.IsAisle && !aisle.HasActiveDevice && aisle.StatusText == "未绑定");
+}
 void CheckNetworkObjectsDumpParsing()
 {
     var widths = new[] { 36, 36, 12, 24, 24, 18 };
@@ -925,6 +954,7 @@ Check("Veyon 固定发布资产、校区密钥标识和服务状态解析", () =
 });
 Check("Veyon 地点 UUID 投影、同名不同身份与按 UUID 选择（R19/R20/R21）",
     CheckLocationIdentityProjection);
+Check("课堂屏幕墙稳定身份、已保存座位行列和筛选投影", CheckClassroomScreenWallProjection);
 Check("应用发布签名、SemVer、摘要验证和自更新失败回滚", ApplicationReleaseChecks.Run);
 Check("配置包静态目录：搜索语义、摘要校验、来源白名单与 API 回退", DeploymentPackageCatalogChecks.Run);
 await CheckAsync("配置包局域网分发：教师机发布、学生机拉取、摘要校验与已装机器探测",
@@ -1103,7 +1133,10 @@ Check("免费网站策略：域名规范化、黑白名单编译和签名防伪/
     Reject(() => WebsitePolicyCryptography.Sign(allow with { SchemaVersion = 99 }, teacherKey));
 });
 Check("网站 Edge/Chrome/Firefox 注册表事务中断后恢复并保留外部修改", WebsitePolicyRegistryTransactionChecks.Run);
-Check("网站 hosts 兜底区块写入、替换与清除不改动其他记录", HostsFilePolicyChecks.Run);
+if (OperatingSystem.IsWindows())
+    Check("网站 hosts 兜底区块写入、替换与清除不改动其他记录", HostsFilePolicyChecks.Run);
+else
+    Console.WriteLine("SKIP 网站 hosts 兜底区块测试仅支持 Windows");
 Check("网站策略推送目标校验与去重", () =>
 {
     var targets = WebsitePolicyTransport.NormalizeTargets(new[] { " pc-01 ", "192.168.1.20", "PC-01", "" });
@@ -1331,7 +1364,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
   // Keep this in sync with src/VeyonCampus.Agent/VeyonCampus.Agent.csproj. It is asserted explicitly
   // so a version bump cannot silently ship a StudentSetup that reports a different agent version than
   // the one it actually bundles.
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.65");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.75");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {
