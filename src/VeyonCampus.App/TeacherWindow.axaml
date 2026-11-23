@@ -125,6 +125,11 @@
           OpenQuickControlWebsitePolicyRequested="OpenQuickControlWebsitePolicy"
           EnableClassroomWebsiteControlRequested="EnableClassroomWebsiteControl"
           LockClassroomInputRequested="LockClassroomInput"
+          LockDeviceInputRequested="LockDeviceInput"
+          UnlockDeviceInputRequested="UnlockDeviceInput"
+          BatchLockInputRequested="BatchLockInput"
+          BatchUnlockInputRequested="BatchUnlockInput"
+          ToggleAllInputLockSelectionRequested="ToggleAllInputLockSelection"
           ReleaseClassroomQuickControlRequested="ReleaseClassroomQuickControl"
           ReplyToClassroomEventRequested="ReplyToClassroomEvent"
           RetryClassroomRestoresRequested="RetryClassroomRestores" />
@@ -499,7 +504,7 @@
         </ScrollViewer>
       </Border>
       <ScrollViewer x:Name="TeacherContentScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto"
-                    ScrollChanged="TeacherContentScrollChanged"
+                    ScrollChanged="TeacherContentScrollChanged" SizeChanged="TeacherContentScrollSizeChanged"
                     Background="{DynamicResource Teacher.Color.Background}">
             <ContentControl x:Name="TeacherPageHost" Content="{Binding}"
                       HorizontalContentAlignment="Stretch" VerticalContentAlignment="Top" />
@@ -512,7 +517,7 @@
               HorizontalAlignment="Right" VerticalAlignment="Stretch"
               Background="{DynamicResource Teacher.Color.Surface}" BorderBrush="{DynamicResource Teacher.Color.Border}"
               BorderThickness="1" CornerRadius="14">
-        <Grid RowDefinitions="Auto,Auto,Auto,*" RowSpacing="10">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,*" RowSpacing="10">
           <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
             <StackPanel Spacing="2">
               <TextBlock Text="学生消息" Classes="section-title" />
@@ -521,10 +526,54 @@
             <Button Grid.Column="1" Classes="secondary" Content="关闭" Click="CloseClassroomChatDrawer"
                     VerticalAlignment="Top" />
           </Grid>
-          <TextBox x:Name="ClassroomChatSearchInput" Grid.Row="1"
+
+          <!-- 待处理求助（原课堂页区块移入此处，页面内不再单独占位） -->
+          <Border Grid.Row="1" Classes="subtle-panel" Padding="10"
+                  IsVisible="{Binding HasClassroomEventItems}">
+            <StackPanel Spacing="7">
+              <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                <TextBlock Text="待处理求助 / 通知" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <TextBlock Grid.Column="1" Text="{Binding PendingClassroomHelpCount}"
+                           Classes="muted" FontSize="12" VerticalAlignment="Center" />
+              </Grid>
+              <ScrollViewer MaxHeight="150" VerticalScrollBarVisibility="Auto"
+                            HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl ItemsSource="{Binding ClassroomEventItems}">
+                  <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                      <VirtualizingStackPanel />
+                    </ItemsPanelTemplate>
+                  </ItemsControl.ItemsPanel>
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="vm:TeacherClassroomEventItem">
+                      <Border Padding="9" CornerRadius="9" Background="{DynamicResource Teacher.Color.Surface}" Margin="0,0,0,7">
+                        <StackPanel Spacing="5">
+                          <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                            <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                            <TextBlock Grid.Column="1" Text="{Binding Status}" Classes="muted"
+                                       VerticalAlignment="Center" />
+                          </Grid>
+                          <TextBlock Text="{Binding SeatLocation}" Classes="muted" IsVisible="{Binding HasSeatLocation}" />
+                          <TextBlock Text="{Binding Detail}" TextWrapping="Wrap" FontSize="12" />
+                          <TextBlock Text="{Binding EventTime}" Classes="muted" FontSize="12" />
+                          <TextBox Text="{Binding ReplyMessage, Mode=TwoWay}" IsVisible="{Binding CanReply}"
+                                   MaxLength="500" PlaceholderText="回复学生" FontSize="12" />
+                          <Button Content="发送回复" IsVisible="{Binding CanReply}" IsEnabled="{Binding CanReply}"
+                                  Click="ReplyToClassroomEvent" HorizontalAlignment="Right" FontSize="12"
+                                  Padding="12,5" />
+                        </StackPanel>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+              </ScrollViewer>
+            </StackPanel>
+          </Border>
+
+          <TextBox x:Name="ClassroomChatSearchInput" Grid.Row="2"
                    Text="{Binding ClassroomChatSearch, Mode=TwoWay}"
                    PlaceholderText="搜索学生姓名或座位" />
-          <StackPanel Grid.Row="2" Spacing="5">
+          <StackPanel Grid.Row="3" Spacing="5">
             <TextBlock Text="选择学生" FontWeight="SemiBold" />
             <ScrollViewer MaxHeight="142" VerticalScrollBarVisibility="Auto">
               <ItemsControl ItemsSource="{Binding FilteredClassroomChatThreads}">
@@ -565,7 +614,7 @@
             <TextBlock Text="课堂开始后会在这里显示学生。" Classes="muted"
                        IsVisible="{Binding HasNoSelectedClassroomChatThread}" />
           </StackPanel>
-          <Border Grid.Row="3" Margin="0,4,0,0" Padding="10" CornerRadius="12"
+          <Border Grid.Row="4" Margin="0,4,0,0" Padding="10" CornerRadius="12"
                   Background="{DynamicResource Teacher.Color.Surface}"
                   BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1">
             <Grid RowDefinitions="Auto,*,Auto" RowSpacing="10">

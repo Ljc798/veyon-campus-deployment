@@ -66,8 +66,12 @@ public sealed partial class TeacherViewModel
     public bool HasSingleRoomProfile => RoomProfiles.Count == 1;
     public bool HasMultipleRoomProfiles => RoomProfiles.Count > 1;
     private bool IsClassroomDirectoryScopeVerified => !OperatingSystem.IsWindows() ||
-        (IsVeyonDeviceDirectoryCurrent && !_classroomDirectorySelectionPending &&
-         !HasClassroomDirectoryError && !HasPendingClassroomScopeChange);
+        (IsVeyonDeviceDirectoryCurrent && !HasClassroomDirectoryError && !HasPendingClassroomScopeChange &&
+         // A running lesson already froze its target list into the session, so an unconfirmed
+         // location pick has nothing to do with it. That pending state only stops a *new* lesson
+         // from starting with a scope nobody confirmed. Treating it as fatal here disabled both
+         // quick-control cards for a lesson that was already running, with no reason on screen.
+         (!_classroomDirectorySelectionPending || HasActiveClassroomSession));
 
     public string ClassroomRoomContextSummary => !IsClassroomDirectoryScopeVerified
         ? _activeClassroomSession is not null
@@ -125,6 +129,23 @@ public sealed partial class TeacherViewModel
             catch (InvalidDataException) { return false; }
         }
     }
+
+    /// <summary>
+    /// Whether the machine directory can be compared right now. A Veyon snapshot that aged past the
+    /// freshness window, or a read that never succeeded, means "cannot verify" - not "changed".
+    /// Confusing the two ended a running lesson: the scope check reported a change every time the
+    /// three-minute window lapsed, and the reconciler released the policy on every affected device.
+    /// </summary>
+    private bool IsActiveClassroomTargetSetVerifiable =>
+        _activeClassroomSession is not null && IsVeyonDeviceDirectoryCurrent &&
+        HasFreshVerifiedVeyonDirectoryRead && VeyonDeviceDirectorySnapshot is not null &&
+        ClassroomLocationIndex >= 0 && ClassroomLocationIndex < WebsiteLocations.Count;
+
+    /// <summary>True only when the teacher actually picked a different room or campus.</summary>
+    private static bool IsClassroomScopeSelectionDifferent(ClassroomSession active,
+        TeacherRoomProfile? selectedRoom, TeacherCampusProfile? selectedCampus) =>
+        selectedRoom is { } room && selectedCampus is { } campus &&
+        (room.RoomId != active.Room.RoomId || campus.ProfileId != active.Room.CampusProfileId);
     public string RoomSelectionStatus
     {
         get => _roomSelectionStatus;
@@ -3078,6 +3099,9 @@ public sealed partial class TeacherViewModel
         if (row is null) return null;
         DeviceHealthCategoryFilterIndex = 0;
         DeviceHealthSearchText = row.StudentName;
+        // Jumping to a collapsed row hides every action behind it, including the identity review the
+        // alert itself tells the teacher to use.
+        row.IsDetailsExpanded = true;
         RefreshDeviceHealthView();
         return _deviceHealthPageRows.FirstOrDefault(item =>
             string.Equals(NormalizeTargetKey(item.Target), NormalizeTargetKey(row.Target),
@@ -3960,12 +3984,21 @@ public sealed partial class TeacherViewModel
         var release = await Task.Run(() => ApplicationReleaseClient.ReadVerifiedStagedRelease(path,
             ApplicationReleaseRole.StudentSetup, releaseClient.ApiBaseAddress,
             ApplicationReleaseTrust.LoadPinnedPublicKeyPem()));
-        if (release.Manifest.SchemaVersion != 3 || release.Manifest.ReleaseChannel is not null ||
-            release.Manifest.StudentAgentVersion is not null)
-            throw new InvalidDataException("本机更新包必须使用已安装学生 Agent 信任的 Developer Release 密钥签署，并提供 stable Schema 3 清单。");
+        // ReadVerifiedStagedRelease 内部 Verify 对 releaseChannel=local-test 会自动改用嵌入的本地测试公钥验签。
+        var isLocalTest = string.Equals(release.Manifest.ReleaseChannel, "local-test", StringComparison.Ordinal);
+        if (isLocalTest)
+        {
+            if (release.Manifest.SchemaVersion != 4)
+                throw new InvalidDataException("本机 local-test 更新包须为本地测试公钥签署的 Schema 4 StudentSetup 清单。");
+        }
+        else if (release.Manifest.SchemaVersion != 3 || release.Manifest.ReleaseChannel is not null ||
+                 release.Manifest.StudentAgentVersion is not null)
+        {
+            throw new InvalidDataException("本机 stable 更新包须为已安装学生 Agent 信任的 Developer Release 公钥签署的 Schema 3 清单。");
+        }
         _localTestStudentSetupInstallerPath = path;
         _localTestStudentReleaseSummary =
-            $"已验签：StudentSetup {release.Manifest.Version} · stable 签名。";
+            $"已验签：StudentSetup {release.Manifest.Version} · {(isLocalTest ? "local-test 测试公钥" : "stable")} 签名。";
         UseLocalTestStudentUpdateSource = true;
         Changed(nameof(LocalTestStudentSetupInstallerPath));
         Changed(nameof(StudentUpdateSourceSummary));

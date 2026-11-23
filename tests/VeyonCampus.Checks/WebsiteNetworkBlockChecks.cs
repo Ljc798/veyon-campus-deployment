@@ -19,6 +19,7 @@ internal static class WebsiteNetworkBlockChecks
         ReportsDivergenceInsteadOfTrustingTheWrite();
         ClearsWhenNothingIsBlocked();
         RecognisesOnlyItsOwnRules();
+        MatchesOnlyBlockedPrefixes();
     }
 
     private static void ClassifiesAddresses()
@@ -158,6 +159,28 @@ internal static class WebsiteNetworkBlockChecks
             "an unrelated rule was claimed.");
     }
 
+    /// <summary>
+    /// A rule only stops new connections, so an app that was already streaming keeps its session.
+    /// The agent therefore drops the sessions whose remote address is already blocked; this checks
+    /// that only those are matched, since a wrong match would cut traffic the school needs.
+    /// </summary>
+    private static void MatchesOnlyBlockedPrefixes()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var prefixes = TcpConnectionReset.Parse(["93.184.216.34/32", "203.119.0.0/16", "2606:4700::/32", "bad"]);
+        Expect(prefixes.Count == 2, "the prefix parser accepted an entry it cannot represent.");
+        Expect(TcpConnectionReset.Covers(prefixes, IPAddress.Parse("93.184.216.34")),
+            "a blocked single address was not matched.");
+        Expect(TcpConnectionReset.Covers(prefixes, IPAddress.Parse("203.119.5.7")),
+            "an address inside a blocked range was not matched.");
+        Expect(!TcpConnectionReset.Covers(prefixes, IPAddress.Parse("93.184.216.35")),
+            "an address next to a blocked one was matched.");
+        Expect(!TcpConnectionReset.Covers(prefixes, IPAddress.Parse("223.5.5.5")),
+            "an unrelated address was matched.");
+        Expect(!TcpConnectionReset.Covers(prefixes, IPAddress.Parse("2606:4700:4700::1111")),
+            "an IPv6 destination was matched although sessions are only reset over IPv4.");
+    }
+
     private sealed class FakeResolver(Dictionary<string, string[]> map) : IWebsiteAddressResolver
     {
         public Task<IReadOnlyList<IPAddress>> ResolveAsync(string host, CancellationToken cancellationToken) =>
@@ -169,22 +192,37 @@ internal static class WebsiteNetworkBlockChecks
     private sealed class FakeBackend : IWebsiteBlockRuleBackend
     {
         public List<string> Written { get; set; } = [];
+        public List<string> Resolvers { get; set; } = [];
+        public List<string> Doh { get; set; } = [];
         public int Writes { get; private set; }
         public bool IgnoreWrites { get; init; }
 
         public IReadOnlyList<string> ReadBlockedAddresses() =>
             Written.OrderBy(value => value, StringComparer.Ordinal).ToArray();
 
-        public void Write(IReadOnlyList<string> addresses)
+        public IReadOnlyList<string> ReadResolverLockCidrs() =>
+            Resolvers.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+
+        public IReadOnlyList<string> ReadDohEndpoints() =>
+            Doh.OrderBy(value => value, StringComparer.Ordinal).ToArray();
+
+        public void Write(IReadOnlyList<string> addresses, IReadOnlyList<string> resolverLockCidrs,
+            IReadOnlyList<string> dohEndpoints)
         {
             Writes++;
-            if (!IgnoreWrites) Written = addresses.ToList();
+            if (IgnoreWrites) return;
+            Written = addresses.ToList();
+            Resolvers = resolverLockCidrs.ToList();
+            Doh = dohEndpoints.ToList();
         }
 
         public void Clear()
         {
             Writes++;
-            if (!IgnoreWrites) Written.Clear();
+            if (IgnoreWrites) return;
+            Written.Clear();
+            Resolvers.Clear();
+            Doh.Clear();
         }
 
         public void Dispose() { }

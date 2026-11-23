@@ -314,6 +314,34 @@ if (args is ["--website-network-block-fixtures"])
     return;
 }
 
+if (args is ["--blocked-address-route-fixtures"])
+{
+    BlockedAddressRouteChecks.Run();
+    Console.WriteLine("PASS blocked-address host route installs, is removed and refuses wider prefixes");
+    return;
+}
+
+if (args is ["--website-dns-lockdown-fixtures"])
+{
+    WebsiteDnsLockdownChecks.Run();
+    Console.WriteLine("PASS website DNS lockdown prefixes, resolver exemptions and DoH endpoints");
+    return;
+}
+
+if (args is ["--agent-configuration-entry-fixtures"])
+{
+    AgentConfigurationEntryChecks.Run();
+    Console.WriteLine("PASS agent configuration entry ownership list");
+    return;
+}
+
+if (args is ["--maintenance-directory-acl-fixtures"])
+{
+    MaintenanceDirectoryAclChecks.Run();
+    Console.WriteLine("PASS Maintenance directory ACL repair and ownership guard");
+    return;
+}
+
 if (args is ["--website-secure-dns-fixtures"])
 {
     WebsiteSecureDnsChecks.Run();
@@ -847,6 +875,7 @@ if (args is ["--student-setup-fixtures"])
 {
     Check("Student Companion 状态默认值、课堂摘要和输入边界", StudentCompanionChecks.Run);
     Check("学生工具新旧入口清理及教师包拒绝", CheckStudentSetupCleanup);
+    Check("卸载夺权重试仅作用于已核验产品路径且失败不谎报成功", OwnedPathDeleteRecoveryChecks.Run);
     Check("网站代理任务 ACL 只允许 SYSTEM 和管理员", CheckTaskAclDescriptors);
     Check("网站策略卸载处理缺失任务及多校区孤立配置", CheckAgentRemovalDecisions);
     Check("课堂策略到期签名、重放与时长上限", CheckWebsitePolicyExpirations);
@@ -1089,6 +1118,8 @@ Check("网站策略推送目标校验与去重", () =>
 });
 Check("网站策略确认明确提示 Edge/Chrome/Firefox 刷新方式", CheckWebsitePolicyApplyAcknowledgement);
 Check("网络层封禁：地址分类、共享地址豁免与写回校验", WebsiteNetworkBlockChecks.Run);
+Check("DNS 强制：公网解析封锁、本机解析器放行与 DoH 端点", WebsiteDnsLockdownChecks.Run);
+Check("Agent 配置目录归属：Maintenance 密钥目录可更新", AgentConfigurationEntryChecks.Run);
 Check("加密 DNS 关闭的所有权、日志往返与冲突上报", WebsiteSecureDnsChecks.Run);
 Check("机房 150 条唯一清单和起始边界", () =>
 {
@@ -1300,7 +1331,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
   // Keep this in sync with src/VeyonCampus.Agent/VeyonCampus.Agent.csproj. It is asserted explicitly
   // so a version bump cannot silently ship a StudentSetup that reports a different agent version than
   // the one it actually bundles.
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.58");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.65");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {

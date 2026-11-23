@@ -79,8 +79,7 @@ internal static class AgentFileSecurity
     {
         if (IsAgentMaintenanceDirectory(directory))
         {
-            SecurePrivateDirectory(directory);
-            VerifyPrivateMaintenanceDirectory(directory);
+            VerifyPrivateServiceTree(directory, depth: 0, secure: true);
             return;
         }
         Secure(directory, directory: true);
@@ -90,10 +89,7 @@ internal static class AgentFileSecurity
             if (Directory.Exists(path) && IsHealthRepairStateDirectory(path))
                 VerifyPrivateHealthRepairState(path);
             else if (Directory.Exists(path) && IsAgentMaintenanceDirectory(path))
-            {
-                SecurePrivateDirectory(path);
-                VerifyPrivateMaintenanceDirectory(path);
-            }
+                VerifyPrivateServiceTree(path, depth: 0, secure: true);
             else if (Directory.Exists(path)) SecureTree(path, executable);
             else if (IsAgentTeacherChannelStatusFile(path)) SecurePrivateFile(path);
             else if (IsAgentConfigurationDirectory(directory) && IsLegacyHealthRepairLedgerFile(path))
@@ -141,42 +137,60 @@ internal static class AgentFileSecurity
         Path.GetFileName(path).Equals("Maintenance", StringComparison.OrdinalIgnoreCase) &&
         Path.GetDirectoryName(path) is { } configDirectory && IsAgentConfigurationDirectory(configDirectory);
 
-    private static void VerifyPrivateMaintenanceDirectory(string directory)
+    /// <summary>
+    /// Read-only ownership check for the Maintenance Service directory that lives inside an Agent
+    /// configuration folder.
+    ///
+    /// Agent cleanup refuses to delete a folder it cannot account for, so this directory has to be
+    /// recognised or the product blocks an update with a file it wrote itself. The check is
+    /// deliberately about access control rather than file names: the directory is protected to
+    /// SYSTEM and Administrators only, so anything inside it was written by the product. Enumerating
+    /// names here is what stalled two releases in a row as the Maintenance Service gained files.
+    /// </summary>
+    internal static void VerifyAgentMaintenanceDirectoryOwned(string directory) =>
+        // secure: true, not just verify. A file written before this fix (the replay window) has an
+        // ACL that inherited nothing from the protected directory, and a verify-only pass would
+        // keep every existing machine blocked forever. Hardening is the narrowest direction here.
+        VerifyPrivateServiceTree(directory, depth: 0, secure: true);
+
+    /// <summary>
+    /// Applies and verifies the private ACL across a Maintenance Service directory tree. Used when
+    /// the Agent hardens its own configuration tree; the depth guard keeps a malformed layout from
+    /// walking an unexpected distance.
+    /// </summary>
+    private static void VerifyPrivateServiceTree(string directory, int depth, bool secure)
     {
+        if (depth > MaximumServiceTreeDepth)
+            throw new IOException($"Maintenance 服务目录层级超出预期：{directory}");
+        PathLinkSecurity.RejectLinks(directory);
+        // Hardening is best effort: a file the Maintenance Service currently holds open cannot
+        // always take a DACL change. If its ACL is already correct the check below still passes;
+        // only a genuinely wrong ACL that cannot be repaired is reported.
+        if (secure) TryHarden(() => SecurePrivateDirectory(directory));
         if (!IsPrivate(directory, directory: true))
-            throw new IOException($"Maintenance 服务目录 ACL 无效：{directory}");
+            throw new IOException($"Maintenance 服务目录 ACL 未限制为 SYSTEM 和 Administrators：{directory}");
         foreach (var path in Directory.EnumerateFileSystemEntries(directory))
         {
             PathLinkSecurity.RejectLinks(path);
-            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0 &&
-                Path.GetFileName(path).Equals(MaintenanceServiceUpdateExecutor.StagingDirectoryName,
-                    StringComparison.OrdinalIgnoreCase))
+            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
             {
-                VerifyPrivateMaintenanceUpdateStagingDirectory(path);
+                VerifyPrivateServiceTree(path, depth + 1, secure);
                 continue;
             }
-            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0)
-                throw new IOException($"Maintenance 服务目录不允许未审核的子目录：{path}");
-            SecurePrivateFile(path);
+            if (secure) TryHarden(() => SecurePrivateFile(path));
+            if (!IsPrivate(path, directory: false))
+                throw new IOException($"Maintenance 服务文件 ACL 未限制为 SYSTEM 和 Administrators：{path}");
         }
     }
 
-    private static void VerifyPrivateMaintenanceUpdateStagingDirectory(string directory)
+    private static void TryHarden(Action action)
     {
-        SecurePrivateDirectory(directory);
-        if (!IsPrivate(directory, directory: true))
-            throw new IOException($"Maintenance 更新暂存目录 ACL 无效：{directory}");
-        foreach (var path in Directory.EnumerateFileSystemEntries(directory))
-        {
-            PathLinkSecurity.RejectLinks(path);
-            if ((File.GetAttributes(path) & FileAttributes.Directory) != 0 ||
-                !Regex.IsMatch(Path.GetFileName(path),
-                    "^VeyonCampus-Student-Setup-(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?-win-x64\\.exe(?:\\.release\\.json)?$",
-                    RegexOptions.CultureInvariant))
-                throw new IOException($"Maintenance 更新暂存目录包含未审核的路径：{path}");
-            SecurePrivateFile(path);
-        }
+        try { action(); }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              System.Security.SecurityException) { }
     }
+
+    private const int MaximumServiceTreeDepth = 4;
 
     private static bool IsLegacyHealthRepairLedgerFile(string path)
     {

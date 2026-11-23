@@ -119,12 +119,18 @@ public sealed class MaintenanceReplayWindow
                              FileShare.None, 32 * 1024,
                              FileOptions.Asynchronous | FileOptions.WriteThrough))
             {
+                // The containing directory has a protected DACL, so a new file does not inherit any
+                // ACE from it. Lock the temporary file down before the first byte is written;
+                // without this the replay window is the one file in the Maintenance directory that
+                // is not SYSTEM/Administrators-only, and Agent cleanup refuses to replace the folder.
+                SecureReplayState(temporary);
                 await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
                 await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
                 stream.Flush(flushToDisk: true);
             }
             PathLinkSecurity.RejectLinksAllowingMissingComponents(_path);
             File.Move(temporary, _path, overwrite: true);
+            SecureReplayState(_path);
         }
         finally
         {
@@ -143,14 +149,25 @@ public sealed class MaintenanceReplayWindow
             try
             {
                 PathLinkSecurity.RejectLinksAllowingMissingComponents(_lockPath);
-                return new FileStream(_lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
+                var stream = new FileStream(_lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None,
                     1, FileOptions.Asynchronous);
+                // Same reason as the state file: a new file under a protected DACL inherits nothing.
+                try { SecureReplayState(_lockPath); }
+                catch { stream.Dispose(); throw; }
+                return stream;
             }
             catch (IOException) when (DateTimeOffset.UtcNow < deadline)
             { await Task.Delay(TimeSpan.FromMilliseconds(40), cancellationToken).ConfigureAwait(false); }
             if (DateTimeOffset.UtcNow >= deadline)
                 throw new IOException("另一个 Maintenance 服务实例正在写重放窗口；等待锁超时。" );
         }
+    }
+
+    /// <summary>Restricts a replay-window file to SYSTEM and Administrators on Windows.</summary>
+    private static void SecureReplayState(string path)
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        AgentFileSecurity.SecurePrivateFile(path);
     }
 
     private sealed record ReplayDocument(int SchemaVersion, IReadOnlyList<Entry> Entries);

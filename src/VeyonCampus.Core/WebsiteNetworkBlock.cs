@@ -44,7 +44,8 @@ public sealed record WebsiteNetworkBlockPlan(
     int ResolvedDomainCount,
     IReadOnlyList<string> UnresolvedDomains,
     int SharedAddressCount,
-    bool Truncated)
+    bool Truncated,
+    WebsiteDnsLockdownPlan? DnsLockdown = null)
 {
     public static WebsiteNetworkBlockPlan Empty { get; } =
         new([], 0, [], 0, false);
@@ -183,8 +184,15 @@ public static class WebsiteNetworkBlockPlanner
 }
 
 /// <summary>What the network layer ended up enforcing, or why it could not.</summary>
+/// <remarks>
+/// The resolver fields are reported separately from the address block because they answer a
+/// different question. An address block can be complete and still be bypassed by a browser that
+/// uses its own DNS; only the resolver lockdown closes that, so the teacher has to be able to see
+/// whether it is in force rather than infer it from "the site opened anyway".
+/// </remarks>
 public sealed record WebsiteNetworkBlockResult(bool Applied, long Revision, int AddressCount, int RuleCount,
-    string? Error)
+    string? Error, bool ResolverLocked = false, int ResolverCidrCount = 0, int DohEndpointCount = 0,
+    IReadOnlyList<string>? AllowedServers = null, string? ResolverLockError = null)
 {
     public static WebsiteNetworkBlockResult Failed(long revision, string error) =>
         new(false, revision, 0, 0, error);
@@ -200,8 +208,18 @@ internal interface IWebsiteBlockRuleBackend : IDisposable
     /// <summary>Every address currently blocked by a rule this product owns.</summary>
     IReadOnlyList<string> ReadBlockedAddresses();
 
-    /// <summary>Replaces this product's rules with rules covering exactly these addresses.</summary>
-    void Write(IReadOnlyList<string> addresses);
+    /// <summary>Destination prefixes currently refused on port 53 by this product.</summary>
+    IReadOnlyList<string> ReadResolverLockCidrs();
+
+    /// <summary>Endpoints currently refused on port 443 because they serve DNS over HTTPS.</summary>
+    IReadOnlyList<string> ReadDohEndpoints();
+
+    /// <summary>
+    /// Replaces this product's rules with rules covering exactly these addresses, plus the resolver
+    /// lockdown. Both are written in one pass so the firewall never contains a half-applied policy.
+    /// </summary>
+    void Write(IReadOnlyList<string> addresses, IReadOnlyList<string> resolverLockCidrs,
+        IReadOnlyList<string> dohEndpoints);
 
     /// <summary>Removes this product's rules and leaves every other rule alone.</summary>
     void Clear();
@@ -222,7 +240,27 @@ public static class WebsiteNetworkBlock
         try
         {
             using var backend = new WindowsWebsiteBlockRuleBackend();
-            return Apply(revision, plan, backend);
+            var result = Apply(revision, plan, backend);
+            // A rule only decides whether a new connection may start. A client that was already
+            // playing - auto-started with Windows, or opened during the break - keeps its established
+            // session and the site still works, which looks exactly like "the push did nothing".
+            // Drop those sessions so the policy bites on the machine as it is right now.
+            if (result.Applied)
+            {
+                if (plan.Addresses.Count > 0)
+                {
+                    TcpConnectionReset.ResetTo(plan.Addresses);
+                    // UDP has no session to reset, and Windows keeps forwarding an established UDP
+                    // flow while its state still matches the rule. A /32 route takes the address out
+                    // of every send path immediately, which is what stops a running QUIC video.
+                    BlockedAddressRoute.Install(plan.Addresses);
+                }
+                else
+                {
+                    BlockedAddressRoute.RemoveAll();
+                }
+            }
+            return result;
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               InvalidOperationException or System.Security.SecurityException or
@@ -237,30 +275,51 @@ public static class WebsiteNetworkBlock
     {
         ArgumentNullException.ThrowIfNull(plan);
         ArgumentNullException.ThrowIfNull(backend);
-        var desired = plan.Addresses.Distinct(StringComparer.OrdinalIgnoreCase)
-            .OrderBy(value => value, StringComparer.Ordinal).ToArray();
-        if (desired.Length == 0)
+        var desired = Normalize(plan.Addresses);
+        var resolverCidrs = Normalize(plan.DnsLockdown?.ResolverAddresses);
+        var dohEndpoints = Normalize(plan.DnsLockdown?.DohEndpoints);
+
+        if (desired.Length == 0 && resolverCidrs.Length == 0 && dohEndpoints.Length == 0)
         {
             backend.Clear();
             return new WebsiteNetworkBlockResult(true, revision, 0, 0, null);
         }
 
-        var current = backend.ReadBlockedAddresses()
-            .OrderBy(value => value, StringComparer.Ordinal).ToArray();
-        if (!current.SequenceEqual(desired, StringComparer.OrdinalIgnoreCase))
+        var current = Normalize(backend.ReadBlockedAddresses());
+        var currentResolvers = Normalize(backend.ReadResolverLockCidrs());
+        var currentDoh = Normalize(backend.ReadDohEndpoints());
+        if (!current.SequenceEqual(desired, StringComparer.OrdinalIgnoreCase) ||
+            !currentResolvers.SequenceEqual(resolverCidrs, StringComparer.OrdinalIgnoreCase) ||
+            !currentDoh.SequenceEqual(dohEndpoints, StringComparer.OrdinalIgnoreCase))
         {
-            backend.Write(desired);
-            current = backend.ReadBlockedAddresses()
-                .OrderBy(value => value, StringComparer.Ordinal).ToArray();
+            backend.Write(desired, resolverCidrs, dohEndpoints);
+            current = Normalize(backend.ReadBlockedAddresses());
+            currentResolvers = Normalize(backend.ReadResolverLockCidrs());
+            currentDoh = Normalize(backend.ReadDohEndpoints());
         }
 
         if (!current.SequenceEqual(desired, StringComparer.OrdinalIgnoreCase))
             return WebsiteNetworkBlockResult.Failed(revision,
                 $"网络层封禁写回不符：期望 {desired.Length} 个地址，实际 {current.Length} 个。");
+        if (!currentResolvers.SequenceEqual(resolverCidrs, StringComparer.OrdinalIgnoreCase))
+            return WebsiteNetworkBlockResult.Failed(revision,
+                $"DNS 强制写回不符：期望 {resolverCidrs.Length} 段，实际 {currentResolvers.Length} 段。");
+        if (!currentDoh.SequenceEqual(dohEndpoints, StringComparer.OrdinalIgnoreCase))
+            return WebsiteNetworkBlockResult.Failed(revision,
+                $"DoH 封锁写回不符：期望 {dohEndpoints.Length} 个端点，实际 {currentDoh.Length} 个。");
 
         return new WebsiteNetworkBlockResult(true, revision, desired.Length,
-            WindowsWebsiteBlockRuleBackend.CountRules(desired.Length), null);
+            WindowsWebsiteBlockRuleBackend.CountRules(desired.Length, resolverCidrs.Length, dohEndpoints.Length),
+            null, resolverCidrs.Length > 0, resolverCidrs.Length, dohEndpoints.Length,
+            plan.DnsLockdown?.AllowedServers, plan.DnsLockdown?.Error);
     }
+
+    private static string[] Normalize(IReadOnlyList<string>? values) =>
+        (values ?? Array.Empty<string>())
+        .Where(value => !string.IsNullOrWhiteSpace(value))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .OrderBy(value => value, StringComparer.Ordinal)
+        .ToArray();
 
     public static WebsiteNetworkBlockResult Clear()
     {
@@ -270,6 +329,10 @@ public static class WebsiteNetworkBlock
         {
             using var backend = new WindowsWebsiteBlockRuleBackend();
             backend.Clear();
+            // Routes outlive the rules they accompanied: a machine that was restarted mid-lesson, or
+            // an Agent that stopped before cleanup, would otherwise keep those addresses unreachable
+            // long after the lesson ended.
+            BlockedAddressRoute.RemoveAll();
             var remaining = backend.ReadBlockedAddresses();
             return remaining.Count == 0
                 ? new WebsiteNetworkBlockResult(true, 0, 0, 0, null)
@@ -348,10 +411,15 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
 {
     internal const string RuleNamePrefix = "VeyonCampus Website Block";
     internal const string EncryptedDnsRulePrefix = "VeyonCampus Encrypted DNS Block";
+    internal const string ResolverLockRulePrefix = "VeyonCampus Resolver Lock";
+    internal const string DohBlockRulePrefix = "VeyonCampus DoH Block";
     internal const string Marker = "VeyonCampus Website Block v1";
 
     /// <summary>Addresses per rule. Long lists make every connection's classification slower.</summary>
     internal const int AddressesPerRule = 64;
+
+    /// <summary>Prefixes per rule. A prefix list is cheaper per entry than an address list.</summary>
+    internal const int CidrsPerRule = 32;
 
     private readonly dynamic _policy;
 
@@ -361,43 +429,30 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
                                            ?? throw new InvalidOperationException("本机没有 Windows 防火墙组件。"))!;
     }
 
-    public IReadOnlyList<string> ReadBlockedAddresses()
-    {
-        var addresses = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var rule in OwnedRules())
-        {
-            var remote = (string)((dynamic)rule).RemoteAddresses;
-            if (string.IsNullOrWhiteSpace(remote) || remote == "*") continue;
-            foreach (var entry in remote.Split(',', StringSplitOptions.RemoveEmptyEntries |
-                                                     StringSplitOptions.TrimEntries))
-                addresses.Add(entry);
-        }
-        return addresses.ToArray();
-    }
+    public IReadOnlyList<string> ReadBlockedAddresses() => ReadRemoteList(RuleNamePrefix);
 
-    public void Write(IReadOnlyList<string> addresses)
+    public IReadOnlyList<string> ReadResolverLockCidrs() => ReadRemoteList(ResolverLockRulePrefix);
+
+    public IReadOnlyList<string> ReadDohEndpoints() => ReadRemoteList(DohBlockRulePrefix);
+
+    public void Write(IReadOnlyList<string> addresses, IReadOnlyList<string> resolverLockCidrs,
+        IReadOnlyList<string> dohEndpoints)
     {
         ArgumentNullException.ThrowIfNull(addresses);
+        ArgumentNullException.ThrowIfNull(resolverLockCidrs);
+        ArgumentNullException.ThrowIfNull(dohEndpoints);
         Clear();
-        var v4 = addresses.Where(value => !value.Contains(':', StringComparison.Ordinal)).ToArray();
-        var v6 = addresses.Where(value => value.Contains(':', StringComparison.Ordinal)).ToArray();
-        var index = 0;
-        foreach (var family in new[] { v4, v6 })
-        {
-            for (var offset = 0; offset < family.Length; offset += AddressesPerRule)
-            {
-                var chunk = family.Skip(offset).Take(AddressesPerRule).ToArray();
-                AddRule($"{RuleNamePrefix} {index:D3}", remoteAddresses: string.Join(',', chunk),
-                    remotePorts: null, protocol: 256);
-                index++;
-            }
-        }
+        WriteAddressRules(addresses);
         // DoT and DoQ share 853. Browsers that turn on encrypted DNS ask a resolver of their own and
         // never see the hosts block, which would make the name-level layers above pointless. Two
         // rules rather than one any-protocol rule: the firewall API only accepts ports on a
         // concrete protocol, and silently drops the port otherwise.
         AddRule(EncryptedDnsRulePrefix + " TCP", remoteAddresses: null, remotePorts: "853", protocol: 6);
         AddRule(EncryptedDnsRulePrefix + " UDP", remoteAddresses: null, remotePorts: "853", protocol: 17);
+        // Port 53 to public resolvers, minus the ones this machine is configured with. Port 443 to
+        // known DoH endpoints, because DoH hides inside HTTPS and cannot be caught by port alone.
+        WritePortRules(ResolverLockRulePrefix, resolverLockCidrs, "53");
+        WritePortRules(DohBlockRulePrefix, dohEndpoints, "443");
     }
 
     public void Clear()
@@ -417,9 +472,67 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
             System.Runtime.InteropServices.Marshal.FinalReleaseComObject(_policy);
     }
 
-    /// <summary>Address rules plus the two encrypted-DNS rules; used only for reporting.</summary>
-    internal static int CountRules(int addressCount) =>
-        addressCount == 0 ? 0 : (int)Math.Ceiling(addressCount / (double)AddressesPerRule) + 2;
+    /// <summary>Address rules, the two encrypted-DNS rules and the port rules; used only for reporting.</summary>
+    internal static int CountRules(int addressCount, int resolverCidrCount = 0, int dohEndpointCount = 0)
+    {
+        if (addressCount == 0 && resolverCidrCount == 0 && dohEndpointCount == 0) return 0;
+        var addressRules = addressCount == 0
+            ? 0
+            : (int)Math.Ceiling(addressCount / (double)AddressesPerRule);
+        return addressRules + 2 + CountPortRules(resolverCidrCount) + CountPortRules(dohEndpointCount);
+    }
+
+    private static int CountPortRules(int cidrCount) =>
+        cidrCount == 0 ? 0 : (int)Math.Ceiling(cidrCount / (double)CidrsPerRule) * 2;
+
+    private void WriteAddressRules(IReadOnlyList<string> addresses)
+    {
+        var v4 = addresses.Where(value => !value.Contains(':', StringComparison.Ordinal)).ToArray();
+        var v6 = addresses.Where(value => value.Contains(':', StringComparison.Ordinal)).ToArray();
+        var index = 0;
+        foreach (var family in new[] { v4, v6 })
+        {
+            for (var offset = 0; offset < family.Length; offset += AddressesPerRule)
+            {
+                var chunk = family.Skip(offset).Take(AddressesPerRule).ToArray();
+                AddRule($"{RuleNamePrefix} {index:D3}", remoteAddresses: string.Join(',', chunk),
+                    remotePorts: null, protocol: 256);
+                index++;
+            }
+        }
+    }
+
+    private void WritePortRules(string prefix, IReadOnlyList<string> cidrs, string port)
+    {
+        if (cidrs.Count == 0) return;
+        var v4 = cidrs.Where(value => !value.Contains(':', StringComparison.Ordinal)).ToArray();
+        var v6 = cidrs.Where(value => value.Contains(':', StringComparison.Ordinal)).ToArray();
+        var index = 0;
+        foreach (var (family, label) in new[] { (v4, "v4"), (v6, "v6") })
+        {
+            for (var offset = 0; offset < family.Length; offset += CidrsPerRule)
+            {
+                var chunk = string.Join(',', family.Skip(offset).Take(CidrsPerRule));
+                AddRule($"{prefix} {label} TCP {index:D3}", chunk, port, protocol: 6);
+                AddRule($"{prefix} {label} UDP {index:D3}", chunk, port, protocol: 17);
+                index++;
+            }
+        }
+    }
+
+    private IReadOnlyList<string> ReadRemoteList(string prefix)
+    {
+        var values = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var rule in RulesWithPrefix(prefix))
+        {
+            var remote = (string)((dynamic)rule).RemoteAddresses;
+            if (string.IsNullOrWhiteSpace(remote) || remote == "*") continue;
+            foreach (var entry in remote.Split(',', StringSplitOptions.RemoveEmptyEntries |
+                                                     StringSplitOptions.TrimEntries))
+                values.Add(entry);
+        }
+        return values.ToArray();
+    }
 
     private void AddRule(string name, string? remoteAddresses, string? remotePorts, int protocol)
     {
@@ -436,6 +549,22 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
         _policy.Rules.Add(rule);
     }
 
+    private List<object> RulesWithPrefix(string prefix)
+    {
+        var rules = new List<object>();
+        foreach (dynamic rule in _policy.Rules)
+        {
+            var name = (string)rule.Name;
+            if (!name.StartsWith(prefix + " ", StringComparison.OrdinalIgnoreCase)) continue;
+            // A rule with our name but someone else's description is not ours; refuse rather than
+            // deleting something a technician created.
+            if (!string.Equals((string)rule.Description, Marker, StringComparison.Ordinal))
+                throw new IOException($"防火墙规则“{name}”与本工具的标记不符；没有修改该规则。");
+            rules.Add(rule);
+        }
+        return rules;
+    }
+
     private List<object> OwnedRules()
     {
         var rules = new List<object>();
@@ -443,8 +572,6 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
         {
             var name = (string)rule.Name;
             if (!IsOwnedRuleName(name)) continue;
-            // A rule with our name but someone else's description is not ours; refuse rather than
-            // deleting something a technician created.
             if (!string.Equals((string)rule.Description, Marker, StringComparison.Ordinal))
                 throw new IOException($"防火墙规则“{name}”与本工具的标记不符；没有修改该规则。");
             rules.Add(rule);
@@ -456,5 +583,7 @@ internal sealed class WindowsWebsiteBlockRuleBackend : IWebsiteBlockRuleBackend
 
     internal static bool IsOwnedRuleName(string name) =>
         name.StartsWith(RuleNamePrefix + " ", StringComparison.OrdinalIgnoreCase) ||
-        name.StartsWith(EncryptedDnsRulePrefix + " ", StringComparison.OrdinalIgnoreCase);
+        name.StartsWith(EncryptedDnsRulePrefix + " ", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith(ResolverLockRulePrefix + " ", StringComparison.OrdinalIgnoreCase) ||
+        name.StartsWith(DohBlockRulePrefix + " ", StringComparison.OrdinalIgnoreCase);
 }

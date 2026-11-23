@@ -53,6 +53,36 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
     public IBrush InputControlStatusBackground { get; private set; } = NeutralSubtleBrush;
     public bool IsExpanded { get => _isExpanded; set => Set(ref _isExpanded, value); }
 
+    /// <summary>Batch-selection checkbox for one-click keyboard/mouse lock on many machines.</summary>
+    public bool IsSelectedForInputLock
+    {
+        get => _isSelectedForInputLock;
+        set
+        {
+            if (_isSelectedForInputLock == value) return;
+            _isSelectedForInputLock = value;
+            Raise(nameof(IsSelectedForInputLock));
+            SelectionToggled?.Invoke();
+        }
+    }
+    private bool _isSelectedForInputLock;
+    public event Action? SelectionToggled;
+
+    /// <summary>True when this one device holds an input lease this tool verified.</summary>
+    public bool IsDeviceInputLocked { get; private set; }
+
+    /// <summary>True when the last input attempt could not be verified, so the row offers 解除.</summary>
+    public bool IsDeviceInputUnverified { get; private set; }
+
+    /// <summary>
+    /// Keyboard/mouse control is per device, not per class: locking every machine at once stops the
+    /// lesson, while a single stuck client is exactly what a teacher needs to freeze. The row only
+    /// offers 锁定 when nothing holds the lease and 解除 when something does.
+    /// </summary>
+    public bool CanLockDeviceInput => !IsDeviceInputLocked && !IsDeviceInputUnverified;
+
+    public bool CanUnlockDeviceInput => IsDeviceInputLocked || IsDeviceInputUnverified;
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     public TeacherClassroomQuickControlDeviceItem(ClassroomQuickControlTargetSnapshot snapshot)
@@ -97,6 +127,12 @@ public sealed class TeacherClassroomQuickControlDeviceItem : INotifyPropertyChan
         Raise(nameof(InputControlStatus));
         Raise(nameof(InputControlStatusBrush));
         Raise(nameof(InputControlStatusBackground));
+        IsDeviceInputLocked = snapshot.InputState == "locked";
+        IsDeviceInputUnverified = snapshot.InputState == "needsReview";
+        Raise(nameof(IsDeviceInputLocked));
+        Raise(nameof(IsDeviceInputUnverified));
+        Raise(nameof(CanLockDeviceInput));
+        Raise(nameof(CanUnlockDeviceInput));
         Summary = snapshot.Phase switch
         {
             ClassroomQuickControlPhase.WaitingForAgent => "尚未收到学生端回执",
@@ -737,9 +773,14 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     public Guid? ActiveClassroomSessionId => _activeClassroomSession?.SessionId;
     public bool HasNoActiveClassroomSession => !HasActiveClassroomSession;
     public bool HasPendingClassroomScopeChange => _activeClassroomSession is { } active &&
-        (SelectedRoomProfile is not { } room || SelectedCampusProfile is not { } campus ||
-         room.RoomId != active.Room.RoomId || campus.ProfileId != active.Room.CampusProfileId ||
-         !IsActiveClassroomTargetSetCurrent);
+        // Two distinct situations were merged here before:
+        //   - the teacher picked another room/campus, or the verified directory says the target set
+        //     really changed  -> a scope change, which the reconciler must act on;
+        //   - the Veyon snapshot is stale or unreadable -> "cannot verify", which must not end a
+        //     lesson that is already running. Folding it in released the policy a few minutes into
+        //     every lesson, because the freshness window is three minutes.
+        (IsClassroomScopeSelectionDifferent(active, SelectedRoomProfile, SelectedCampusProfile) ||
+         (IsActiveClassroomTargetSetVerifiable && !IsActiveClassroomTargetSetCurrent));
     public bool CanSwitchClassroomScope => HasPendingClassroomScopeChange &&
         !IsExecuting && !_isClassroomTransitioning && !_isRetryingClassroomRestores &&
         !IsReadingWebsiteLocations && !_classroomDirectorySelectionPending && !HasClassroomDirectoryError &&
@@ -773,17 +814,27 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
     /// Explains a disabled quick-control button instead of leaving the teacher with a grey control.
     /// Keep the order: setup problems first, then "class not started", then transient states.
     /// </summary>
-    public string ClassroomQuickControlBlockedReason
+    /// <remarks>
+    /// Null, not an empty string, when nothing is blocking. The value is bound to the buttons'
+    /// <c>ToolTip.Tip</c>, and Avalonia draws the tooltip bubble for an empty string too - the
+    /// reported symptom was a floating white box with no text under an enabled button.
+    /// </remarks>
+    public string? ClassroomQuickControlBlockedReason
     {
         get
         {
-            if (CanStartClassroomQuickControl) return "";
+            if (CanStartClassroomQuickControl) return null;
             if (!TeacherClassroomQuickControlBuildFeatures.PilotEnabled)
                 return "当前构建没有启用课堂快捷管控，请改用“策略与预设”单独下发。";
             if (!WebsiteSigningCampuses.Contains(CampusId, StringComparer.Ordinal))
                 return "本机没有当前校区的签名身份，课堂无法开始。请使用生成这份学生端配置包的教师机，或重新生成配置包并部署学生端。";
             if (HasPendingClassroomScopeChange)
                 return "课堂范围已经变化，请先确认切换到当前 Veyon 名单。";
+            // Covers the private half of IsClassroomDirectoryScopeVerified. Without this branch a
+            // pending location selection disabled both quick-control buttons while returning an
+            // empty reason, so the page showed two grey cards with no explanation at all.
+            if (_classroomDirectorySelectionPending)
+                return "课堂范围还在等待确认：请到“地点与学生名单”选择对应地点，再回到课堂页。";
             if (OperatingSystem.IsWindows() && !IsVeyonDeviceDirectoryCurrent)
                 return "Veyon 设备名单没有读取成功，请到“设备健康”重新读取后再回到课堂页。";
             if (HasClassroomDirectoryError)
@@ -798,10 +849,14 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                 return "先在页面顶部点击“开始课堂”，网站限制和键鼠锁定才会启用。";
             if (_isClassroomQuickControlBusy) return "正在发送上一批管控命令，请稍候。";
             if (!HasValidClassroomQuickControlDeadline) return "自动解除时间无效，请重新选择管控时长。";
-            return "";
+            // Never return an empty reason while the buttons are disabled: a grey control with no
+            // explanation is indistinguishable from a broken page, which is exactly how this was
+            // reported. The wording stays actionable rather than generic.
+            return "当前状态还不足以启用课堂快捷管控：请回到“地点与学生名单”重新核对课堂范围，再回到课堂页。";
         }
     }
-    public bool HasClassroomQuickControlBlockedReason => ClassroomQuickControlBlockedReason.Length > 0;
+    public bool HasClassroomQuickControlBlockedReason =>
+        !string.IsNullOrEmpty(ClassroomQuickControlBlockedReason);
     public bool CanStartClassroomWebsiteControl => CanStartClassroomQuickControl;
     public bool CanStartClassroomInputLock => CanStartClassroomQuickControl &&
         !(_classroomQuickControlSnapshot?.Devices.Any(item =>
@@ -855,6 +910,64 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             _quickControlDeadlineChosenByOperator = value is not null;
             NotifyQuickControlDeadlineChanged();
         }
+    }
+
+    // Keyboard/mouse locks are per-device and independent of the lesson/website deadline. When the
+    // teacher picks a time here, the lock is persisted on the student and self-renewed until then.
+    private TimeSpan? _inputLockReleaseTime = CreateDefaultInputLockReleaseTime();
+    public TimeSpan? InputLockReleaseTime
+    {
+        get => _inputLockReleaseTime;
+        set
+        {
+            if (_inputLockReleaseTime == value) return;
+            _inputLockReleaseTime = value;
+            Changed(nameof(InputLockReleaseTime));
+            Changed(nameof(InputLockReleaseHint));
+        }
+    }
+
+    private static TimeSpan CreateDefaultInputLockReleaseTime() => DateTime.Now.AddMinutes(45).TimeOfDay;
+
+    /// <summary>Desktop-ready grace for persisted locks after a reboot (seconds).</summary>
+    public const int InputLockGraceSeconds = 45;
+
+    public string InputLockReleaseHint
+    {
+        get
+        {
+            if (!TryResolveInputLockReleaseUtc(DateTimeOffset.UtcNow, out var release, out var error))
+                return error;
+            return $"锁到今天 {release.ToLocalTime():HH:mm}；学生重启后按 45 秒宽限自动恢复，到点或点解除即释放。";
+        }
+    }
+
+    /// <summary>Resolves the custom keyboard/mouse lock deadline from the time picker.</summary>
+    internal bool TryResolveInputLockReleaseUtc(DateTimeOffset requestedUtc,
+        out DateTimeOffset releaseUtc, out string error)
+    {
+        releaseUtc = default;
+        if (InputLockReleaseTime is not { } time || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+        {
+            error = "请选择今天内有效的键鼠锁定截止时间。";
+            return false;
+        }
+        var local = requestedUtc.ToLocalTime();
+        var candidate = new DateTimeOffset(local.Year, local.Month, local.Day,
+            time.Hours, time.Minutes, time.Seconds, local.Offset);
+        if (candidate <= requestedUtc)
+        {
+            error = "键鼠锁定截止时间必须晚于当前时间。";
+            return false;
+        }
+        if (candidate - requestedUtc > StudentInputGuardCommandCryptography.MaximumPersistedLockLifetime)
+        {
+            error = "键鼠锁定截止时间不能超过 12 小时。";
+            return false;
+        }
+        releaseUtc = candidate.ToUniversalTime();
+        error = "";
+        return true;
     }
 
     /// <summary>
@@ -1020,6 +1133,32 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         _classroomQuickControlDevices;
     public bool HasClassroomQuickControlDevices => _classroomQuickControlDevices.Count > 0;
     public bool HasNoClassroomQuickControlDevices => !HasClassroomQuickControlDevices;
+
+    // Multi-select batch input control: select many students and lock/unlock them in one action.
+    public int InputLockSelectedCount => _classroomQuickControlDevices.Count(item => item.IsSelectedForInputLock);
+    public bool HasInputLockSelection => InputLockSelectedCount > 0;
+    public bool AllInputLockSelected => _classroomQuickControlDevices.Count > 0 &&
+        _classroomQuickControlDevices.All(item => item.IsSelectedForInputLock);
+    public string InputLockSelectionSummary => !HasClassroomQuickControlDevices
+        ? "没有可选学生"
+        : HasInputLockSelection ? $"已选 {InputLockSelectedCount}/{_classroomQuickControlDevices.Count} 台" :
+            "未选择学生（勾选复选框可多选）";
+    public Guid[] GetSelectedInputLockTargetIds() =>
+        _classroomQuickControlDevices.Where(item => item.IsSelectedForInputLock)
+            .Select(item => item.TargetId).ToArray();
+    public void ToggleAllInputLockSelection(bool selected)
+    {
+        foreach (var item in _classroomQuickControlDevices) item.IsSelectedForInputLock = selected;
+        RaiseInputLockSelectionChanged();
+    }
+    public void NotifyInputLockSelectionChanged() => RaiseInputLockSelectionChanged();
+    private void RaiseInputLockSelectionChanged()
+    {
+        Changed(nameof(InputLockSelectedCount));
+        Changed(nameof(HasInputLockSelection));
+        Changed(nameof(AllInputLockSelected));
+        Changed(nameof(InputLockSelectionSummary));
+    }
     public string ClassroomQuickControlProgressHeader => _classroomQuickControlSnapshot is { } snapshot
         ? $"逐台执行进度 · {snapshot.Devices.Count} 台"
         : "逐台执行进度";
@@ -1134,7 +1273,9 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             }
             else
             {
-                _classroomQuickControlDevices.Insert(index, new TeacherClassroomQuickControlDeviceItem(target));
+                var item = new TeacherClassroomQuickControlDeviceItem(target);
+                item.SelectionToggled += () => NotifyInputLockSelectionChanged();
+                _classroomQuickControlDevices.Insert(index, item);
             }
         }
         while (_classroomQuickControlDevices.Count > ordered.Length)
@@ -6820,7 +6961,10 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         {
             var campus = CampusId.Trim();
             WebsitePolicySigningKeyStore.ValidateCampusId(campus);
-            var targets = WebsitePolicyTransport.NormalizeTargets(GetSelectedWebsitePolicyTargets());
+            var selectedTargets = GetSelectedWebsitePolicyTargets();
+            if (selectedTargets.Count == 0 && WebsitePolicyTargetChoices.Any(choice => choice.IsSelected))
+                throw new InvalidDataException(DescribeWebsiteTargetTrustBlocker());
+            var targets = WebsitePolicyTransport.NormalizeTargets(selectedTargets);
             var domains = mode switch
             {
                 WebsitePolicyMode.Disabled => Array.Empty<string>(),
@@ -7363,7 +7507,38 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
         var failedTargets = _lastFailedWebsiteTargets.Select(NormalizeTargetKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         SetWebsitePolicyTargetSelection(choice => failedTargets.Contains(NormalizeTargetKey(choice.Target)));
-        WebsitePolicyHistoryText = $"已选中 {WebsitePolicyTargetChoices.Count(choice => choice.IsSelected)} 台待重试设备，点击“应用限制”重试。";
+        // These targets come from a signed push result, not from a bulk location fill, so the
+        // directory-snapshot gate does not apply. Keeping it meant the three-minute freshness window
+        // could expire while the first push was still running, and the retry reported "no targets
+        // selected" even though every failed machine was ticked on screen.
+        _websiteTargetsRequireDirectorySnapshot = false;
+        _websiteTargetsLoadedFromPartialRead = false;
+        _websiteTargetsDirectoryFingerprint = null;
+        var selected = WebsitePolicyTargetChoices.Count(choice => choice.IsSelected);
+        WebsitePolicyHistoryText = $"已选中 {selected} 台待重试设备，点击“应用限制”重试。";
+        Changed(nameof(CanPushWebsitePolicy));
+        Changed(nameof(CanDisableWebsitePolicy));
+    }
+
+    /// <summary>
+    /// Names the real reason a push found no targets. Reporting "no targets selected" when the
+    /// selection is intact but the Veyon snapshot went stale is what made a retry look broken.
+    /// </summary>
+    private string DescribeWebsiteTargetTrustBlocker()
+    {
+        if (_websiteTargetsLoadedFromPartialRead)
+            return "Veyon 名单上次读取不完整，请重新读取地点后再推送。";
+        if (_websiteTargetsRequireDirectorySnapshot && !_veyonDeviceDirectoryReadValid)
+            return "Veyon 目录尚未成功读取，请重新读取地点后再推送。";
+        if (_websiteTargetsRequireDirectorySnapshot && !HasFreshVerifiedVeyonDirectoryRead)
+            return "Veyon 名单已超过 3 分钟未刷新，请重新读取地点后再推送。";
+        if (_websiteTargetsRequireDirectorySnapshot && !string.Equals(_websiteTargetsDirectoryFingerprint,
+                VeyonNetworkObjectDirectory.LastTrustedDirectoryFingerprint, StringComparison.Ordinal))
+            return "当前名单与 Veyon 目录不一致，请重新读取地点后再推送。";
+        if (!AreTargetsConflictFree(WebsitePolicyTargetChoices.Where(choice => choice.IsSelected)
+                .Select(choice => choice.Target)))
+            return "部分电脑在 Veyon 目录中的状态已变化，请重新读取地点后再推送。";
+        return "请至少勾选一台学生电脑。";
     }
 
     private void LoadLatestWebsitePolicyHistory()
@@ -7921,6 +8096,52 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                          string.Join(Environment.NewLine, lines));
         }
         return string.Join(Environment.NewLine + Environment.NewLine, sections);
+    }
+
+    /// <summary>
+    /// Pins one device identity that the teacher confirmed in the device detail. Unlike
+    /// <see cref="ConfirmStudentAgentIdentities"/> this does not need a fresh answer from the Agent:
+    /// the candidate is a signature the device already produced, and the teacher compared its code
+    /// on site. Requiring a live read here made the alert impossible to clear while the machine was
+    /// off or busy.
+    /// </summary>
+    public void ConfirmDeviceIdentity(TeacherDeviceHealthRow row, StudentAgentIdentityTrustCandidate candidate)
+    {
+        ArgumentNullException.ThrowIfNull(row);
+        ArgumentNullException.ThrowIfNull(candidate);
+        var trustStore = new StudentAgentIdentityTrustStore();
+        // Decide from the trust store, not from the fingerprint carried by the receipt: a receipt
+        // captured before the first pin still reports "never pinned" while a pin already exists.
+        var pinnedFingerprint = GetPinnedStudentAgentFingerprint(candidate.Target);
+        var rotated = pinnedFingerprint is not null &&
+            !string.Equals(pinnedFingerprint, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase);
+        trustStore.Pin(candidate, replaceChangedKey: rotated);
+        row.AcknowledgeIdentityPinned(candidate.Fingerprint, DateTimeOffset.UtcNow);
+        ReconcileDeviceHealthAlerts();
+        RefreshDeviceHealthView();
+        NotifyDeviceHealthBatchProperties();
+        if (IsCampusIdValid()) SaveDeviceHealthCache(CampusId.Trim());
+        var label = GetWebsitePolicyTargetLabel(candidate.Target);
+        StudentAgentIdentityStatus = rotated
+            ? $"{label}：已确认轮换 Agent 身份。"
+            : $"{label}：已固定 Agent 身份。";
+        Changed(nameof(StudentAgentIdentityStatus));
+    }
+
+    /// <summary>Fingerprint currently pinned for this device, or null when nothing is pinned yet.</summary>
+    public string? GetPinnedStudentAgentFingerprint(string target)
+    {
+        if (!IsCampusIdValid()) return null;
+        try
+        {
+            var pem = new StudentAgentIdentityTrustStore().FindTrustedPublicKey(CampusId.Trim(), target);
+            return pem is null ? null : StudentAgentResponseCryptography.GetFingerprint(pem);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or CryptographicException or ArgumentException)
+        {
+            return null;
+        }
     }
 
     public void ReportPackagePublisherError(string message) => PackagePublisherError = message;
@@ -8688,6 +8909,11 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         : "";
     public bool HasIdentityCandidate => _identityCandidate is not null;
     public bool CanReviewIdentity => _identityCandidate is { } candidate && !IdentityMatchesPinnedKey(candidate);
+    /// <summary>
+    /// The last identity this device actually proved. It survives a failed poll, so a teacher can
+    /// still confirm the machine while it is switched off or busy answering something else.
+    /// </summary>
+    internal StudentAgentIdentityTrustCandidate? CurrentIdentityCandidate => _identityCandidate;
     public bool ShowFullIdentityFingerprints
     {
         get => _showFullIdentityFingerprints;
@@ -9122,7 +9348,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                 SetRuntimeFreshness(TeacherDeviceRuntimeFreshness.IdentityConflict);
                 SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-identity", "Agent 身份需要核对",
                     TeacherDeviceHealthAlertSeverity.Critical,
-                    result.Detail + "；在核对完成前不会把设备标记为正常。")]);
+                    result.Detail + "；在核对完成前不会把设备标记为正常。" +
+                    "在设备详情「安全与身份」中点「核对并固定身份」查看新旧指纹并重新核对。")]);
                 Detail = result.Detail;
                 return;
             }
@@ -9224,6 +9451,16 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                     ? $" · {secureDnsConflict} 仍启用加密 DNS（hosts 在那失效）"
                     : ""
                 : "") +
+            (summary.WebsiteMode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined or WebsitePolicyMode.Allowlist
+                ? summary.ResolverLockError is { Length: > 0 } resolverError
+                    ? $" · DNS 强制未完全生效：{resolverError}"
+                    : summary.ResolverLocked == true
+                        ? $" · DNS 强制已生效（仅放行 {(string.IsNullOrWhiteSpace(summary.ResolverLockServers) ? "本机原 DNS" : summary.ResolverLockServers)}；" +
+                          $"封 {summary.ResolverLockCidrs ?? 0} 段公网 53、{summary.DohBlockEndpoints ?? 0} 个 DoH 端点）"
+                        : summary.ResolverLocked == false
+                            ? " · DNS 强制未生效（换 DNS 或开 DoH 可绕过）"
+                            : " · DNS 强制未上报"
+                : "") +
             (summary.EdgeProfileCount is { } edgeCount
                 ? $" · Edge Profile 降级 {summary.EdgeDegradedProfileCount}/{edgeCount}"
                 : " · Edge 策略回执未提供");
@@ -9319,6 +9556,38 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
         }
     }
 
+    /// <summary>
+    /// Records an identity the teacher just confirmed. Pinning is a local trust decision made
+    /// against a signature the device already produced, so it must never wait for the Agent to
+    /// answer: a machine that is switched off would otherwise keep an alert nobody can clear.
+    /// </summary>
+    internal void AcknowledgeIdentityPinned(string fingerprint, DateTimeOffset confirmedUtc)
+    {
+        if (_identityCandidate is null) return;
+        _identityCandidate = _identityCandidate with { PreviouslyPinnedFingerprint = fingerprint };
+        // Both lists feed the combined issue set: the lightweight poll records the conflict as a
+        // runtime issue, the detailed status read records it as a detailed one.
+        var remainingDetailed = _detailedIssues.Where(issue => issue.Code != "agent-identity").ToArray();
+        if (remainingDetailed.Length != _detailedIssues.Count)
+            _detailedIssues = Array.AsReadOnly(remainingDetailed);
+        SetRuntimeIssues(_runtimeIssues.Where(issue => issue.Code != "agent-identity"));
+        SetCachedIssueSummaries(_cachedIssueSummaries.Select(issue => issue.Code == "agent-identity"
+            ? MarkCachedIssueResolved(issue, confirmedUtc)
+            : issue));
+        if (_issues.Count == 0)
+        {
+            // The identity conflict was the only blocker; it is gone, but the Agent has not reported
+            // again yet, so the row stays pending until the next signed receipt arrives.
+            Category = TeacherDeviceHealthCategory.Pending;
+            CategoryLabel = "身份已固定";
+            IssueCode = "";
+            IssueTitle = "";
+            Detail = "已固定这台电脑的 Agent 身份；下次签名回执到达后会自动复核状态。";
+        }
+        RaiseHealthDetailProperties();
+        NotifyRepairActionAvailability();
+    }
+
     public void RefreshRuntimeFreshness(DateTimeOffset nowUtc)
     {
         if (_runtimeFreshness == TeacherDeviceRuntimeFreshness.IdentityConflict) return;
@@ -9387,7 +9656,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             SetIssues([new TeacherDeviceHealthIssue(IssueCode, IssueTitle,
                 identityProblem ? TeacherDeviceHealthAlertSeverity.Critical :
                     TeacherDeviceHealthAlertSeverity.Informational,
-                identityProblem ? "身份回执需要教师核对；暂不执行修复。" :
+                identityProblem ? "身份回执需要教师核对；暂不执行修复。在下方「安全与身份」中点「核对并固定身份」重新核对。" :
                     "未收到有效回执；这不能说明电脑已关机。确认地址、Agent 和网络后重新读取。")]);
             AgentSummary = identityProblem ? "身份回执需要教师核对" : "Agent 未取得有效签名状态";
             Raise(nameof(CompactSummary));
@@ -9396,7 +9665,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             UpdateSummary = "未读取";
             if (CollectedText.Length == 0) CollectedText = "尚无成功读取记录";
             Detail = identityProblem
-                ? "Agent 身份或签名需要现场核对；暂不执行修复。"
+                ? "Agent 身份或签名需要现场核对；暂不执行修复。在「安全与身份」中点「核对并固定身份」查看新旧指纹并重新核对。"
                 : "未收到有效回执；这不能说明电脑已关机。确认电脑地址、Agent 和网络后重新读取。";
             RaiseHealthDetailProperties();
             return;

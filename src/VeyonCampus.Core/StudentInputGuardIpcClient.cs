@@ -39,14 +39,58 @@ internal static class StudentInputGuardIpcClient
             return CreateUnavailable(requestId, true,
                 "无法安全枚举活动交互桌面会话；状态未知。" + exception.GetType().Name);
         }
-        if (sessions.Count != 1)
-            return CreateUnavailable(requestId, true, sessions.Count == 0
-                ? "当前没有唯一活动的交互桌面会话。"
-                : "检测到多个活动交互桌面会话；为避免控制错会话，状态未知。");
+        if (sessions.Count == 0)
+            return CreateUnavailable(requestId, true, "当前没有活动的交互桌面会话。");
 
         var command = new StudentInputGuardIpcCommand(1, requestId,
             StudentInputGuardIpcOperation.ReadStatus, null, null, null);
-        return await SendAsync(sessions[0], command, cancellationToken, responseTimeout).ConfigureAwait(false);
+        // More than one Active session is normal on a lab VM (a console left logged in plus a
+        // remote desktop). Guessing the "right" one made the whole feature report unknown, so ask
+        // every session and use the first Guard that answers.
+        StudentInputGuardIpcReceipt? firstUsable = null;
+        StudentInputGuardIpcReceipt? locked = null;
+        foreach (var sessionId in OrderSessionsForAttempt(sessions))
+        {
+            var receipt = await SendAsync(sessionId, command, cancellationToken, responseTimeout)
+                .ConfigureAwait(false);
+            if (!receipt.Supported || receipt.Phase == StudentInputGuardPhase.Unknown) continue;
+            firstUsable ??= receipt;
+            // A machine with two logged-in desktops may have the lease on either one; report the
+            // locked session so the teacher sees "locked" instead of the idle desktop's state.
+            if (receipt.Phase == StudentInputGuardPhase.Locked && locked is null) locked = receipt;
+        }
+        return locked ?? firstUsable ??
+               CreateUnavailable(requestId, true, "没有可用的交互桌面 Guard。");
+    }
+
+    /// <summary>
+    /// Read-only snapshot of every active interactive session's Guard, for diagnostics only. This
+    /// never executes a command. It lets the Agent log what each session reported so a dual-session
+    /// mismatch can be explained from agent-runtime.log alone on the next test.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    internal static async Task<string> DescribeSessionsAsync(CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows()) return "non-windows";
+        IReadOnlyList<int> sessions;
+        try { sessions = GetActiveInteractiveSessions(); }
+        catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                              UnauthorizedAccessException or IOException)
+        {
+            return "session-enum-failed: " + exception.GetType().Name;
+        }
+        if (sessions.Count == 0) return "no-active-session";
+        var parts = new List<string>(sessions.Count);
+        foreach (var sessionId in sessions)
+        {
+            var command = new StudentInputGuardIpcCommand(1, Guid.NewGuid(),
+                StudentInputGuardIpcOperation.ReadStatus, null, null, null);
+            var receipt = await SendAsync(sessionId, command, cancellationToken,
+                TimeSpan.FromSeconds(1)).ConfigureAwait(false);
+            var lease = receipt.LeaseId is { } id ? id.ToString("N")[..8] : "none";
+            parts.Add($"s{sessionId}={receipt.Phase}/lease:{lease}/{(receipt.Supported ? "up" : "down")}");
+        }
+        return string.Join(" ", parts);
     }
 
     [SupportedOSPlatform("windows")]
@@ -65,15 +109,29 @@ internal static class StudentInputGuardIpcClient
             return CreateUnavailable(command.CommandId, true,
                 "无法安全枚举活动交互桌面会话；没有执行键鼠操作。" + exception.GetType().Name);
         }
-        if (sessions.Count != 1)
-            return CreateUnavailable(command.CommandId, true, sessions.Count == 0
-                ? "当前没有唯一活动的交互桌面会话；没有执行键鼠操作。"
-                : "检测到多个活动交互桌面会话；没有执行键鼠操作。");
+        if (sessions.Count == 0)
+            return CreateUnavailable(command.CommandId, true, "当前没有活动的交互桌面会话；没有执行键鼠操作。");
 
+        var statusCommand = new StudentInputGuardIpcCommand(1, Guid.NewGuid(),
+            StudentInputGuardIpcOperation.ReadStatus, null, null, null);
         var ipcCommand = new StudentInputGuardIpcCommand(1, command.CommandId,
             StudentInputGuardIpcOperation.Execute, command.Action, command.LeaseId,
             command.LeaseExpiresUtc);
-        return await SendAsync(sessions[0], ipcCommand, cancellationToken).ConfigureAwait(false);
+        // Apply to every session that has a usable Guard. A machine with a console desktop and a
+        // remote desktop would otherwise be locked on whichever session happens to answer first,
+        // leaving the other one free - and the student could simply switch to it.
+        StudentInputGuardIpcReceipt? best = null;
+        foreach (var sessionId in OrderSessionsForAttempt(sessions))
+        {
+            var status = await SendAsync(sessionId, statusCommand, cancellationToken)
+                .ConfigureAwait(false);
+            if (!status.Supported || status.Phase == StudentInputGuardPhase.Unknown) continue;
+            var receipt = await SendAsync(sessionId, ipcCommand, cancellationToken).ConfigureAwait(false);
+            if (receipt.Outcome == StudentInputGuardOutcome.Succeeded) best = receipt;
+            else best ??= receipt;
+        }
+        return best ?? CreateUnavailable(command.CommandId, true,
+            "没有可用的交互桌面 Guard；没有执行键鼠操作。");
     }
 
     [SupportedOSPlatform("windows")]
@@ -107,6 +165,21 @@ internal static class StudentInputGuardIpcClient
                     ? "交互桌面 Guard 未在时限内回应；输入状态未知。"
                     : "本机 Guard 通信或进程身份校验失败；输入状态未知。");
         }
+    }
+
+    /// <summary>
+    /// Ordering for multi-session attempts: console first, then newest session id.
+    /// </summary>
+    /// <remarks>
+    /// The console is the desktop a student sits at, so it is tried first; a lab VM often has a
+    /// second logged-in desktop that the teacher is actually looking at, which is why every session
+    /// still gets an attempt instead of one being guessed.
+    /// </remarks>
+    internal static IReadOnlyList<int> OrderSessionsForAttempt(IReadOnlyList<int> sessions)
+    {
+        var console = WTSGetActiveConsoleSessionId();
+        return sessions.OrderBy(id => console != uint.MaxValue && id == (int)console ? 0 : 1)
+            .ThenByDescending(id => id).ToArray();
     }
 
     private static void ValidateResponse(StudentInputGuardIpcReceipt response, Guid requestId,
@@ -183,7 +256,7 @@ internal static class StudentInputGuardIpcClient
     }
 
     [SupportedOSPlatform("windows")]
-    private static string GetGuardExecutablePath()
+    internal static string GetGuardExecutablePath()
     {
         var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
         if (string.IsNullOrWhiteSpace(programFiles))
@@ -193,7 +266,7 @@ internal static class StudentInputGuardIpcClient
     }
 
     [SupportedOSPlatform("windows")]
-    private static IReadOnlyList<int> GetActiveInteractiveSessions()
+    internal static IReadOnlyList<int> GetActiveInteractiveSessions()
     {
         if (!WTSEnumerateSessionsW(IntPtr.Zero, 0, 1, out var buffer, out var count))
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
@@ -250,4 +323,7 @@ internal static class StudentInputGuardIpcClient
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerSessionId(SafePipeHandle pipe, out uint serverSessionId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
 }

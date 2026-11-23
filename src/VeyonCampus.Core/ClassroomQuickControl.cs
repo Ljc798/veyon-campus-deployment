@@ -692,7 +692,7 @@ public sealed class ClassroomQuickControlStateStore
     }
 
     public ClassroomQuickControlDeviceState UpdateRetry(Guid sessionId, Guid targetId,
-        long desiredRevision, Guid taskId, DateTimeOffset? nowUtc = null)
+        long desiredRevision, Guid taskId, DateTimeOffset? nowUtc = null, bool awaitingAgent = false)
     {
         lock (ProcessGate)
         using (AcquireFileLock())
@@ -705,7 +705,14 @@ public sealed class ClassroomQuickControlStateStore
             if (previous.DesiredRevision != desiredRevision || previous.TaskId != taskId)
                 return previous;
             var failures = Math.Min(previous.RetryFailureCount + 1, 7);
-            var seconds = Math.Min(60 * (1 << Math.Max(0, failures - 1)), 1800);
+            // A machine that is simply not answering is not a failing command: it is booting, or its
+            // agent has not started yet. Doubling the wait for that case pushed the next attempt to
+            // four, eight and then sixteen minutes after a reboot, while the same command went
+            // through instantly when it was queued before the machine started. Offline therefore
+            // keeps a short, bounded ladder; the long one stays for real failures.
+            var seconds = awaitingAgent
+                ? Math.Min(10 * failures, 30)
+                : Math.Min(60 * (1 << Math.Max(0, failures - 1)), 1800);
             var now = (nowUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
             var next = previous with
             {
@@ -714,7 +721,9 @@ public sealed class ClassroomQuickControlStateStore
                 RetryAfterUtc = now.AddSeconds(seconds),
                 UpdatedUtc = now,
                 ChangeSource = "retry-backoff",
-                TriggerReason = $"设备暂未取得可信状态；第 {failures} 次退避，{seconds} 秒后再检查同一任务。"
+                TriggerReason = awaitingAgent
+                    ? $"设备暂未上线；第 {failures} 次等待，{seconds} 秒后再核对同一任务。"
+                    : $"设备暂未取得可信状态；第 {failures} 次退避，{seconds} 秒后再检查同一任务。"
             };
             if (session.StateRevision == long.MaxValue)
                 throw new InvalidDataException("课堂状态 Revision 已达到上限；待同步时间未更新。");

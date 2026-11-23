@@ -31,7 +31,13 @@ internal sealed class StudentCompanionInputGuardSupervisor : IAsyncDisposable
     public void Start()
     {
         if (!OperatingSystem.IsWindows() || _loop is not null) return;
-        _loop = RunAsync(_shutdown.Token);
+        // The Guard needs full integrity on the student's desktop: BlockInput is refused with
+        // ERROR_ACCESS_DENIED (5) when the caller cannot act on the foreground window, which is what
+        // a student-token process hits on a desktop showing an elevated window. The SYSTEM Agent now
+        // starts the Guard inside the session, so Companion must not start a second, less capable
+        // instance - two starters produced competing processes and a Guard that could never lock.
+        AppendLog("StartDeferred", "Guard 由 Student Agent 以 SYSTEM 身份启动；Companion 不再启动它。");
+        _loop ??= Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()

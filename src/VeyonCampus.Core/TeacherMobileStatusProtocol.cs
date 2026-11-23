@@ -20,7 +20,19 @@ public sealed record WebsitePolicyReportedState(long Revision, WebsitePolicyMode
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? NetworkBlockAddresses = null,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? NetworkBlockError = null,
     /// <summary>Browsers whose encrypted DNS a school pinned on, which makes hosts ineffective there.</summary>
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SecureDnsConflict = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? SecureDnsConflict = null,
+    /// <summary>
+    /// Whether outbound DNS is pinned to the resolvers this machine already uses. When false, a
+    /// browser with its own resolver can resolve around every name-level layer above.
+    /// </summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? ResolverLocked = null,
+    /// <summary>How many destination prefixes are refused on port 53.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? ResolverLockCidrs = null,
+    /// <summary>How many known DoH endpoints are refused on port 443.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? DohBlockEndpoints = null,
+    /// <summary>The resolvers still allowed, so a teacher can see why a LAN DNS keeps working.</summary>
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResolverLockServers = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ResolverLockError = null);
 public sealed record ApplicationPolicyReportedState(bool Supported, long? Revision,
     ApplicationPolicyMode? Mode, DateTimeOffset? ExpiresUtc);
 public sealed record StudentSystemPolicyReportedState(bool Supported, long? Revision,

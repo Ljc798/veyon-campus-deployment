@@ -199,7 +199,20 @@ internal static class VeyonCampusUninstallDataCleanup
         RejectPathChain(path);
         if ((attributes & FileAttributes.ReparsePoint) != 0 || (attributes & FileAttributes.Directory) != 0)
             throw new IOException("Veyon Campus 清理目标不是普通文件；拒绝删除。");
-        File.Delete(path);
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception exception) when (OwnedPathDeleteRecovery.ShouldRetry(exception))
+        {
+            // Only this already-verified product file is targeted. Re-check the path chain
+            // after recovery so a swap to a link cannot turn the retry into an escape.
+            OwnedPathDeleteRecovery.RestoreOwnership(path, exception);
+            RejectPathChain(path);
+            if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                throw new IOException("Veyon Campus 清理目标在所有权恢复后变为重解析点；拒绝删除。");
+            File.Delete(path);
+        }
     }
 
     private static void DeleteTree(string root)
@@ -207,7 +220,19 @@ internal static class VeyonCampusUninstallDataCleanup
         if (!Directory.Exists(root)) return;
         RejectPathChain(root);
         VerifyTreeHasNoReparsePoints(root);
-        Directory.Delete(root, recursive: true);
+        try
+        {
+            Directory.Delete(root, recursive: true);
+        }
+        catch (Exception exception) when (OwnedPathDeleteRecovery.ShouldRetry(exception))
+        {
+            // Only this already-verified product root is targeted. Re-run both checks after
+            // recovery so a reparse point introduced meanwhile cannot widen the retry.
+            OwnedPathDeleteRecovery.RestoreOwnership(root, exception);
+            RejectPathChain(root);
+            VerifyTreeHasNoReparsePoints(root);
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static void RejectPathChain(string path)

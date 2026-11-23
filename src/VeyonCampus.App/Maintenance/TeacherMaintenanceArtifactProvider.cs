@@ -36,7 +36,8 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
                 ApplicationReleaseRole.StudentSetup, _releaseClient.ApiBaseAddress, publicKeyPem), cancellationToken)
                 .ConfigureAwait(false);
             ValidateLocalTestPackage(release, _releaseClient.ApiBaseAddress, publicKeyPem);
-            return new TeacherMaintenanceRelease(release, null, channel);
+            // Schema 4 local-test 清单自带可信 Agent 目标；旧 Schema 3 stable 测试包此处仍为 null。
+            return new TeacherMaintenanceRelease(release, release.Manifest.StudentAgentVersion, channel);
         }
 
         var check = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.StudentSetup, "0.0.0",
@@ -141,11 +142,22 @@ public sealed class TeacherMaintenanceArtifactProvider : ILegacyStudentSetupArti
     private static void ValidateLocalTestPackage(ApplicationReleaseEnvelope release, Uri apiBaseAddress,
         string publicKeyPem)
     {
+        // Verify 对 releaseChannel=local-test 的清单会自动改用嵌入的本地测试公钥验签，
+        // 并强制 Schema 4 必须带 PolicyCapabilities 与 StudentAgentVersion。此处只做本机入口的语义校验。
         ApplicationReleaseClient.Verify(release, ApplicationReleaseRole.StudentSetup, apiBaseAddress, publicKeyPem);
-        if (release.Manifest.SchemaVersion != 3 || release.Manifest.ReleaseChannel is not null ||
-            release.Manifest.StudentAgentVersion is not null)
-            throw new InvalidDataException("本机测试包须为 Developer Release 签名的 stable Schema 3 StudentSetup，且不得伪造 Agent 目标版本。");
-        ApplicationReleaseCompatibility.EnsureSupports(release.Manifest,
+        var manifest = release.Manifest;
+        var isLocalTest = string.Equals(manifest.ReleaseChannel, "local-test", StringComparison.Ordinal);
+        if (isLocalTest)
+        {
+            if (manifest.SchemaVersion != 4)
+                throw new InvalidDataException("本机 local-test 测试包须为测试公钥签名的 Schema 4 StudentSetup 清单。");
+        }
+        else if (manifest.SchemaVersion != 3 || manifest.ReleaseChannel is not null ||
+                 manifest.StudentAgentVersion is not null)
+        {
+            throw new InvalidDataException("本机 stable 测试包须为 Developer Release 公钥签名的 Schema 3 StudentSetup，且不得伪造 Agent 目标版本。");
+        }
+        ApplicationReleaseCompatibility.EnsureSupports(manifest,
             applicationPolicyRequired: true, studentSystemPolicyRequired: true);
     }
 

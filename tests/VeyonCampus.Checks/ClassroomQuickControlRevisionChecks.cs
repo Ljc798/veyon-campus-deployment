@@ -165,6 +165,14 @@ internal static class ClassroomQuickControlRevisionChecks
                    afterRestart.TaskId == endedDevice.TaskId && afterRestart.RetryFailureCount == 1 &&
                    afterRestart.RetryAfterUtc == retried.RetryAfterUtc);
 
+            // A machine that is merely offline keeps the short ladder: the long one put the next
+            // attempt minutes away, so a student that rebooted stayed restricted long after its
+            // agent was back. 10s per attempt, capped at 30s.
+            var waitingRetry = store.UpdateRetry(sessionId, targetId, endedDevice.DesiredRevision,
+                endedDevice.TaskId!.Value, now.AddSeconds(10), awaitingAgent: true);
+            Expect(waitingRetry.RetryFailureCount == 2 &&
+                   waitingRetry.RetryAfterUtc == now.AddSeconds(30));
+
             var lines = File.ReadAllLines(path + ".events.jsonl");
             var entries = lines.Select(line => JsonDocument.Parse(line)).ToArray();
             try

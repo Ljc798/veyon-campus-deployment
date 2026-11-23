@@ -654,15 +654,21 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
 
     internal Task<ClassroomQuickControlOperationResult> ExecuteClassroomQuickControlAsync(
         Guid expectedSessionId, ClassroomQuickControlAction action,
-        DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default)
+        DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default,
+        IReadOnlyList<Guid>? selectedTargetIds = null, bool preserveControlExpiry = false,
+        DateTimeOffset? inputLockReleaseUtc = null, int inputLockGraceSeconds = 0)
     {
         if (expectedSessionId == Guid.Empty || _classroomContext is not { } context ||
             context.SessionId != expectedSessionId)
             throw new InvalidOperationException("课堂已变化；拒绝向旧课堂发送快捷管控操作。");
         var service = _classroomQuickControlService ?? throw new PlatformNotSupportedException(
             "当前教师平台不支持课堂快捷管控。");
-        return service.ExecuteAsync(expectedSessionId, action, controlExpiresUtc: controlExpiresUtc,
-            cancellationToken: cancellationToken);
+        // Per-device input control: the classroom card applies website restrictions to everyone,
+        // while a keyboard/mouse lease is only ever requested for the devices the caller names and
+        // never moves the lesson's shared deadline.
+        return service.ExecuteAsync(expectedSessionId, action, selectedTargetIds,
+            controlExpiresUtc, cancellationToken, preserveControlExpiry: preserveControlExpiry,
+            inputLockReleaseUtc: inputLockReleaseUtc, inputLockGraceSeconds: inputLockGraceSeconds);
     }
 
     internal Task<ClassroomQuickControlOperationResult> ReleaseClassroomQuickControlsAsync(

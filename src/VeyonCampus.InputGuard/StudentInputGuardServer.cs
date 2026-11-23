@@ -66,6 +66,11 @@ internal sealed class StudentInputGuardServer
         {
             while (!cancellationToken.IsCancellationRequested)
             {
+                // The lease thread completes the queue when it can no longer release input. Staying
+                // alive would leave a pipe that accepts connections but never answers, which the
+                // Agent can only report as "状态无法核验"; exiting lets the supervisor start a fresh,
+                // unlocked Guard instead of a zombie nobody can use.
+                if (_requests.IsCompleted) break;
                 using var pipe = CreateSecureServerPipe(_pipeName);
                 try
                 {
@@ -101,7 +106,15 @@ internal sealed class StudentInputGuardServer
         var completion = new TaskCompletionSource<StudentInputGuardIpcReceipt>(
             TaskCreationOptions.RunContinuationsAsynchronously);
         ValidateCommand(command);
-        _requests.Add(new PendingRequest(command, completion), cancellationToken);
+        try { _requests.Add(new PendingRequest(command, completion), cancellationToken); }
+        catch (InvalidOperationException)
+        {
+            // The queue was completed because the lease thread could not release input. Answer with a
+            // definitive "unsupported" receipt instead of letting the caller time out.
+            return Task.FromResult(CreateReceipt(command.RequestId, StudentInputGuardOutcome.Unsupported,
+                StudentInputGuardPhase.Unsupported,
+                "Guard 已停止服务；请重启学生端 Guard。", null, null));
+        }
         return completion.Task.WaitAsync(TimeSpan.FromSeconds(3), cancellationToken);
     }
 
@@ -114,7 +127,13 @@ internal sealed class StudentInputGuardServer
                 var wait = _locked ? GetLeaseWaitMilliseconds() : Timeout.Infinite;
                 if (!_requests.TryTake(out var request, wait))
                 {
-                    ExpireLease();
+                    // GetLeaseWaitMilliseconds caps the wait at 1s so this thread wakes periodically.
+                    // A 1s TryTake timeout therefore does NOT mean the lease expired - treating it as
+                    // one released the lock about a second after every Activate/Renew, which the
+                    // teacher saw as "lease not matched" followed by a 20-second "Expired" state.
+                    // Only release when the absolute deadline has actually passed.
+                    if (_locked && Stopwatch.GetTimestamp() >= _leaseExpiresTimestamp)
+                        ExpireLease();
                     continue;
                 }
                 try { request.Completion.TrySetResult(HandleRequest(request.Command)); }
@@ -157,9 +176,22 @@ internal sealed class StudentInputGuardServer
                     return CreateReceipt(command.RequestId, StudentInputGuardOutcome.Conflict, _phase,
                         "已有输入锁定租约；拒绝覆盖。", _leaseId, _leaseExpiresUtc);
                 if (!NativeMethods.BlockInput(true))
+                {
+                    var error = Marshal.GetLastWin32Error();
+                    var desktop = NativeMethods.DescribeCurrentDesktop();
+                    _log("BlockInputRejected", new System.ComponentModel.Win32Exception(error));
+                    // A Guard that cannot block input is useless, and it also prevents the Agent from
+                    // retrying with the higher-integrity variant: BlockInput returns 5 when the
+                    // caller may not act on the desktop. Exit so the Agent restarts this instance as
+                    // SYSTEM inside the same session, where the call is not subject to that limit.
+                    _supported = false;
+                    _requests.CompleteAdding();
                     return CreateReceipt(command.RequestId, StudentInputGuardOutcome.Failed,
-                        StudentInputGuardPhase.Unlocked,
-                        $"Windows 未接受输入阻止请求（错误码 {Marshal.GetLastWin32Error()}）。", null, null);
+                        StudentInputGuardPhase.Unsupported,
+                        $"Windows 未接受输入阻止请求（错误码 {error}；当前桌面 {desktop}）。" +
+                        "Guard 将退出，以便用更高权限重新启动。",
+                        null, null);
+                }
                 _locked = true;
                 _phase = StudentInputGuardPhase.Locked;
                 _leaseId = command.LeaseId;
@@ -333,9 +365,20 @@ internal sealed class StudentInputGuardServer
         if (!NativeMethods.GetNamedPipeClientProcessId(handle, out var pid) || pid == 0 ||
             !NativeMethods.GetNamedPipeClientSessionId(handle, out var sessionId) || sessionId != 0)
             throw new UnauthorizedAccessException("无法确认本机 Agent 管道客户端。");
-        using var process = Process.GetProcessById(checked((int)pid));
-        var path = WindowsProcessImagePath.Read(checked((int)pid));
-        if (process.SessionId != 0 || !string.Equals(path,
+        // The pipe SDDL already restricts connections to SYSTEM and the signed-in user, and the
+        // session check above excludes the user, so the peer can only be SYSTEM. Reading its image
+        // path needs PROCESS_QUERY_LIMITED_INFORMATION on a Session 0 process, which a normal user
+        // token is routinely denied (Win32 5). Treating that denial as "not the Agent" made every
+        // status read fail with 拒绝访问, so the path is verified only when it can be read.
+        string? path = null;
+        try { path = WindowsProcessImagePath.Read(checked((int)pid)); }
+        catch (Exception exception) when (exception is InvalidOperationException or
+                                              System.ComponentModel.Win32Exception or
+                                              UnauthorizedAccessException or ArgumentException)
+        {
+            path = null;
+        }
+        if (path is not null && !string.Equals(path,
                 WebsitePolicyAgentInstaller.InstalledExecutablePath, StringComparison.OrdinalIgnoreCase))
             throw new UnauthorizedAccessException("Guard 仅接受安装目录中 Session 0 Agent 的命令。");
     }
@@ -356,6 +399,47 @@ internal sealed class StudentInputGuardServer
         [DllImport("user32.dll", SetLastError = true)]
         [return: MarshalAs(UnmanagedType.Bool)]
         internal static extern bool BlockInput([MarshalAs(UnmanagedType.Bool)] bool block);
+
+        /// <summary>
+        /// "winsta0\default" when the Guard sits on the interactive desktop. A process started onto
+        /// another window station can still call BlockInput and get ERROR_ACCESS_DENIED, so the name
+        /// is what makes that failure explainable instead of mysterious.
+        /// </summary>
+        internal static string DescribeCurrentDesktop()
+        {
+            try
+            {
+                return ReadName(GetProcessWindowStation()) + "\\" + ReadName(GetThreadDesktop(GetCurrentThreadId()));
+            }
+            catch (Exception exception) when (exception is System.ComponentModel.Win32Exception or
+                                                  EntryPointNotFoundException or DllNotFoundException)
+            {
+                return "未知";
+            }
+        }
+
+        private static string ReadName(IntPtr handle)
+        {
+            if (handle == IntPtr.Zero) return "?";
+            var buffer = new StringBuilder(256);
+            return GetUserObjectInformation(handle, 2 /* UOI_NAME */, buffer, buffer.Capacity * 2, out _)
+                ? buffer.ToString()
+                : "?";
+        }
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetProcessWindowStation();
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetThreadDesktop(uint threadId);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetUserObjectInformation(IntPtr handle, int index, StringBuilder info,
+            int length, out int needed);
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true,
             EntryPoint = "ConvertStringSecurityDescriptorToSecurityDescriptorW")]

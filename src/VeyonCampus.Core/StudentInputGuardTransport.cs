@@ -79,13 +79,30 @@ public static class StudentInputGuardTransport
 
     public static async Task<StudentInputGuardDeliveryResult> ExecuteAsync(string target, string campusId,
         RSA campusPrivateKey, Guid roomId, StudentInputGuardAction action, Guid leaseId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, DateTimeOffset? lockReleaseUtc = null,
+        int graceSeconds = 0)
     {
         ArgumentNullException.ThrowIfNull(campusPrivateKey);
         if (!Enum.IsDefined(action) || roomId == Guid.Empty || leaseId == Guid.Empty)
             throw new InvalidDataException("InputGuard 命令的动作、房间或租约标识无效。");
         var statusResult = await ReadStatusAsync(target, campusId, campusPrivateKey, cancellationToken)
             .ConfigureAwait(false);
+        // A machine can have two active interactive sessions. The Agent reads every session's Guard
+        // and returns the one holding the lease, but a single poll can still catch a guard mid-restart
+        // or between two lease-owner sessions. Renew/Release used to fail outright on that one bad read
+        // and stop the whole renewal loop, which showed up as "租约不匹配" even though the lock was
+        // healthy. Give the read a couple of short retries before declaring a real mismatch - the same
+        // pattern the website readback already uses. Activate is intentionally NOT retried: starting a
+        // second lease on a transiently-misread device would be unsafe.
+        if (action is StudentInputGuardAction.Renew or StudentInputGuardAction.Release)
+        {
+            for (var attempt = 0; attempt < 2 && LeaseReadMismatch(statusResult, leaseId); attempt++)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(350), cancellationToken).ConfigureAwait(false);
+                statusResult = await ReadStatusAsync(target, campusId, campusPrivateKey, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
         if (!statusResult.Succeeded || statusResult.Status is not { } status)
             return new StudentInputGuardDeliveryResult(statusResult.Target, false, statusResult.NeedsReview,
                 null, null, statusResult.Detail);
@@ -119,10 +136,13 @@ public static class StudentInputGuardTransport
             return new StudentInputGuardDeliveryResult(statusResult.Target, false, true,
                 StudentInputGuardOutcome.Failed, null, "教师机身份无法核验；没有发送键鼠命令。" + exception.Message);
         }
+        var persistedIntent = action == StudentInputGuardAction.Activate && lockReleaseUtc is not null;
         var command = new StudentInputGuardCommand(1, StudentInputGuardCommandCryptography.Purpose,
             campusId, roomId, status.DeviceFingerprint, teacherMachineId,
             status.AgentRunId, Guid.NewGuid(), Guid.NewGuid(), status.ControlEpoch, leaseId,
-            now, expiresUtc, action, leaseExpiresUtc);
+            now, expiresUtc, action, leaseExpiresUtc,
+            LockReleaseUtc: persistedIntent ? lockReleaseUtc!.Value.ToUniversalTime() : null,
+            GraceSeconds: persistedIntent ? graceSeconds : 0);
         string signedCommand;
         try { signedCommand = StudentInputGuardCommandCryptography.Sign(command, campusPrivateKey); }
         catch (InvalidDataException exception)
@@ -211,6 +231,20 @@ public static class StudentInputGuardTransport
             buffer.Write(chunk, 0, read);
         }
         return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// True when a Renew/Release status read has not yet confirmed the lease we expect. A transient
+    /// "no matching guard" or a different lease is worth another short read; a confirmed matching
+    /// lease is not. Reads that failed outright are retried too, because a single timeout with two
+    /// sessions is exactly the noise this tolerates.
+    /// </summary>
+    private static bool LeaseReadMismatch(StudentInputGuardStatusDeliveryResult read, Guid leaseId)
+    {
+        if (!read.Succeeded) return !read.NeedsReview; // do not retry an identity/signature rejection
+        var status = read.Status;
+        return status is null || !status.Supported ||
+               status.Phase != StudentInputGuardPhase.Locked || status.LeaseId != leaseId;
     }
 
     public static bool IsLocalMachineTarget(string target)

@@ -91,6 +91,7 @@ public partial class TeacherWindow : Window
         DataContext = _model;
         _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
         SyncTeacherPageTemplate();
+        SyncContentScrollForClassroom();
         _model.ReleaseNoticeAvailable += OnReleaseNoticeAvailable;
         _model.PropertyChanged += TeacherModelPropertyChanged;
         _model.ActiveClassroomSeatGridChanged += OnActiveClassroomSeatGridChanged;
@@ -213,7 +214,11 @@ public partial class TeacherWindow : Window
             nameof(TeacherViewModel.IsTeacherAboutPage) or
             nameof(TeacherViewModel.IsRoomPage) or
             nameof(TeacherViewModel.IsSetupPage))
+        {
             SyncTeacherPageTemplate();
+            // 课堂页所有操作一屏可见，仅学生列表内部滚动；禁用外层整页滚动。
+            SyncContentScrollForClassroom();
+        }
         if (e.PropertyName == nameof(TeacherViewModel.IsHealthCenterPage)) SyncDeviceRuntimePolling();
         if (e.PropertyName is nameof(TeacherViewModel.IsClassroomExperiencePage) or
             nameof(TeacherViewModel.HasActiveClassroomSession) or
@@ -253,6 +258,54 @@ public partial class TeacherWindow : Window
         if (_model.IsRoomPage)
             TeacherPageHost.LayoutUpdated += TryAttachSeatMapPointerHandler;
     }
+
+    /// <summary>
+    /// 课堂控制页改为左右两栏：所有操作在左栏一屏可见，学生明细只在右栏列表内部滚动。
+    /// 因此进入课堂页时关闭外层整页滚动，离开课堂页时恢复，避免多滚动一套。
+    /// </summary>
+    private void SyncContentScrollForClassroom()
+    {
+        var scroll = this.FindControl<ScrollViewer>("TeacherContentScroll");
+        if (scroll is null) return;
+        if (_model.IsClassroomExperiencePage)
+        {
+            scroll.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled;
+            scroll.Offset = new Vector(0, 0);
+            // 让课堂页 Grid 拿到外层 Viewport 的完整高度，右栏学生列表才能用 * 撑满并内部滚动。
+            TeacherPageHost.VerticalContentAlignment = VerticalAlignment.Stretch;
+            ApplyClassroomViewportHeight();
+        }
+        else
+        {
+            scroll.VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Auto;
+            TeacherPageHost.VerticalContentAlignment = VerticalAlignment.Top;
+        }
+    }
+
+    /// <summary>把外层内容区的可见高度交给课堂页，让左右两栏按整屏高度布局而非堆叠到内容高度。</summary>
+    private void ApplyClassroomViewportHeight()
+    {
+        if (!_model.IsClassroomExperiencePage) return;
+        var scroll = this.FindControl<ScrollViewer>("TeacherContentScroll");
+        if (scroll is null) return;
+        var view = TeacherPageHost.GetVisualDescendants().OfType<TeacherClassroomView>().FirstOrDefault();
+        if (view is null)
+        {
+            // 模板刚切换时视图尚未生成，等一次布局后再补设高度。
+            EventHandler? retry = null;
+            retry = (_, _) =>
+            {
+                TeacherPageHost.LayoutUpdated -= retry;
+                ApplyClassroomViewportHeight();
+            };
+            TeacherPageHost.LayoutUpdated += retry;
+            return;
+        }
+        view.SetViewportHeight(scroll.Viewport.Height);
+    }
+
+    private void TeacherContentScrollSizeChanged(object? sender, SizeChangedEventArgs e) =>
+        ApplyClassroomViewportHeight();
 
     private void TryAttachSeatMapPointerHandler(object? sender, EventArgs e)
     {
@@ -639,6 +692,107 @@ public partial class TeacherWindow : Window
         else
             await RunClassroomQuickControlAsync(ClassroomQuickControlAction.LockInput,
                 "限时锁定键鼠", "将在当前课堂内的学生电脑申请短时键鼠锁定，并在所选截止时间自动解除。教师端关闭或断线后，锁定最多 20 秒自动释放。");
+    }
+
+    [SupportedOSPlatform("windows")]
+    private async void LockDeviceInput(Guid targetId) =>
+        await RunDeviceInputAsync(targetId, ClassroomQuickControlAction.LockInput);
+
+    [SupportedOSPlatform("windows")]
+    private async void UnlockDeviceInput(Guid targetId) =>
+        await RunDeviceInputAsync(targetId, ClassroomQuickControlAction.UnlockInput);
+
+    private void ToggleAllInputLockSelection(bool selected) => _model.ToggleAllInputLockSelection(selected);
+
+    [SupportedOSPlatform("windows")]
+    private async void BatchLockInput(Guid[] targetIds) =>
+        await RunInputLockAsync(targetIds, ClassroomQuickControlAction.LockInput);
+
+    [SupportedOSPlatform("windows")]
+    private async void BatchUnlockInput(Guid[] targetIds) =>
+        await RunInputLockAsync(targetIds, ClassroomQuickControlAction.UnlockInput);
+
+    /// <summary>
+    /// Applies a keyboard/mouse lease to exactly one device. The classroom-level button still applies
+    /// website restrictions to everyone, but an input lease freezes whoever holds it, so it is only
+    /// ever requested for the machine the teacher picked.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunDeviceInputAsync(Guid targetId, ClassroomQuickControlAction action) =>
+        await RunInputLockAsync([targetId], action);
+
+    /// <summary>
+    /// Applies a keyboard/mouse lease to one or many selected devices. A lock carries the custom
+    /// deadline and a 2-minute teacher-offline grace; the student Agent persists and self-renews it,
+    /// so it survives reboot and does not depend on the teacher's (stoppable) renewal loop. Unlock
+    /// releases every selected device that this tool holds.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunInputLockAsync(Guid[] targetIds, ClassroomQuickControlAction action)
+    {
+        if (TeacherClassroomQuickControlBuildFeatures.PilotEnabled is false)
+        {
+            _model.SetClassroomQuickControlSessionNotice(
+                "当前教师端构建未启用课堂快捷管控；没有发送键鼠命令。");
+            return;
+        }
+        if (_model.ActiveClassroomSessionId is not { } sessionId)
+        {
+            _model.SetClassroomQuickControlSessionNotice(
+                "当前没有活动课堂；请先在页面顶部开始课堂，再对设备锁定键鼠。");
+            return;
+        }
+        if (targetIds.Length == 0)
+        {
+            _model.SetClassroomQuickControlSessionNotice("请先勾选要操作的学生电脑（可多选）。");
+            return;
+        }
+        var locking = action == ClassroomQuickControlAction.LockInput;
+        DateTimeOffset? releaseUtc = null;
+        var names = targetIds
+            .Select(id => _model.ClassroomQuickControlDevices.FirstOrDefault(item => item.TargetId == id)?.DisplayName)
+            .Where(name => !string.IsNullOrWhiteSpace(name)).ToArray();
+        var displayNames = names.Length > 0 ? string.Join("、", names.Take(6)) +
+            (names.Length > 6 ? $" 等 {names.Length} 台" : "") : $"{targetIds.Length} 台设备";
+        if (locking)
+        {
+            if (!_model.TryResolveInputLockReleaseUtc(DateTimeOffset.UtcNow, out var resolved, out var error))
+            {
+                _model.SetClassroomQuickControlSessionNotice(error);
+                return;
+            }
+            releaseUtc = resolved;
+            if (!await ConfirmProfileActionAsync("锁定键鼠",
+                    $"将锁定 {displayNames} 的键盘鼠标，其他学生电脑不受影响。\n\n" +
+                    $"锁定持续到今天 {releaseUtc.Value.ToLocalTime():HH:mm}，由学生端自行维持；学生重启后按 45 秒宽限自动恢复锁定。\n" +
+                    "教师端可随时点“解除”立即释放；到点也会自动解除。这一步不会改动整个课堂的自动解除时间。\n\n" +
+                    "学生端需要交互桌面 Guard 在运行；若状态显示“无法核验”，锁定不会生效。",
+                    "确认锁定")) return;
+        }
+        else if (!await ConfirmProfileActionAsync("解除键鼠锁定",
+                     $"将解除 {displayNames} 上由本工具持有的键鼠锁定；网站限制和其他来源的锁定保持不变。",
+                     "确认解除")) return;
+
+        SetClassroomQuickControlBusy(true);
+        try
+        {
+            var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
+                sessionId, action, controlExpiresUtc: null,
+                selectedTargetIds: targetIds, preserveControlExpiry: true,
+                inputLockReleaseUtc: releaseUtc,
+                inputLockGraceSeconds: locking ? TeacherViewModel.InputLockGraceSeconds : 0));
+            _model.SetClassroomQuickControlSessionNotice(result.Message);
+            var refreshed = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
+            if (_model.ActiveClassroomSessionId == sessionId)
+                _model.UpdateClassroomQuickControlSnapshot(refreshed);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          CryptographicException or PlatformNotSupportedException or SocketException)
+        {
+            _model.SetClassroomQuickControlSessionNotice("键鼠操作没有完成。" + exception.Message);
+        }
+        finally { SetClassroomQuickControlBusy(false); }
     }
 
     [SupportedOSPlatform("windows")]
@@ -2143,40 +2297,61 @@ public partial class TeacherWindow : Window
 
     private async void ReviewDeviceHealthIdentity(object? sender, RoutedEventArgs e)
     {
-        if (sender is not Button { DataContext: TeacherDeviceHealthRow row } || !row.CanReviewIdentity) return;
+        if (sender is not Button { DataContext: TeacherDeviceHealthRow row }) return;
         row.SetIdentityReviewStatus("正在重新读取签名身份……");
         var discoveries = await _model.DiscoverStudentAgentIdentityAsync(row.Target);
         var discovery = discoveries.SingleOrDefault();
-        if (discovery is null || discovery.Candidate is not { } candidate)
+        // A live answer is only needed to refresh the fingerprint. Pinning itself is a local trust
+        // decision about a signature the device already produced, so an offline machine still has an
+        // identity the teacher can confirm - otherwise its alert could never be cleared.
+        var candidate = discovery?.Candidate ?? row.CurrentIdentityCandidate;
+        if (candidate is null)
         {
-            row.SetIdentityReviewStatus(discovery?.Detail ?? "未取得可验证的 Agent 身份；尚未更改信任记录。");
+            row.SetIdentityReviewStatus((discovery?.Detail is { Length: > 0 } detail ? detail + " " : "") +
+                "尚未取得可核对的身份，信任记录没有改动；请先确认学生 Agent 在线并重新读取。");
             return;
         }
 
-        row.SetIdentityCandidate(candidate);
-        if (discovery.MatchesPinnedKey)
+        var pinnedFingerprint = _model.GetPinnedStudentAgentFingerprint(row.Target);
+        if (pinnedFingerprint is { Length: > 0 } pinned)
         {
-            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: false);
-        }
-        else
-        {
-            row.SetIdentityReviewStatus("Agent 签名有效；教师现场核对前不会固定或轮换身份。");
-            if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return;
-            try
+            if (string.Equals(pinned, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase))
             {
-                _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);
-            }
-            catch (Exception exception) when (exception is InvalidDataException or IOException or
-                UnauthorizedAccessException or InvalidOperationException or CryptographicException)
-            {
-                row.SetIdentityReviewStatus("身份固定失败：" + exception.Message);
-                await ShowStudentAgentTrustErrorAsync(exception.Message);
+                row.SetIdentityReviewStatus("身份与已固定指纹一致，无需重新核对；" +
+                    "若要改动指纹，请先在该机重置 Agent 身份。");
                 return;
             }
+            // Show the fingerprint that is pinned now, which can be newer than the one recorded when
+            // this receipt was captured.
+            candidate = candidate with { PreviouslyPinnedFingerprint = pinned };
         }
 
-        row.SetIdentityReviewStatus("身份已由教师确认，正在读取新的签名状态……");
-        await _model.ReadDeviceHealthRowAsync(row);
+        row.SetIdentityCandidate(candidate);
+        var reviewed = discovery is { Candidate: not null }
+            ? discovery
+            : new VeyonCampus.Core.StudentAgentIdentityDiscoveryResult(row.Target, candidate, false,
+                "使用最近一次有效签名回执中的身份核对。");
+        row.SetIdentityReviewStatus(discovery is { Candidate: not null }
+            ? "Agent 签名有效；教师现场核对前不会固定或轮换身份。"
+            : "本次没有重新读取到 Agent 身份" +
+              (_model.StudentAgentIdentityStatus is { Length: > 0 } reason ? $"（{reason}）" : "") +
+              "，改用最近一次有效签名回执里的身份核对；固定前请对照该机显示的核对码。");
+        if (!await ConfirmStudentAgentIdentityTrustAsync([reviewed])) return;
+        try
+        {
+            _model.ConfirmDeviceIdentity(row, candidate);
+        }
+        catch (Exception exception) when (exception is InvalidDataException or IOException or
+            UnauthorizedAccessException or InvalidOperationException or CryptographicException)
+        {
+            row.SetIdentityReviewStatus("身份固定失败：" + exception.Message);
+            await ShowStudentAgentTrustErrorAsync(exception.Message);
+            return;
+        }
+
+        row.SetIdentityReviewStatus("身份已由教师确认并固定。");
+        if (!await _model.ReadDeviceHealthRowAsync(row))
+            row.SetIdentityReviewStatus("身份已固定；Agent 暂未应答，下次签名回执到达后会自动复核。");
     }
 
     private async void CopyDeviceHealthDiagnostic(object? sender, RoutedEventArgs e)

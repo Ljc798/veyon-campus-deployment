@@ -49,7 +49,18 @@ public sealed record StudentAgentRuntimeSummary(
     string? NetworkBlockError = null,
     /// <summary>Browsers still resolving over their own encrypted DNS, where hosts cannot reach.</summary>
     [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-    string? SecureDnsConflict = null);
+    string? SecureDnsConflict = null,
+    /// <summary>Outbound DNS is pinned to the machine's own resolvers; switching DNS no longer helps.</summary>
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    bool? ResolverLocked = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    int? ResolverLockCidrs = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    int? DohBlockEndpoints = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? ResolverLockServers = null,
+    [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    string? ResolverLockError = null);
 
 /// <summary>Short-lived InputGuard state included only in runtime-summary schema v2.</summary>
 public sealed record StudentInputGuardRuntimeSnapshot(int SchemaVersion, bool Supported,
@@ -143,6 +154,11 @@ public static class StudentAgentRuntimeSummaryCryptography
             !summary.ApplicationSupported && summary.ApplicationExpiresUtc is not null ||
             summary.SystemPolicySupported != (summary.SystemPolicyRevision is not null) ||
             summary.SystemPolicySupported != (summary.SystemPolicyPending is not null) ||
+            summary.ResolverLockCidrs is < 0 ||
+            summary.DohBlockEndpoints is < 0 ||
+            summary.ResolverLocked == false && (summary.ResolverLockCidrs ?? 0) > 0 ||
+            summary.ResolverLockServers is { Length: > 512 } ||
+            summary.ResolverLockError is { Length: > 512 } ||
             summary.UpdateTransactionState is not ("notFound" or "inProgress" or "committed" or "rolledBack" or
                 "superseded" or "needsReview"))
             throw new InvalidDataException("学生 Agent 轻量运行摘要字段无效。");

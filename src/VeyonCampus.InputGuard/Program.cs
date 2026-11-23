@@ -18,15 +18,30 @@ internal static class Program
 
         if (args.SequenceEqual(["--guard-server"], StringComparer.Ordinal))
         {
+            var sessionId = Process.GetCurrentProcess().SessionId;
+            GuardDiagnostics.Write("ServerStarting",
+                $"SessionId={sessionId} Interactive={Environment.UserInteractive}");
+            // One Guard per session. Student Companion and the SYSTEM Agent can both try to start
+            // it at the same moment; without this, the second instance fails on the single-instance
+            // pipe (Win32 291) and the session ends up with competing processes.
+            using var singleInstance = new Mutex(initiallyOwned: true,
+                @"Local\VeyonCampus.InputGuard." + sessionId, out var createdNew);
+            if (!createdNew)
+            {
+                GuardDiagnostics.Write("AlreadyRunning", $"会话 {sessionId} 已有 Guard 在运行；本进程退出。");
+                return 0;
+            }
             try
             {
                 using var shutdown = new CancellationTokenSource();
                 new StudentInputGuardServer().RunAsync(shutdown.Token).GetAwaiter().GetResult();
+                GuardDiagnostics.Write("ServerStopped", "服务模式正常退出；等待监督者重新启动。");
                 return 0;
             }
             catch (Exception exception) when (exception is IOException or InvalidOperationException or
                                               UnauthorizedAccessException or System.ComponentModel.Win32Exception or
-                                              System.Security.SecurityException or ArgumentException)
+                                              System.Security.SecurityException or ArgumentException or
+                                              PlatformNotSupportedException or NotSupportedException)
             {
                 GuardDiagnostics.Write("ServerExited", exception);
                 return 1;

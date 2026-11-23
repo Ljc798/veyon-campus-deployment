@@ -1090,6 +1090,10 @@ public static class WebsitePolicyAgentInstaller
             else
                 WebsitePolicyRegistryStore.RemoveEmptyAgentState();
 
+            stage = "移除被封地址的路由";
+            // These routes are what makes a running UDP flow fail immediately. Leaving them behind
+            // would keep blocked addresses unreachable after the product is gone.
+            BlockedAddressRoute.RemoveAll();
             stage = "移除本工具防火墙规则";
             WebsitePolicyFirewall.RemoveOwned(knownExecutables);
             stage = "移除 HTTP 监听地址权限";
@@ -3752,47 +3756,32 @@ public static class WebsitePolicyAgentInstaller
                 if ((attributes & FileAttributes.ReparsePoint) != 0)
                     throw new IOException("网站策略 Agent 配置目录含重解析点；拒绝递归删除。" );
                 var name = Path.GetFileName(entry);
-                var healthRepairDirectory = (attributes & FileAttributes.Directory) != 0 &&
-                    string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase);
-                if (healthRepairDirectory) VerifyHealthRepairDirectoryIsSafe(entry);
-                var updateTimingDirectory = (attributes & FileAttributes.Directory) != 0 &&
-                    string.Equals(name, StudentUpdatePhaseTimingStore.DirectoryName, StringComparison.OrdinalIgnoreCase);
-                if (updateTimingDirectory && !allowTimingDiagnostics)
+                var isDirectory = (attributes & FileAttributes.Directory) != 0;
+                // Entries whose contents matter get an extra check, not only a name check.
+                if (isDirectory && string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase))
+                    VerifyHealthRepairDirectoryIsSafe(entry);
+                // The Maintenance Service keeps its own signing key beside the campus config. It is
+                // product-owned, so it must be recognised here; otherwise the next Agent update
+                // refuses to replace a configuration folder the product itself wrote into.
+                else if (isDirectory && string.Equals(name, "Maintenance", StringComparison.OrdinalIgnoreCase))
+                    AgentFileSecurity.VerifyAgentMaintenanceDirectoryOwned(entry);
+                else if (isDirectory && !allowTimingDiagnostics && string.Equals(name,
+                             StudentUpdatePhaseTimingStore.DirectoryName, StringComparison.OrdinalIgnoreCase))
                     StudentUpdatePhaseTimingStore.VerifyOwnedDirectoryForRemoval(entry);
-                // The SYSTEM updater stages its signed installer beside the campus config.
-                // This directory is product-owned and may remain when cleanup is interrupted;
-                // keep it as recognized recovery data instead of treating it as an unknown file.
-                var updateStagingDirectory = (attributes & FileAttributes.Directory) != 0 &&
-                    Regex.IsMatch(name, @"^student-update-[0-9a-f]{32}$",
-                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var expectedConfig = string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase);
-                var expectedIdentity = string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase);
-                var updateReplayState = string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase);
-                var teacherChannelStatus = string.Equals(name,
+
+                if (!IsRecognizedAgentConfigurationEntry(name, hash, isDirectory))
+                    throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
+
+                var legacyHealthRepairLedger = !isDirectory &&
+                    string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
+                var legacyHealthRepairTemporary = !isDirectory && Regex.IsMatch(name,
+                    @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                var teacherChannelStatus = !isDirectory && string.Equals(name,
                     "agent-" + hash + ".json.teacher-channel-status.json", StringComparison.OrdinalIgnoreCase);
-                var teacherChannelStatusTemporary = Regex.IsMatch(name,
+                var teacherChannelStatusTemporary = !isDirectory && Regex.IsMatch(name,
                     "^agent-" + Regex.Escape(hash) + @"\.json\.teacher-channel-status\.json\.tmp-[0-9a-f]{32}$",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var edgePolicyRefreshQueue = string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase);
-                var legacyHealthRepairLedger = string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase);
-                var usageInstallationId = string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase);
-                var usageLastSentState = string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase);
-                var startupLog = string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase);
-                var runtimeLog = string.Equals(name, "agent-runtime.log", StringComparison.OrdinalIgnoreCase);
-                var temporary = Regex.IsMatch(name, "^agent-" + Regex.Escape(hash) + @"\.json\.tmp-[0-9a-f]{32}$",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var identityTemporary = Regex.IsMatch(name, "^" + Regex.Escape(StudentAgentIdentityKeyStore.FileName) +
-                    @"\.tmp-[0-9a-f]{32}$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var edgePolicyRefreshTemporary = Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var legacyHealthRepairTemporary = Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                if (!updateStagingDirectory && !updateTimingDirectory && !expectedConfig && !expectedIdentity && !updateReplayState &&
-                    !edgePolicyRefreshQueue && !healthRepairDirectory && !legacyHealthRepairLedger &&
-                    !edgePolicyRefreshTemporary && !usageInstallationId &&
-                    !legacyHealthRepairTemporary && !usageLastSentState && !startupLog && !runtimeLog &&
-                    !temporary && !identityTemporary && !teacherChannelStatus && !teacherChannelStatusTemporary)
-                    throw new IOException($"网站策略 Agent 配置目录含无法确认归属的文件：{entry}；拒绝删除。" );
                 if (legacyHealthRepairLedger || legacyHealthRepairTemporary || teacherChannelStatus ||
                     teacherChannelStatusTemporary)
                 {
@@ -3804,6 +3793,48 @@ public static class WebsitePolicyAgentInstaller
         }
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.TopDirectoryOnly))
             throw new IOException($"网站策略 Agent 配置根目录含无法确认归属的文件：{file}；拒绝删除。" );
+    }
+
+    /// <summary>
+    /// Whether an entry directly under a campus configuration folder belongs to the product.
+    ///
+    /// This is the guard that decides if a configuration folder may be replaced: an entry that is
+    /// not listed here aborts the update instead of being deleted. Every new file the Agent or the
+    /// Maintenance Service starts writing there has to be added here, or the product blocks its own
+    /// update with a file it wrote itself.
+    /// </summary>
+    internal static bool IsRecognizedAgentConfigurationEntry(string name, string hash, bool isDirectory)
+    {
+        if (isDirectory)
+            return string.Equals(name, "health-repair", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, "Maintenance", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(name, StudentUpdatePhaseTimingStore.DirectoryName, StringComparison.OrdinalIgnoreCase) ||
+                   Regex.IsMatch(name, @"^student-update-[0-9a-f]{32}$",
+                       RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        var escapedHash = Regex.Escape(hash);
+        var identity = Regex.Escape(StudentAgentIdentityKeyStore.FileName);
+        return string.Equals(name, "agent-" + hash + ".json", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, StudentAgentIdentityKeyStore.FileName, StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "student-update-replay.json", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "edge-policy-refresh.json", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "health-repair-ledger.json", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "usage-installation-id", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "usage-installation-id.last-hkt-day", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "agent-startup.log", StringComparison.OrdinalIgnoreCase) ||
+               string.Equals(name, "agent-runtime.log", StringComparison.OrdinalIgnoreCase) ||
+               Regex.IsMatch(name, "^agent-" + escapedHash + @"\.json\.teacher-channel-status\.json$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               Regex.IsMatch(name, "^agent-" + escapedHash + @"\.json\.teacher-channel-status\.json\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               Regex.IsMatch(name, "^agent-" + escapedHash + @"\.json\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               Regex.IsMatch(name, "^" + identity + @"\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               Regex.IsMatch(name, @"^edge-policy-refresh\.json\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+               Regex.IsMatch(name, @"^health-repair-ledger\.json\.tmp-[0-9a-f]{32}$",
+                   RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
     }
 
     [SupportedOSPlatform("windows")]
@@ -4253,6 +4284,29 @@ public static class WebsitePolicyAgentInstaller
                 $"{details}{Environment.NewLine}");
         }
         catch (Exception logWriteException) when (logWriteException is IOException or UnauthorizedAccessException or ArgumentException) { }
+    }
+
+    /// <summary>
+    /// Records a one-line operational note without an exception. Used where the Agent has a
+    /// diagnostic string from a local component (for example the InputGuard pipe client) but the
+    /// signed status protocol has no field to carry it to the teacher.
+    /// </summary>
+    public static void ReportAgentOperationNote(string configPath, string operation, string detail)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(detail)) return;
+            var directory = Path.GetDirectoryName(Path.GetFullPath(configPath));
+            if (directory is null || !Directory.Exists(directory) ||
+                string.IsNullOrWhiteSpace(operation) || operation.Length > 64 ||
+                operation.Any(char.IsControl)) return;
+            if (detail.Length > 2000) detail = detail[..2000] + "…";
+            detail = new string(detail.Where(character => !char.IsControl(character) || character == '\t').ToArray());
+            AppendBoundedAgentLog(Path.Combine(directory, "agent-runtime.log"),
+                $"{DateTimeOffset.UtcNow:O} note operation={operation} {detail}{Environment.NewLine}");
+        }
+        catch (Exception logWriteException) when (logWriteException is IOException or UnauthorizedAccessException or
+                                                       ArgumentException) { }
     }
 
     public static void ReportAgentCompatibilityMigrationFailure(string configPath, Exception exception)
@@ -4756,7 +4810,7 @@ public sealed class WebsitePolicyAgent
         var classroomStatus = new ClassroomStatusAgentState();
         var classroomEvents = new ClassroomEventGrantState();
         var edgeApplyResults = new EdgeWebsitePolicyApplyResultState();
-        var inputGuardState = new StudentInputGuardAgentState(agentIdentityKey);
+        var inputGuardState = new StudentInputGuardAgentState(agentIdentityKey, configPath);
         using var listener = new HttpListener();
         listener.Prefixes.Add(ListenPrefix);
         listener.Start();
@@ -4784,6 +4838,42 @@ public sealed class WebsitePolicyAgent
         }, CancellationToken.None);
         using var expiryTimer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         var expiryTicks = 0;
+        // Name and address layers cannot stop a client that resolves on its own and speaks QUIC.
+        // This watcher closes the matching entertainment client while a restricting policy holds it.
+        _ = Task.Run(() => ClassroomAppSuppression.RunAsync(config.CampusId, shutdown.Token),
+            CancellationToken.None);
+        // Replace a student-token Guard (which answers the pipe but cannot block input) with a SYSTEM
+        // one as early as possible, instead of waiting for the first lock attempt to fail with 5.
+        try
+        {
+            InteractiveGuardLauncher.TryLaunchInActiveSessions(
+                StudentInputGuardIpcClient.GetGuardExecutablePath(), restartUnresponsive: false,
+                out var guardLaunch);
+            if (!string.IsNullOrWhiteSpace(guardLaunch))
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "guard-launch", guardLaunch);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              System.ComponentModel.Win32Exception or
+                                              System.Security.SecurityException or NotSupportedException)
+        {
+            WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "guard-launch",
+                "启动 Guard 的兜底路径失败：" + exception.Message);
+        }
+        // Restore a persisted keyboard/mouse lock after a student reboot. The Agent owns this lease
+        // itself, so the lock survives restarts even though the teacher's renewal loop does not.
+        _ = Task.Run(async () =>
+        {
+            try { await inputGuardState.RestorePersistedIntentAsync(config.CampusId, shutdown.Token)
+                    .ConfigureAwait(false); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                                  InvalidDataException or NotSupportedException or
+                                                  System.Security.SecurityException or OperationCanceledException)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "input-guard-intent",
+                    "恢复持久化键鼠锁定失败：" + exception.Message);
+            }
+        }, CancellationToken.None);
         var nextRequest = listener.GetContextAsync();
         var nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         while (!shutdown.IsCancellationRequested)
@@ -5325,12 +5415,14 @@ public sealed class WebsitePolicyAgent
                 StudentInputGuardReceipt receipt;
                 try
                 {
-                    if (command.Action is StudentInputGuardAction.Activate or StudentInputGuardAction.Renew)
-                    {
-                        var website = WebsitePolicyRegistryStore.ReadStatus(config.CampusId, now);
-                        if (website.Mode != WebsitePolicyMode.Disabled)
-                            throw new InvalidDataException("学生机已有网站限制；为避免课堂模式叠加，没有启动或续租键鼠锁定。");
-                    }
+                    // Classroom website restriction and per-device keyboard/mouse lock are independent
+                    // controls. Since the per-device redesign the teacher deliberately keeps an active
+                    // website policy while locking one machine ("现有网站策略保持不变"). A legacy check
+                    // here used to reject Activate/Renew whenever any website policy was present, so a
+                    // class that pushed a website block first could never acquire or renew an input
+                    // lease - the symptom was "租约不匹配" followed by a 20-second expiry. Do not gate
+                    // one control on the other; the Guard owns its own lease lifetime and both controls
+                    // already expire and release independently.
                     receipt = await inputGuardState.ExecuteAsync(command, now, cancellationToken)
                         .ConfigureAwait(false);
                 }
@@ -5462,7 +5554,8 @@ public sealed class WebsitePolicyAgent
                         inputGuardSummary, StudentAgentBootIdentity.GetCurrentBootId(),
                         website.HostsRevision, website.HostsError,
                         website.NetworkBlockRevision, website.NetworkBlockAddresses, website.NetworkBlockError,
-                        website.SecureDnsConflict);
+                        website.SecureDnsConflict, website.ResolverLocked, website.ResolverLockCidrs,
+                        website.DohBlockEndpoints, website.ResolverLockServers, website.ResolverLockError);
                     var signedSummary = StudentAgentResponseCryptography.Sign(summary, agentIdentityKey);
                     await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedSummary),
                         "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
@@ -5909,6 +6002,16 @@ public sealed class WebsitePolicyAgent
                 edgeExecutionMode = WebsitePolicyRegistryStore.ReadEdgeExecutionMode(config.CampusId);
                 appliedRevision = policy.Revision;
                 appliedMode = policy.Mode;
+                // A policy that names Douyin must bite on the client that is already running, not
+                // only on the next browser request. Close it before acknowledging the command.
+                try { ClassroomAppSuppression.Sync(config.CampusId); ClassroomAppSuppression.Sweep(); }
+                catch (Exception exception) when (exception is InvalidOperationException or
+                                                      System.ComponentModel.Win32Exception or
+                                                      UnauthorizedAccessException or NotSupportedException)
+                {
+                    // The watcher retries on its next tick; a policy acknowledgement must not fail
+                    // because one process could not be closed right now.
+                }
             }
             finally { ApplyGate.Release(); }
             if (edgeExecutionMode == EdgeWebsitePolicyExecutionMode.LegacyRegistry && edgePolicyChanged)
@@ -6302,7 +6405,21 @@ public static class WebsitePolicyRegistryStore
                 ? networkAddresses
                 : null,
             key.GetValue("NetworkBlockError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
-            WebsitePolicyRegistryTransactions.SecureDnsConflict(snapshot));
+            WebsitePolicyRegistryTransactions.SecureDnsConflict(snapshot),
+            key.GetValue("ResolverLockCidrs", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                is int resolverCidrs
+                ? resolverCidrs > 0
+                : null,
+            key.GetValue("ResolverLockCidrs", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                is int resolverCidrCount
+                ? resolverCidrCount
+                : null,
+            key.GetValue("DohBlockEndpoints", null, RegistryValueOptions.DoNotExpandEnvironmentNames)
+                is int dohEndpoints
+                ? dohEndpoints
+                : null,
+            key.GetValue("ResolverLockServers", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string,
+            key.GetValue("ResolverLockError", null, RegistryValueOptions.DoNotExpandEnvironmentNames) as string);
 
         DateTimeOffset? ReadUtc(string valueName)
         {
@@ -6538,7 +6655,10 @@ public static class WebsitePolicyRegistryStore
         var allowedAgentValues = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             { "CampusId", "Revision", "Mode", "ExpiresUtc", "ExpiredUtc", "EdgeExecutionMode",
                 "PolicyDocumentJson", "EdgeExtensionId", "HostsRevision", "HostsError",
-                "NetworkBlockRevision", "NetworkBlockAddresses", "NetworkBlockError", "PendingTransactionJson" };
+                "NetworkBlockRevision", "NetworkBlockAddresses", "NetworkBlockError",
+                "BlockedAddressRoutes",
+                "ResolverLockCidrs", "DohBlockEndpoints", "ResolverLockServers", "ResolverLockError",
+                "PendingTransactionJson" };
         if (agentKey.GetValueNames().Any(name => !allowedAgentValues.Contains(name)) ||
             agentKey.GetSubKeyNames().Any(name => !string.Equals(name, "Managed", StringComparison.OrdinalIgnoreCase)))
             throw new IOException("网站策略代理注册表包含未知值或子项；卸载没有修改浏览器策略。" );
@@ -6772,7 +6892,11 @@ public static class WebsitePolicyRegistryStore
         var blocked = document.Mode is WebsitePolicyMode.Blocklist or WebsitePolicyMode.Combined
             ? document.Domains.ToArray()
             : Array.Empty<string>();
-        if (blocked.Length == 0)
+        // An allowlist has no addresses to refuse: what it needs is the resolver lockdown, because
+        // "only these sites" is decided by the answer the machine gets. Applying the lockdown here
+        // means a student who switches to a public resolver cannot resolve around the allowlist
+        // either, even though the address block stays empty until reverse enforcement exists.
+        if (blocked.Length == 0 && document.Mode is not WebsitePolicyMode.Allowlist)
         {
             ClearNetworkBlock();
             return;
@@ -6783,11 +6907,12 @@ public static class WebsitePolicyRegistryStore
         var exempt = document.Mode == WebsitePolicyMode.Combined
             ? (document.AllowedDomains ?? Array.Empty<string>()).ToArray()
             : Array.Empty<string>();
-        ApplyNetworkBlockInBackground(document.Revision, blocked, exempt);
+        ApplyNetworkBlockInBackground(document.Revision, blocked, exempt,
+            restrictAllPublicResolvers: document.Mode == WebsitePolicyMode.Allowlist);
     }
 
     private static void ApplyNetworkBlockInBackground(long revision, IReadOnlyList<string> blocked,
-        IReadOnlyList<string> exempt)
+        IReadOnlyList<string> exempt, bool restrictAllPublicResolvers)
     {
         _ = Task.Run(async () =>
         {
@@ -6799,6 +6924,30 @@ public static class WebsitePolicyRegistryStore
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(90));
                 var plan = await WebsiteNetworkBlockPlanner.BuildAsync(blocked, exempt,
                     new SystemWebsiteAddressResolver(), timeout.Token).ConfigureAwait(false);
+                // The lockdown is built from the machine's current resolvers and is independent of
+                // whether a single blocked name resolved; a slow resolver must not leave the DNS
+                // route open.
+                var servers = WebsiteDnsLockdown.ReadConfiguredServers();
+                var lockdown = WebsiteDnsLockdown.Build(servers, restrictAllPublicResolvers);
+                // Closing port 53 to the rest of the internet is only safe while the resolver we
+                // left open really answers. A stale list, or a server that is only reachable from
+                // another subnet, would otherwise leave the machine unable to resolve anything -
+                // and a machine that resolves nothing looks like "each site I type is broken"
+                // rather than a policy. Probe first, and stay on DoH-only when no resolver answers.
+                if (lockdown.ResolverAddresses.Count > 0)
+                {
+                    using var probe = CancellationTokenSource.CreateLinkedTokenSource(timeout.Token);
+                    probe.CancelAfter(TimeSpan.FromSeconds(5));
+                    if (!await WebsiteDnsLockdown.AnyResolverRespondsAsync(servers,
+                            TimeSpan.FromSeconds(3), probe.Token).ConfigureAwait(false))
+                        lockdown = lockdown with
+                        {
+                            ResolverAddresses = Array.Empty<string>(),
+                            Error = "本机 DNS 服务器没有响应查询，已暂缓 53 端口强制（避免断网）；" +
+                                    "DoH 端点仍然封锁。请检查学生机的 DNS 设置。"
+                        };
+                }
+                plan = plan with { DnsLockdown = lockdown };
                 var result = WebsiteNetworkBlock.Apply(revision, plan);
                 // A domain that never answered is left out of the plan rather than failing the run,
                 // so a slow resolver must be visible as a partial block instead of a clean success.
@@ -6891,6 +7040,32 @@ public static class WebsitePolicyRegistryStore
                 key.SetValue("NetworkBlockError", message.Length <= 512 ? message : message[..512],
                     RegistryValueKind.String);
             }
+
+            // The resolver lockdown is reported on its own because it can be in force while the
+            // address block is empty (allowlist) and can fail while the address block still works.
+            if (result.ResolverLocked)
+            {
+                key.SetValue("ResolverLockCidrs", result.ResolverCidrCount, RegistryValueKind.DWord);
+                key.SetValue("DohBlockEndpoints", result.DohEndpointCount, RegistryValueKind.DWord);
+                if (result.AllowedServers is { Count: > 0 } servers)
+                {
+                    var text = string.Join(',', servers);
+                    key.SetValue("ResolverLockServers", text.Length <= 512 ? text : text[..512],
+                        RegistryValueKind.String);
+                }
+                else key.DeleteValue("ResolverLockServers", throwOnMissingValue: false);
+            }
+            else
+            {
+                key.DeleteValue("ResolverLockCidrs", throwOnMissingValue: false);
+                key.DeleteValue("DohBlockEndpoints", throwOnMissingValue: false);
+                key.DeleteValue("ResolverLockServers", throwOnMissingValue: false);
+            }
+            var lockError = result.ResolverLockError;
+            if (lockError is { Length: > 0 })
+                key.SetValue("ResolverLockError", lockError.Length <= 512 ? lockError : lockError[..512],
+                    RegistryValueKind.String);
+            else key.DeleteValue("ResolverLockError", throwOnMissingValue: false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               System.Security.SecurityException) { }
