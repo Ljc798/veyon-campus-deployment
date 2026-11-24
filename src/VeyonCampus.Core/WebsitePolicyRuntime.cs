@@ -912,14 +912,27 @@ public static class WebsitePolicyAgentInstaller
         {
             VerifyAgentInstallationRootsAreSafe();
             VerifyAgentConfigurationRootIsSafe();
-            if (IsScheduledTaskPresent() || HasStudentUpdateRecoveryTasks() ||
-                GetPreviousAgentExecutablePaths().Any(File.Exists) ||
-                WebsitePolicyFirewall.HasNamedRule() || HasProductUrlReservation() || WebsitePolicyRegistryStore.HasAgentState() ||
-                WindowsStudentSystemPolicyAgent.HasAnyActiveState() || WindowsApplicationPolicyStateStore.HasAnyActiveState() ||
-                WindowsStudentSystemPolicyStateStore.HasAnyStoredData() || WindowsApplicationPolicyStateStore.HasAnyStoredData() ||
-                WindowsDefaultWallpaper.HasInstalledAssets() || HasAnyProgramDataProductDirectory() ||
-                FindAgentConfigurationFiles().Count > 0 || HasAnyAgentHealthResponse())
-                return new(step, ExecutionPlan.NeedsReview, "仍发现网站策略代理任务、文件、配置、策略状态、壁纸资源、防火墙规则或运行中的 Agent。" );
+            // Name every leftover instead of a single catch-all sentence: uninstall regressions are
+            // only actionable when the failing resource is known.
+            var leftovers = new List<string>();
+            if (IsScheduledTaskPresent()) leftovers.Add("开机计划任务");
+            if (HasStudentUpdateRecoveryTasks()) leftovers.Add("学生端更新恢复任务");
+            if (GetPreviousAgentExecutablePaths().Any(File.Exists)) leftovers.Add("旧版 Agent 可执行文件");
+            if (WebsitePolicyFirewall.HasNamedRule()) leftovers.Add("防火墙规则");
+            if (HasProductUrlReservation()) leftovers.Add("HTTP URL 保留");
+            if (WebsitePolicyRegistryStore.HasAgentState()) leftovers.Add("Agent 注册表状态");
+            if (WindowsStudentSystemPolicyAgent.HasAnyActiveState()) leftovers.Add("学生系统策略状态");
+            if (WindowsApplicationPolicyStateStore.HasAnyActiveState()) leftovers.Add("应用策略状态");
+            if (WindowsStudentSystemPolicyStateStore.HasAnyStoredData()) leftovers.Add("学生系统策略存储");
+            if (WindowsApplicationPolicyStateStore.HasAnyStoredData()) leftovers.Add("应用策略存储");
+            if (WindowsDefaultWallpaper.HasInstalledAssets()) leftovers.Add("壁纸资源");
+            if (HasAnyProgramDataProductDirectory()) leftovers.Add("ProgramData 产品目录");
+            if (FindAgentConfigurationFiles().Count > 0) leftovers.Add("Agent 配置文件");
+            if (HasAnyAgentHealthResponse()) leftovers.Add("仍在响应的 Agent");
+            if (leftovers.Count > 0)
+                return new(step, ExecutionPlan.NeedsReview,
+                    "仍发现网站策略代理任务、文件、配置、策略状态、壁纸资源、防火墙规则或运行中的 Agent。" +
+                    $"（具体残留：{string.Join("、", leftovers)}）" );
             return new(step, ExecutionPlan.Succeeded, "网站策略代理已卸载；本机不会再接收或应用该校区的网站策略。" );
         }
         catch (Exception exception)
