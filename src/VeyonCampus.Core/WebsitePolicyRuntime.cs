@@ -6626,6 +6626,10 @@ public static class WebsitePolicyRegistryStore
         WebsitePolicyRegistryTransactions.Commit(backend, WebsitePolicyRegistryTransactionOperation.Remove, before, after);
         ClearHostsFallback();
         ClearNetworkBlock();
+        // Committing an empty snapshot clears the values but leaves the key behind, and the removal
+        // verification treats any surviving key as leftover agent state. Drop the now-empty key so a
+        // completed uninstall really looks uninstalled.
+        RemoveEmptyAgentState();
     }
 
     private static WebsitePolicyBrowserRegistrySnapshot RemovedOwnedBrowser(
