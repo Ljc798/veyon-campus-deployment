@@ -52,25 +52,29 @@
         ColumnSpacing="10" RowSpacing="8">
     <!-- Status and classroom actions -->
     <Border Grid.Row="0" Grid.ColumnSpan="2" Classes="card" Padding="12,9">
-      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="15" VerticalAlignment="Center">
-        <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <TextBlock Text="学生电脑" Classes="muted" FontSize="12" />
+      <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto" ColumnSpacing="18" VerticalAlignment="Center">
+        <StackPanel Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <TextBlock Text="学生电脑" Classes="muted" FontSize="12" VerticalAlignment="Center" />
           <TextBlock Text="{Binding ClassroomScreenWall.Tiles.Count}"
-                     Foreground="{DynamicResource Teacher.Color.Info}" FontSize="18" FontWeight="Bold" />
+                     Foreground="{DynamicResource Teacher.Color.Info}" FontSize="15"
+                     FontWeight="SemiBold" VerticalAlignment="Center" />
         </StackPanel>
-        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <TextBlock Text="已选设备" Classes="muted" FontSize="12" />
-          <TextBlock Text="{Binding InputLockSelectedCount}" FontWeight="SemiBold" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <TextBlock Text="已选设备" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding InputLockSelectedCount}" FontSize="13"
+                     FontWeight="SemiBold" VerticalAlignment="Center" />
         </StackPanel>
-        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <TextBlock Text="任务待核验" Classes="muted" FontSize="12" />
-          <TextBlock Text="{Binding ClassroomOverviewPendingCount}"
-                     Foreground="{DynamicResource Teacher.Color.Warning}" FontWeight="SemiBold" />
+        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <TextBlock Text="任务待核验" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding ClassroomOverviewPendingCount}" FontSize="13"
+                     Foreground="{DynamicResource Teacher.Color.Warning}"
+                     FontWeight="SemiBold" VerticalAlignment="Center" />
         </StackPanel>
-        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <TextBlock Text="控制已回执" Classes="muted" FontSize="12" />
-          <TextBlock Text="{Binding ClassroomOverviewReceiptCount}"
-                     Foreground="{DynamicResource Teacher.Color.Success}" FontWeight="SemiBold" />
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+          <TextBlock Text="控制已回执" Classes="muted" FontSize="12" VerticalAlignment="Center" />
+          <TextBlock Text="{Binding ClassroomOverviewReceiptCount}" FontSize="13"
+                     Foreground="{DynamicResource Teacher.Color.Success}"
+                     FontWeight="SemiBold" VerticalAlignment="Center" />
         </StackPanel>
         <StackPanel Grid.Column="4" Spacing="3" VerticalAlignment="Center">
           <TextBlock Text="{Binding ClassroomRoomContextSummary}" FontWeight="SemiBold"
@@ -93,38 +97,54 @@
 
     <!-- Shared search, view, grid, and density controls -->
     <Border Grid.Row="1" Grid.ColumnSpan="2" Classes="card" Padding="8">
-      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-        <StackPanel Orientation="Horizontal" Spacing="7" VerticalAlignment="Center">
-          <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="9" Padding="3">
-            <StackPanel Orientation="Horizontal" Spacing="2">
-              <Button Content="屏幕墙" Classes="wall-tab" Classes.active="{Binding IsClassroomScreenWallMode}"
-                      Tag="ScreenWall" Click="SwitchWorkspace" ToolTip.Tip="按座位查看学生实时画面" />
-              <Button Content="座位图" Classes="wall-tab" Classes.active="{Binding IsClassroomSeatMapMode}"
-                      Tag="SeatMap" Click="SwitchWorkspace" ToolTip.Tip="只读查看真实座位行列和设备状态" />
-              <Button Content="设备列表" Classes="wall-tab" Classes.active="{Binding IsClassroomListMode}"
-                      Tag="DeviceList" Click="SwitchWorkspace" ToolTip.Tip="搜索、筛选、多选和排查设备" />
-            </StackPanel>
-          </Border>
-          <TextBox Width="210" PlaceholderText="搜索姓名、电脑、座位或 Host"
-                   Text="{Binding ClassroomSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-          <ComboBox Width="122" ItemsSource="{Binding ClassroomStatusFilterOptions}"
-                    SelectedItem="{Binding ClassroomStatusFilter, Mode=TwoWay}" />
-          <ComboBox Width="132" ItemsSource="{Binding ClassroomSortOptions}"
-                    SelectedItem="{Binding ClassroomSortOrder, Mode=TwoWay}" />
-          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-            <TextBlock Text="列数" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-            <ComboBox Width="68" ItemsSource="{Binding ClassroomColumnOptions}"
-                      SelectedItem="{Binding ClassroomScreenWall.GridColumns, Mode=TwoWay}" />
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto,Auto" ColumnSpacing="8" VerticalAlignment="Center">
+        <Border Background="{DynamicResource Teacher.Color.SurfaceSubtle}" CornerRadius="9" Padding="3">
+          <StackPanel Orientation="Horizontal" Spacing="2">
+            <Button Content="屏幕墙" Classes="wall-tab" Classes.active="{Binding IsClassroomScreenWallMode}"
+                    Tag="ScreenWall" Click="SwitchWorkspace" ToolTip.Tip="按座位查看学生实时画面" />
+            <Button Content="座位图" Classes="wall-tab" Classes.active="{Binding IsClassroomSeatMapMode}"
+                    Tag="SeatMap" Click="SwitchWorkspace" ToolTip.Tip="只读查看真实座位行列和设备状态" />
+            <Button Content="设备列表" Classes="wall-tab" Classes.active="{Binding IsClassroomListMode}"
+                    Tag="DeviceList" Click="SwitchWorkspace" ToolTip.Tip="搜索、筛选、多选和排查设备" />
           </StackPanel>
-          <StackPanel Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
-            <TextBlock Text="缩略图" Classes="muted" FontSize="12" VerticalAlignment="Center" />
-            <ComboBox Width="76" ItemsSource="{Binding ClassroomThumbnailSizeOptions}"
-                      SelectedItem="{Binding ClassroomScreenWall.ThumbnailSize, Mode=TwoWay}" />
+        </Border>
+        <TextBox Grid.Column="1" Width="236"
+                 PlaceholderText="搜索姓名、电脑、座位或 Host"
+                 Text="{Binding ClassroomSearchText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+        <ComboBox Grid.Column="3" Width="100" ItemsSource="{Binding ClassroomStatusFilterOptions}"
+                  SelectedItem="{Binding ClassroomStatusFilter, Mode=TwoWay}"
+                  ToolTip.Tip="按连接状态筛选" />
+        <ComboBox Grid.Column="4" Width="108" ItemsSource="{Binding ClassroomSortOptions}"
+                  SelectedItem="{Binding ClassroomSortOrder, Mode=TwoWay}"
+                  ToolTip.Tip="卡片排列顺序" />
+        <Button Grid.Column="5" Classes="secondary" Padding="10,6"
+                ToolTip.Tip="列数、缩略图大小与紧凑模式">
+          <StackPanel Orientation="Horizontal" Spacing="5">
+            <TextBlock Text="视图" VerticalAlignment="Center" />
+            <Path Data="M4,7 L8,11 L12,7" Width="10" Height="8" Stretch="Uniform"
+                  Fill="Transparent" Stroke="{DynamicResource Teacher.Color.Muted}"
+                  StrokeThickness="1.6" StrokeLineCap="Round" VerticalAlignment="Center" />
           </StackPanel>
-          <ToggleSwitch Content="紧凑" IsChecked="{Binding ClassroomScreenWall.CompactMode, Mode=TwoWay}"
-                        VerticalAlignment="Center" ToolTip.Tip="减少卡片间距和辅助文字" />
-        </StackPanel>
-      </ScrollViewer>
+          <Button.Flyout>
+            <Flyout Placement="BottomEdgeAlignedRight">
+              <StackPanel Width="196" Spacing="12">
+                <StackPanel Spacing="4">
+                  <TextBlock Text="每行列数" Classes="muted" FontSize="11" />
+                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ClassroomColumnOptions}"
+                            SelectedItem="{Binding ClassroomScreenWall.GridColumns, Mode=TwoWay}" />
+                </StackPanel>
+                <StackPanel Spacing="4">
+                  <TextBlock Text="缩略图大小" Classes="muted" FontSize="11" />
+                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ClassroomThumbnailSizeOptions}"
+                            SelectedItem="{Binding ClassroomScreenWall.ThumbnailSize, Mode=TwoWay}" />
+                </StackPanel>
+                <CheckBox Content="紧凑模式" IsChecked="{Binding ClassroomScreenWall.CompactMode, Mode=TwoWay}"
+                          ToolTip.Tip="减少卡片间距和辅助文字" />
+              </StackPanel>
+            </Flyout>
+          </Button.Flyout>
+        </Button>
+      </Grid>
     </Border>
 
     <!-- Main workspace: the three views share TargetId, selection, and live device state. -->
@@ -482,21 +502,25 @@
                   Click="ToggleTaskPanel" FontWeight="SemiBold" />
           <TextBlock Grid.Column="1" Text="{Binding ClassroomTaskSummary}" Classes="muted"
                      VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-            <TextBlock Text="执行中" Classes="muted" FontSize="11" />
-            <TextBlock Text="{Binding ClassroomTaskInProgressCount}" FontWeight="SemiBold" />
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="执行中" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding ClassroomTaskInProgressCount}" FontSize="12"
+                       FontWeight="SemiBold" VerticalAlignment="Center" />
           </StackPanel>
-          <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="4">
-            <TextBlock Text="成功" Classes="muted" FontSize="11" />
-            <TextBlock Text="{Binding ClassroomTaskSuccessCount}" Foreground="{DynamicResource Teacher.Color.Success}" />
+          <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="成功" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding ClassroomTaskSuccessCount}" FontSize="12"
+                       Foreground="{DynamicResource Teacher.Color.Success}" VerticalAlignment="Center" />
           </StackPanel>
-          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4">
-            <TextBlock Text="失败" Classes="muted" FontSize="11" />
-            <TextBlock Text="{Binding ClassroomTaskFailureCount}" Foreground="{DynamicResource Teacher.Color.Danger}" />
+          <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="失败" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding ClassroomTaskFailureCount}" FontSize="12"
+                       Foreground="{DynamicResource Teacher.Color.Danger}" VerticalAlignment="Center" />
           </StackPanel>
-          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="4">
-            <TextBlock Text="待核验" Classes="muted" FontSize="11" />
-            <TextBlock Text="{Binding ClassroomTaskPendingCount}" Foreground="{DynamicResource Teacher.Color.Warning}" />
+          <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="5" VerticalAlignment="Center">
+            <TextBlock Text="待核验" Classes="muted" FontSize="11" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding ClassroomTaskPendingCount}" FontSize="12"
+                       Foreground="{DynamicResource Teacher.Color.Warning}" VerticalAlignment="Center" />
           </StackPanel>
         </Grid>
         <ScrollViewer Grid.Row="1" MaxHeight="175" VerticalScrollBarVisibility="Auto"

@@ -175,7 +175,8 @@ private static readonly string[] DefaultBlockedDomains =
 
     private static readonly string[] DefaultAllowedDomains =
     [
-        "smartedu.cn", "icourse163.org", "xuetangx.com", "www.bdfjiaoyu.com"
+        "smartedu.cn", "icourse163.org", "xuetangx.com", "www.bdfjiaoyu.com",
+        "super-zxt-student.chuangke100.com"
     ];
     private static readonly JsonSerializerOptions Options = new()
     {

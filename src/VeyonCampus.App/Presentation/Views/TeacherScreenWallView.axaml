@@ -85,9 +85,6 @@
                               IsVisible="{Binding HasFrame}">
                         <TextBlock Text="{Binding FrameInfoText}" Foreground="#D6E4EC" FontSize="10" />
                       </Border>
-                      <Button Content="放大" Classes="secondary" FontSize="10" Padding="7,2"
-                              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="5"
-                              Click="OpenDetail" ToolTip.Tip="打开独立窗口查看这台电脑的实时画面" />
                     </Grid>
                   </Border>
 
