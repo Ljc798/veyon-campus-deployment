@@ -108,7 +108,9 @@ internal static class BlockedAddressRoute
     /// <returns>How many routes were removed.</returns>
     internal static int RemoveAll()
     {
-        using var key = OpenStateKey(writable: true);
+        // Open, never create: this runs during uninstall, and CreateSubKey would resurrect the very
+        // state key the removal step just deleted.
+        using var key = OpenStateKey(writable: true, create: false);
         return key is null ? 0 : RemoveRecorded(key);
     }
 
@@ -220,14 +222,15 @@ internal static class BlockedAddressRoute
         }
     }
 
-    private static RegistryKey? OpenStateKey(bool writable)
+    private static RegistryKey? OpenStateKey(bool writable, bool create = true)
     {
         try
         {
             using var root = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
-            return writable
+            if (!writable) return root.OpenSubKey(StateKey, writable: false);
+            return create
                 ? root.CreateSubKey(StateKey, writable: true)
-                : root.OpenSubKey(StateKey, writable: false);
+                : root.OpenSubKey(StateKey, writable: true);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
                                               System.Security.SecurityException)

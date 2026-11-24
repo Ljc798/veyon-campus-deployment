@@ -1122,6 +1122,11 @@ public static class WebsitePolicyAgentInstaller
             WindowsDefaultWallpaper.RemoveInstalledAssetsForUninstall();
             RemoveEmptyProgramDataProductRoot();
 
+            // Later cleanup steps touch the same registry key (routes, firewall bookkeeping). Re-check
+            // emptiness after all of them so a resurrected key cannot masquerade as leftover state.
+            stage = "确认注册表状态已清空";
+            WebsitePolicyRegistryStore.RemoveEmptyAgentState();
+
             stage = "复核卸载结果";
             var readback = VerifyAbsent();
             if (readback.Status != ExecutionPlan.Succeeded)
