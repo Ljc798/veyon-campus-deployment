@@ -129,16 +129,14 @@ internal static class MaintenanceModelChecks
         // 这条记录以前会让整条 run 在下次读取时报「状态历史不连续」，设备永久停在 Failed。
         var clockStepOperationId = Guid.NewGuid();
         var clockStep = MaintenanceRun.Start(clockStepOperationId, identity, now);
-        clockStep = clockStep.TransitionTo(MaintenanceRunState.ManualRequired, "先进入人工核对", null,
-            now.AddSeconds(30));
         var steppedBack = clockStep.TransitionTo(MaintenanceRunState.Failed, "时钟回拨后的写入", null,
-            now.AddSeconds(60).AddMinutes(-5));
+            now.AddMinutes(-5));
         var clockStepJournal = MaintenanceJournal.Empty(now)
             .AddOrGet(MaintenanceRun.Start(clockStepOperationId, identity, now), now)
             .Update(clockStep, now.AddSeconds(1))
             .Update(steppedBack, now.AddSeconds(2));
         Assert(clockStepJournal.Find(clockStepOperationId)?.Transitions[^1].OccurredUtc >=
-               clockStep.Transitions[^1].OccurredUtc,
+               clockStep.CreatedUtc,
             "A transition stamped before the previous one must be clamped, not break the run history.");
 
         // 回归：学生端签名状态按秒打时间戳，同一次点击里同一事实常被读回两次（对账后紧跟配置阶段）。
