@@ -124,6 +124,32 @@ internal static class MaintenanceModelChecks
         Assert(reloadJournal.Find(reloadOperationId)!.Transitions[0].Evidence ==
                reloadedJournal.Find(reloadOperationId)!.Transitions[0].Evidence,
             "Maintenance evidence must compare by value across journal reloads.");
+
+        // 回归：学生端签名状态按秒打时间戳，同一次点击里同一事实常被读回两次（对账后紧跟配置阶段）。
+        // 过去第二次读回因「时间戳相同」被判为非单调延续，整批设备直接失败。
+        var sameStampOperationId = Guid.NewGuid();
+        var sameStampVersions = new MaintenanceComponentVersions("1.1.45", "0.4.57", "0.4.57", null);
+        var sameStamp = now.AddSeconds(60);
+        var sameStampJournal = MaintenanceJournal.Empty(now)
+            .AddOrGet(MaintenanceRun.Start(sameStampOperationId, identity, now), now);
+        MaintenanceRun VerifiedFact(string? transactionState, DateTimeOffset updated) =>
+            new(sameStampOperationId, identity, MaintenanceRunState.Discovered, null, null, null, null, now,
+                updated, Array.Empty<MaintenanceTransition>(), sameStampVersions, transactionState, sameStamp);
+        sameStampJournal = sameStampJournal.Update(VerifiedFact("inProgress", now.AddSeconds(1)), now.AddSeconds(1));
+        sameStampJournal = sameStampJournal.Update(VerifiedFact("committed", now.AddSeconds(2)), now.AddSeconds(2));
+        sameStampJournal = sameStampJournal.Update(VerifiedFact("committed", now.AddSeconds(3)), now.AddSeconds(3));
+        Assert(sameStampJournal.Find(sameStampOperationId)?.VerifiedUpdateTransactionState == "committed",
+            "An identical signed status re-read within the same stamp must be accepted, not rejected as non-monotonic.");
+        var backward = VerifiedFact("initial", now.AddSeconds(4));
+        try
+        {
+            _ = sameStampJournal.Update(backward, now.AddSeconds(4));
+            throw new InvalidOperationException("A same-stamp rewrite back to another transaction state must be rejected.");
+        }
+        catch (InvalidDataException exception) when (
+            exception.Message.Contains("单调延续", StringComparison.Ordinal))
+        {
+        }
     }
 
     private static MaintenanceEvidence Evidence(string identityFingerprint, string kind, DateTimeOffset time,

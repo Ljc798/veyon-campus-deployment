@@ -87,19 +87,34 @@ public sealed class MaintenanceJournal
 
     /// <summary>
     /// The student signs its status with a coarser stamp than the transaction state machine: the
-    /// "inProgress" observation and the "committed" observation that follows it can carry the same
-    /// stamp. Refusing that replacement stranded the run - and every later click for that device was
-    /// rejected with "该设备已有活动维护操作" until the journal file was edited by hand. A forward
-    /// observation is therefore allowed to replace an equal-stamped "inProgress" one; anything else
-    /// with the same stamp stays a rewrite of recorded history and is still rejected.
+    /// "inProgress" observation, the "committed" observation that follows it, and a repeated read of
+    /// that same committed fact can all carry one stamp. Refusing them stranded the run - and every
+    /// later click for that device was rejected with "该设备已有活动维护操作" until the journal file
+    /// was edited by hand. A forward observation, or a byte-identical re-record of the same verified
+    /// fact, is therefore allowed to replace an equal-stamped one; anything else with the same stamp
+    /// stays a rewrite of recorded history and is still rejected.
     /// </summary>
-    private static bool IsForwardTransactionObservation(MaintenanceRun existing, MaintenanceRun replacement)
+    private static bool IsAcceptableSameStampUpdate(MaintenanceRun existing, MaintenanceRun replacement)
     {
+        // Reading the same signed status twice inside one second is normal (reconcile right after the
+        // offer, then again for the configuration stage). Recording an identical fact again is not a
+        // rewrite of history, so it must not abort the whole batch with "不是当前操作的单调延续".
+        if (existing.VerifiedCurrentVersions == replacement.VerifiedCurrentVersions &&
+            string.Equals(existing.VerifiedUpdateTransactionState, replacement.VerifiedUpdateTransactionState,
+                StringComparison.Ordinal))
+            return true;
         if (!string.Equals(existing.VerifiedUpdateTransactionState, "inProgress", StringComparison.Ordinal))
             return false;
         return replacement.VerifiedUpdateTransactionState is "committed" or "rolledBack" or "notFound" or
             "needsReview" or "superseded";
     }
+
+    /// <summary>
+    /// Names the rule that rejected the update. The bare message forced support to read the journal by
+    /// hand every time this fired, so the detail now travels to the teacher UI.
+    /// </summary>
+    private static InvalidDataException NotMonotonic(string detail) =>
+        new("Maintenance journal 更新不是当前操作的单调延续（" + detail + "）。");
 
     public MaintenanceJournal Update(MaintenanceRun replacement, DateTimeOffset nowUtc)
     {
@@ -108,23 +123,31 @@ public sealed class MaintenanceJournal
         var index = Array.FindIndex(currentRuns, run => run.OperationId == replacement.OperationId);
         if (index < 0) throw new KeyNotFoundException("Maintenance operationId 不在 journal 中。");
         var existing = Runs[index];
-        if (existing.Device.Key != replacement.Device.Key || existing.CreatedUtc != replacement.CreatedUtc ||
-            existing.Transitions.Count > replacement.Transitions.Count ||
-            !existing.Transitions.SequenceEqual(replacement.Transitions.Take(existing.Transitions.Count)) ||
-            existing.Capabilities is not null && !string.Equals(existing.Capabilities.SignedResponseSha256,
-                replacement.Capabilities?.SignedResponseSha256, StringComparison.Ordinal) ||
-            existing.CurrentVersions is not null && existing.CurrentVersions != replacement.CurrentVersions ||
-            existing.AgentCommandId is not null && existing.AgentCommandId != replacement.AgentCommandId &&
-                !IsValidNextPhaseCommand(existing, replacement) ||
-            existing.VerifiedStatusUtc is not null &&
-            (replacement.VerifiedStatusUtc is null || replacement.VerifiedStatusUtc < existing.VerifiedStatusUtc) ||
-            existing.VerifiedStatusUtc is not null &&
+        if (existing.Device.Key != replacement.Device.Key || existing.CreatedUtc != replacement.CreatedUtc)
+            throw NotMonotonic("设备的固定身份或事务创建时间被改写");
+        if (existing.Transitions.Count > replacement.Transitions.Count ||
+            !existing.Transitions.SequenceEqual(replacement.Transitions.Take(existing.Transitions.Count)))
+            throw NotMonotonic("已记录的状态历史被改写或截断");
+        if (existing.Capabilities is not null && !string.Equals(existing.Capabilities.SignedResponseSha256,
+                replacement.Capabilities?.SignedResponseSha256, StringComparison.Ordinal))
+            throw NotMonotonic("签名能力集摘要与已记录的不一致");
+        if (existing.CurrentVersions is not null && existing.CurrentVersions != replacement.CurrentVersions)
+            throw NotMonotonic("事务中的组件版本快照被改写");
+        if (existing.AgentCommandId is not null && existing.AgentCommandId != replacement.AgentCommandId &&
+            !IsValidNextPhaseCommand(existing, replacement))
+            throw NotMonotonic("Agent 命令标识被替换，且不构成合法的下一阶段命令");
+        if (existing.VerifiedStatusUtc is not null &&
+            (replacement.VerifiedStatusUtc is null || replacement.VerifiedStatusUtc < existing.VerifiedStatusUtc))
+            throw NotMonotonic("签名状态时间倒流或丢失");
+        if (existing.VerifiedStatusUtc is not null &&
             existing.VerifiedStatusUtc == replacement.VerifiedStatusUtc &&
-            !IsForwardTransactionObservation(existing, replacement) ||
-            existing.VerifiedStatusUtc is null && replacement.VerifiedStatusUtc is null &&
-            (replacement.VerifiedCurrentVersions is not null || replacement.VerifiedUpdateTransactionState is not null) ||
-            existing.Plan is not null && !SameIntent(existing.Plan, replacement.Plan))
-            throw new InvalidDataException("Maintenance journal 更新不是当前操作的单调延续。");
+            !IsAcceptableSameStampUpdate(existing, replacement))
+            throw NotMonotonic("同一签名状态时间戳下改写了事务状态或版本读回");
+        if (existing.VerifiedStatusUtc is null && replacement.VerifiedStatusUtc is null &&
+            (replacement.VerifiedCurrentVersions is not null || replacement.VerifiedUpdateTransactionState is not null))
+            throw NotMonotonic("没有签名状态时间戳却写入了已核验事实");
+        if (existing.Plan is not null && !SameIntent(existing.Plan, replacement.Plan))
+            throw NotMonotonic("维护计划的目标、批次或渠道被改写");
         if (replacement.UpdatedUtc < existing.UpdatedUtc)
             throw new InvalidDataException("Maintenance journal 更新时间不能倒退。");
         var updated = currentRuns;
