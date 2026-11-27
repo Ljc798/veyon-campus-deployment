@@ -3813,8 +3813,19 @@ public static class WebsitePolicyAgentInstaller
                     teacherChannelStatusTemporary)
                 {
                     PathLinkSecurity.RejectLinks(entry);
+                    // A writer that creates one of these through the campus folder's inherited ACL
+                    // leaves it readable by Users. The name already proves the file is product-owned,
+                    // so tighten the ACL and re-check instead of refusing to remove the Agent because
+                    // of a status file the product wrote itself.
                     if (!AgentFileSecurity.IsPrivate(entry, directory: false))
-                        throw new IOException("Agent 私有状态文件 ACL 无效；拒绝删除。" );
+                    {
+                        try { AgentFileSecurity.SecurePrivateFile(entry); }
+                        catch (Exception exception) when (exception is IOException or
+                                                              UnauthorizedAccessException or
+                                                              System.Security.SecurityException) { }
+                        if (!AgentFileSecurity.IsPrivate(entry, directory: false))
+                            throw new IOException($"Agent 私有状态文件 ACL 无效：{entry}；拒绝删除。" );
+                    }
                 }
             }
         }
