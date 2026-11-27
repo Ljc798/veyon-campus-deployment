@@ -328,6 +328,15 @@ public static class ClassroomStatusTransport
                     signedCommand, target, pinnedKey, DateTimeOffset.UtcNow, trustStore);
                 if (!verified.MatchesPinnedKey)
                 {
+                    // The acknowledgement is signed over this command's nonce by the key it presents, so a
+                    // re-imaged machine proves possession on its first reply. Accept the rotation here,
+                    // otherwise every freshly reinstalled seat stays on "身份需要核对" forever.
+                    if (StudentAgentIdentityAutoTrust.TryAcceptVerifiedKeyChange(command.CampusId, target,
+                            verified, out var rotated, trustStore))
+                        return new ClassroomStatusDeliveryResult(target, true, false,
+                            rotated ? "课堂状态已由学生 Agent 确认；身份已自动更新。"
+                                    : "课堂状态已由已固定身份的学生 Agent 确认。",
+                            verified.Payload, verified.Fingerprint);
                     var changed = pinnedKey is not null;
                     return new ClassroomStatusDeliveryResult(target, false, true,
                         changed ? "Agent 身份密钥与已固定记录不符，拒绝标记确认。" :

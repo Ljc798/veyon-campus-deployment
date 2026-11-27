@@ -247,11 +247,23 @@ public static class StudentAgentRuntimeSummaryTransport
                         verified.Fingerprint, pinnedKey is null ? null :
                             StudentAgentResponseCryptography.GetFingerprint(pinnedKey));
                     if (!verified.MatchesPinnedKey)
-                        return new StudentAgentRuntimeSummaryDeliveryResult(target, false,
-                            pinnedKey is null
-                                ? $"Agent 签名有效但身份尚未固定，指纹：{verified.Fingerprint}"
-                                : "Agent 身份指纹已变化；轻量状态被拒绝。",
-                            NeedsReview: true, IdentityCandidate: candidate);
+                    {
+                        // The summary already carries this key's signature over the nonce we just issued,
+                        // so the machine has proven it holds the private key. A batch reinstall rotates
+                        // every key at once; re-pinning here lets one "重新检测" clear the whole list
+                        // instead of leaving every device on "身份需要核对".
+                        if (!StudentAgentIdentityAutoTrust.TryAcceptVerifiedKeyChange(campusId, target,
+                                verified, out var rotated))
+                            return new StudentAgentRuntimeSummaryDeliveryResult(target, false,
+                                pinnedKey is null
+                                    ? $"Agent 签名有效但身份尚未固定，指纹：{verified.Fingerprint}"
+                                    : "Agent 身份指纹已变化；轻量状态被拒绝。",
+                                NeedsReview: true, IdentityCandidate: candidate);
+                        return new StudentAgentRuntimeSummaryDeliveryResult(target, true,
+                            rotated ? "签名、随机数已验证；Agent 身份已自动更新。" :
+                                "签名、随机数和固定设备身份均已验证。", verified.Payload,
+                            IdentityCandidate: candidate);
+                    }
                     return new StudentAgentRuntimeSummaryDeliveryResult(target, true,
                         "签名、随机数和固定设备身份均已验证。", verified.Payload,
                         IdentityCandidate: candidate);

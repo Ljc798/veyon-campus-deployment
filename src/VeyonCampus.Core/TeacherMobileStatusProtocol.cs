@@ -368,11 +368,23 @@ public static class WebsitePolicyStatusTransport
                     verified.PublicKeyPem, verified.Fingerprint, pinnedKey is null ? null :
                     StudentAgentResponseCryptography.GetFingerprint(pinnedKey));
                 if (!verified.MatchesPinnedKey)
+                {
+                    // The reply is signed by this key over the nonce we issued, so possession is already
+                    // proven. Re-pinning here is what makes the health card's "重新检测" converge after a
+                    // batch reinstall instead of reporting every device as needing manual review.
+                    if (StudentAgentIdentityAutoTrust.TryAcceptVerifiedKeyChange(campusId,
+                            outgoingRequest.Target, verified, out var rotated))
+                        return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, true,
+                            rotated ? "Agent 回执签名、随机数已验证；身份已自动更新。" :
+                                "学生 Agent 状态回执的签名、随机数和已固定设备身份均已验证。", status,
+                            IdentityCandidate: candidate,
+                            VerifiedResponseSha256: Convert.ToHexString(SHA256.HashData(reply.Body)));
                     return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, false,
                         pinnedKey is null
                             ? $"Agent 回执签名有效，但身份尚未由教师核对并固定。指纹：{verified.Fingerprint}"
                             : $"Agent 身份指纹已变化，拒绝信任。原指纹：{candidate.PreviouslyPinnedFingerprint}；新指纹：{verified.Fingerprint}",
                         NeedsReview: true, IdentityCandidate: candidate);
+                }
                 return new StudentAgentStatusDeliveryResult(outgoingRequest.Target, true,
                     "学生 Agent 状态回执的签名、随机数和已固定设备身份均已验证。", status,
                     IdentityCandidate: candidate,

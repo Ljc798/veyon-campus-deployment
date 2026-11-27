@@ -282,8 +282,12 @@ public static class StudentAgentCommandAcknowledgementCryptography
 /// Library consumers and headless checks keep the strict "explicit teacher approval"
 /// behaviour by default; the desktop Teacher Console opts in at startup so the first
 /// valid signed reply is pinned automatically instead of blocking every command.
-/// A changed key is never replaced here - the one-click maintenance flow approves it
-/// for the devices the teacher explicitly targeted.
+/// A changed key is replaced only where the reply already proves possession of the new
+/// private key - the response is signed by that key over a nonce this teacher just
+/// generated; see <see cref="TryAcceptVerifiedKeyChange"/>. Reinstalling or re-imaging a
+/// classroom rotates every key at once, and teachers cannot compare fingerprints, so the
+/// read paths accept the rotation instead of parking the whole room on "身份需要核对".
+/// Command paths that depend on the pinned key during a transfer stay strict.
 /// </summary>
 public static class StudentAgentIdentityAutoTrust
 {
@@ -301,6 +305,27 @@ public static class StudentAgentIdentityAutoTrust
     public static bool TryApproveRotation(string campusId, string target, string publicKeyPem,
         string fingerprint, out bool rotated, StudentAgentIdentityTrustStore? trustStore = null) =>
         TryPin(campusId, target, publicKeyPem, fingerprint, replaceChangedKey: true, out rotated, trustStore);
+
+    /// <summary>
+    /// Accepts a key change that the caller has already proven: the Agent signed a nonce this teacher
+    /// generated moments ago with the very key it is presenting. A full reinstall regenerates the
+    /// Agent key on every machine, so after a batch redeploy every pin is stale; without this the
+    /// health view kept eleven devices on "身份需要核对" and each one stayed blocked until somebody ran
+    /// a maintenance operation. Only call this after the response signature, the nonce echo and the
+    /// freshness window have all been validated - the proof is the same one the first-use pin relies on.
+    /// Returns true when the presented key is now the pinned key.
+    /// </summary>
+    public static bool TryAcceptVerifiedKeyChange<T>(string campusId, string target,
+        VerifiedStudentAgentResponse<T> verified, out bool rotated,
+        StudentAgentIdentityTrustStore? trustStore = null)
+    {
+        ArgumentNullException.ThrowIfNull(verified);
+        rotated = false;
+        if (verified.MatchesPinnedKey) return true;
+        if (!IsEnabled) return false;
+        return TryPin(campusId, target, verified.PublicKeyPem, verified.Fingerprint,
+            replaceChangedKey: true, out rotated, trustStore);
+    }
 
     private static bool TryPin(string campusId, string target, string publicKeyPem, string fingerprint,
         bool replaceChangedKey, out bool rotated, StudentAgentIdentityTrustStore? trustStore)

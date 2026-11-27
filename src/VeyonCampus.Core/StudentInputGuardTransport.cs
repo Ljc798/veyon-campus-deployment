@@ -55,8 +55,16 @@ public static class StudentInputGuardTransport
             StudentInputGuardCommandCryptography.ValidateStatus(verified.Payload, request,
                 expectedFingerprint, teacherNow);
             if (!verified.MatchesPinnedKey)
-                return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
-                    "Student Agent 身份指纹已变化；InputGuard 状态被拒绝。", NeedsReview: true);
+            {
+                // Signed over the nonce we issued, so the machine has proven possession. A reinstall
+                // rotates the key; refusing here left the seat's guard status unreadable until someone
+                // pushed an update, which is exactly the state the health view cannot clear.
+                if (!StudentAgentIdentityAutoTrust.TryAcceptVerifiedKeyChange(campusId, normalizedTarget,
+                        verified, out var identityRotated))
+                    return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
+                        "Student Agent 身份指纹已变化；InputGuard 状态被拒绝。", NeedsReview: true);
+                _ = identityRotated;
+            }
             // Every timestamp in this protocol is compared against the other machine's clock. A PC whose
             // clock drifts by minutes therefore failed the status read itself ("状态无法核验"), and an
             // already locked machine could not be released. Measure the difference from this signed
