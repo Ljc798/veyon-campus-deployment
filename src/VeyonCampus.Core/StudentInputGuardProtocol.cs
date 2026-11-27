@@ -123,7 +123,26 @@ public static class StudentInputGuardCommandCryptography
     // file written when the teacher used a longer grace cannot keep a fresh 45s setting from taking
     // effect after an in-place upgrade.
     public const int MaximumRebootGraceSeconds = 45;
+    // The band a persisted intent has to fall into before the student will accept the command.
+    public const int MinimumPersistedGraceSeconds = 30;
+    public const int MaximumPersistedGraceSeconds = 600;
     private static readonly JsonSerializerOptions JsonOptions = ApplicationPolicyCompiler.JsonOptions;
+
+    /// <summary>
+    /// A persisted lock must carry a reboot grace inside <see cref="MinimumPersistedGraceSeconds"/>..
+    /// <see cref="MaximumPersistedGraceSeconds"/>, because the student rejects the whole command when
+    /// it does not. A caller that never picked one - the phone only sends a duration - used to hand
+    /// over 0, so every timed single-device lock from the phone failed with "InputGuard 命令...无效"
+    /// while the desktop worked (it passes 45). Anything missing or out of range is clamped into the
+    /// accepted band here instead of travelling to the student as an invalid command.
+    /// </summary>
+    public static int NormalizePersistedGraceSeconds(int requestedSeconds) => requestedSeconds switch
+    {
+        0 => MaximumRebootGraceSeconds,
+        < MinimumPersistedGraceSeconds => MinimumPersistedGraceSeconds,
+        > MaximumPersistedGraceSeconds => MaximumPersistedGraceSeconds,
+        _ => requestedSeconds
+    };
 
     public static string Sign(StudentInputGuardCommand command, RSA campusPrivateKey)
     {
@@ -273,7 +292,7 @@ public static class StudentInputGuardCommandCryptography
             (command.Action == StudentInputGuardAction.Activate &&
              command.LockReleaseUtc is { } release && release.Offset == TimeSpan.Zero &&
              release > now && release <= now.Add(MaximumPersistedLockLifetime) &&
-             command.GraceSeconds is >= 30 and <= 600);
+             command.GraceSeconds is >= MinimumPersistedGraceSeconds and <= MaximumPersistedGraceSeconds);
         if (command.SchemaVersion != 1 || command.Purpose != Purpose || command.RoomId == Guid.Empty ||
             command.AgentRunId == Guid.Empty || command.CommandId == Guid.Empty || command.Nonce == Guid.Empty ||
             command.ExpectedControlEpoch == Guid.Empty || command.LeaseId == Guid.Empty ||

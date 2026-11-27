@@ -1235,7 +1235,11 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             signingKey.PrivateKey, context.Session.Room.RoomId, StudentInputGuardAction.Activate,
             leaseId, cancellationToken,
             lockReleaseUtc: persisted ? inputLockReleaseUtc : null,
-            graceSeconds: persisted ? inputLockGraceSeconds : 0).ConfigureAwait(false);
+            // A persisted lock needs a reboot grace inside 30..600s; a caller that never picked one
+            // (the phone sends only a duration) must not ship 0, which the student rejects outright.
+            graceSeconds: persisted
+                ? StudentInputGuardCommandCryptography.NormalizePersistedGraceSeconds(inputLockGraceSeconds)
+                : 0).ConfigureAwait(false);
         EnsureCurrentTask(context.SessionId, binding.TargetId, locking.DesiredRevision,
             locking.TaskId!.Value, ClassroomQuickControlAction.LockInput, allowEndedRestore);
         if (!command.Succeeded || command.Receipt?.Outcome != StudentInputGuardOutcome.Succeeded)

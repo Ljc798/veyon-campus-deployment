@@ -978,6 +978,40 @@ Check("课堂共享链接只识别单个安全 HTTP(S) 地址、学生主动打�
 Check("课堂状态签名隔离、重放拒绝、两分钟过期与 Agent 回执", ClassroomStatusChecks.Run);
 Check("课堂事件签名授权、角色/目标绑定、短期令牌和有界内存队列", ClassroomEventProtocolChecks.Run);
 Check("课堂一对一聊天：换行协议、会话隔离、重试去重、送达状态和内存清理", ClassroomChatChecks.Run);
+Check("手机端单台定时键鼠锁定使用合法的重启宽限，不再签到无效命令", () =>
+{
+    // The phone only sends a duration, so the persisted lock used to carry GraceSeconds = 0 - which
+    // the student rejects, failing every timed single-device lock from the phone while the desktop
+    // (which passes 45) worked. Signing must succeed for whatever a caller leaves unset.
+    var now = DateTimeOffset.UtcNow;
+    foreach (var requested in new[] { 0, 1, 29, 30, 45, 120, 600, 601, 3600 })
+    {
+        var grace = StudentInputGuardCommandCryptography.NormalizePersistedGraceSeconds(requested);
+        if (grace is < StudentInputGuardCommandCryptography.MinimumPersistedGraceSeconds or
+            > StudentInputGuardCommandCryptography.MaximumPersistedGraceSeconds)
+            throw new InvalidDataException($"Grace {requested} normalized to an unusable {grace}.");
+    }
+    if (StudentInputGuardCommandCryptography.NormalizePersistedGraceSeconds(0) !=
+        StudentInputGuardCommandCryptography.MaximumRebootGraceSeconds)
+        throw new InvalidDataException("An unset grace must fall back to the reboot grace.");
+
+    using var key = RSA.Create(2048);
+    var command = new StudentInputGuardCommand(1, StudentInputGuardCommandCryptography.Purpose,
+        "测试校区", Guid.NewGuid(), new string('A', 64), new string('B', 32), Guid.NewGuid(), Guid.NewGuid(),
+        Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), now, now.AddSeconds(30),
+        StudentInputGuardAction.Activate, now.AddSeconds(20),
+        LockReleaseUtc: now.AddMinutes(30),
+        GraceSeconds: StudentInputGuardCommandCryptography.NormalizePersistedGraceSeconds(0));
+    _ = StudentInputGuardCommandCryptography.Sign(command, key);
+    try
+    {
+        _ = StudentInputGuardCommandCryptography.Sign(command with { GraceSeconds = 0 }, key);
+        throw new InvalidDataException("A persisted lock with no grace must still be rejected.");
+    }
+    catch (InvalidDataException exception) when (exception.Message.Contains("InputGuard 命令", StringComparison.Ordinal))
+    {
+    }
+});
 Check("Student Companion 状态默认值、课堂摘要和输入边界", StudentCompanionChecks.Run);
 Check("Developer Release 公钥嵌入与指纹校验，未配置时安全停用", CheckPinnedApplicationReleasePublicKey);
 Check("学生账户只读扫描排除嵌套管理员、操作员、域账户和内置账户", IssueThirdRoundChecks.CheckWindowsAccountReader);

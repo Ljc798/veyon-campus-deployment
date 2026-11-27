@@ -172,7 +172,11 @@ public static class StudentInputGuardTransport
             status.AgentRunId, Guid.NewGuid(), Guid.NewGuid(), status.ControlEpoch, leaseId,
             now, expiresUtc, action, leaseExpiresUtc,
             LockReleaseUtc: persistedIntent ? lockReleaseUtc!.Value.ToUniversalTime() + clockOffset : null,
-            GraceSeconds: persistedIntent ? graceSeconds : 0);
+            // The student rejects a persisted intent whose grace is outside 30..600s, so a caller
+            // that passes 0 must not be able to sign an invalid command.
+            GraceSeconds: persistedIntent
+                ? StudentInputGuardCommandCryptography.NormalizePersistedGraceSeconds(graceSeconds)
+                : 0);
         string signedCommand;
         try { signedCommand = StudentInputGuardCommandCryptography.Sign(command, campusPrivateKey); }
         catch (InvalidDataException exception)
