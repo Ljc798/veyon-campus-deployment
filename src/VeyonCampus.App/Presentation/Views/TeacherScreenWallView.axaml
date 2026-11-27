@@ -61,6 +61,13 @@
                     <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
                               IsEnabled="{Binding CanUnlockInput}" />
                     <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                    <MenuItem Header="网络开关">
+                      <MenuItem Header="禁止该设备修改网络" Tag="BlockNetworkChangeEnabled" Click="RequestDeviceAction" />
+                      <MenuItem Header="允许该设备修改网络" Tag="BlockNetworkChangeDisabled" Click="RequestDeviceAction" />
+                      <Separator />
+                      <MenuItem Header="关闭该设备 WiFi（10 分钟后自动恢复）" Tag="WifiOff" Click="RequestDeviceAction" />
+                      <MenuItem Header="立即恢复该设备 WiFi" Tag="WifiOn" Click="RequestDeviceAction" />
+                    </MenuItem>
                     <Separator />
                     <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
                     <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
@@ -158,6 +165,13 @@
                       <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
                                 IsEnabled="{Binding CanUnlockInput}" />
                       <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                      <MenuItem Header="网络开关">
+                        <MenuItem Header="禁止该设备修改网络" Tag="BlockNetworkChangeEnabled" Click="RequestDeviceAction" />
+                        <MenuItem Header="允许该设备修改网络" Tag="BlockNetworkChangeDisabled" Click="RequestDeviceAction" />
+                        <Separator />
+                        <MenuItem Header="关闭该设备 WiFi（10 分钟后自动恢复）" Tag="WifiOff" Click="RequestDeviceAction" />
+                        <MenuItem Header="立即恢复该设备 WiFi" Tag="WifiOn" Click="RequestDeviceAction" />
+                      </MenuItem>
                       <Separator />
                       <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
                       <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />

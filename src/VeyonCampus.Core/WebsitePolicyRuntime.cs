@@ -4653,6 +4653,8 @@ public sealed class WebsitePolicyAgent
     public const string RuntimeSummaryPathV2 = "/v2/device/runtime-summary";
     public const string InputGuardStatusPath = "/v1/device/input-guard/status";
     public const string InputGuardCommandPath = "/v1/device/input-guard/command";
+    public const string NetworkControlStatusPath = "/v1/device/network-control/status";
+    public const string NetworkControlCommandPath = "/v1/device/network-control/command";
     public const string StudentUpdateDownloadCapabilityPath = "/v1/student-update-download-capabilities";
     public const string ClassroomStatusPath = "/v1/classroom/status";
     public const string ClassroomStatusLocalPath = "/v1/classroom/status/local";
@@ -4843,11 +4845,22 @@ public sealed class WebsitePolicyAgent
         // The firewall keeps its rules across reboots, but the addresses behind them drift, and a
         // machine that was offline for a week should not start the day blocking last week's IPs.
         WebsitePolicyRegistryStore.RefreshNetworkBlock();
+        var networkControlState = new StudentNetworkControlState(configPath);
         // Strip the ordinary account's remaining network switches. Applied here rather than at
         // install time so an in-place Agent upgrade enforces it too, and reported so a hardened
-        // machine can be told apart from one where the policy never got written.
-        if (config.NetworkHardening != false)
-            ReconcileNetworkHardening(configPath);
+        // machine can be told apart from one where the policy never got written. The teacher can
+        // switch this off per machine, in which case the durable state file says so.
+        if (networkControlState.HardeningWanted(config.NetworkHardening != false))
+        {
+            if (!NetworkPolicyHardening.ReadSnapshot().FullyEnforced) ReconcileNetworkHardening(configPath);
+        }
+        else
+        {
+            ReconcileNetworkHardeningReverted(configPath);
+        }
+        // A restart always brings the radio back: an all-in-one with no other uplink is unreachable
+        // once its only adapter is down, and no remote action could undo that.
+        networkControlState.ApplyPersistedAtStartup(configPath);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var teacherChannelSupervisor = new StudentAgentTeacherChannelSupervisor();
         var classroomStatus = new ClassroomStatusAgentState();
@@ -4936,7 +4949,8 @@ public sealed class WebsitePolicyAgent
                 nextRequest = listener.GetContextAsync();
                 _ = HandleAsync(context, configPath, config, applicationPolicyAgent, studentSystemPolicyAgent,
                     agentIdentityKey, classroomStatus, classroomEvents, browserRestartSignal,
-                    edgePolicyRefreshSignal, edgeApplyResults, inputGuardState, teacherChannelSupervisor, shutdown);
+                    edgePolicyRefreshSignal, edgeApplyResults, inputGuardState, networkControlState,
+                    teacherChannelSupervisor, shutdown);
                 continue;
             }
 
@@ -4953,8 +4967,10 @@ public sealed class WebsitePolicyAgent
             if (++expiryTicks % 20 == 0)
             {
                 WebsitePolicyRegistryStore.RefreshNetworkBlock();
-                // Re-apply the account hardening in case a student or another tool removed it.
-                if (config.NetworkHardening != false) ReconcileNetworkHardening(configPath);
+                // Re-apply the account hardening in case a student or another tool removed it, and
+                // release a Wi-Fi hold whose deadline has passed even when the Agent is offline.
+                networkControlState.Sweep(configPath, DateTimeOffset.UtcNow,
+                    config.NetworkHardening != false);
             }
             nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
         }
@@ -4995,6 +5011,45 @@ public sealed class WebsitePolicyAgent
             {
                 WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
                     "网络开关加固失败：" + exception.Message);
+            }
+            catch (Exception nested) when (nested is IOException or UnauthorizedAccessException or
+                                               ArgumentException or System.Security.SecurityException) { }
+        }
+    }
+
+    /// <summary>
+    /// Removes the machine policy when the teacher has switched hardening off for this device, and
+    /// only when the values are the ones this product writes.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private static void ReconcileNetworkHardeningReverted(string configPath)
+    {
+        try
+        {
+            var snapshot = NetworkPolicyHardening.ReadSnapshot();
+            // Nothing of ours is set: skip the write so the registry stays quiet on every restart.
+            if (snapshot.Error is null && !snapshot.SettingsPageHidden && !snapshot.QuickSettingsDisabled &&
+                !snapshot.ConnectionToggleBlocked && !snapshot.PropertyChangeBlocked) return;
+            var reverted = NetworkPolicyHardening.Revert();
+            if (reverted.Failure is { } failure)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    failure);
+                return;
+            }
+            if (reverted.Changes.Count > 0)
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    "已按教师指令恢复网络开关：" + string.Join(" ", reverted.Changes));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidOperationException or NotSupportedException or
+                                              System.Security.SecurityException or
+                                              System.ComponentModel.Win32Exception)
+        {
+            try
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    "恢复网络开关失败：" + exception.Message);
             }
             catch (Exception nested) when (nested is IOException or UnauthorizedAccessException or
                                                ArgumentException or System.Security.SecurityException) { }
@@ -5095,6 +5150,7 @@ public sealed class WebsitePolicyAgent
         StudentAgentEdgePolicyRefreshSignalState edgePolicyRefreshSignal,
         EdgeWebsitePolicyApplyResultState edgeApplyResults,
         StudentInputGuardAgentState inputGuardState,
+        StudentNetworkControlState networkControlState,
         StudentAgentTeacherChannelSupervisor teacherChannelSupervisor,
         CancellationTokenSource agentShutdown)
     {
@@ -5524,6 +5580,75 @@ public sealed class WebsitePolicyAgent
                 var signedReceipt = StudentAgentResponseCryptography.Sign(receipt, agentIdentityKey);
                 await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedReceipt),
                     "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == NetworkControlStatusPath)
+            {
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("网络开关状态读取不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is > 8192)
+                {
+                    await RespondAsync(response, 413, "network control request too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedStatusRequest = await ReadBoundedAsync(context.Request.InputStream, 8192,
+                    cancellationToken).ConfigureAwait(false);
+                var statusNow = DateTimeOffset.UtcNow;
+                var statusRequest = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => WebsitePolicyStatusCryptography.VerifyRequest(signedStatusRequest, publicKey,
+                        config.CampusId, statusNow), statusNow);
+                var networkStatus = networkControlState.ReadStatus(config.CampusId, statusRequest.Nonce,
+                    statusNow);
+                var signedNetworkStatus = StudentAgentResponseCryptography.Sign(networkStatus,
+                    agentIdentityKey);
+                await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedNetworkStatus),
+                    "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+            if (context.Request.HttpMethod == "POST" &&
+                context.Request.Url?.AbsolutePath == NetworkControlCommandPath)
+            {
+                response.Headers["Cache-Control"] = "no-store";
+                if (context.Request.Headers["Origin"] is not null || context.Request.QueryString.Count > 0)
+                    throw new InvalidDataException("网络开关命令不接受网页来源或查询参数。");
+                if (context.Request.ContentLength64 is >
+                    StudentNetworkControlCommandCryptography.MaximumEnvelopeBytes)
+                {
+                    await RespondAsync(response, 413, "network control command too large", cancellationToken)
+                        .ConfigureAwait(false);
+                    return;
+                }
+                var signedNetworkCommand = await ReadBoundedAsync(context.Request.InputStream,
+                    StudentNetworkControlCommandCryptography.MaximumEnvelopeBytes, cancellationToken)
+                    .ConfigureAwait(false);
+                var networkNow = DateTimeOffset.UtcNow;
+                var networkCommand = VerifyWithPolicyTrustRoots(config, PolicyTrustKeyRole.WebsitePolicy,
+                    publicKey => StudentNetworkControlCommandCryptography.Verify(signedNetworkCommand,
+                        publicKey, config.CampusId, networkNow), networkNow);
+                if (ReadCommandNonce(context.Request) != networkCommand.Nonce)
+                    throw new InvalidDataException("网络开关命令与 HTTP 随机数不匹配。");
+                // Disabling the wireless adapter takes a second or two and briefly drops the teacher
+                // channel itself, so this deliberately runs outside ApplyGate and acknowledges before
+                // the adapter goes down only when the radio is left alone.
+                var networkReceipt = networkControlState.Apply(networkCommand, configPath, networkNow);
+                var signedNetworkReceipt = StudentAgentResponseCryptography.Sign(networkReceipt,
+                    agentIdentityKey);
+                try
+                {
+                    await RespondBytesAsync(response, 200, Encoding.UTF8.GetBytes(signedNetworkReceipt),
+                        "application/json; charset=utf-8", cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception) when (exception is HttpListenerException or IOException or
+                                                      ObjectDisposedException)
+                {
+                    // The radio may already be down, which is the expected outcome of "关闭 WiFi".
+                    WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-control",
+                        "网络开关已执行，但回执未能送达教师端；教师端会以状态读回为准。");
+                    _ = exception;
+                }
                 return;
             }
             if (context.Request.HttpMethod == "POST" &&
@@ -6372,7 +6497,7 @@ public sealed class WebsitePolicyAgent
     private static bool IsCommandEndpoint(string? path) => path is ConfigurationSyncPath or PolicyPath or ApplicationPolicyPath or
         StudentSystemPolicyPath or ApplicationPolicyAuditPath or ApplicationInventoryPath or StudentAccountsPath or
         ApplicationCatalogPath or ApplicationCatalogDetailsPath or
-        HealthRepairPath or EdgePolicyModePath or InputGuardCommandPath;
+        HealthRepairPath or EdgePolicyModePath or InputGuardCommandPath or NetworkControlCommandPath;
 
     private static void AcceptStatusNonce(Guid nonce, DateTimeOffset issuedUtc, DateTimeOffset nowUtc)
     {

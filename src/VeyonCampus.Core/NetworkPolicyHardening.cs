@@ -15,9 +15,12 @@ namespace VeyonCampus.Core;
 /// needs elevation.
 ///
 /// This class closes the remaining entries as far as Windows allows: the whole "Network &amp;
-/// internet" Settings page is hidden, the classic connection UI is restricted to display-only, and
-/// an optional Wi-Fi allowlist keeps a student from joining a phone hotspot. A determined student
-/// can still reach the radio through the taskbar flyout, which is why <see cref="NetworkGuardian"/>
+/// internet" Settings page is hidden, the classic connection UI is restricted to display-only, the
+/// Quick Settings flyout is removed together with its Wi-Fi and airplane-mode tiles, and the tray
+/// network icon is hidden for every loaded profile. The machine-wide values take effect for the next
+/// Explorer start; the icon is written into each signed-in profile because Windows offers no
+/// machine-wide equivalent for it. A determined student can still disconnect the radio with
+/// <c>netsh wlan disconnect</c>, which needs no elevation, which is why <see cref="NetworkGuardian"/>
 /// exists as the second line: whatever the route, once the network is gone the machine locks.
 ///
 /// The restrictions are machine-wide. They deliberately do not apply to administrators in the
@@ -30,7 +33,17 @@ public static class NetworkPolicyHardening
     private const string ExplorerPolicyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Explorer";
     private const string NetworkConnectionsPolicyPath =
         @"SOFTWARE\Policies\Microsoft\Windows\Network Connections";
+    // "Remove Quick Settings" (Start Menu and Taskbar) is a user policy: Explorer reads
+    // DisableControlCenter from Software\Policies\Microsoft\Windows\Explorer, not from the legacy
+    // CurrentVersion\Policies\Explorer branch. It is written to both the machine hive (covers every
+    // account, including one that has never signed in) and each loaded profile hive.
+    private const string QuickSettingsMachinePolicyPath = @"SOFTWARE\Policies\Microsoft\Windows\Explorer";
+    private const string QuickSettingsUserPolicyPath = @"Software\Policies\Microsoft\Windows\Explorer";
+    // "Remove the networking icon" is user-scope only; there is no machine-wide equivalent.
+    private const string NetworkIconUserPolicyPath = @"Software\Microsoft\Windows\CurrentVersion\Policies\Explorer";
     private const string SettingsPageVisibilityValue = "SettingsPageVisibility";
+    private const string QuickSettingsDisabledValue = "DisableControlCenter";
+    private const string NetworkIconHiddenValue = "HideSCANetwork";
     // Hides the whole "Network & internet" page; every nested page (Wi-Fi, airplane mode, VPN,
     // proxy, mobile hotspot, Ethernet) is hidden with it.
     private const string HiddenSettingsPages = "hide:network";
@@ -57,6 +70,29 @@ public static class NetworkPolicyHardening
                         RegistryValueKind.String);
                     changes.Add("已隐藏「网络和 Internet」设置页。");
                 }
+                // An earlier build wrote DisableControlCenter to this branch, where Explorer never
+                // reads it. Remove that stale value so it cannot be mistaken for a working setting.
+                if (explorer.GetValue(QuickSettingsDisabledValue) is not null)
+                {
+                    explorer.DeleteValue(QuickSettingsDisabledValue, throwOnMissingValue: false);
+                    changes.Add("已清除未生效的旧快速设置策略值。");
+                }
+            }
+
+            // The Settings page is only one way to switch the radio off. The taskbar Quick Settings
+            // flyout is the other, and no policy hides just the Wi-Fi tile from it, so the whole
+            // flyout is removed: "Remove Quick Settings" takes the Wi-Fi and airplane-mode tiles
+            // with it. A reboot (or an Explorer restart) is needed before the taskbar drops it.
+            using (var quickSettings = Registry.LocalMachine.CreateSubKey(QuickSettingsMachinePolicyPath,
+                       writable: true))
+            {
+                if (quickSettings is null)
+                    return NetworkPolicyHardeningResult.Failed("无法打开任务栏快速设置策略键。");
+                if (quickSettings.GetValue(QuickSettingsDisabledValue) is not 1)
+                {
+                    quickSettings.SetValue(QuickSettingsDisabledValue, 1, RegistryValueKind.DWord);
+                    changes.Add("已移除任务栏快速设置面板（WiFi 与飞行模式磁贴随之消失）。");
+                }
             }
 
             using (var connections = Registry.LocalMachine.CreateSubKey(NetworkConnectionsPolicyPath,
@@ -77,6 +113,8 @@ public static class NetworkPolicyHardening
                 }
             }
 
+            var taskbar = ApplyTaskbarPerProfile();
+            changes.AddRange(taskbar.Notes);
             return NetworkPolicyHardeningResult.Succeeded(changes);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or
@@ -85,6 +123,115 @@ public static class NetworkPolicyHardening
         {
             return NetworkPolicyHardeningResult.Failed("写入网络开关加固策略失败：" + exception.Message);
         }
+    }
+
+    /// <summary>
+    /// Hides the tray network icon and the Quick Settings flyout for every loaded profile hive, which
+    /// is every account currently signed in. The machine-wide value above already covers the flyout;
+    /// the tray icon has no machine-wide equivalent, so an account that has never signed in only
+    /// loses its icon once a later reconcile finds the hive loaded.
+    /// </summary>
+    private static (int Covered, List<string> Notes) ApplyTaskbarPerProfile()
+    {
+        var notes = new List<string>();
+        var covered = 0;
+        foreach (var sid in LoadedProfileSids())
+        {
+            try
+            {
+                using var quickSettings = Registry.Users.CreateSubKey(
+                    sid + "\\" + QuickSettingsUserPolicyPath, writable: true);
+                using var networkIcon = Registry.Users.CreateSubKey(
+                    sid + "\\" + NetworkIconUserPolicyPath, writable: true);
+                if (quickSettings is null || networkIcon is null)
+                {
+                    notes.Add($"账户 {sid} 的任务栏策略键无法打开，未隐藏网络图标。");
+                    continue;
+                }
+                quickSettings.SetValue(QuickSettingsDisabledValue, 1, RegistryValueKind.DWord);
+                networkIcon.SetValue(NetworkIconHiddenValue, 1, RegistryValueKind.DWord);
+                covered++;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or
+                                                  System.Security.SecurityException or IOException)
+            {
+                notes.Add($"账户 {sid} 的任务栏设置写入失败：{exception.Message}");
+            }
+        }
+        if (covered > 0)
+            notes.Insert(0, $"已对 {covered} 个已登录账户隐藏任务栏网络图标与快速设置。");
+        return (covered, notes);
+    }
+
+    /// <summary>Profile SIDs that currently have a loaded hive under HKEY_USERS.</summary>
+    private static IEnumerable<string> LoadedProfileSids()
+    {
+        string[] names;
+        try
+        {
+            names = Registry.Users.GetSubKeyNames();
+        }
+        catch (Exception exception) when (exception is UnauthorizedAccessException or
+                                              System.Security.SecurityException or IOException)
+        {
+            yield break;
+        }
+        foreach (var name in names)
+            if (name.StartsWith("S-1-5-21-", StringComparison.Ordinal))
+                yield return name;
+    }
+
+    /// <summary>Removes the per-profile taskbar values this product wrote.</summary>
+    private static List<string> RevertTaskbarPerProfile()
+    {
+        var restored = new List<string>();
+        var covered = 0;
+        foreach (var sid in LoadedProfileSids())
+        {
+            try
+            {
+                using var quickSettings = Registry.Users.OpenSubKey(
+                    sid + "\\" + QuickSettingsUserPolicyPath, writable: true);
+                using var networkIcon = Registry.Users.OpenSubKey(
+                    sid + "\\" + NetworkIconUserPolicyPath, writable: true);
+                if (quickSettings?.GetValue(QuickSettingsDisabledValue) is 1)
+                    quickSettings.DeleteValue(QuickSettingsDisabledValue, throwOnMissingValue: false);
+                if (networkIcon?.GetValue(NetworkIconHiddenValue) is 1)
+                    networkIcon.DeleteValue(NetworkIconHiddenValue, throwOnMissingValue: false);
+                covered++;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or
+                                                  System.Security.SecurityException or IOException)
+            {
+                restored.Add($"账户 {sid} 的任务栏设置未能恢复：{exception.Message}");
+            }
+        }
+        if (covered > 0)
+            restored.Insert(0, $"已恢复 {covered} 个已登录账户的任务栏网络图标与快速设置。");
+        return restored;
+    }
+
+    /// <summary>Counts loaded profiles and how many already hide the tray network icon.</summary>
+    private static (int Profiles, int Hidden) CountTaskbarProfiles()
+    {
+        var profiles = 0;
+        var hidden = 0;
+        foreach (var sid in LoadedProfileSids())
+        {
+            profiles++;
+            try
+            {
+                using var networkIcon = Registry.Users.OpenSubKey(
+                    sid + "\\" + NetworkIconUserPolicyPath, writable: false);
+                if (networkIcon?.GetValue(NetworkIconHiddenValue) is 1) hidden++;
+            }
+            catch (Exception exception) when (exception is UnauthorizedAccessException or
+                                                  System.Security.SecurityException or IOException)
+            {
+                _ = exception;
+            }
+        }
+        return (profiles, hidden);
     }
 
     /// <summary>
@@ -107,6 +254,21 @@ public static class NetworkPolicyHardening
                     explorer.DeleteValue(SettingsPageVisibilityValue, throwOnMissingValue: false);
                     changes.Add("已恢复「网络和 Internet」设置页。");
                 }
+                if (explorer?.GetValue(QuickSettingsDisabledValue) is 1)
+                {
+                    explorer.DeleteValue(QuickSettingsDisabledValue, throwOnMissingValue: false);
+                    changes.Add("已清除未生效的旧快速设置策略值。");
+                }
+            }
+
+            using (var quickSettings = Registry.LocalMachine.OpenSubKey(QuickSettingsMachinePolicyPath,
+                       writable: true))
+            {
+                if (quickSettings?.GetValue(QuickSettingsDisabledValue) is 1)
+                {
+                    quickSettings.DeleteValue(QuickSettingsDisabledValue, throwOnMissingValue: false);
+                    changes.Add("已恢复任务栏快速设置面板。");
+                }
             }
 
             using (var connections = Registry.LocalMachine.OpenSubKey(NetworkConnectionsPolicyPath,
@@ -121,6 +283,8 @@ public static class NetworkPolicyHardening
                 }
             }
 
+            var restored = RevertTaskbarPerProfile();
+            changes.AddRange(restored);
             return NetworkPolicyHardeningResult.Succeeded(changes);
         }
         catch (Exception exception) when (exception is UnauthorizedAccessException or
@@ -141,13 +305,21 @@ public static class NetworkPolicyHardening
         if (!OperatingSystem.IsWindows())
             throw new PlatformNotSupportedException("网络开关加固仅支持 Windows。");
         var settingsPageHidden = false;
+        var quickSettingsDisabled = false;
         var connectionToggleBlocked = false;
         var propertyChangeBlocked = false;
         try
         {
             using (var explorer = Registry.LocalMachine.OpenSubKey(ExplorerPolicyPath, writable: false))
+            {
                 settingsPageHidden = explorer?.GetValue(SettingsPageVisibilityValue) as string ==
                                      HiddenSettingsPages;
+            }
+            using (var quickSettings = Registry.LocalMachine.OpenSubKey(QuickSettingsMachinePolicyPath,
+                       writable: false))
+            {
+                quickSettingsDisabled = quickSettings?.GetValue(QuickSettingsDisabledValue) is 1;
+            }
             using (var connections = Registry.LocalMachine.OpenSubKey(NetworkConnectionsPolicyPath,
                        writable: false))
             {
@@ -158,10 +330,15 @@ public static class NetworkPolicyHardening
         catch (Exception exception) when (exception is UnauthorizedAccessException or
                                               System.Security.SecurityException or IOException)
         {
-            return new NetworkPolicyHardeningSnapshot(false, false, false, null, exception.Message);
+            return new NetworkPolicyHardeningSnapshot(false, false, false, false, null, exception.Message);
         }
-        return new NetworkPolicyHardeningSnapshot(settingsPageHidden, connectionToggleBlocked,
-            propertyChangeBlocked, includeWifiFilters ? ReadWifiFilters() : null, null);
+        var profiles = CountTaskbarProfiles();
+        return new NetworkPolicyHardeningSnapshot(settingsPageHidden, quickSettingsDisabled,
+            connectionToggleBlocked, propertyChangeBlocked,
+            includeWifiFilters ? ReadWifiFilters() : null, null,
+            TaskbarNetworkHidden: quickSettingsDisabled &&
+                                  (profiles.Profiles == 0 || profiles.Hidden == profiles.Profiles),
+            ProfilesWithNetworkIconHidden: profiles.Hidden);
     }
 
     /// <summary>
@@ -281,8 +458,11 @@ public sealed record NetworkPolicyHardeningResult(bool Applied, IReadOnlyList<st
 
 /// <summary>What the machine currently enforces, surfaced for diagnostics.</summary>
 public sealed record NetworkPolicyHardeningSnapshot(bool SettingsPageHidden,
-    bool ConnectionToggleBlocked, bool PropertyChangeBlocked, string? WifiFilters, string? Error)
+    bool QuickSettingsDisabled, bool ConnectionToggleBlocked, bool PropertyChangeBlocked,
+    string? WifiFilters, string? Error, bool TaskbarNetworkHidden = false,
+    int ProfilesWithNetworkIconHidden = 0)
 {
     public bool FullyEnforced =>
-        SettingsPageHidden && ConnectionToggleBlocked && PropertyChangeBlocked && Error is null;
+        SettingsPageHidden && QuickSettingsDisabled && ConnectionToggleBlocked &&
+        PropertyChangeBlocked && TaskbarNetworkHidden && Error is null;
 }

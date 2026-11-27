@@ -732,6 +732,89 @@ public partial class TeacherWindow : Window
     private async void UnlockDeviceInput(Guid targetId) =>
         await RunDeviceInputAsync(targetId, ClassroomQuickControlAction.UnlockInput);
 
+    /// <summary>
+    /// Turns the two student network switches on or off. Hardening is durable; switching the Wi-Fi
+    /// radio off is always time-boxed because an all-in-one that only has Wi-Fi loses the teacher
+    /// channel with it, and the student Agent restores it on its own clock.
+    /// </summary>
+    [SupportedOSPlatform("windows")]
+    private async Task RunNetworkControlAsync(Guid[] targetIds, bool? hardeningEnabled, bool? wifiEnabled,
+        int wifiRestoreSeconds, string title, string message)
+    {
+        if (targetIds.Length == 0)
+        {
+            _model.SetClassroomQuickControlSessionNotice("请先勾选要操作的学生电脑（可多选）。");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(_model.CampusId))
+        {
+            _model.SetClassroomQuickControlSessionNotice("当前没有选中的校区；无法签名网络开关命令。");
+            return;
+        }
+
+        var resolved = new List<(Guid Id, string Target, string Name)>();
+        foreach (var targetId in targetIds)
+        {
+            var tile = _screenWall.Tiles.FirstOrDefault(item => item.TargetId == targetId);
+            if (tile is null || string.IsNullOrWhiteSpace(tile.HostText)) continue;
+            resolved.Add((targetId, tile.HostText, tile.DisplayName));
+        }
+        if (resolved.Count == 0)
+        {
+            _model.SetClassroomQuickControlSessionNotice(
+                "所选设备没有可用的 Agent 地址；请先在屏幕墙刷新一次连接状态。");
+            return;
+        }
+
+        var names = resolved.Select(item => item.Name).ToArray();
+        var displayNames = string.Join("、", names.Take(6)) +
+                           (names.Length > 6 ? $" 等 {names.Length} 台" : "");
+        if (!await ConfirmProfileActionAsync(title,
+                $"将对 {displayNames} 执行：{message}", "确认执行")) return;
+
+        SetClassroomQuickControlBusy(true);
+        try
+        {
+            using var signingKey = WebsitePolicySigningKeyStore.Open(_model.CampusId);
+            var succeeded = 0;
+            var failures = new List<string>();
+            foreach (var item in resolved)
+            {
+                StudentNetworkControlDeliveryResult result;
+                try
+                {
+                    result = await StudentNetworkControlTransport.ExecuteAsync(item.Target,
+                        _model.CampusId, signingKey.PrivateKey, hardeningEnabled, wifiEnabled,
+                        wifiRestoreSeconds);
+                }
+                catch (Exception exception) when (exception is InvalidDataException or
+                                                      CryptographicException or ArgumentException)
+                {
+                    failures.Add($"{item.Name}：{exception.Message}");
+                    continue;
+                }
+                if (result.Succeeded) succeeded++;
+                else failures.Add($"{item.Name}：{result.Detail}");
+            }
+
+            _model.SetClassroomQuickControlSessionNotice(failures.Count == 0
+                ? $"{title}已完成：{succeeded} 台设备确认。"
+                : $"{title}：{succeeded} 台成功，{failures.Count} 台未完成。" +
+                  string.Join("；", failures.Take(3)));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidDataException or InvalidOperationException or
+                                              CryptographicException or PlatformNotSupportedException or
+                                              SocketException or System.Security.SecurityException)
+        {
+            _model.SetClassroomQuickControlSessionNotice($"{title}未完成：" + exception.Message);
+        }
+        finally
+        {
+            SetClassroomQuickControlBusy(false);
+        }
+    }
+
     [SupportedOSPlatform("windows")]
     private void HandleClassroomDeviceAction(Guid targetId, ClassroomDeviceAction action)
     {
@@ -764,6 +847,30 @@ public partial class TeacherWindow : Window
                 break;
             case ClassroomDeviceAction.ShowDiagnostics:
                 if (tile is not null) ShowClassroomDeviceDiagnostics(tile);
+                break;
+            case ClassroomDeviceAction.BlockNetworkChangeEnabled:
+                _ = RunNetworkControlAsync([targetId], hardeningEnabled: true, wifiEnabled: null,
+                    StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+                    "禁止修改网络设置",
+                    "隐藏网络设置页、快速设置面板和网络连接界面，普通学生账户将无法关闭 WiFi 或切换网络。");
+                break;
+            case ClassroomDeviceAction.BlockNetworkChangeDisabled:
+                _ = RunNetworkControlAsync([targetId], hardeningEnabled: false, wifiEnabled: null,
+                    StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+                    "允许修改网络设置",
+                    "恢复网络设置页、快速设置面板和网络连接界面。");
+                break;
+            case ClassroomDeviceAction.WifiOff:
+                _ = RunNetworkControlAsync([targetId], hardeningEnabled: null, wifiEnabled: false,
+                    StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+                    "关闭 WiFi",
+                    $"立即关闭无线网卡，{StudentNetworkControlCommandCryptography.DefaultRestoreSeconds / 60} " +
+                    "分钟后由学生端自动恢复；期间该设备会暂时失联。");
+                break;
+            case ClassroomDeviceAction.WifiOn:
+                _ = RunNetworkControlAsync([targetId], hardeningEnabled: null, wifiEnabled: true,
+                    StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+                    "恢复 WiFi", "重新启用无线网卡。");
                 break;
         }
     }
@@ -982,6 +1089,33 @@ public partial class TeacherWindow : Window
     }
 
     private void ToggleAllInputLockSelection(bool selected) => _model.ToggleAllInputLockSelection(selected);
+
+    [SupportedOSPlatform("windows")]
+    private void BlockNetworkChange(object? sender, RoutedEventArgs e) =>
+        _ = RunNetworkControlAsync(_model.GetSelectedInputLockTargetIds(), hardeningEnabled: true,
+            wifiEnabled: null, StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+            "禁止修改网络设置",
+            "隐藏网络设置页、快速设置面板和网络连接界面，普通学生账户将无法关闭 WiFi 或切换网络。");
+
+    [SupportedOSPlatform("windows")]
+    private void AllowNetworkChange(object? sender, RoutedEventArgs e) =>
+        _ = RunNetworkControlAsync(_model.GetSelectedInputLockTargetIds(), hardeningEnabled: false,
+            wifiEnabled: null, StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+            "允许修改网络设置", "恢复网络设置页、快速设置面板和网络连接界面。");
+
+    [SupportedOSPlatform("windows")]
+    private void SwitchWifiOff(object? sender, RoutedEventArgs e) =>
+        _ = RunNetworkControlAsync(_model.GetSelectedInputLockTargetIds(), hardeningEnabled: null,
+            wifiEnabled: false, StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+            "关闭 WiFi",
+            $"立即关闭无线网卡，{StudentNetworkControlCommandCryptography.DefaultRestoreSeconds / 60} " +
+            "分钟后由学生端自动恢复；期间这些设备会暂时失联，重启也会恢复。");
+
+    [SupportedOSPlatform("windows")]
+    private void SwitchWifiOn(object? sender, RoutedEventArgs e) =>
+        _ = RunNetworkControlAsync(_model.GetSelectedInputLockTargetIds(), hardeningEnabled: null,
+            wifiEnabled: true, StudentNetworkControlCommandCryptography.DefaultRestoreSeconds,
+            "恢复 WiFi", "重新启用无线网卡。");
 
     [SupportedOSPlatform("windows")]
     private async void BatchLockInput(Guid[] targetIds) =>

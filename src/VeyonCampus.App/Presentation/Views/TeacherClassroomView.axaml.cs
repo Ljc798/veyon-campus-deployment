@@ -61,6 +61,10 @@ public partial class TeacherClassroomView : UserControl
     public event BatchInputRequestHandler? BatchLockInputRequested;
     public event BatchInputRequestHandler? BatchUnlockInputRequested;
     public event ToggleAllSelectionHandler? ToggleAllInputLockSelectionRequested;
+    public event EventHandler<RoutedEventArgs>? BlockNetworkChangeRequested;
+    public event EventHandler<RoutedEventArgs>? AllowNetworkChangeRequested;
+    public event EventHandler<RoutedEventArgs>? WifiOffRequested;
+    public event EventHandler<RoutedEventArgs>? WifiOnRequested;
 
     private void SwitchWorkspace(object? sender, RoutedEventArgs e)
     {
@@ -235,6 +239,18 @@ public partial class TeacherClassroomView : UserControl
 
     private void RequestBatchUnlockInput(object? sender, RoutedEventArgs e) =>
         BatchUnlockInputRequested?.Invoke(_model?.GetSelectedInputLockTargetIds() ?? []);
+
+    private void RequestBlockNetworkChange(object? sender, RoutedEventArgs e) =>
+        BlockNetworkChangeRequested?.Invoke(sender, e);
+
+    private void RequestAllowNetworkChange(object? sender, RoutedEventArgs e) =>
+        AllowNetworkChangeRequested?.Invoke(sender, e);
+
+    private void RequestWifiOff(object? sender, RoutedEventArgs e) =>
+        WifiOffRequested?.Invoke(sender, e);
+
+    private void RequestWifiOn(object? sender, RoutedEventArgs e) =>
+        WifiOnRequested?.Invoke(sender, e);
 
     private TeacherViewModel? _model => DataContext as TeacherViewModel;
 }

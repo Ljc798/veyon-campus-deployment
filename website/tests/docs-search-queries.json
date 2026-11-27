@@ -24,6 +24,8 @@
   {"id":"website-policy-modes","query":"网站策略里的允许名单和阻止名单有什么区别？","expectedSlug":"website-policy-modes","acceptableSlugs":["apply-website-policy","end-class"],"critical":false,"verifiedFor":"1.1.77"},
   {"id":"end-class","query":"下课后怎么解除网站限制？","expectedSlug":"end-class","acceptableSlugs":["apply-website-policy","classroom-offline"],"critical":true,"verifiedFor":"1.1.77"},
   {"id":"class-offline","query":"学生电脑后来开机，课堂限制会怎样？","expectedSlug":"classroom-offline","acceptableSlugs":["end-class","student-offline"],"critical":false,"verifiedFor":"1.1.77"},
+  {"id":"network-lockdown","query":"学生电脑断网以后键鼠被锁了怎么办？","expectedSlug":"student-network-lockdown","acceptableSlugs":["classroom-offline","student-offline"],"critical":true,"verifiedFor":"1.1.115"},
+  {"id":"block-wifi-switch","query":"怎么禁止学生关闭 WiFi 或飞行模式？","expectedSlug":"student-network-lockdown","acceptableSlugs":["student-offline","apply-website-policy"],"critical":false,"verifiedFor":"1.1.115"},
   {"id":"student-offline","query":"学生电脑在教师端显示离线、不在线，怎么办？","expectedSlug":"student-offline","acceptableSlugs":["veyon-connection","maintenance-service"],"critical":true,"verifiedFor":"1.1.77"},
   {"id":"veyon-connection","query":"教师端连不上学生端，但 Veyon 本身看起来没问题","expectedSlug":"veyon-connection","acceptableSlugs":["student-offline","classroom-location"],"critical":true,"verifiedFor":"1.1.77"},
   {"id":"veyon-channel-waiting","query":"Veyon 能连接，学生端却一直显示等待教师端连接，教师端发不了消息","expectedSlug":"veyon-connection","acceptableSlugs":["student-offline","student-config"],"critical":true,"verifiedFor":"1.1.77"},

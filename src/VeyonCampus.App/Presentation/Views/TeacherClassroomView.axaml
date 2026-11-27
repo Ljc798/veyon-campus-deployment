@@ -205,6 +205,13 @@
                           <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
                                     IsEnabled="{Binding CanUnlockInput}" />
                           <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                          <MenuItem Header="网络开关">
+                            <MenuItem Header="禁止该设备修改网络" Tag="BlockNetworkChangeEnabled" Click="RequestDeviceAction" />
+                            <MenuItem Header="允许该设备修改网络" Tag="BlockNetworkChangeDisabled" Click="RequestDeviceAction" />
+                            <Separator />
+                            <MenuItem Header="关闭该设备 WiFi（10 分钟后自动恢复）" Tag="WifiOff" Click="RequestDeviceAction" />
+                            <MenuItem Header="立即恢复该设备 WiFi" Tag="WifiOn" Click="RequestDeviceAction" />
+                          </MenuItem>
                           <Separator />
                           <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
                           <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
@@ -261,6 +268,13 @@
                           <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
                                     IsEnabled="{Binding CanUnlockInput}" />
                           <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                          <MenuItem Header="网络开关">
+                            <MenuItem Header="禁止该设备修改网络" Tag="BlockNetworkChangeEnabled" Click="RequestDeviceAction" />
+                            <MenuItem Header="允许该设备修改网络" Tag="BlockNetworkChangeDisabled" Click="RequestDeviceAction" />
+                            <Separator />
+                            <MenuItem Header="关闭该设备 WiFi（10 分钟后自动恢复）" Tag="WifiOff" Click="RequestDeviceAction" />
+                            <MenuItem Header="立即恢复该设备 WiFi" Tag="WifiOn" Click="RequestDeviceAction" />
+                          </MenuItem>
                           <Separator />
                           <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
                           <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
@@ -316,6 +330,13 @@
                         <MenuItem Header="解除该设备键鼠限制" Tag="UnlockInput" Click="RequestDeviceAction"
                                   IsEnabled="{Binding CanUnlockInput}" />
                         <MenuItem Header="查看 Input Guard 状态" Tag="ShowInputGuardStatus" Click="RequestDeviceAction" />
+                        <MenuItem Header="网络开关">
+                          <MenuItem Header="禁止该设备修改网络" Tag="BlockNetworkChangeEnabled" Click="RequestDeviceAction" />
+                          <MenuItem Header="允许该设备修改网络" Tag="BlockNetworkChangeDisabled" Click="RequestDeviceAction" />
+                          <Separator />
+                          <MenuItem Header="关闭该设备 WiFi（10 分钟后自动恢复）" Tag="WifiOff" Click="RequestDeviceAction" />
+                          <MenuItem Header="立即恢复该设备 WiFi" Tag="WifiOn" Click="RequestDeviceAction" />
+                        </MenuItem>
                         <Separator />
                         <MenuItem Header="查看设备信息" Tag="ShowDeviceInfo" Click="RequestDeviceAction" />
                         <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
@@ -469,6 +490,28 @@
               <Button Content="解除所选" Classes="secondary" Padding="10,5" Click="RequestBatchUnlockInput"
                       IsEnabled="{Binding HasInputLockSelection}" />
             </StackPanel>
+          </StackPanel>
+          <TextBlock Text="网络开关" Classes="section-title" />
+          <StackPanel Spacing="5">
+            <TextBlock
+                Text="禁止后，普通学生账户无法从设置页、快速设置面板或网络连接界面关闭 WiFi。关闭 WiFi 会让设备暂时失联，学生端会在时限到后自动恢复，重启也会恢复。"
+                Classes="muted" FontSize="12" TextWrapping="Wrap" />
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="7">
+              <Button Content="禁止改网络" Classes="primary" FontSize="12" Padding="10,5"
+                      Click="RequestBlockNetworkChange" IsEnabled="{Binding HasInputLockSelection}"
+                      ToolTip.Tip="隐藏设置页、快速设置面板和网络连接界面（对所选设备）" />
+              <Button Grid.Column="1" Content="允许改网络" Classes="secondary" FontSize="12" Padding="10,5"
+                      Click="RequestAllowNetworkChange" IsEnabled="{Binding HasInputLockSelection}"
+                      ToolTip.Tip="恢复网络设置入口（对所选设备）" />
+            </Grid>
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="7">
+              <Button Content="关闭 WiFi（10 分钟）" Classes="secondary" FontSize="12" Padding="10,5"
+                      Click="RequestWifiOff" IsEnabled="{Binding HasInputLockSelection}"
+                      ToolTip.Tip="立即关闭无线网卡，10 分钟后由学生端自动恢复；期间这些设备会失联" />
+              <Button Grid.Column="1" Content="恢复 WiFi" Classes="secondary" FontSize="12" Padding="10,5"
+                      Click="RequestWifiOn" IsEnabled="{Binding HasInputLockSelection}"
+                      ToolTip.Tip="立即重新启用无线网卡" />
+            </Grid>
           </StackPanel>
           <TextBlock Text="{Binding ClassroomQuickControlSelectionSummary}" Classes="muted" FontSize="12"
                      TextWrapping="Wrap" />

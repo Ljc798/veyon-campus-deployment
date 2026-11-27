@@ -1405,7 +1405,7 @@ Check("配置包按稳定协议兼容补丁更新并保留新协议、Agent 与 
   // Keep this in sync with src/VeyonCampus.Agent/VeyonCampus.Agent.csproj. It is asserted explicitly
   // so a version bump cannot silently ship a StudentSetup that reports a different agent version than
   // the one it actually bundles.
-  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.75");
+  Expect(WebsitePolicyAgentInstaller.BuildVersion == "0.4.76");
 });
 Check("Veyon 目录数字类型读回包含空地点、中文显示名及 UUID 地点关联", () =>
 {

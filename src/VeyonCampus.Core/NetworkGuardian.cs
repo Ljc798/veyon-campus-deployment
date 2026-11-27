@@ -51,6 +51,7 @@ internal static class NetworkGuardian
         if (!OperatingSystem.IsWindows()) return;
 
         var roomId = DeriveRoomId(campusId);
+        var networkControl = new StudentNetworkControlState(configPath);
         DateTimeOffset? offlineSince = null;
         DateTimeOffset? holdStarted = null;
         Guid? ownLease = null;
@@ -101,7 +102,9 @@ internal static class NetworkGuardian
                 // Only while a classroom policy is actually in force. Locking outside a lesson would
                 // punish a student for switching the radio off at the end of the day, which is
                 // ordinary use rather than an escape; the whole point is to protect a lesson.
-                if (!IsPolicyActive(campusId))
+                // A radio the teacher deliberately switched off is not an escape either: locking the
+                // keyboard then would freeze a whole class the teacher meant to isolate.
+                if (!IsPolicyActive(campusId) || networkControl.IsWifiHoldActive(now))
                 {
                     if (ownLease is { } stale)
                     {
@@ -112,7 +115,9 @@ internal static class NetworkGuardian
                     holdStarted = null;
                     offlineSince = null;
                     Report(configPath, ref reportedState, "no-policy",
-                        "网络不通，但当前没有生效的课堂策略，不锁定键鼠。");
+                        networkControl.IsWifiHoldActive(now)
+                            ? "网络不通，但 WiFi 是教师端主动关闭的，不锁定键鼠。"
+                            : "网络不通，但当前没有生效的课堂策略，不锁定键鼠。");
                     continue;
                 }
 

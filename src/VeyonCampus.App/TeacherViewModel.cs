@@ -32,7 +32,15 @@ public enum ClassroomDeviceAction
     UnlockInput,
     ShowInputGuardStatus,
     ShowDeviceInfo,
-    ShowDiagnostics
+    ShowDiagnostics,
+    /// <summary>Hide the Settings/Quick Settings network entries so the student cannot switch it off.</summary>
+    BlockNetworkChangeEnabled,
+    /// <summary>Give the ordinary account its network switches back.</summary>
+    BlockNetworkChangeDisabled,
+    /// <summary>Disable the wireless adapter for a bounded window; the Agent restores it on its own.</summary>
+    WifiOff,
+    /// <summary>Bring the wireless adapter back immediately.</summary>
+    WifiOn
 }
 
 public delegate void ClassroomDeviceActionRequestHandler(Guid targetId, ClassroomDeviceAction action);
