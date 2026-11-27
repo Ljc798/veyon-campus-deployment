@@ -71,3 +71,6 @@ campus.json
 
 # Inno Setup scripts generated per build run
 installer/.*.iss
+
+# Agent 会话备份，不入库
+/.workbuddy/backup/

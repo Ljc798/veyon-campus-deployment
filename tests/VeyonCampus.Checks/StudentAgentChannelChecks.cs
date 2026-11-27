@@ -12,6 +12,7 @@ internal static class StudentAgentChannelChecks
 {
     public static async Task RunAsync()
     {
+        CheckIdentityAliasPins();
         await CheckConcurrentRequestsAsync();
         await CheckLateResponseAfterTimeoutAsync();
         CheckAdmissionAfterClassEnds();
@@ -21,6 +22,61 @@ internal static class StudentAgentChannelChecks
         CheckTeacherEndpointReconnectConfiguration();
         CheckWebSocketSubProtocolNegotiation();
         Console.WriteLine("PASS Agent channel concurrency, late replies, post-class admission, campus isolation, close handling, and endpoint refresh");
+    }
+
+    /// <summary>
+    /// One machine, several names: the Veyon computer name, the seat name in the classroom layout,
+    /// a host name or an IP all carry the same Agent key. The channels used to demand exactly one
+    /// pin for the fingerprint, so the second name turned a healthy Agent into "untrusted" - shown
+    /// as 认证失败, which also blocked 解除键鼠 and every package push until the lock deadline.
+    /// </summary>
+    private static void CheckIdentityAliasPins()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "veyon-pin-aliases-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var store = new StudentAgentIdentityTrustStore(Path.Combine(directory, "agents.json"));
+            using var key = RSA.Create(2048);
+            var publicKeyPem = key.ExportSubjectPublicKeyInfoPem();
+            var fingerprint = StudentAgentResponseCryptography.GetFingerprint(publicKeyPem);
+            store.Pin(new StudentAgentIdentityTrustCandidate("pc-01", "demo", publicKeyPem, fingerprint));
+            store.Pin(new StudentAgentIdentityTrustCandidate("seat-01", "demo", publicKeyPem, fingerprint));
+            using var otherKey = RSA.Create(2048);
+            var otherPublicKeyPem = otherKey.ExportSubjectPublicKeyInfoPem();
+            store.Pin(new StudentAgentIdentityTrustCandidate("pc-02", "demo", otherPublicKeyPem,
+                StudentAgentResponseCryptography.GetFingerprint(otherPublicKeyPem)));
+            store.Pin(new StudentAgentIdentityTrustCandidate("pc-03", "other", publicKeyPem, fingerprint));
+
+            var pins = store.FindTrustedPins("demo", fingerprint);
+            Expect(pins.Count == 2,
+                "同一 Agent 身份的两个名称未被一起解析：" + pins.Count);
+            Expect(pins.Select(pin => pin.Target).OrderBy(target => target, StringComparer.OrdinalIgnoreCase)
+                    .SequenceEqual(["pc-01", "seat-01"]),
+                "别名解析返回了错误的设备名称。");
+            Expect(pins.All(pin => pin.Fingerprint == fingerprint && pin.PublicKeyPem == publicKeyPem),
+                "别名解析混入了不同身份的固定项。");
+            Expect(store.FindTrustedPins("demo", fingerprint).Count ==
+                   store.FindTrustedPins("demo", fingerprint).DistinctBy(pin => pin.Target,
+                       StringComparer.OrdinalIgnoreCase).Count(),
+                "别名解析没有按设备名称去重。");
+            Expect(store.FindTrustedPins("other", fingerprint).Single().Target == "pc-03",
+                "别名解析跨越了校区边界。");
+
+            var rejectedInvalidFingerprint = false;
+            try { store.FindTrustedPins("demo", "not-a-fingerprint"); }
+            catch (InvalidDataException) { rejectedInvalidFingerprint = true; }
+            Expect(rejectedInvalidFingerprint, "无效指纹没有被别名解析拒绝。");
+            Expect(store.FindTrustedPins("demo",
+                    StudentAgentResponseCryptography.GetFingerprint(otherPublicKeyPem)).Count == 1,
+                "另一台设备的身份没有被单独解析。");
+        }
+        finally
+        {
+            try { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
     }
 
     private static async Task CheckConcurrentRequestsAsync()

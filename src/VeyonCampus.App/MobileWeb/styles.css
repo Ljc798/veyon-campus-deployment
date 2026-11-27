@@ -919,3 +919,18 @@ body.messages-open { overflow: hidden; }
   }
   .classroom-screen-preview-tile-heading small { grid-column: 2; justify-self: end; }
 }
+
+/* 单台设备管控：时长 + 四个动作，避免在手机上调整个班级的倒计时。 */
+.device-control-dialog { width: min(100% - 20px, 520px); max-width: none; padding: 18px; border: 1px solid var(--line); border-radius: 20px; color: var(--ink); background: #fff; }
+.device-control-dialog::backdrop { background: #112c3d66; }
+.device-control-dialog[open] { display: flex; flex-direction: column; gap: 14px; }
+.device-control-duration { display: grid; gap: 8px; }
+.device-control-duration label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); }
+.device-control-duration select,
+.device-control-duration input { min-height: 44px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 12px; font: inherit; color: var(--ink); background: #fff; }
+.device-control-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.device-control-actions button { display: grid; gap: 2px; justify-items: start; text-align: left; }
+.device-control-actions button strong { font-size: 14px; }
+.device-control-actions button span { font-size: 11px; color: var(--muted); }
+.device-row-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+@media (max-width: 380px) { .device-control-actions { grid-template-columns: 1fr; } }

@@ -59,24 +59,33 @@ internal sealed partial class TeacherMobileControlService
                 return;
             }
 
-            var matchingAgentPins = _agentTrustStore.List().Where(pin => pin.CampusId == campusId &&
-                string.Equals(pin.Fingerprint, hello.AgentIdentityFingerprint,
-                    StringComparison.OrdinalIgnoreCase)).ToArray();
-            if (matchingAgentPins.Length != 1)
+            // A machine can be pinned under more than one name (Veyon computer name, seat name, host
+            // name, IP). Requiring exactly one pin for the identity blocked maintenance - the update
+            // push path - the moment a second name was pinned, which the teacher showed as 认证失败.
+            var matchingAgentPins = _agentTrustStore.FindTrustedPins(campusId,
+                hello.AgentIdentityFingerprint);
+            if (matchingAgentPins.Count == 0)
             {
                 await CloseRejectedMaintenanceChannelAsync(socket, "untrusted agent identity",
                     handshakeTimeout.Token).ConfigureAwait(false);
                 return;
             }
 
-            var agentPin = matchingAgentPins[0];
-            if (!StudentAgentChannelAdmissionPolicy.CanAdmitPinnedAgent(campusId, agentPin.CampusId,
-                    agentPin.Target))
+            var admittedAgentPins = matchingAgentPins.Where(pin =>
+                    StudentAgentChannelAdmissionPolicy.CanAdmitPinnedAgent(campusId, pin.CampusId, pin.Target))
+                .ToArray();
+            if (admittedAgentPins.Length == 0)
             {
                 await CloseRejectedMaintenanceChannelAsync(socket, "campus identity mismatch",
                     handshakeTimeout.Token).ConfigureAwait(false);
                 return;
             }
+
+            // Address the device by the name it was already enrolled under, so the maintenance pin and
+            // every later update keep using one consistent target; otherwise take the newest pin.
+            var agentPin = admittedAgentPins.FirstOrDefault(pin =>
+                    _maintenanceTrustStore.FindTrustedPin(pin.CampusId, pin.Target, pin.Fingerprint) is not null)
+                ?? admittedAgentPins[0];
 
             var verifiedEnrollment = MaintenanceServiceIdentityStore.VerifyEnrollment(
                 hello.SignedEnrollmentJson, agentPin.PublicKeyPem, campusId, agentPin.Fingerprint,
@@ -117,21 +126,39 @@ internal sealed partial class TeacherMobileControlService
                 MaintenanceIdentityFingerprint: verifiedEnrollment.MaintenanceIdentityFingerprint),
                 handshakeTimeout.Token).ConfigureAwait(false);
 
+            // Aliases that already hold a maintenance key for this identity are safe to route too: the
+            // teacher may address the device by the seat name while the pin was created under the
+            // Veyon computer name. No new maintenance pin is created for an alias here.
+            var routingPins = admittedAgentPins.Where(pin =>
+                string.Equals(pin.Target, agentPin.Target, StringComparison.OrdinalIgnoreCase) ||
+                _maintenanceTrustStore.FindTrustedPublicKeyForIdentity(pin.CampusId, pin.Target,
+                    pin.Fingerprint, verifiedEnrollment.MaintenanceIdentityFingerprint) is not null).ToArray();
             await using var connection = new TeacherMaintenanceServiceConnection(socket);
-            using var registration = MaintenanceServiceChannelHub.Register(campusId, agentPin.Target,
-                verifiedEnrollment.MaintenanceIdentityFingerprint, connection.SendRequestAsync,
-                connection.Invalidate);
-            try { _maintenanceServiceChannelConnected?.Invoke(agentPin.Target); }
-            catch (InvalidOperationException)
+            var registrations = routingPins.Select(pin => MaintenanceServiceChannelHub.Register(campusId,
+                pin.Target, verifiedEnrollment.MaintenanceIdentityFingerprint, connection.SendRequestAsync,
+                connection.Invalidate)).ToArray();
+            try
             {
-                // UI notification is best-effort; it must not tear down an authenticated service channel.
+                foreach (var pin in routingPins)
+                {
+                    try { _maintenanceServiceChannelConnected?.Invoke(pin.Target); }
+                    catch (InvalidOperationException)
+                    {
+                        // UI notification is best-effort; it must not tear down an authenticated channel.
+                    }
+                }
+                try { await connection.RunAsync(context.RequestAborted).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
+                catch (Exception exception) when (exception is WebSocketException or IOException or
+                                                  InvalidDataException or ObjectDisposedException or
+                                                  OperationCanceledException)
+                {
+                    // The hub registration is removed on exit; the SYSTEM service reconnects independently.
+                }
             }
-            try { await connection.RunAsync(context.RequestAborted).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
-            catch (Exception exception) when (exception is WebSocketException or IOException or InvalidDataException or
-                                              ObjectDisposedException or OperationCanceledException)
+            finally
             {
-                // The hub registration is removed on exit; the SYSTEM service reconnects independently.
+                foreach (var registration in registrations) registration.Dispose();
             }
         }
         catch (Exception exception) when (exception is WebSocketException or IOException or InvalidDataException or

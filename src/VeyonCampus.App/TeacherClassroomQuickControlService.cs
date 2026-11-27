@@ -291,7 +291,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default,
         DateTimeOffset? expectedControlExpiresUtc = null, string source = "teacher-command",
         bool preserveControlExpiry = false, DateTimeOffset? inputLockReleaseUtc = null,
-        int inputLockGraceSeconds = 0)
+        int inputLockGraceSeconds = 0, DateTimeOffset? targetExpiresUtc = null)
     {
         if (!Enum.IsDefined(action)) throw new InvalidDataException("快捷管控操作无效。");
         if (!TeacherClassroomQuickControlBuildFeatures.PilotEnabled && action is not
@@ -313,6 +313,31 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             ValidateControlExpiry(expires, DateTimeOffset.UtcNow);
             requestedControlExpiry = expires;
         }
+        // A per-device deadline (single card / phone) deliberately does not move the class countdown.
+        // It only bounds this device's website policy or input lease, and it is validated here so a
+        // stale picker value cannot be signed into a policy that is already expired on arrival.
+        var perTargetExpiry = targetExpiresUtc?.ToUniversalTime();
+        if (perTargetExpiry is not null)
+        {
+            var now = DateTimeOffset.UtcNow;
+            var maximum = action == ClassroomQuickControlAction.LockInput
+                ? StudentInputGuardCommandCryptography.MaximumPersistedLockLifetime
+                : WebsitePolicyCompiler.MaximumPolicyLifetime;
+            if (perTargetExpiry <= now)
+                throw new InvalidDataException("单台设备的截止时间必须晚于当前时间。");
+            if (perTargetExpiry - now > maximum)
+                throw new InvalidDataException(action == ClassroomQuickControlAction.LockInput
+                    ? "单台键鼠锁定不能超过 12 小时。"
+                    : "单台网站策略不能超过 24 小时。");
+            if (perTargetExpiry.Value.ToLocalTime().Date != now.ToLocalTime().Date)
+                throw new InvalidDataException("单台设备管控只能持续到今天结束，不能跨天。");
+        }
+        // The class-wide push supplies its own deadline; reuse it as this run's target deadline so a
+        // device pinned earlier at 10:30 follows the teacher's new 15:30 instead of keeping the old one.
+        var effectiveTargetExpiry = perTargetExpiry ?? requestedControlExpiry;
+        var effectiveInputReleaseUtc = inputLockReleaseUtc ?? (action == ClassroomQuickControlAction.LockInput
+            ? perTargetExpiry
+            : null);
         var targets = SelectTargets(context, selectedTargetIds);
         if (targets.Count == 0) throw new InvalidDataException("当前课堂没有可操作的学生电脑。");
         var requestedUtc = DateTimeOffset.UtcNow;
@@ -366,7 +391,9 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                             "同一任务已由另一工作线程处理；已读取权威状态，没有重复发送。");
                     var result = await ExecuteTargetAsync(context, binding, action, cancellationToken,
                             operation.DesiredRevision, operation.TaskId!.Value,
-                            inputLockReleaseUtc: inputLockReleaseUtc, inputLockGraceSeconds: inputLockGraceSeconds)
+                            inputLockReleaseUtc: effectiveInputReleaseUtc,
+                            inputLockGraceSeconds: inputLockGraceSeconds,
+                            targetExpiresUtc: effectiveTargetExpiry)
                         .ConfigureAwait(false);
                     var latest = TryReadDevice(context.SessionId, binding.TargetId);
                     if (latest is { } latestState && latestState.DesiredRevision == operation.DesiredRevision &&
@@ -532,7 +559,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         TeacherClassroomEventContext context, TargetBinding binding, ClassroomQuickControlAction action,
         CancellationToken cancellationToken, long desiredRevision, Guid taskId,
         bool allowEndedRestore = false, DateTimeOffset? inputLockReleaseUtc = null,
-        int inputLockGraceSeconds = 0)
+        int inputLockGraceSeconds = 0, DateTimeOffset? targetExpiresUtc = null)
     {
         var previous = ReadDevice(context.SessionId, binding.TargetId);
         var requestedMode = action switch
@@ -616,7 +643,7 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => await EnableWebsiteAsync(context,
                     binding, previous, website!, guardResult, cancellationToken, allowEndedRestore,
-                    readback.Website.Status?.CollectedUtc).ConfigureAwait(false),
+                    readback.Website.Status?.CollectedUtc, targetExpiresUtc).ConfigureAwait(false),
                 ClassroomQuickControlAction.LockInput => await LockInputAsync(context, binding, previous,
                     website, guardResult, cancellationToken, allowEndedRestore, inputLockReleaseUtc,
                     inputLockGraceSeconds).ConfigureAwait(false),
@@ -939,8 +966,25 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
         TeacherClassroomEventContext context, TargetBinding binding,
         ClassroomQuickControlDeviceState previous, WebsitePolicyReportedState website,
         StudentInputGuardStatusDeliveryResult guardResult, CancellationToken cancellationToken,
-        bool allowEndedRestore = false, DateTimeOffset? agentUtc = null)
+        bool allowEndedRestore = false, DateTimeOffset? agentUtc = null,
+        DateTimeOffset? targetExpiresUtc = null)
     {
+        // A single card's deadline can pass while the machine is still waiting for the Agent. Retrying
+        // then must not invent a fresh window: the policy already expired on the student side, so drop
+        // the queued task instead of extending a restriction the teacher ended.
+        var pendingPhase = previous.WebsitePhase ?? previous.Phase;
+        if (targetExpiresUtc is null && previous.WebsiteExpiresUtc is { } ownExpiry &&
+            ownExpiry.ToUniversalTime() <= DateTimeOffset.UtcNow &&
+            pendingPhase is ClassroomQuickControlPhase.WaitingForAgent or
+                ClassroomQuickControlPhase.WebsiteApplying or ClassroomQuickControlPhase.Switching)
+        {
+            var expired = SaveDevice(context, ClearWebsiteControl(previous,
+                "单台网站策略已到截止时间；不再补发。"));
+            return Result(context, binding, previous.Mode, DeviceControlMode.WebsiteRestriction,
+                expired.Mode, ClassroomQuickControlPhase.NoneVerified, true, false,
+                expired.Detail, null, expired.InputLeaseId, expired.ExpiresUtc);
+        }
+
         if (HasWebsiteOwnership(previous) &&
             website.Mode != WebsitePolicyMode.Disabled && previous.WebsiteRevision != website.Revision)
             return StoreResult(context, binding, previous, DeviceControlMode.WebsiteRestriction,
@@ -988,7 +1032,15 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
                 previous.PendingWebsiteRevision, previous.InputLeaseId, previous.ExpiresUtc);
 
         var now = DateTimeOffset.UtcNow;
-        var expires = _stateStore.Read(context.SessionId)?.ControlExpiresUtc ?? now.Add(DefaultWebsiteLifetime);
+        // A single card keeps its own deadline. Reusing the device's previous website expiry is what
+        // makes the automatic catch-up re-push honour "this one until 10:50" instead of silently
+        // extending it to the lesson deadline.
+        var expires = targetExpiresUtc
+            ?? (previous.WebsiteExpiresUtc is { } own && own.ToUniversalTime() > now
+                ? own.ToUniversalTime()
+                : (DateTimeOffset?)null)
+            ?? _stateStore.Read(context.SessionId)?.ControlExpiresUtc
+            ?? now.Add(DefaultWebsiteLifetime);
         ValidateControlExpiry(expires, now);
         // The signed document is checked against the student machine's own clock. Translate both
         // timestamps by the offset measured from its signed status response: without this, a machine
@@ -1505,12 +1557,18 @@ internal sealed class TeacherClassroomQuickControlService : IAsyncDisposable
             signingKey.PrivateKey, cancellationToken).ConfigureAwait(false);
         EnsureCurrentTask(context.SessionId, binding.TargetId, pending.DesiredRevision,
             pending.TaskId!.Value, action, allowEndedRestore);
-        if (command.Succeeded && finalStatus.Succeeded && finalStatus.Status is { Supported: true } final &&
+        // A signed status read-back with no lease is the authority, not the release command's reply.
+        // The agent can answer the release with a conflict (for example when the lease just expired)
+        // while input is already restored; insisting on command success left those machines stuck on
+        // "键鼠待核验" even though nothing was blocked any more.
+        if (finalStatus.Succeeded && finalStatus.Status is { Supported: true } final &&
             final.LeaseId is null && (final.Phase is StudentInputGuardPhase.Unlocked or
                 StudentInputGuardPhase.Expired))
         {
             var clear = SaveDevice(context, ClearInputControl(pending,
-                "InputGuard 解除回执与后续签名状态均已确认。"));
+                command.Succeeded
+                    ? "InputGuard 解除回执与后续签名状态均已确认。"
+                    : "解除命令没有回执，但签名状态已确认输入已恢复（无活动租约）。"));
             return Result(context, binding, previous.Mode, DeviceControlMode.None, clear.Mode,
                 clear.Phase, true, HasWebsiteOwnership(clear), clear.Detail,
                 clear.WebsiteRevision ?? clear.PendingWebsiteRevision, null, clear.ExpiresUtc);

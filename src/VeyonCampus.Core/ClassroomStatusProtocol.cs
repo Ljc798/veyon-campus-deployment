@@ -159,14 +159,19 @@ public static class ClassroomStatusCryptography
     }
 
     public static ClassroomStatusSnapshot ToSnapshot(ClassroomStatusCommand command,
-        DateTimeOffset receivedUtc, DateTimeOffset nowUtc)
+        DateTimeOffset receivedUtc, DateTimeOffset nowUtc, DateTimeOffset? expiresUtc = null)
     {
         Validate(command, command.CampusId, nowUtc);
         var received = receivedUtc.ToUniversalTime();
+        // expiresUtc lets the Agent pass the deadline translated into its own clock. Mixing the
+        // teacher's absolute deadline with the local receipt time assumed both clocks agree: a student
+        // PC even a second behind produced "expires - received > lifetime" and the classroom assistant
+        // showed 回执时间无效 for the whole lesson.
+        var expires = (expiresUtc ?? command.ExpiresUtc).ToUniversalTime();
         return command.Active
             ? new ClassroomStatusSnapshot(true, command.SessionId, command.RoomName, command.TargetCount,
-                received, command.ExpiresUtc, command.Mode)
-            : new ClassroomStatusSnapshot(true, ReceivedUtc: received, ExpiresUtc: command.ExpiresUtc);
+                received, expires, command.Mode)
+            : new ClassroomStatusSnapshot(true, ReceivedUtc: received, ExpiresUtc: expires);
     }
 
     public static void Validate(ClassroomStatusCommand command, string campusId, DateTimeOffset nowUtc)
@@ -233,18 +238,29 @@ public sealed class ClassroomStatusAgentState
     private readonly object _gate = new();
     private ClassroomStatusCommand? _current;
     private DateTimeOffset _receivedUtc;
+    // The teacher's deadline translated into this machine's clock (receipt + remaining lifetime).
+    // Stored per message so nothing downstream has to subtract a timestamp from another clock.
+    private DateTimeOffset _expiresUtcLocal;
 
     public ClassroomStatusCommand Apply(string signedJson, string campusId, string teacherPublicKeyPem,
         DateTimeOffset nowUtc)
     {
         var command = ClassroomStatusCryptography.Verify(signedJson, campusId, teacherPublicKeyPem, nowUtc);
+        var receivedUtc = nowUtc.ToUniversalTime();
+        // The remaining lifetime is the only clock-independent quantity here: the teacher's absolute
+        // deadline minus its own issue time. Adding it to the local receipt time removes the assumption
+        // that the two machines agree, which any drifting classroom PC silently violated.
+        var lifetime = command.ExpiresUtc - command.IssuedUtc;
+        if (lifetime < TimeSpan.Zero || lifetime > ClassroomStatusCryptography.MaximumLifetime)
+            throw new InvalidDataException("课堂状态有效期无效。");
         lock (_gate)
         {
             if (_current is { } current &&
                 (command.MessageId == current.MessageId || command.IssuedUtc <= current.IssuedUtc))
                 throw new InvalidDataException("重复或过期的课堂状态消息已拒绝。");
             _current = command;
-            _receivedUtc = nowUtc.ToUniversalTime();
+            _receivedUtc = receivedUtc;
+            _expiresUtcLocal = receivedUtc + lifetime;
             return command;
         }
     }
@@ -254,9 +270,9 @@ public sealed class ClassroomStatusAgentState
         lock (_gate)
         {
             var command = _current;
-            if (command is null || command.CampusId != campusId || command.ExpiresUtc <= nowUtc.ToUniversalTime())
+            if (command is null || command.CampusId != campusId || _expiresUtcLocal <= nowUtc.ToUniversalTime())
                 return new ClassroomStatusSnapshot(false);
-            return ClassroomStatusCryptography.ToSnapshot(command, _receivedUtc, nowUtc);
+            return ClassroomStatusCryptography.ToSnapshot(command, _receivedUtc, nowUtc, _expiresUtcLocal);
         }
     }
 }

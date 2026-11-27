@@ -51,16 +51,34 @@ public static class StudentInputGuardTransport
             var verified = StudentAgentResponseCryptography.VerifyForTeacher<StudentInputGuardStatusResponse>(
                 Encoding.UTF8.GetString(body), campusId, normalizedTarget, pinnedKey);
             var expectedFingerprint = verified.Fingerprint;
+            var teacherNow = DateTimeOffset.UtcNow;
             StudentInputGuardCommandCryptography.ValidateStatus(verified.Payload, request,
-                expectedFingerprint, DateTimeOffset.UtcNow);
+                expectedFingerprint, teacherNow);
             if (!verified.MatchesPinnedKey)
                 return new StudentInputGuardStatusDeliveryResult(normalizedTarget, false,
                     "Student Agent 身份指纹已变化；InputGuard 状态被拒绝。", NeedsReview: true);
+            // Every timestamp in this protocol is compared against the other machine's clock. A PC whose
+            // clock drifts by minutes therefore failed the status read itself ("状态无法核验"), and an
+            // already locked machine could not be released. Measure the difference from this signed
+            // response and report versions of the timestamps the teacher can compare with its own clock.
+            var clockOffset = MeasureClockOffset(verified.Payload.CollectedUtc, teacherNow);
+            var status = clockOffset == TimeSpan.Zero
+                ? verified.Payload
+                : verified.Payload with
+                {
+                    CollectedUtc = verified.Payload.CollectedUtc - clockOffset,
+                    LeaseExpiresUtc = verified.Payload.LeaseExpiresUtc is { } leaseExpiry
+                        ? leaseExpiry - clockOffset
+                        : null
+                };
+            var skewNote = clockOffset == TimeSpan.Zero
+                ? ""
+                : $"，两端时钟相差 {clockOffset.TotalSeconds:0} 秒（已按差值换算时间）";
             return new StudentInputGuardStatusDeliveryResult(normalizedTarget, true,
-                verified.Payload.Supported
+                (verified.Payload.Supported
                     ? "Agent 签名、设备身份与 InputGuard 状态均已验证。"
-                    : "Agent 签名和设备身份已验证；当前 Agent 未连接可用的交互桌面 Guard。",
-                verified.Payload);
+                    : "Agent 签名和设备身份已验证；当前 Agent 未连接可用的交互桌面 Guard。") + skewNote,
+                status, ClockOffset: clockOffset);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
@@ -122,7 +140,11 @@ public static class StudentInputGuardTransport
                 StudentInputGuardOutcome.Conflict, null,
                 "当前签名状态中的租约与本次操作不匹配；没有发送命令。");
 
-        var now = DateTimeOffset.UtcNow;
+        // The student validates every signed timestamp against its own clock, so a machine whose clock
+        // drifted by minutes rejected every command. Issue the command on the student's timeline using
+        // the difference measured from its signed status, the same way the website policy does.
+        var clockOffset = statusResult.ClockOffset;
+        var now = DateTimeOffset.UtcNow + clockOffset;
         var expiresUtc = now.Add(StudentInputGuardCommandCryptography.MaximumCommandLifetime);
         var leaseExpiresUtc = action is StudentInputGuardAction.Activate or StudentInputGuardAction.Renew
             ? now.Add(StudentInputGuardCommandCryptography.MaximumLeaseLifetime)
@@ -141,7 +163,7 @@ public static class StudentInputGuardTransport
             campusId, roomId, status.DeviceFingerprint, teacherMachineId,
             status.AgentRunId, Guid.NewGuid(), Guid.NewGuid(), status.ControlEpoch, leaseId,
             now, expiresUtc, action, leaseExpiresUtc,
-            LockReleaseUtc: persistedIntent ? lockReleaseUtc!.Value.ToUniversalTime() : null,
+            LockReleaseUtc: persistedIntent ? lockReleaseUtc!.Value.ToUniversalTime() + clockOffset : null,
             GraceSeconds: persistedIntent ? graceSeconds : 0);
         string signedCommand;
         try { signedCommand = StudentInputGuardCommandCryptography.Sign(command, campusPrivateKey); }
@@ -169,22 +191,24 @@ public static class StudentInputGuardTransport
                     response.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.Conflict,
                     null, null, response.StatusCode == HttpStatusCode.NotFound
                         ? "此 Student Agent 尚不支持 InputGuard 命令。"
-                        : $"InputGuard 命令未确认（HTTP {(int)response.StatusCode}）。");
+                        : $"InputGuard 命令未确认（HTTP {(int)response.StatusCode}）。")
+                { ClockOffset = clockOffset };
 
             var body = await ReadBoundedAsync(response.Content,
                 StudentAgentResponseCryptography.MaximumEnvelopeBytes, timeout.Token).ConfigureAwait(false);
             var verified = StudentAgentResponseCryptography.Verify<StudentInputGuardReceipt>(
                 Encoding.UTF8.GetString(body), pinnedKey);
             StudentInputGuardCommandCryptography.ValidateReceipt(verified.Payload, command,
-                DateTimeOffset.UtcNow);
+                DateTimeOffset.UtcNow + clockOffset);
             if (!verified.MatchesPinnedKey)
                 return new StudentInputGuardDeliveryResult(statusResult.Target, false, true,
-                    null, null, "Agent 身份指纹已变化；InputGuard 回执被拒绝。");
+                    null, null, "Agent 身份指纹已变化；InputGuard 回执被拒绝。") { ClockOffset = clockOffset };
             return new StudentInputGuardDeliveryResult(statusResult.Target,
                 verified.Payload.Outcome == StudentInputGuardOutcome.Succeeded,
                 verified.Payload.Outcome is StudentInputGuardOutcome.Unknown or
                     StudentInputGuardOutcome.Conflict or StudentInputGuardOutcome.ReplayRejected,
-                verified.Payload.Outcome, verified.Payload, verified.Payload.Detail);
+                verified.Payload.Outcome, verified.Payload, verified.Payload.Detail)
+                { ClockOffset = clockOffset };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException or
@@ -231,6 +255,27 @@ public static class StudentInputGuardTransport
             buffer.Write(chunk, 0, read);
         }
         return buffer.ToArray();
+    }
+
+    /// <summary>
+    /// Student clock minus teacher clock, measured from a freshly signed status response.
+    /// </summary>
+    /// <remarks>
+    /// The whole protocol compares one machine's timestamps against the other machine's clock: the
+    /// student rejects a command issued more than 5 seconds "in the future", and the teacher rejects
+    /// a receipt completed outside a two-minute window. A few seconds of difference is noise and is
+    /// left alone; anything larger is translated rather than rejected, because a classroom PC with a
+    /// drifting clock used to make 锁定/解除 unconfirmable - and a persisted lock then had to run out
+    /// its deadline before the machine was usable again.
+    /// </remarks>
+    internal static TimeSpan MeasureClockOffset(DateTimeOffset studentNowUtc, DateTimeOffset teacherNowUtc)
+    {
+        var offset = studentNowUtc.ToUniversalTime() - teacherNowUtc.ToUniversalTime();
+        if (Math.Abs(offset.TotalSeconds) < 3 ||
+            offset > StudentInputGuardCommandCryptography.MaximumPersistedLockLifetime ||
+            offset < -StudentInputGuardCommandCryptography.MaximumPersistedLockLifetime)
+            return TimeSpan.Zero;
+        return offset;
     }
 
     /// <summary>

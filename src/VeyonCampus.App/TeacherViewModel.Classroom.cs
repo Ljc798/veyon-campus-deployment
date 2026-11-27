@@ -3509,6 +3509,46 @@ public sealed partial class TeacherViewModel
         RefreshDeviceHealthView();
     }
 
+    private string? _notifiedTeacherReleaseVersion;
+
+    /// <summary>
+    /// Asks the release catalog for a newer teacher build on launch and on the hourly beat. The daily
+    /// campus heartbeat also carries the latest versions, but it only runs once per calendar day and
+    /// only after a campus config package is published, so a build released later in the day stayed
+    /// invisible until the next morning. Nothing here is allowed to disturb the classroom: every
+    /// failure is silent and the "关于与软件更新" page still checks on demand.
+    /// </summary>
+    public async Task CheckTeacherReleaseOnLaunchAsync()
+    {
+        if (!OperatingSystem.IsWindows() || _releaseClient is null) return;
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            var result = await _releaseClient.CheckLatestAsync(ApplicationReleaseRole.TeacherConsole,
+                AppVersion, timeout.Token).ConfigureAwait(true);
+            if (!result.IsNewer || result.Release is not { } release) return;
+            if (!HasRequiredPolicyCapabilities(release.Manifest)) return;
+            var version = release.Manifest.Version;
+            lock (_releaseNoticeGate)
+            {
+                if (_pendingReleaseNotice is not null ||
+                    string.Equals(_notifiedTeacherReleaseVersion, version, StringComparison.Ordinal))
+                    return;
+                _notifiedTeacherReleaseVersion = version;
+                _pendingReleaseNotice = "发现可用的新版本：" + Environment.NewLine +
+                                        $"教师控制台：{AppVersion} → {version}";
+            }
+            ReleaseNoticeAvailable?.Invoke(this, EventArgs.Empty);
+        }
+        catch (Exception exception) when (exception is HttpRequestException or IOException or
+                                          TaskCanceledException or UnauthorizedAccessException or
+                                          InvalidDataException or InvalidOperationException or
+                                          PlatformNotSupportedException or System.Text.Json.JsonException)
+        {
+            // A release-catalog outage must never surface as a classroom problem.
+        }
+    }
+
     private void QueueNewerReleaseNotice(TeacherCampusLatestReleases releases)
     {
         if (_releaseClient is null) return;
@@ -3594,7 +3634,7 @@ public sealed partial class TeacherViewModel
                 if (switched) CampusId = campus;
                 StudentTrustedCampusStatus = switched
                     ? $"学生端信任的校区是“{campus}”，教师端已切换；请再点一次“一键静默更新全部学生端”。" +
-                      "若提示身份未固定，请先在“设备健康”里核对并固定身份。"
+                      "若提示身份未固定，请确认该机 VeyonCampus Agent 正在运行；教师端会在连接时自动信任身份。"
                     : $"学生端信任的校区就是当前的“{campus}”；如果更新仍返回 409，请核对两机时间差是否超过 2 分钟。";
                 return;
             }
@@ -3764,6 +3804,7 @@ public sealed partial class TeacherViewModel
         if (TeacherCampusHeartbeatStateStore.IsDue(_teacherHeartbeatState,
                 TeacherCampusHeartbeatStateStore.GetHongKongDate()))
             await SendTeacherCampusHeartbeatAsync();
+        await CheckTeacherReleaseOnLaunchAsync();
         await SendCampusOperationsReportsAsync();
     }
 

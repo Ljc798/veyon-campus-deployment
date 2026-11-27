@@ -43,6 +43,11 @@ internal static class Program
             Environment.ExitCode = RunConfigurationClear("TeacherConsole", parentPid, parentStartTicks);
             return;
         }
+        if (args.Length >= 1 && args[0] == "--enable-local-webapi")
+        {
+            Environment.ExitCode = RunEnableLocalWebApi(args.Length >= 2 ? args[1] : null);
+            return;
+        }
 #endif
         var role = typeof(App).Assembly.GetName().Name ?? "VeyonCampus";
         EventWaitHandle? activationSignal = null;
@@ -135,6 +140,49 @@ internal static class Program
             }
             catch (Exception) { }
             return 1;
+        }
+    }
+#endif
+
+#if TEACHER_CONSOLE
+    /// <summary>
+    /// Headless branch behind the screen wall's "启用本机 WebAPI" action and the installer's post-install
+    /// step. It runs before the single-instance mutex so an elevated copy never fights the running window.
+    /// </summary>
+    private static int RunEnableLocalWebApi(string? portText)
+    {
+        var port = int.TryParse(portText, out var parsed) ? parsed : VeyonLocalWebApi.DefaultPort;
+        try
+        {
+            var outcome = VeyonLocalWebApi.EnsureEnabled(port);
+            WriteLocalWebApiDiagnostic(outcome.Detail);
+            return outcome.Succeeded ? 0 : 1;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or
+                                          UnauthorizedAccessException or PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception)
+        {
+            WriteLocalWebApiDiagnostic("启用本机 WebAPI 失败：" + exception.Message);
+            return 1;
+        }
+    }
+
+    private static void WriteLocalWebApiDiagnostic(string detail)
+    {
+        try
+        {
+            var directory = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VeyonCampus", "Logs");
+            Directory.CreateDirectory(directory);
+            File.AppendAllText(Path.Combine(directory, "local-webapi.log"),
+                DateTimeOffset.Now.ToString("yyyy-MM-dd HH:mm:ss zzz") + " " + detail + Environment.NewLine,
+                new System.Text.UTF8Encoding(false));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                          NotSupportedException or ArgumentException)
+        {
+            // Diagnostics are best-effort; the exit code is the contract.
         }
     }
 #endif

@@ -35,6 +35,29 @@ public static class ClassroomAppSuppression
         ("douyu.com", ["douyu"])
     ];
 
+    /// <summary>
+    /// Offline games that belong to no domain, so no site entry can ever reach them.
+    /// </summary>
+    /// <remarks>
+    /// These are closed whenever any restricting policy is in force. An offline card game needs no
+    /// network at all, which makes it the first thing a student opens after pulling the link or
+    /// turning the radio off — the very move the website policy is meant to survive. Names are the
+    /// process image names Windows reports, matched case-insensitively by
+    /// <see cref="Process.GetProcessesByName(string)"/>.
+    /// </remarks>
+    internal static readonly string[] OfflineGameProcesses =
+    [
+        // Windows built-in and Store card/board games.
+        "solitaire", "solitairecollection", "microsoftsolitairecollection",
+        "minesweeper", "spidersolitaire", "spider", "freecell", "mahjong", "mahjongg",
+        "purbleplace", "jigsawpuzzle", "hearts", "chess", "msmahjong", "bubblewitch",
+        // Locally installed single-player games.
+        "plantsvszombies", "pvz", "pvzlawn", "angrybirds", "bejeweled", "zuma",
+        "insaniquarium", "feedingfrenzy", "dinerdash", "cookingdash",
+        // Arcade emulators.
+        "mame", "mameui", "kawaks", "neogeo", "fba", "winKawaks", "nebula"
+    ];
+
     private static readonly object Gate = new();
     private static string[] _processNames = [];
     private static DateTimeOffset? _untilUtc;
@@ -180,11 +203,14 @@ public static class ClassroomAppSuppression
     {
         ArgumentNullException.ThrowIfNull(blockedDomains);
         ArgumentNullException.ThrowIfNull(allowedDomains);
+        if (mode == WebsitePolicyMode.Disabled) return [];
         var result = new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+        // Offline games belong to no domain, so a site entry can never reach them. Any restricting
+        // policy closes them as well: an offline game is exactly what a student falls back to once
+        // the network is gone or the site list has taken effect.
+        result.UnionWith(OfflineGameProcesses);
         switch (mode)
         {
-            case WebsitePolicyMode.Disabled:
-                return [];
             case WebsitePolicyMode.Blocklist:
                 foreach (var entry in KnownClients)
                     if (blockedDomains.Any(domain => Matches(domain, entry.Domain)))

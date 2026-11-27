@@ -12,8 +12,17 @@
     <Border Grid.Row="0" Background="{DynamicResource Teacher.Color.WarningSubtle}"
             CornerRadius="8" Padding="10,7" Margin="8,8,8,0"
             IsVisible="{Binding ClassroomScreenWall.HasWebApiWarning}">
-      <TextBlock Text="{Binding ClassroomScreenWall.WebApiWarning}" FontSize="12"
-                 Foreground="{DynamicResource Teacher.Color.Warning}" TextWrapping="Wrap" />
+      <Grid ColumnDefinitions="*,Auto" ColumnSpacing="10">
+        <TextBlock Text="{Binding ClassroomScreenWall.WebApiWarning}" FontSize="12"
+                   VerticalAlignment="Center"
+                   Foreground="{DynamicResource Teacher.Color.Warning}" TextWrapping="Wrap" />
+        <Button Grid.Column="1" Classes="secondary" FontSize="12" Padding="10,4"
+                VerticalAlignment="Center"
+                Content="{Binding ClassroomScreenWall.WebApiActionText}"
+                Click="EnableLocalWebApi"
+                IsEnabled="{Binding ClassroomScreenWall.CanEnableWebApi}"
+                ToolTip.Tip="为本机启用 Veyon WebAPI（仅本机可访问），屏幕墙需要它才能取图" />
+      </Grid>
     </Border>
 
     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -99,8 +108,8 @@
                     </Border>
                   </Grid>
 
-                  <TextBlock Grid.Row="3" Text="右键查看设备操作" Classes="muted" FontSize="10"
-                             IsVisible="{Binding !IsCompact}" VerticalAlignment="Center" />
+                  <TextBlock Grid.Row="3" Text="右键打开设备操作" Classes="muted" FontSize="9.5"
+                             VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
                 </Grid>
               </Border>
             </DataTemplate>
@@ -117,7 +126,7 @@
         </Border>
         <Border Background="{DynamicResource Teacher.Color.Surface}" CornerRadius="12" Padding="18"
                 IsVisible="{Binding ClassroomScreenWall.HasTiles}">
-          <TextBlock Text="没有设备符合当前搜索或状态筛选。清除筛选条件后重试。"
+          <TextBlock Text="{Binding ClassroomScreenWall.FilteredEmptyHint}"
                      IsVisible="{Binding !ClassroomScreenWall.HasFilteredTiles}"
                      Classes="muted" HorizontalAlignment="Center" TextWrapping="Wrap" />
         </Border>

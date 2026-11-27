@@ -362,6 +362,13 @@ if (args is ["--teacher-room-selection-fixtures"])
     return;
 }
 
+if (args is ["--classroom-status-fixtures"])
+{
+    ClassroomStatusChecks.Run();
+    Console.WriteLine("PASS 课堂状态签名隔离、重放拒绝、两分钟过期、时钟差换算与 Agent 回执");
+    return;
+}
+
 if (args is ["--input-guard-ipc-fixtures"])
 {
     if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows IPC fixture");

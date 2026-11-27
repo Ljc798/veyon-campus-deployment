@@ -14,6 +14,9 @@ internal sealed class MobileQuickControlApiFixture(ClassroomSession session)
     };
     private int _reads;
     private int _operations;
+    private IReadOnlyList<Guid>? _lastTargetIds;
+    private DateTimeOffset? _lastTargetExpiry;
+    private int? _lastDurationMinutes;
 
     public Task<ClassroomQuickControlSnapshot> ReadAsync(Guid sessionId, CancellationToken cancellationToken)
     {
@@ -27,18 +30,29 @@ internal sealed class MobileQuickControlApiFixture(ClassroomSession session)
             { WebsiteState = "needsReview" }], RoomName: session.Room.RoomName, TargetCount: session.Targets.Length));
     }
 
-    public Task<ClassroomQuickControlOperationResult> ExecuteAsync(Guid sessionId, ClassroomQuickControlAction action,
+    public Task<ClassroomQuickControlOperationResult> ExecuteAsync(Guid sessionId,
+        ClassroomQuickControlAction action, IReadOnlyList<Guid>? targetIds, DateTimeOffset? targetExpiresUtc,
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        Expect(sessionId == session.SessionId && action == ClassroomQuickControlAction.Release,
+        Expect(sessionId == session.SessionId &&
+               action is ClassroomQuickControlAction.Release or ClassroomQuickControlAction.EnableWebsiteRestriction,
             "Only the requested active classroom operation may reach the service");
         Interlocked.Increment(ref _operations);
+        _lastTargetIds = targetIds;
+        _lastTargetExpiry = targetExpiresUtc;
+        _lastDurationMinutes = targetExpiresUtc is { } expiry
+            ? (int)Math.Round((expiry - DateTimeOffset.UtcNow).TotalMinutes)
+            : null;
+        var devices = targetIds is { Count: > 0 } ? targetIds : [session.Targets[0].TargetId];
         return Task.FromResult(new ClassroomQuickControlOperationResult(sessionId, action, DateTimeOffset.UtcNow,
-            [new ClassroomQuickControlTargetResult(session.Targets[0].TargetId, "学生 08",
-                DeviceControlMode.WebsiteRestriction, DeviceControlMode.None, DeviceControlMode.WebsiteRestriction,
+            devices.Select(id => new ClassroomQuickControlTargetResult(id, "学生 08",
+                DeviceControlMode.WebsiteRestriction,
+                action == ClassroomQuickControlAction.Release ? DeviceControlMode.None : DeviceControlMode.WebsiteRestriction,
+                DeviceControlMode.WebsiteRestriction,
                 ClassroomQuickControlPhase.Unknown, false, true, 41, null,
-                "Fixture: no trusted Agent readback; restoration remains pending.")], "等待可信回执。"));
+                "Fixture: no trusted Agent readback; restoration remains pending.")).ToArray(),
+            "等待可信回执。"));
     }
 
     public async Task VerifyAsync(HttpClient client, string origin, string token)
@@ -81,6 +95,25 @@ internal sealed class MobileQuickControlApiFixture(ClassroomSession session)
                 result?.SessionId == session.SessionId && result.Results.Single() is
                     { Succeeded: false, NeedsReview: true, Phase: ClassroomQuickControlPhase.Unknown },
                 "Native mobile operations must return per-device pending results rather than unsupported or success");
+        }
+        using (var request = Request(HttpMethod.Post, "/api/classroom/quick-control", origin, token,
+                   new { sessionId = session.SessionId, action = "enableWebsiteRestriction",
+                         targetIds = new[] { Guid.NewGuid() }, durationMinutes = 30 }))
+        using (var response = await client.SendAsync(request).ConfigureAwait(false))
+            Expect(response.StatusCode == HttpStatusCode.Conflict && _operations == 1,
+                "A device that is not part of the active classroom must be rejected before execution");
+        using (var request = Request(HttpMethod.Post, "/api/classroom/quick-control", origin, token,
+                   new { sessionId = session.SessionId, action = "enableWebsiteRestriction",
+                         targetIds = new[] { session.Targets[0].TargetId }, durationMinutes = 30 }))
+        using (var response = await client.SendAsync(request).ConfigureAwait(false))
+        {
+            var result = JsonSerializer.Deserialize<ClassroomQuickControlOperationResult>(
+                await response.Content.ReadAsStringAsync().ConfigureAwait(false), JsonOptions);
+            Expect(response.StatusCode == HttpStatusCode.OK && _operations == 2 &&
+                _lastTargetIds?.Single() == session.Targets[0].TargetId &&
+                _lastDurationMinutes is >= 28 and <= 30 &&
+                result?.Results.Count == 1,
+                "A single-device phone request must carry its own deadline and return only that device");
         }
         using (var request = Request(HttpMethod.Post, "/api/classroom/mode", origin, token, new { mode = "practice" }))
         using (var response = await client.SendAsync(request).ConfigureAwait(false))

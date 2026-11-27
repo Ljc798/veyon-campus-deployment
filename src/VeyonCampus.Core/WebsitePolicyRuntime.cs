@@ -730,7 +730,10 @@ public sealed record WebsitePolicyAgentConfig(string CampusId, string PublicKeyP
     string? PreviousApplicationPolicyPublicKeyPem = null,
     DateTimeOffset? ApplicationPolicyPreviousRootRetireUtc = null,
     string? PreviousStudentSystemPolicyPublicKeyPem = null,
-    DateTimeOffset? StudentSystemPolicyPreviousRootRetireUtc = null);
+    DateTimeOffset? StudentSystemPolicyPreviousRootRetireUtc = null,
+    // Null keeps the production default (hardened). Set false only on a machine where the network
+    // settings page must stay available, such as a technician's own device.
+    bool? NetworkHardening = null);
 
 public sealed record StagedWebsitePolicyAgentUpdate(string TargetExecutablePath, string PreviousExecutablePath);
 
@@ -1083,6 +1086,12 @@ public static class WebsitePolicyAgentInstaller
             if (WindowsStudentSystemPolicyAgent.HasAnyActiveState() ||
                 WindowsApplicationPolicyStateStore.HasAnyActiveState())
                 throw new IOException("仍有活动或待恢复的学生策略；未删除计划任务和 Agent 文件。请先恢复所有校区的策略。");
+
+            stage = "解除网络开关加固";
+            // The Agent applies these machine-wide values on start, outside the tracked system-policy
+            // state, so they are removed here instead of through RestoreForRemoval. Failure is not fatal:
+            // the Agent files and task still have to go, and an administrator can delete the values by hand.
+            _ = NetworkPolicyHardening.Revert();
 
             if (task is not null)
             {
@@ -4823,6 +4832,11 @@ public sealed class WebsitePolicyAgent
         // The firewall keeps its rules across reboots, but the addresses behind them drift, and a
         // machine that was offline for a week should not start the day blocking last week's IPs.
         WebsitePolicyRegistryStore.RefreshNetworkBlock();
+        // Strip the ordinary account's remaining network switches. Applied here rather than at
+        // install time so an in-place Agent upgrade enforces it too, and reported so a hardened
+        // machine can be told apart from one where the policy never got written.
+        if (config.NetworkHardening != false)
+            ReconcileNetworkHardening(configPath);
         using var shutdown = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var teacherChannelSupervisor = new StudentAgentTeacherChannelSupervisor();
         var classroomStatus = new ClassroomStatusAgentState();
@@ -4860,6 +4874,11 @@ public sealed class WebsitePolicyAgent
         // This watcher closes the matching entertainment client while a restricting policy holds it.
         _ = Task.Run(() => ClassroomAppSuppression.RunAsync(config.CampusId, shutdown.Token),
             CancellationToken.None);
+        // A student who cuts the network keeps every applied policy but stops receiving new ones,
+        // and can play an offline game in the gap. This watcher takes that gap away by holding the
+        // machine locked while connectivity is gone, so disconnecting costs the student the machine.
+        _ = Task.Run(() => NetworkGuardian.RunAsync(config.CampusId, inputGuardState, configPath,
+            shutdown.Token), CancellationToken.None);
         // Replace a student-token Guard (which answers the pipe but cannot block input) with a SYSTEM
         // one as early as possible, instead of waiting for the first lock attempt to fail with 5.
         try
@@ -4920,8 +4939,54 @@ public sealed class WebsitePolicyAgent
             catch (OperationCanceledException) when (shutdown.IsCancellationRequested) { break; }
             // Every twentieth tick is ten minutes: often enough to follow a CDN rotation, rare enough
             // that a thousand-domain list does not keep the resolver busy all day.
-            if (++expiryTicks % 20 == 0) WebsitePolicyRegistryStore.RefreshNetworkBlock();
+            if (++expiryTicks % 20 == 0)
+            {
+                WebsitePolicyRegistryStore.RefreshNetworkBlock();
+                // Re-apply the account hardening in case a student or another tool removed it.
+                if (config.NetworkHardening != false) ReconcileNetworkHardening(configPath);
+            }
             nextExpiryCheck = expiryTimer.WaitForNextTickAsync(shutdown.Token).AsTask();
+        }
+    }
+
+    /// <summary>
+    /// Re-applies the ordinary-account network restrictions when they are missing or were removed.
+    /// </summary>
+    /// <remarks>
+    /// A standard account cannot use <c>netsh</c> or Device Manager, so the remaining ways to switch
+    /// the network off are the Settings page and the classic connection UI. Hiding the first and
+    /// restricting the second is what makes a disconnect a deliberate, effortful act rather than a
+    /// one-click escape; <see cref="NetworkGuardian"/> covers whatever still gets through.
+    /// </remarks>
+    [SupportedOSPlatform("windows")]
+    private static void ReconcileNetworkHardening(string configPath)
+    {
+        try
+        {
+            if (NetworkPolicyHardening.ReadSnapshot().FullyEnforced) return;
+            var applied = NetworkPolicyHardening.Apply();
+            if (applied.Failure is { } failure)
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    failure);
+                return;
+            }
+            if (applied.Changes.Count > 0)
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    "已加固普通账户网络开关：" + string.Join(" ", applied.Changes));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidOperationException or NotSupportedException or
+                                              System.Security.SecurityException or
+                                              System.ComponentModel.Win32Exception)
+        {
+            try
+            {
+                WebsitePolicyAgentInstaller.ReportAgentOperationNote(configPath, "network-hardening",
+                    "网络开关加固失败：" + exception.Message);
+            }
+            catch (Exception nested) when (nested is IOException or UnauthorizedAccessException or
+                                               ArgumentException or System.Security.SecurityException) { }
         }
     }
 

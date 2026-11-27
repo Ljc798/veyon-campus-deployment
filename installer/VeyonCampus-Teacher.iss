@@ -71,6 +71,10 @@ Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""V
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileControl"" dir=in action=allow protocol=TCP localport=39176 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusTeacherMobileBootstrap"" dir=in action=allow protocol=TCP localport=39177 remoteip=LocalSubnet profile=any enable=yes"; Flags: runhidden waituntilterminated
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""VeyonCampusPackageShare"" dir=in action=allow protocol=TCP localport=39178 remoteip=LocalSubnet profile=domain,private enable=yes"; Flags: runhidden waituntilterminated
+; The screen wall reads frames from the local Veyon WebAPI, which Veyon ships switched off. This runs
+; the product's own enable path (loopback-only firewall rule + config + service restart) so a freshly
+; installed teacher machine has a working screen wall without anyone running a script.
+Filename: "{app}\VeyonCampus.Teacher.exe"; Parameters: "--enable-local-webapi"; Flags: runhidden waituntilterminated skipifsilent
 Filename: "{app}\VeyonCampus.Teacher.exe"; Description: "启动教师控制台"; Flags: nowait postinstall skipifsilent runascurrentuser
 
 [UninstallDelete]

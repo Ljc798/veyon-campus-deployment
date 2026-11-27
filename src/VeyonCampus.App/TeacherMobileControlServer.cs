@@ -104,7 +104,8 @@ internal sealed record MobileReviewGrant(Guid DeviceId, Guid ProfileId, string P
     long AuditRevision, string AuditFingerprint, IReadOnlyList<string> Targets, DateTimeOffset ExpiresUtc);
 internal sealed record MobileClassroomModeRequest(ClassroomMode? Mode, string? ReviewToken = null);
 internal sealed record MobileClassroomQuickControlRequest(Guid? SessionId,
-    ClassroomQuickControlAction? Action);
+    ClassroomQuickControlAction? Action, IReadOnlyList<Guid>? TargetIds = null,
+    int? DurationMinutes = null);
 internal sealed record MobileScreenPreviewStartRequest(IReadOnlyList<string>? Targets = null,
     string? Quality = null, int? RefreshIntervalSeconds = null);
 internal sealed record MobileClassroomEventReplyRequest(Guid HelpEventId, string Message);
@@ -454,8 +455,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         {
             WebsitePolicySigningKeyStore.ValidateCampusId(_activeCampusId().Trim());
             var identity = _identityProvider.CreateIdentity();
-            Func<Guid, ClassroomQuickControlAction, CancellationToken,
-                Task<ClassroomQuickControlOperationResult>>? executeQuickControl = null;
+            Func<Guid, ClassroomQuickControlAction, IReadOnlyList<Guid>?, DateTimeOffset?,
+                CancellationToken, Task<ClassroomQuickControlOperationResult>>? executeQuickControl = null;
             Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>? readQuickControl = null;
             if (_classroomQuickControlService is not null)
             {
@@ -668,7 +669,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         Guid expectedSessionId, ClassroomQuickControlAction action,
         DateTimeOffset? controlExpiresUtc = null, CancellationToken cancellationToken = default,
         IReadOnlyList<Guid>? selectedTargetIds = null, bool preserveControlExpiry = false,
-        DateTimeOffset? inputLockReleaseUtc = null, int inputLockGraceSeconds = 0)
+        DateTimeOffset? inputLockReleaseUtc = null, int inputLockGraceSeconds = 0,
+        DateTimeOffset? targetExpiresUtc = null)
     {
         if (expectedSessionId == Guid.Empty || _classroomContext is not { } context ||
             context.SessionId != expectedSessionId)
@@ -680,7 +682,8 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
         // never moves the lesson's shared deadline.
         return service.ExecuteAsync(expectedSessionId, action, selectedTargetIds,
             controlExpiresUtc, cancellationToken, preserveControlExpiry: preserveControlExpiry,
-            inputLockReleaseUtc: inputLockReleaseUtc, inputLockGraceSeconds: inputLockGraceSeconds);
+            inputLockReleaseUtc: inputLockReleaseUtc, inputLockGraceSeconds: inputLockGraceSeconds,
+            targetExpiresUtc: targetExpiresUtc);
     }
 
     internal Task<ClassroomQuickControlOperationResult> ReleaseClassroomQuickControlsAsync(
@@ -733,12 +736,17 @@ public sealed class TeacherMobileControlManager : INotifyPropertyChanged, IAsync
     }
 
     private Task<ClassroomQuickControlOperationResult> ExecuteClassroomQuickControlForMobileAsync(
-        Guid sessionId, ClassroomQuickControlAction action, CancellationToken cancellationToken)
+        Guid sessionId, ClassroomQuickControlAction action, IReadOnlyList<Guid>? targetIds,
+        DateTimeOffset? targetExpiresUtc, CancellationToken cancellationToken)
     {
         var service = _classroomQuickControlService ?? throw new PlatformNotSupportedException(
             "当前教师平台不支持课堂快捷管控。");
-        return service.ExecuteAsync(sessionId, action, cancellationToken: cancellationToken,
-            source: "teacher-mobile");
+        // A phone request that names devices must not move the class countdown: the per-device
+        // deadline is passed through and the lesson deadline is preserved.
+        var perDevice = targetIds is { Count: > 0 };
+        return service.ExecuteAsync(sessionId, action, perDevice ? targetIds : null,
+            cancellationToken: cancellationToken, source: "teacher-mobile",
+            preserveControlExpiry: perDevice, targetExpiresUtc: perDevice ? targetExpiresUtc : null);
     }
 
     private Task<ClassroomQuickControlSnapshot> ReadClassroomQuickControlForMobileAsync(
@@ -1097,8 +1105,8 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
     private readonly Action<string, string, string, WebsitePolicyMode>? _websitePolicyListsSaved;
     private readonly Func<IReadOnlyList<string>, CancellationToken,
         Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? _readRuntimeSummaries;
-    private readonly Func<Guid, ClassroomQuickControlAction, CancellationToken,
-        Task<ClassroomQuickControlOperationResult>>? _executeClassroomQuickControl;
+    private readonly Func<Guid, ClassroomQuickControlAction, IReadOnlyList<Guid>?, DateTimeOffset?,
+        CancellationToken, Task<ClassroomQuickControlOperationResult>>? _executeClassroomQuickControl;
     private readonly Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>?
         _readClassroomQuickControl;
     private readonly Action<string>? _studentAgentChannelConnected;
@@ -1163,7 +1171,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
         Action<string, string, string, WebsitePolicyMode>? websitePolicyListsSaved = null,
         Func<IReadOnlyList<string>, CancellationToken,
             Task<IReadOnlyList<StudentAgentRuntimeSummaryDeliveryResult>>>? readRuntimeSummaries = null,
-        Func<Guid, ClassroomQuickControlAction, CancellationToken,
+        Func<Guid, ClassroomQuickControlAction, IReadOnlyList<Guid>?, DateTimeOffset?, CancellationToken,
             Task<ClassroomQuickControlOperationResult>>? executeClassroomQuickControl = null,
         Func<Guid, CancellationToken, Task<ClassroomQuickControlSnapshot>>? readClassroomQuickControl = null,
         ITeacherMobileControlHost? host = null,
@@ -2003,6 +2011,59 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     "课堂或操作已变化；请刷新后重试。").ConfigureAwait(false);
                 return;
             }
+            var targetIds = request.TargetIds is { Count: > 0 }
+                ? request.TargetIds.Distinct().ToArray() : null;
+            if (targetIds is not null)
+            {
+                if (targetIds.Length > ClassroomSession.MaximumTargets || _readClassroomQuickControl is null)
+                {
+                    await WriteError(context, StatusCodes.Status409Conflict,
+                        "所选电脑已不在当前课堂中；请刷新后重试。").ConfigureAwait(false);
+                    return;
+                }
+                var devices = (await _readClassroomQuickControl(sessionId, context.RequestAborted)
+                        .ConfigureAwait(false)).Devices;
+                if (targetIds.Any(id => devices.All(device => device.TargetId != id)))
+                {
+                    await WriteError(context, StatusCodes.Status409Conflict,
+                        "所选电脑已不在当前课堂中；请刷新后重试。").ConfigureAwait(false);
+                    return;
+                }
+                if (action is not (ClassroomQuickControlAction.EnableWebsiteRestriction or
+                        ClassroomQuickControlAction.LockInput or ClassroomQuickControlAction.UnlockInput or
+                        ClassroomQuickControlAction.ClearWebsiteRestrictions))
+                {
+                    await WriteError(context, StatusCodes.Status409Conflict,
+                        "单台设备只支持网站策略与键鼠操作。").ConfigureAwait(false);
+                    return;
+                }
+            }
+            // The phone sends a duration, not a clock time: its clock may be minutes off the teacher's,
+            // and a relative deadline stays correct even then. The deadline is clamped to today because
+            // both the website policy and the input lease refuse to cross midnight.
+            DateTimeOffset? targetExpiresUtc = null;
+            if (targetIds is not null && request.DurationMinutes is { } minutes)
+            {
+                if (minutes is < 1 or > 720)
+                {
+                    await WriteError(context, StatusCodes.Status400BadRequest,
+                        "管控时长需在 1 至 720 分钟之间。").ConfigureAwait(false);
+                    return;
+                }
+                var now = DateTimeOffset.UtcNow;
+                var deadline = now.AddMinutes(action == ClassroomQuickControlAction.LockInput
+                    ? Math.Min(minutes, 720) : Math.Min(minutes, 1440));
+                var localMidnight = now.ToLocalTime().Date.AddDays(1);
+                var midnightUtc = new DateTimeOffset(localMidnight,
+                    TimeZoneInfo.Local.GetUtcOffset(localMidnight)).ToUniversalTime();
+                targetExpiresUtc = deadline < midnightUtc ? deadline : midnightUtc.AddMinutes(-1);
+                if (targetExpiresUtc <= now.AddMinutes(1))
+                {
+                    await WriteError(context, StatusCodes.Status400BadRequest,
+                        "今天剩余时间不足；请选择更短的时长，或明天再操作。").ConfigureAwait(false);
+                    return;
+                }
+            }
             if (_executeClassroomQuickControl is null)
             {
                 await WriteError(context, StatusCodes.Status501NotImplemented,
@@ -2010,10 +2071,12 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                     .ConfigureAwait(false);
                 return;
             }
-            var result = await _executeClassroomQuickControl(sessionId, action, context.RequestAborted)
+            var result = await _executeClassroomQuickControl(sessionId, action, targetIds,
+                    targetExpiresUtc, context.RequestAborted)
                 .ConfigureAwait(false);
-            if (result.SessionId != active.SessionId || result.Results.Count != active.Targets.Count)
-                throw new InvalidDataException("快捷管控结果与当前课堂电脑范围不匹配。");
+            var expectedCount = targetIds?.Length ?? active.Targets.Count;
+            if (result.SessionId != active.SessionId || result.Results.Count != expectedCount)
+                throw new InvalidDataException("快捷管控结果与本次电脑范围不匹配。");
             var actionName = action switch
             {
                 ClassroomQuickControlAction.EnableWebsiteRestriction => "课堂快捷网站限制",
@@ -2022,6 +2085,7 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
                 ClassroomQuickControlAction.ClearWebsiteRestrictions => "恢复全班网站访问",
                 _ => "解除课堂快捷管控"
             };
+            if (targetIds is not null) actionName += "（单台）";
             var auditTargets = result.Results.Select(item => new MobileControlAuditTargetResult(
                 item.DisplayName, item.Succeeded ? "verified" : item.NeedsReview ? "needs-review" : "failed"))
                 .ToArray();
@@ -2291,46 +2355,99 @@ internal sealed partial class TeacherMobileControlService : IAsyncDisposable
             throw new InvalidDataException("学生 Agent 连接公钥无效。", exception);
         }
 
-        var matchingPins = _agentTrustStore.List().Where(pin => pin.CampusId == campusId &&
-            string.Equals(pin.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase)).ToArray();
-        if (matchingPins.Length != 1 ||
-            !StudentAgentChannelProtocol.VerifyHello(hello, campusId, nonce, matchingPins[0].PublicKeyPem))
+        // One machine can be pinned under several names (Veyon computer name, seat name, host name,
+        // IP). Requiring "exactly one pin for this fingerprint" turned a healthy Agent into an
+        // untrusted one the moment a second name was pinned - the teacher showed 认证失败, the
+        // channel could not be re-established, and 解除键鼠 and 推送 stayed blocked.
+        var matchingPins = _agentTrustStore.FindTrustedPins(campusId, fingerprint);
+        if (matchingPins.Count == 0)
+        {
+            // Automatic trust on first use. The Hello is signed with this very key over the nonce this
+            // teacher just generated, so the machine proves possession of the private key. Teachers
+            // cannot compare fingerprints in practice and always clicked "confirm" anyway, so a
+            // reinstalled or image-restored Agent used to stay rejected forever: 认证失败, no push, no
+            // 解除键鼠. Pinning it here keeps the signature check (the key must have signed our nonce)
+            // and only drops the human comparison step.
+            if (!StudentAgentChannelProtocol.VerifyHello(hello, campusId, nonce, hello.PublicKeyPem) ||
+                string.IsNullOrWhiteSpace(hello.Target))
+            {
+                await CloseRejectedAgentChannelAsync(socket, "untrusted agent", handshakeTimeout.Token)
+                    .ConfigureAwait(false);
+                return;
+            }
+            try
+            {
+                var autoPin = _agentTrustStore.Pin(new StudentAgentIdentityTrustCandidate(
+                    hello.Target, campusId, hello.PublicKeyPem, fingerprint), replaceChangedKey: true);
+                matchingPins = [autoPin];
+            }
+            catch (Exception exception) when (exception is InvalidDataException or IOException or
+                                               UnauthorizedAccessException or CryptographicException)
+            {
+                await CloseRejectedAgentChannelAsync(socket, "untrusted agent", handshakeTimeout.Token)
+                    .ConfigureAwait(false);
+                return;
+            }
+        }
+
+        var identityPin = matchingPins[0];
+        if (matchingPins.Any(pin => !string.Equals(pin.PublicKeyPem, identityPin.PublicKeyPem,
+                StringComparison.Ordinal)) ||
+            !StudentAgentChannelProtocol.VerifyHello(hello, campusId, nonce, identityPin.PublicKeyPem))
         {
             await CloseRejectedAgentChannelAsync(socket, "untrusted agent", handshakeTimeout.Token)
                 .ConfigureAwait(false);
             return;
         }
 
-        var target = matchingPins[0].Target;
-        if (!StudentAgentChannelAdmissionPolicy.CanAdmitPinnedAgent(campusId, matchingPins[0].CampusId, target))
+        var admittedPins = matchingPins
+            .Where(pin => StudentAgentChannelAdmissionPolicy.CanAdmitPinnedAgent(campusId, pin.CampusId,
+                pin.Target))
+            .ToArray();
+        if (admittedPins.Length == 0)
         {
             await CloseRejectedAgentChannelAsync(socket, "campus identity mismatch", handshakeTimeout.Token)
                 .ConfigureAwait(false);
             return;
         }
 
+        var target = admittedPins[0].Target;
         await SendAgentChannelMessageAsync(socket, new StudentAgentChannelMessage(
             StudentAgentChannelProtocol.CurrentVersion, "ready", campusId, target),
             handshakeTimeout.Token).ConfigureAwait(false);
         var connection = new TeacherAgentChannelConnection(socket);
-        using var registration = StudentAgentChannelHub.Register(campusId, target, connection.SendHttpAsync);
-        try { _studentAgentChannelConnected?.Invoke(target); }
-        catch (Exception exception) when (exception is InvalidDataException or IOException or
-            UnauthorizedAccessException or InvalidOperationException or ObjectDisposedException)
-        {
-            // A connected Agent remains available; the bounded catch-up scan will retry saved state.
-        }
+        // Route every pinned name to this one connection: the classroom layout and the Veyon listing
+        // do not necessarily use the same name, and a rename leaves the old pin behind.
+        var registrations = admittedPins
+            .Select(pin => StudentAgentChannelHub.Register(campusId, pin.Target, connection.SendHttpAsync))
+            .ToArray();
         try
         {
-            await connection.RunAsync(context.RequestAborted).ConfigureAwait(false);
+            foreach (var pin in admittedPins)
+            {
+                try { _studentAgentChannelConnected?.Invoke(pin.Target); }
+                catch (Exception exception) when (exception is InvalidDataException or IOException or
+                    UnauthorizedAccessException or InvalidOperationException or ObjectDisposedException)
+                {
+                    // A connected Agent remains available; the bounded catch-up scan retries saved state.
+                }
+            }
+            try
+            {
+                await connection.RunAsync(context.RequestAborted).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
+            catch (Exception exception) when (exception is WebSocketException or IOException or
+                InvalidDataException or HttpRequestException or ObjectDisposedException)
+            {
+                // The registration is removed on exit. The student reconnects with bounded backoff.
+            }
         }
-        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
-        catch (Exception exception) when (exception is WebSocketException or IOException or
-            InvalidDataException or HttpRequestException or ObjectDisposedException)
+        finally
         {
-            // The registration is removed on exit. The student reconnects with bounded backoff.
+            foreach (var registration in registrations) registration.Dispose();
+            await connection.DisposeAsync().ConfigureAwait(false);
         }
-        finally { await connection.DisposeAsync().ConfigureAwait(false); }
     }
 
     internal static async Task CloseRejectedAgentChannelAsync(WebSocket socket, string reason,

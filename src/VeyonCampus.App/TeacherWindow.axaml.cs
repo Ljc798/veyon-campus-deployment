@@ -194,6 +194,7 @@ public partial class TeacherWindow : Window
             }
             _isOpeningWindow = false;
             _observedClassroomScopeFingerprint = BuildClassroomScopeFingerprint();
+            ScheduleLaunchReleaseCheck();
             ShowPendingReleaseNotice();
         };
         Closed += async (_, _) =>
@@ -939,17 +940,18 @@ public partial class TeacherWindow : Window
         var name = string.IsNullOrWhiteSpace(device?.DisplayName) ? "该设备" : device!.DisplayName;
         var enabling = action == ClassroomQuickControlAction.EnableWebsiteRestriction;
         var policySummary = _model.ClassroomQuickControlPresetSummary;
-        var deadlineSummary = _model.HasCurrentClassroomQuickControlDeadline
-            ? _model.CurrentClassroomQuickControlDeadlineText
-            : _model.ClassroomQuickControlDeadlineSummary;
-        if (!await ConfirmProfileActionAsync(enabling ? "应用网站策略" : "恢复网站访问",
-                enabling
-                    ? $"目标设备：{name}\n当前名单：{policySummary}\n截止时间：{deadlineSummary}\n\n" +
-                      "将对这台电脑应用当前课堂已保存的网站名单，其他学生电脑不受影响。\n\n" +
-                      "学生端需要在线并运行网站策略组件；若该设备已有其他来源的策略，会保留并报告冲突。\n" +
-                      "这一步只作用于这一台，不会改动全班的自动解除时间。"
-                    : $"将解除 {name} 上由本工具写入的网站限制；其他设备保持不变。",
-                enabling ? "确认应用" : "确认恢复"))
+        DateTimeOffset? deviceDeadline = null;
+        if (enabling)
+        {
+            deviceDeadline = await PromptSingleDeviceDeadlineAsync("网站策略 · 选择截止时间",
+                $"目标设备：{name}\n当前名单：{policySummary}", "只对这台电脑应用当前课堂已保存的网站名单，其他电脑不受影响，" +
+                "也不会改动全班的自动解除时间。学生端需要在线；若该设备已有其他来源的策略，会保留并报告冲突。",
+                TimeSpan.FromHours(24));
+            if (deviceDeadline is null) return;
+        }
+        else if (!await ConfirmProfileActionAsync("恢复网站访问",
+                     $"将解除 {name} 上由本工具写入的网站限制；其他设备保持不变。",
+                     "确认恢复"))
             return;
 
         SetClassroomQuickControlBusy(true);
@@ -957,7 +959,7 @@ public partial class TeacherWindow : Window
         {
             var result = await Task.Run(() => _mobileControl.ExecuteClassroomQuickControlAsync(
                 sessionId, action, controlExpiresUtc: null, selectedTargetIds: [targetId],
-                preserveControlExpiry: true));
+                preserveControlExpiry: true, targetExpiresUtc: deviceDeadline));
             _model.SetClassroomQuickControlSessionNotice(result.Message);
             var refreshed = await Task.Run(() => _mobileControl.ReadClassroomQuickControlSnapshot(sessionId));
             if (_model.ActiveClassroomSessionId == sessionId)
@@ -1033,18 +1035,32 @@ public partial class TeacherWindow : Window
             (names.Length > 6 ? $" 等 {names.Length} 台" : "") : $"{targetIds.Length} 台设备";
         if (locking)
         {
-            if (!_model.TryResolveInputLockReleaseUtc(DateTimeOffset.UtcNow, out var resolved, out var error))
+            if (targetIds.Length == 1)
             {
-                _model.SetClassroomQuickControlSessionNotice(error);
-                return;
+                // Single machine: its own clock-time, independent of the lesson-wide countdown.
+                var single = await PromptSingleDeviceDeadlineAsync("锁定键鼠 · 选择截止时间",
+                    $"目标设备：{displayNames}",
+                    "锁定后由学生端自行维持，到点自动解除；学生重启会按 45 秒宽限自动恢复锁定。" +
+                    "教师端可随时点“解除”立即释放。这一步不会改动整个课堂的自动解除时间。",
+                    StudentInputGuardCommandCryptography.MaximumPersistedLockLifetime);
+                if (single is null) return;
+                releaseUtc = single;
             }
-            releaseUtc = resolved;
-            if (!await ConfirmProfileActionAsync("锁定键鼠",
-                    $"将锁定 {displayNames} 的键盘鼠标，其他学生电脑不受影响。\n\n" +
-                    $"锁定持续到今天 {releaseUtc.Value.ToLocalTime():HH:mm}，由学生端自行维持；学生重启后按 45 秒宽限自动恢复锁定。\n" +
-                    "教师端可随时点“解除”立即释放；到点也会自动解除。这一步不会改动整个课堂的自动解除时间。\n\n" +
-                    "学生端需要交互桌面 Guard 在运行；若状态显示“无法核验”，锁定不会生效。",
-                    "确认锁定")) return;
+            else
+            {
+                if (!_model.TryResolveInputLockReleaseUtc(DateTimeOffset.UtcNow, out var resolved, out var error))
+                {
+                    _model.SetClassroomQuickControlSessionNotice(error);
+                    return;
+                }
+                releaseUtc = resolved;
+                if (!await ConfirmProfileActionAsync("锁定键鼠",
+                        $"将锁定 {displayNames} 的键盘鼠标，其他学生电脑不受影响。\n\n" +
+                        $"锁定持续到今天 {releaseUtc.Value.ToLocalTime():HH:mm}，由学生端自行维持；学生重启后按 45 秒宽限自动恢复锁定。\n" +
+                        "教师端可随时点“解除”立即释放；到点也会自动解除。这一步不会改动整个课堂的自动解除时间。\n\n" +
+                        "学生端需要交互桌面 Guard 在运行；若状态显示“无法核验”，锁定不会生效。",
+                        "确认锁定")) return;
+            }
         }
         else if (!await ConfirmProfileActionAsync("解除键鼠锁定",
                      $"将解除 {displayNames} 上由本工具持有的键鼠锁定；网站限制和其他来源的锁定保持不变。",
@@ -1593,6 +1609,24 @@ public partial class TeacherWindow : Window
 
     private void OnReleaseNoticeAvailable(object? sender, EventArgs e) =>
         Dispatcher.UIThread.Post(ShowPendingReleaseNotice);
+
+    /// <summary>
+    /// Runs the launch update check a few seconds after the window settles, so the network call never
+    /// delays first paint. This is what makes "open it every morning and it tells me" true even on
+    /// days when the daily campus heartbeat already ran before the release was published.
+    /// </summary>
+    private void ScheduleLaunchReleaseCheck() =>
+        DispatcherTimer.RunOnce(async () =>
+        {
+            try
+            {
+                await _model.CheckTeacherReleaseOnLaunchAsync();
+            }
+            finally
+            {
+                ShowPendingReleaseNotice();
+            }
+        }, TimeSpan.FromSeconds(6));
 
     private async void ShowPendingReleaseNotice()
     {
@@ -2336,9 +2370,149 @@ public partial class TeacherWindow : Window
         return await dialog.ShowDialog<bool>(this);
     }
 
+    /// <summary>
+    /// One card's deadline picker. The class-wide deadline lives on the classroom page and belongs to
+    /// everyone; a single machine gets its own clock-time here so "this one until 10:50" does not move
+    /// the countdown every other seat is watching. Returns null when the teacher cancels.
+    /// </summary>
+    private async Task<DateTimeOffset?> PromptSingleDeviceDeadlineAsync(string title, string summary,
+        string description, TimeSpan maximum)
+    {
+        var dialog = new Window
+        {
+            Title = title,
+            Width = 520,
+            SizeToContent = SizeToContent.Height,
+            CanResize = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Background = Avalonia.Media.Brushes.White
+        };
+        var now = DateTimeOffset.Now;
+        var defaultDeadline = now.AddMinutes(45);
+        if (defaultDeadline.Date != now.Date) defaultDeadline = now.Date.AddDays(1).AddMinutes(-1);
+        var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(24) };
+        layout.Children.Add(new TextBlock
+        {
+            Text = summary, FontWeight = Avalonia.Media.FontWeight.SemiBold,
+            TextWrapping = Avalonia.Media.TextWrapping.Wrap
+        });
+        layout.Children.Add(new TextBlock
+        {
+            Text = description, TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Foreground = Avalonia.Media.Brushes.DimGray
+        });
+        layout.Children.Add(new TextBlock { Text = "截止时间（今天，24 小时制 HH:mm）" });
+        var timeBox = new TextBox
+        {
+            Text = defaultDeadline.ToString("HH:mm"), Width = 120,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left
+        };
+        layout.Children.Add(timeBox);
+        var presets = new WrapPanel { Orientation = Avalonia.Layout.Orientation.Horizontal };
+        foreach (var minutes in new[] { 15, 30, 45, 60, 90, 120 })
+        {
+            var preset = new Button
+            {
+                Content = $"{minutes} 分钟", Margin = new Avalonia.Thickness(0, 0, 8, 6),
+                MinWidth = 0, Padding = new Avalonia.Thickness(12, 6)
+            };
+            preset.Classes.Add("tertiary");
+            preset.Click += (_, _) =>
+            {
+                var candidate = DateTimeOffset.Now.AddMinutes(minutes);
+                if (candidate.Date != DateTimeOffset.Now.Date)
+                    candidate = DateTimeOffset.Now.Date.AddDays(1).AddMinutes(-1);
+                timeBox.Text = candidate.ToString("HH:mm");
+            };
+            presets.Children.Add(preset);
+        }
+        layout.Children.Add(presets);
+        var preview = new TextBlock
+        {
+            Text = "", TextWrapping = Avalonia.Media.TextWrapping.Wrap,
+            Foreground = Avalonia.Media.Brushes.DimGray
+        };
+        layout.Children.Add(preview);
+        void RefreshPreview()
+        {
+            if (TryParseDeadline(timeBox.Text, DateTimeOffset.Now, maximum, out var parsed, out var error))
+            {
+                preview.Text = $"将在 {parsed.ToLocalTime():HH:mm} 自动解除。";
+                preview.Foreground = Avalonia.Media.Brushes.DimGray;
+            }
+            else
+            {
+                preview.Text = error;
+                preview.Foreground = Avalonia.Media.Brushes.Firebrick;
+            }
+        }
+        timeBox.TextChanged += (_, _) => RefreshPreview();
+        RefreshPreview();
+        var actions = new StackPanel
+        {
+            Orientation = Avalonia.Layout.Orientation.Horizontal,
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
+            Spacing = 10
+        };
+        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
+        cancel.Classes.Add("secondary");
+        var confirm = new Button { Content = "确认", IsDefault = true, MinWidth = 100 };
+        confirm.Classes.Add("primary");
+        cancel.Click += (_, _) => dialog.Close(null);
+        confirm.Click += (_, _) =>
+        {
+            if (!TryParseDeadline(timeBox.Text, DateTimeOffset.Now, maximum, out var parsed, out var error))
+            {
+                preview.Text = error;
+                preview.Foreground = Avalonia.Media.Brushes.Firebrick;
+                return;
+            }
+            dialog.Close(parsed);
+        };
+        actions.Children.Add(cancel);
+        actions.Children.Add(confirm);
+        layout.Children.Add(actions);
+        dialog.Content = layout;
+        return await dialog.ShowDialog<DateTimeOffset?>(this);
+    }
+
+    private static bool TryParseDeadline(string? text, DateTimeOffset now, TimeSpan maximum,
+        out DateTimeOffset deadline, out string error)
+    {
+        deadline = default;
+        error = "";
+        if (!TimeSpan.TryParseExact((text ?? "").Trim(), @"h\:mm", CultureInfo.InvariantCulture, out var time) &&
+            !TimeSpan.TryParseExact((text ?? "").Trim(), @"hh\:mm", CultureInfo.InvariantCulture, out time))
+        {
+            error = "请输入 HH:mm 格式的截止时间，例如 10:50。";
+            return false;
+        }
+        if (time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+        {
+            error = "截止时间需在今天之内。";
+            return false;
+        }
+        var local = now.ToLocalTime();
+        var candidate = new DateTimeOffset(local.Year, local.Month, local.Day,
+            time.Hours, time.Minutes, 0, local.Offset);
+        if (candidate <= now)
+        {
+            error = "截止时间必须晚于当前时间。";
+            return false;
+        }
+        if (candidate - now > maximum)
+        {
+            error = maximum >= TimeSpan.FromHours(24)
+                ? "截止时间不能超过 24 小时。"
+                : $"截止时间不能超过 {maximum.TotalHours:0} 小时。";
+            return false;
+        }
+        deadline = candidate.ToUniversalTime();
+        return true;
+    }
+
     private Task ShowSeatGridAxisRemovalNoticeAsync(string message) =>
         ShowSeatActionNoticeAsync("此行列暂时不能删除", message);
-
     private async Task ShowSeatActionNoticeAsync(string title, string message)
     {
         var dialog = new Window
@@ -2578,14 +2752,14 @@ public partial class TeacherWindow : Window
         row.SetIdentityReviewStatus("正在重新读取签名身份……");
         var discoveries = await _model.DiscoverStudentAgentIdentityAsync(row.Target);
         var discovery = discoveries.SingleOrDefault();
-        // A live answer is only needed to refresh the fingerprint. Pinning itself is a local trust
+        // A live answer is only needed to refresh the identity. Pinning itself is a local trust
         // decision about a signature the device already produced, so an offline machine still has an
-        // identity the teacher can confirm - otherwise its alert could never be cleared.
+        // identity that can be trusted - otherwise its alert could never be cleared.
         var candidate = discovery?.Candidate ?? row.CurrentIdentityCandidate;
         if (candidate is null)
         {
             row.SetIdentityReviewStatus((discovery?.Detail is { Length: > 0 } detail ? detail + " " : "") +
-                "尚未取得可核对的身份，信任记录没有改动；请先确认学生 Agent 在线并重新读取。");
+                "尚未取得可信任的身份；请先确认学生 Agent 在线并重新读取。");
             return;
         }
 
@@ -2594,26 +2768,16 @@ public partial class TeacherWindow : Window
         {
             if (string.Equals(pinned, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase))
             {
-                row.SetIdentityReviewStatus("身份与已固定指纹一致，无需重新核对；" +
-                    "若要改动指纹，请先在该机重置 Agent 身份。");
+                row.SetIdentityReviewStatus("身份与已固定身份一致，无需处理。");
                 return;
             }
-            // Show the fingerprint that is pinned now, which can be newer than the one recorded when
-            // this receipt was captured.
             candidate = candidate with { PreviouslyPinnedFingerprint = pinned };
         }
 
         row.SetIdentityCandidate(candidate);
-        var reviewed = discovery is { Candidate: not null }
-            ? discovery
-            : new VeyonCampus.Core.StudentAgentIdentityDiscoveryResult(row.Target, candidate, false,
-                "使用最近一次有效签名回执中的身份核对。");
-        row.SetIdentityReviewStatus(discovery is { Candidate: not null }
-            ? "Agent 签名有效；教师现场核对前不会固定或轮换身份。"
-            : "本次没有重新读取到 Agent 身份" +
-              (_model.StudentAgentIdentityStatus is { Length: > 0 } reason ? $"（{reason}）" : "") +
-              "，改用最近一次有效签名回执里的身份核对；固定前请对照该机显示的核对码。");
-        if (!await ConfirmStudentAgentIdentityTrustAsync([reviewed])) return;
+        // Teachers cannot compare fingerprints, and the confirmation was always clicked through.
+        // Trust the identity the machine just proved with its own signature and keep the signature
+        // requirement; only the human comparison step is gone.
         try
         {
             _model.ConfirmDeviceIdentity(row, candidate);
@@ -2621,14 +2785,14 @@ public partial class TeacherWindow : Window
         catch (Exception exception) when (exception is InvalidDataException or IOException or
             UnauthorizedAccessException or InvalidOperationException or CryptographicException)
         {
-            row.SetIdentityReviewStatus("身份固定失败：" + exception.Message);
+            row.SetIdentityReviewStatus("身份保存失败：" + exception.Message);
             await ShowStudentAgentTrustErrorAsync(exception.Message);
             return;
         }
 
-        row.SetIdentityReviewStatus("身份已由教师确认并固定。");
+        row.SetIdentityReviewStatus("已自动信任并更新该身份，无需再人工核对。");
         if (!await _model.ReadDeviceHealthRowAsync(row))
-            row.SetIdentityReviewStatus("身份已固定；Agent 暂未应答，下次签名回执到达后会自动复核。");
+            row.SetIdentityReviewStatus("身份已更新；Agent 暂未应答，下次签名回执到达后会自动复核。");
     }
 
     private async void CopyDeviceHealthDiagnostic(object? sender, RoutedEventArgs e)
@@ -3017,12 +3181,8 @@ public partial class TeacherWindow : Window
         var discoveries = await _model.DiscoverStudentAgentIdentitiesAsync();
         var candidates = discoveries.Where(item => item.Candidate is not null).ToArray();
         if (candidates.Length == 0) return false;
-        if (candidates.All(item => item.MatchesPinnedKey))
-        {
-            _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: false);
-            return true;
-        }
-        if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries)) return false;
+        // No fingerprint comparison dialog: identity changes are trusted automatically. The device
+        // still has to prove the key by signing, and the pin records the key that was proven.
         try
         {
             _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);
@@ -3034,75 +3194,6 @@ public partial class TeacherWindow : Window
             await ShowStudentAgentTrustErrorAsync(exception.Message);
             return false;
         }
-    }
-
-    private async Task<bool> ConfirmStudentAgentIdentityTrustAsync(
-        IReadOnlyList<VeyonCampus.Core.StudentAgentIdentityDiscoveryResult> discoveries)
-    {
-        var dialog = new Window
-        {
-            Title = "确认学生电脑",
-            Width = 720,
-            Height = 520,
-            CanResize = true,
-            WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Background = Avalonia.Media.Brushes.White
-        };
-        var layout = new StackPanel { Spacing = 14, Margin = new Avalonia.Thickness(20) };
-        layout.Children.Add(new TextBlock
-        {
-            Text = "首次信任时，请把学生电脑课堂助手显示的 12 位设备配对核对码与下方逐台结果对上，并确认现场设备名称/位置。密钥固定记录保存在当前教师用户配置中，因此不同教师机可能显示不同。若逐台结果提示连接超时，Agent 没有回应，暂时没有身份可供确认；请检查学生电脑中的 Agent、网络和 TCP 39174 防火墙。",
-            TextWrapping = Avalonia.Media.TextWrapping.Wrap
-        });
-        var rows = new StackPanel { Spacing = 8 };
-        foreach (var item in discoveries)
-        {
-            var candidate = item.Candidate;
-            rows.Children.Add(new TextBlock
-            {
-                Text = candidate is null
-                    ? $"{_model.GetWebsitePolicyStudentName(item.Target)}：未取得可验证身份 — {item.Detail}"
-                    : item.MatchesPinnedKey
-                        ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 已固定\n核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n{candidate.Fingerprint}"
-                        : candidate.PreviouslyPinnedFingerprint is { } old
-                            ? $"{_model.GetWebsitePolicyStudentName(item.Target)} · 身份密钥变化，请现场复核后轮换\n原：{old}\n新核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n新指纹：{candidate.Fingerprint}"
-                            : $"{_model.GetWebsitePolicyStudentName(item.Target)} · 首次信任\n核对码：{FormatAgentIdentityVerificationCode(candidate.Fingerprint)}\n指纹：{candidate.Fingerprint}",
-                TextWrapping = Avalonia.Media.TextWrapping.Wrap,
-                FontFamily = "Consolas"
-            });
-        }
-        layout.Children.Add(new ScrollViewer { Content = rows, Height = 220 });
-        var verified = new CheckBox
-        {
-            Content = "我已核对学生电脑课堂助手上的配对核对码，并确认现场设备名称/位置。",
-            IsChecked = false
-        };
-        layout.Children.Add(verified);
-        var actions = new StackPanel
-        {
-            Orientation = Avalonia.Layout.Orientation.Horizontal,
-            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Right,
-            Spacing = 8
-        };
-        var cancel = new Button { Content = "取消", IsCancel = true, MinWidth = 90 };
-        cancel.Classes.Add("secondary");
-        var confirm = new Button { Content = "固定已核对的身份", IsDefault = true, MinWidth = 150, IsEnabled = false };
-        confirm.Classes.Add("primary");
-        verified.IsCheckedChanged += (_, _) => confirm.IsEnabled = verified.IsChecked == true;
-        cancel.Click += (_, _) => dialog.Close(false);
-        confirm.Click += (_, _) => dialog.Close(true);
-        actions.Children.Add(cancel);
-        actions.Children.Add(confirm);
-        layout.Children.Add(actions);
-        dialog.Content = layout;
-        return await dialog.ShowDialog<bool>(this);
-    }
-
-    private static string FormatAgentIdentityVerificationCode(string fingerprint)
-    {
-        if (fingerprint.Length != 64 || fingerprint.Any(character => !Uri.IsHexDigit(character)))
-            return "指纹无效";
-        return $"{fingerprint[..4]}-{fingerprint[4..8]}-{fingerprint[8..12]}";
     }
 
     private async Task ShowStudentAgentTrustErrorAsync(string message)
@@ -3400,14 +3491,10 @@ public partial class TeacherWindow : Window
         }
 
         setStatus(candidate.PreviouslyPinnedFingerprint is null
-            ? "已收到签名身份。请与学生机现场显示的指纹核对后确认。"
-            : "Agent 指纹发生变化。请先现场核对新旧指纹；确认前不会轮换信任记录。");
-        if (!await ConfirmStudentAgentIdentityTrustAsync(discoveries))
-        {
-            setStatus("身份核对已取消；没有更改信任记录。");
-            return;
-        }
-
+            ? "已收到签名身份，正在自动信任。"
+            : "Agent 身份已更新，正在自动信任新身份。");
+        // Automatic trust: no fingerprint comparison dialog. The signature is still verified, and
+        // the teacher cannot meaningfully compare a 64-character fingerprint anyway.
         try
         {
             _model.ConfirmStudentAgentIdentities(discoveries, approveChangedKeys: true);

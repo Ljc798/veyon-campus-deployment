@@ -362,6 +362,34 @@ public sealed class StudentAgentIdentityTrustStore
 
     public IReadOnlyList<StudentAgentIdentityTrustPin> List() => Array.AsReadOnly(ReadPins().ToArray());
 
+    /// <summary>
+    /// Every pin that carries one device identity, one per target name, newest first.
+    /// </summary>
+    /// <remarks>
+    /// A single machine can legitimately be addressed by more than one name - the Veyon computer
+    /// name, the seat name from the classroom layout, a host name or an IP. Each name is pinned
+    /// separately, but they all carry the same Agent public key. Treating "exactly one pin for this
+    /// fingerprint" as the trust test therefore rejected a healthy Agent as soon as a second name
+    /// was pinned: the teacher reported 认证失败, the authenticated channel could never be
+    /// re-established, and 解除键鼠 plus every package push stayed blocked with no recovery but
+    /// waiting for the lock deadline. Callers verify the challenge signature against the pinned key
+    /// and then route the one connection under every returned target.
+    /// </remarks>
+    public IReadOnlyList<StudentAgentIdentityTrustPin> FindTrustedPins(string campusId, string fingerprint)
+    {
+        WebsitePolicySigningKeyStore.ValidateCampusId(campusId);
+        if (string.IsNullOrWhiteSpace(fingerprint) ||
+            !Regex.IsMatch(fingerprint, "^[A-Fa-f0-9]{64}$", RegexOptions.CultureInvariant))
+            throw new InvalidDataException("待核对的学生 Agent 指纹无效。");
+        return ReadPins()
+            .Where(pin => pin.CampusId == campusId &&
+                          string.Equals(pin.Fingerprint, fingerprint, StringComparison.OrdinalIgnoreCase))
+            .GroupBy(pin => NormalizeTarget(pin.Target), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(pin => pin.PinnedUtc).First())
+            .OrderByDescending(pin => pin.PinnedUtc)
+            .ToArray();
+    }
+
     public StudentAgentIdentityTrustPin Pin(StudentAgentIdentityTrustCandidate candidate, bool replaceChangedKey = false)
     {
         ArgumentNullException.ThrowIfNull(candidate);

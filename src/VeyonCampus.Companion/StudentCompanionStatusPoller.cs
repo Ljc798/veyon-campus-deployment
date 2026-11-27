@@ -48,7 +48,10 @@ public sealed class StudentCompanionStatusPoller : IAsyncDisposable
             received.Offset != TimeSpan.Zero || expires.Offset != TimeSpan.Zero ||
             received > now.Add(ClassroomStatusCryptography.MaximumFutureSkew) || expires <= received ||
             expires - received > ClassroomStatusCryptography.MaximumLifetime)
-            throw new InvalidDataException("课堂状态本机回执时间无效。");
+            throw new InvalidDataException("课堂状态本机回执时间无效。" +
+                (snapshot.ReceivedUtc is { } skewSource
+                    ? $"本机与教师端时钟相差约 {Math.Round((skewSource - now).TotalSeconds)} 秒，请对齐学生机系统时间并启用自动同步。"
+                    : ""));
         if (expires <= now)
             return new StudentCompanionStatusSnapshot(StudentCompanionConnectionState.Disconnected,
                 AgentIdentityFingerprint: identityFingerprint,

@@ -400,6 +400,46 @@
         <p id="classroom-chat-status" class="fine-print" role="status" aria-live="polite"></p>
       </section>
     </dialog>
+    <dialog id="device-control-dialog" class="device-control-dialog" aria-labelledby="device-control-title">
+      <header class="mobile-dialog-heading">
+        <div><p class="eyebrow">SINGLE DEVICE</p><h2 id="device-control-title">单台管控</h2></div>
+        <button id="device-control-close" class="text-button" type="button">关闭</button>
+      </header>
+      <p id="device-control-subtitle" class="fine-print"></p>
+      <div class="device-control-duration">
+        <label for="device-control-duration">持续时长
+          <select id="device-control-duration">
+            <option value="10">10 分钟</option>
+            <option value="15">15 分钟</option>
+            <option value="20">20 分钟</option>
+            <option value="30">30 分钟</option>
+            <option value="45" selected>45 分钟</option>
+            <option value="60">1 小时</option>
+            <option value="90">1 小时 30 分</option>
+            <option value="120">2 小时</option>
+            <option value="custom">自定义分钟数</option>
+          </select>
+        </label>
+        <input id="device-control-custom-minutes" class="hidden" type="number" inputmode="numeric"
+               min="1" max="720" value="45" aria-label="自定义管控分钟数">
+        <p id="device-control-deadline" class="fine-print" aria-live="polite"></p>
+      </div>
+      <div class="device-control-actions">
+        <button type="button" class="secondary-button" data-device-action="enableWebsiteRestriction">
+          <strong>应用网站限制</strong><span>使用已保存名单</span>
+        </button>
+        <button type="button" class="secondary-button" data-device-action="lockInput">
+          <strong>锁定键鼠</strong><span>到点自动解除</span>
+        </button>
+        <button type="button" class="secondary-button" data-device-action="clearWebsiteRestrictions">
+          <strong>恢复网站访问</strong><span>清除本工具写入的限制</span>
+        </button>
+        <button type="button" class="secondary-button" data-device-action="unlockInput">
+          <strong>解除键鼠锁定</strong><span>立即释放</span>
+        </button>
+      </div>
+      <p id="device-control-status" class="fine-print" role="status" aria-live="polite"></p>
+    </dialog>
     <div id="toast" class="toast hidden" role="status"></div>
   </main>
   <nav id="control-tabs" class="bottom-nav hidden" role="tablist" aria-label="手机教师功能" aria-orientation="horizontal">

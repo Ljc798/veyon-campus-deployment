@@ -125,6 +125,23 @@ public static class TeacherConsoleUninstaller
             foreach (var (name, matches) in rulesByName)
                 if (matches.Count > 0) policy.Rules.Remove(name);
 
+            // The screen wall's WebAPI rule is loopback-only instead of LocalSubnet, so it needs its
+            // own match. Removing it also closes the port Veyon keeps bound to all interfaces.
+            dynamic? webApiRule = null;
+            try { webApiRule = policy.Rules.Item(VeyonLocalWebApi.FirewallRuleName); }
+            catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException or
+                                              Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            {
+                webApiRule = null;
+            }
+            if (webApiRule is not null &&
+                (int)webApiRule.Protocol == 6 &&
+                string.Equals((string)webApiRule.LocalPorts,
+                    VeyonLocalWebApi.DefaultPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                    StringComparison.Ordinal) &&
+                string.Equals((string)webApiRule.RemoteAddresses, "127.0.0.1", StringComparison.OrdinalIgnoreCase))
+                policy.Rules.Remove(VeyonLocalWebApi.FirewallRuleName);
+
             foreach (dynamic rule in policy.Rules)
                 if (OwnedFirewallRules.ContainsKey((string)rule.Name))
                     throw new IOException("教师端防火墙规则删除后仍存在。");

@@ -79,7 +79,13 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
     public Guid TargetId { get; }
     public string DisplayName { get => _displayName; private set => Set(ref _displayName, value); }
     public string StudentName { get => _studentName; private set => Set(ref _studentName, value); }
-    public string IdentitySummaryText => $"{ComputerName} · {SeatText}";
+
+    /// <summary>
+    /// Second line of a card: the app's own seat label. It deliberately does not mix in the Veyon
+    /// computer name, because renaming a seat in this app never renames the machine in Veyon and the
+    /// combination read as two conflicting names ("曹家乐左边 · 未命名2").
+    /// </summary>
+    public string IdentitySummaryText => HasSeatAssignment ? SeatText : ComputerName;
     public string StudentDisplayName => string.IsNullOrWhiteSpace(StudentName) ? "未关联学生姓名" : StudentName;
     public string SeatText { get => _seatText; private set => Set(ref _seatText, value); }
     public string HostText { get => _hostText; private set => Set(ref _hostText, value); }
@@ -160,7 +166,10 @@ public sealed class ClassroomScreenTileViewModel : INotifyPropertyChanged
     public bool IsInputUnverified => _isInputUnverified;
     public bool CanLockInput => !_isInputLocked && !_isInputUnverified;
     public bool CanUnlockInput => _isInputLocked || _isInputUnverified;
-    public string InputButtonText => _isInputLocked ? "解除键鼠" : "锁定键鼠";
+    // An unverified device keeps offering "解除键鼠" on purpose: pressing it re-sends the release and
+    // re-reads the signed status, which is the only way out of "待核验". Offering "锁定键鼠" there read
+    // as if input had already been restored when it had not.
+    public string InputButtonText => _isInputLocked || _isInputUnverified ? "解除键鼠" : "锁定键鼠";
     public string InputBadgeText => _isInputLocked ? "键鼠已锁" : _isInputUnverified ? "键鼠待核验" : "键鼠未锁";
     public IBrush InputBadgeBrush => _isInputLocked ? InfoBrush : _isInputUnverified ? WarningBrush : NeutralBrush;
     public IBrush InputBadgeBackground =>

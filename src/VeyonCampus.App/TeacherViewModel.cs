@@ -8286,7 +8286,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
             StudentAgentIdentityStatus = discoveries.SingleOrDefault() is { } result
                 ? result.Candidate is null ? $"{target}：{result.Detail}" :
                     result.MatchesPinnedKey ? $"{target}：身份与已固定指纹一致。" :
-                    $"{target}：发现待核对的 Agent 身份。"
+                    $"{target}：发现新的 Agent 身份，将自动信任。"
                 : "未取得学生电脑身份。";
             Changed(nameof(StudentAgentIdentityStatus));
             return discoveries;
@@ -8437,7 +8437,7 @@ public sealed partial class TeacherViewModel : INotifyPropertyChanged
                     return $"{GetWebsitePolicyTargetLabel(result.Target)}：无法读取 — {result.Detail}";
                 return candidate.PreviouslyPinnedFingerprint is { } old &&
                        !string.Equals(old, candidate.Fingerprint, StringComparison.OrdinalIgnoreCase)
-                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份变化待确认；旧指纹 {old}，新指纹 {candidate.Fingerprint}"
+                    ? $"{GetWebsitePolicyTargetLabel(result.Target)}：身份变化将自动信任；旧指纹 {old}，新指纹 {candidate.Fingerprint}"
                     : $"{GetWebsitePolicyTargetLabel(result.Target)}：待确认；指纹 {candidate.Fingerprint}";
             });
             sections.Add($"需处理 / 错误（{needsAttention.Length}）{Environment.NewLine}" +
@@ -9239,8 +9239,8 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             ? IdentityMatchesPinnedKey(candidate)
                 ? "Agent 签名：有效 · 身份已固定"
                 : candidate.PreviouslyPinnedFingerprint is null
-                    ? "Agent 签名：有效 · 身份等待教师核对"
-                    : "Agent 签名：有效 · 指纹变化，等待教师核对"
+                    ? "Agent 签名：有效 · 身份已自动信任"
+                    : "Agent 签名：有效 · 身份已更新，自动信任"
             : "Agent 签名：状态回执已验证 · 未提供身份指纹"
         : _identityCandidate is not null
             ? "本轮未取得有效回执；指纹为最近一次有效签名记录"
@@ -9375,7 +9375,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
     {
         TeacherDeviceRuntimeFreshness.Current => $"最近读回 {(_runtimeSummary?.CollectedUtc.ToLocalTime().ToString("HH:mm:ss") ?? "")}",
         TeacherDeviceRuntimeFreshness.Stale => "状态已过期",
-        TeacherDeviceRuntimeFreshness.IdentityConflict => "身份待核对",
+        TeacherDeviceRuntimeFreshness.IdentityConflict => "身份已变化，待自动更新",
         _ => "状态未知"
     };
     public DateTimeOffset? LastCollectedUtc => _runtimeSummary?.CollectedUtc ?? _status?.CollectedUtc;
@@ -9697,7 +9697,7 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
                 SetRuntimeIssues([new TeacherDeviceHealthIssue("agent-identity", "Agent 身份需要核对",
                     TeacherDeviceHealthAlertSeverity.Critical,
                     result.Detail + "；在核对完成前不会把设备标记为正常。" +
-                    "在设备详情「安全与身份」中点「核对并固定身份」查看新旧指纹并重新核对。")]);
+                    "教师端会在该机重新连接时自动信任并更新身份，无需人工核对指纹；若长时间未更新，请在该机重启 VeyonCampus Agent 服务。")]);
                 Detail = result.Detail;
                 return;
             }
@@ -9998,22 +9998,22 @@ public sealed class TeacherDeviceHealthRow(string target, string studentName, st
             Category = identityProblem
                 ? TeacherDeviceHealthCategory.NeedsManualReview
                 : TeacherDeviceHealthCategory.NoResponse;
-            CategoryLabel = identityProblem ? "需人工核对身份" : "未收到有效回执";
+            CategoryLabel = identityProblem ? "身份待自动更新" : "未收到有效回执";
             IssueCode = identityProblem ? "agent-identity" : "agent-no-response";
-            IssueTitle = identityProblem ? "Agent 身份需要核对" : "Agent 未收到回执";
+            IssueTitle = identityProblem ? "Agent 身份待更新" : "Agent 未收到回执";
             SetIssues([new TeacherDeviceHealthIssue(IssueCode, IssueTitle,
                 identityProblem ? TeacherDeviceHealthAlertSeverity.Critical :
                     TeacherDeviceHealthAlertSeverity.Informational,
-                identityProblem ? "身份回执需要教师核对；暂不执行修复。在下方「安全与身份」中点「核对并固定身份」重新核对。" :
+                identityProblem ? "身份回执已变化；教师端会自动信任新身份，请在该机重新连接后再次读取。" :
                     "未收到有效回执；这不能说明电脑已关机。确认地址、Agent 和网络后重新读取。")]);
-            AgentSummary = identityProblem ? "身份回执需要教师核对" : "Agent 未取得有效签名状态";
+            AgentSummary = identityProblem ? "身份回执待自动更新" : "Agent 未取得有效签名状态";
             Raise(nameof(CompactSummary));
             ServiceSummary = "未读取";
             PolicySummary = "未读取";
             UpdateSummary = "未读取";
             if (CollectedText.Length == 0) CollectedText = "尚无成功读取记录";
             Detail = identityProblem
-                ? "Agent 身份或签名需要现场核对；暂不执行修复。在「安全与身份」中点「核对并固定身份」查看新旧指纹并重新核对。"
+                ? "Agent 身份或签名需要更新；教师端会自动信任新身份，请确认学生端 Agent 正在运行后重新读取。"
                 : "未收到有效回执；这不能说明电脑已关机。确认电脑地址、Agent 和网络后重新读取。";
             RaiseHealthDetailProperties();
             return;
@@ -10970,7 +10970,7 @@ public sealed class StudentConfigurationSyncTargetProgressItem(string target, st
     public void CompleteIdentityReview()
     {
         SetCanReviewIdentity(false);
-        SetIdentityReviewStatus("身份已核对。请再次运行上方的统一维护操作。");
+        SetIdentityReviewStatus("身份已自动信任。请再次运行上方的统一维护操作。");
     }
 
     private void SetCanReviewIdentity(bool value)

@@ -63,6 +63,14 @@
       </ControlTheme>
       <Color x:Key="App.Color.Focus">#257BD8</Color>
       <SolidColorBrush x:Key="App.Brush.Focus" Color="{StaticResource App.Color.Focus}" />
+      <!-- SukiUI 让浮层表面跟随窗口玻璃背景，桌面深色壁纸下看起来就是“没有背景”。
+           这里显式给下拉列表、按钮浮层和右键菜单一个不透明表面。 -->
+      <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#D6E2EA" />
+      <SolidColorBrush x:Key="FlyoutPresenterBackground" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="FlyoutPresenterBorderBrush" Color="#D6E2EA" />
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFFFF" />
+      <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#D6E2EA" />
     </ResourceDictionary>
   </Application.Resources>
   <Application.Styles>

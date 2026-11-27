@@ -94,10 +94,18 @@ public sealed record StudentInputGuardStatusResponse(
 
 public sealed record StudentInputGuardStatusDeliveryResult(string Target, bool Succeeded,
     string Detail, StudentInputGuardStatusResponse? Status = null, bool NeedsReview = false,
-    bool TransientUnavailable = false);
+    bool TransientUnavailable = false, TimeSpan ClockOffset = default);
 
 public sealed record StudentInputGuardDeliveryResult(string Target, bool Succeeded, bool NeedsReview,
-    StudentInputGuardOutcome? Outcome, StudentInputGuardReceipt? Receipt, string Detail);
+    StudentInputGuardOutcome? Outcome, StudentInputGuardReceipt? Receipt, string Detail)
+{
+    /// <summary>
+    /// Student clock minus teacher clock, as measured from the signed status response. Non-zero means
+    /// the two machines disagree; every signed timestamp in this protocol is compared against the
+    /// other machine's clock, so a skew of minutes used to make 锁定/解除 impossible to confirm.
+    /// </summary>
+    public TimeSpan ClockOffset { get; init; }
+}
 
 /// <summary>Teacher-signed, device-bound commands for a temporary InputGuard lease.</summary>
 public static class StudentInputGuardCommandCryptography
@@ -223,8 +231,16 @@ public static class StudentInputGuardCommandCryptography
         var now = nowUtc.ToUniversalTime();
         if (status.SchemaVersion != 1 || status.Purpose != "VeyonCampus.StudentInputGuardStatus.v1" ||
             status.CampusId != request.CampusId || status.Nonce != request.Nonce ||
-            status.CollectedUtc.Offset != TimeSpan.Zero || status.CollectedUtc > now.AddMinutes(2) ||
-            status.CollectedUtc < now.Subtract(TimeSpan.FromMinutes(2)) ||
+            status.CollectedUtc.Offset != TimeSpan.Zero ||
+            // The response is bound to a fresh teacher nonce and signed by the pinned Agent, so replay
+            // is already excluded. Comparing CollectedUtc against the teacher clock with a two-minute
+            // window additionally required both machines to agree within two minutes: one classroom PC
+            // with a drifting clock then reported "状态无法核验" for every read, and an already locked
+            // machine could not be released until its deadline. The window is now only a sanity bound
+            // that matches the longest persisted lease, and the measured difference is reported so the
+            // caller can translate timestamps instead of failing.
+            status.CollectedUtc > now.Add(MaximumPersistedLockLifetime) ||
+            status.CollectedUtc < now.Subtract(MaximumPersistedLockLifetime) ||
             status.DeviceFingerprint != expectedDeviceFingerprint || status.AgentRunId == Guid.Empty ||
             status.ControlEpoch == Guid.Empty || !Enum.IsDefined(status.Phase) ||
             status.Supported == (status.Phase == StudentInputGuardPhase.Unsupported) ||

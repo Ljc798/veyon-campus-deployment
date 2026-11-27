@@ -22,6 +22,22 @@ internal static class ClassroomStatusChecks
         var verified = ClassroomStatusCryptography.Verify(signed, "campus-demo",
             teacherKey.ExportSubjectPublicKeyInfoPem(), now.AddSeconds(1));
         Expect(verified == active && verified.Active && verified.RoomName == "机房 A" && verified.TargetCount == 2);
+
+        // A student clock even a few seconds behind the teacher used to make the local snapshot carry
+        // "expires - received > lifetime"; the classroom assistant then showed 回执时间无效 for the whole
+        // lesson. The Agent now anchors the deadline on its own receipt time, so the snapshot lifetime
+        // stays within the configured maximum no matter how far the two clocks drifted.
+        var studentNow = now.AddSeconds(12);
+        var skewedState = new ClassroomStatusAgentState();
+        skewedState.Apply(signed, "campus-demo", teacherKey.ExportSubjectPublicKeyInfoPem(), studentNow);
+        var skewedSnapshot = skewedState.Read("campus-demo", studentNow.AddSeconds(1));
+        if (!skewedSnapshot.Connected || skewedSnapshot.ReceivedUtc != studentNow ||
+            skewedSnapshot.ExpiresUtc - skewedSnapshot.ReceivedUtc != active.ExpiresUtc - active.IssuedUtc)
+            throw new Exception("学生机时钟落后教师端时，本机课堂状态快照把两端时间混算，课堂助手会一直显示回执时间无效。");
+        if (StudentInputGuardTransport.MeasureClockOffset(studentNow, now) != TimeSpan.FromSeconds(12))
+            throw new Exception("键鼠协议没有测出学生机与教师端的时钟差。");
+        if (StudentInputGuardTransport.MeasureClockOffset(now.AddSeconds(1), now) != TimeSpan.Zero)
+            throw new Exception("秒级测量噪声被当成时钟差换算。");
         var modeCommand = ClassroomStatusCryptography.Create("campus-demo", session, now.AddSeconds(2),
             ClassroomMode.Practice);
         var modeSigned = ClassroomStatusCryptography.Sign(modeCommand, teacherKey);

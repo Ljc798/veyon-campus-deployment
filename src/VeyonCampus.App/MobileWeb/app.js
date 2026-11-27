@@ -796,7 +796,13 @@ function renderClassroomScreenPreviewTiles(targets) {
     liveButton.disabled = singleTargetPreviewPending;
     liveButton.setAttribute("aria-label", `${isLiveTarget ? "停止" : "打开"}${screenTargetDisplayName(target)}的实时画面`);
     liveButton.addEventListener("click", () => void openSingleTargetScreenPreview(target.targetId));
-    tile.append(heading, position, frame, frameStatus, retryButton, liveButton);
+    const controlButton = document.createElement("button");
+    controlButton.className = "secondary-button compact-button monitor-tile-control-button";
+    controlButton.type = "button";
+    controlButton.textContent = "单台管控";
+    controlButton.setAttribute("aria-label", `管控${screenTargetDisplayName(target)}`);
+    controlButton.addEventListener("click", () => openDeviceControlSheet(target.targetId));
+    tile.append(heading, position, frame, frameStatus, retryButton, liveButton, controlButton);
     grid.append(tile);
   }
   grid.classList.remove("hidden");
@@ -2944,6 +2950,26 @@ function renderClassroomQuickControl() {
       notEnabled:"未启用",waitingForAgent:"等待上线后自动下发",applying:"正在下发",reported:"已写入，等待浏览器确认",
       applied:"已确认生效",needsReview:"需核对",expired:"已到期",releasing:"正在解除",unknown:"状态未确认"
     }, false) + "。" + (item.detail || "等待设备回执。");
+    let rowActions = row.querySelector(".device-row-actions");
+    if (!item.targetId) {
+      rowActions?.remove();
+      return;
+    }
+    if (!rowActions) {
+      rowActions = document.createElement("div");
+      rowActions.className = "device-row-actions";
+      row.append(rowActions);
+    }
+    if (item.targetId !== rowActions.dataset.targetId) {
+      rowActions.dataset.targetId = item.targetId;
+      rowActions.replaceChildren();
+      const controlButton = document.createElement("button");
+      controlButton.type = "button";
+      controlButton.className = "secondary-button compact-button";
+      controlButton.textContent = "单台管控 · 选时长";
+      controlButton.addEventListener("click", () => openDeviceControlSheet(item.targetId));
+      rowActions.append(controlButton);
+    }
   });
   for (const [key, row] of existing) if (!present.has(key)) row.remove();
 }
@@ -3004,6 +3030,120 @@ async function loadClassroomQuickControlSnapshot() {
     $("classroom-quick-control-status").textContent = error.message || "无法读取课堂管控状态；操作时会再次核验。";
   }
   renderClassroomQuickControl();
+}
+
+let deviceControlTargetId = null;
+let deviceControlBusy = false;
+
+function findQuickControlDevice(targetId) {
+  const devices = classroomQuickControlSnapshot?.devices;
+  if (!Array.isArray(devices)) return null;
+  return devices.find(item => item?.targetId &&
+    normalizeTarget(item.targetId) === normalizeTarget(targetId)) || null;
+}
+
+function openDeviceControlSheet(targetId) {
+  if (!activeClassroomSessionId) {
+    toast("请先在教师电脑确认课堂范围。");
+    return;
+  }
+  if (classroomQuickControlUnavailable) {
+    toast("此教师端暂不支持课堂快捷管控。");
+    return;
+  }
+  deviceControlTargetId = targetId;
+  const device = findQuickControlDevice(targetId);
+  const target = classroomScreenTargets().find(item =>
+    normalizeTarget(item.targetId) === normalizeTarget(targetId));
+  $("device-control-subtitle").textContent = device
+    ? `${device.displayName || "该电脑"} · ${quickControlPhaseLabel(device.phase)}`
+    : (target ? screenTargetDisplayName(target) : "该电脑");
+  $("device-control-status").textContent = "";
+  renderDeviceControlDeadline();
+  const dialog = $("device-control-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+function closeDeviceControlSheet() {
+  const dialog = $("device-control-dialog");
+  if (dialog.open) dialog.close();
+  deviceControlTargetId = null;
+}
+
+function deviceControlMinutes() {
+  const value = $("device-control-duration").value;
+  if (value === "custom") {
+    const minutes = Number($("device-control-custom-minutes").value);
+    if (!Number.isInteger(minutes) || minutes < 1 || minutes > 720) {
+      $("device-control-status").textContent = "请输入 1 至 720 分钟。";
+      return null;
+    }
+    return minutes;
+  }
+  const minutes = Number(value);
+  return Number.isInteger(minutes) && minutes >= 1 && minutes <= 720 ? minutes : null;
+}
+
+function renderDeviceControlDeadline() {
+  const custom = $("device-control-duration").value === "custom";
+  $("device-control-custom-minutes").classList.toggle("hidden", !custom);
+  const minutes = deviceControlMinutes();
+  if (!minutes) {
+    $("device-control-deadline").textContent = "";
+    return;
+  }
+  const deadline = new Date(Date.now() + minutes * 60_000);
+  const crossesMidnight = deadline.toDateString() !== new Date().toDateString();
+  $("device-control-deadline").textContent = crossesMidnight
+    ? `将在今天 ${formatTimeOfDay(new Date(Date.now() + 60_000))} 之后跨天，系统会限制到今天结束。`
+    : `将在 ${formatTimeOfDay(deadline)} 自动解除；只影响这台电脑。`;
+}
+
+async function runDeviceControl(action) {
+  const targetId = deviceControlTargetId;
+  if (!targetId || deviceControlBusy || !activeClassroomSessionId) return;
+  const minutes = deviceControlMinutes();
+  if (!minutes) return;
+  const device = findQuickControlDevice(targetId);
+  const name = device?.displayName || "该电脑";
+  const labels = {
+    enableWebsiteRestriction: "应用网站限制",
+    lockInput: "锁定键鼠",
+    clearWebsiteRestrictions: "恢复网站访问",
+    unlockInput: "解除键鼠锁定"
+  };
+  const label = labels[action];
+  if (!label) return;
+  const timed = action === "enableWebsiteRestriction" || action === "lockInput";
+  if (!window.confirm(`${label}：${name}\n${timed
+    ? `持续 ${minutes} 分钟；只影响这台电脑，不改动全班倒计时。`
+    : "只解除本工具持有且能签名核验的管控。"}\n继续吗？`)) return;
+  const status = $("device-control-status");
+  const buttons = Array.from($("device-control-dialog").querySelectorAll("[data-device-action]"));
+  deviceControlBusy = true;
+  for (const button of buttons) button.disabled = true;
+  status.textContent = "正在发送并核对签名状态…";
+  try {
+    const result = await api("/api/classroom/quick-control", {
+      method: "POST",
+      body: {
+        sessionId: activeClassroomSessionId,
+        action,
+        targetIds: [targetId],
+        ...(timed ? { durationMinutes: minutes } : {})
+      }
+    });
+    const detail = Array.isArray(result?.results) ? result.results[0] : null;
+    status.textContent = (result?.message || `${label}已提交。`) +
+      (detail?.detail ? ` ${detail.detail}` : "");
+    await loadClassroomQuickControlSnapshot();
+    renderClassroomQuickControl();
+  } catch (error) {
+    status.textContent = error?.message || "操作未完成，请稍后重试。";
+  } finally {
+    deviceControlBusy = false;
+    for (const button of buttons) button.disabled = false;
+  }
 }
 
 async function runClassroomQuickControl(action) {
@@ -4304,6 +4444,12 @@ $("classroom-quick-control-input").addEventListener("click", () => {
 });
 $("classroom-quick-control-clear-websites").addEventListener("click", () => void runClassroomQuickControl("clearWebsiteRestrictions"));
 $("classroom-quick-control-release").addEventListener("click", () => void runClassroomQuickControl("release"));
+$("device-control-close").addEventListener("click", closeDeviceControlSheet);
+$("device-control-duration").addEventListener("change", renderDeviceControlDeadline);
+$("device-control-custom-minutes").addEventListener("input", renderDeviceControlDeadline);
+$("device-control-dialog").addEventListener("close", () => { deviceControlTargetId = null; });
+for (const button of $("device-control-dialog").querySelectorAll("[data-device-action]"))
+  button.addEventListener("click", () => void runDeviceControl(button.dataset.deviceAction));
 $("retry-classroom-restores").addEventListener("click", retryClassroomRestores);
 $("toggle-all").addEventListener("click", () => {
   const inputs = Array.from(roomList.querySelectorAll("input[data-target]"));

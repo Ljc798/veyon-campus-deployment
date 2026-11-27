@@ -23,12 +23,13 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     private int _controlDeviceCount;
     private bool _active;
     private bool _disposed;
+    private bool _isEnablingWebApi;
     private double _tileWidth = 240;
     private double _tileHeight = 210;
     private double _tilePictureHeight = 120;
     private int _gridColumns = 3;
     private string _thumbnailSize = "中";
-    private bool _compactMode;
+    private bool _compactMode = true;
     private string _searchText = "";
     private string _statusFilter = "全部状态";
     private string _sortOrder = "按座位顺序";
@@ -105,6 +106,64 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
     public string SummaryText { get => _summaryText; private set => Set(ref _summaryText, value); }
     public bool HasCredentials => _service.HasCredentials;
 
+    /// <summary>
+    /// One-click repair for the most common classroom condition: Veyon ships with its WebAPI off, so a
+    /// freshly imaged teacher machine shows 21 tiles but no picture at all.
+    /// </summary>
+    public bool IsEnablingWebApi
+    {
+        get => _isEnablingWebApi;
+        private set
+        {
+            if (!Set(ref _isEnablingWebApi, value)) return;
+            Raise(nameof(CanEnableWebApi));
+            Raise(nameof(WebApiActionText));
+        }
+    }
+
+    public bool CanEnableWebApi => !_disposed && !IsWebApiReady && !IsEnablingWebApi;
+    public string WebApiActionText => IsEnablingWebApi ? "正在启用…" : "启用本机 WebAPI";
+
+    /// <summary>Explains an empty grid by its real cause instead of always blaming the filter.</summary>
+    public string FilteredEmptyHint => IsWebApiReady
+        ? "没有设备符合当前搜索或状态筛选。清除筛选条件后重试。"
+        : "本机 Veyon WebAPI 未启用，所以这里没有画面。点上方「启用本机 WebAPI」后会立即开始取图。";
+
+    internal async Task EnableLocalWebApiAsync()
+    {
+        if (_disposed || IsEnablingWebApi) return;
+        IsEnablingWebApi = true;
+        try
+        {
+            WebApiWarning = "正在启用本机 WebAPI；如弹出管理员授权请允许，Veyon 服务会短暂重启……";
+            var outcome = await LocalWebApiEnabler.EnsureAsync().ConfigureAwait(true);
+            await RefreshReadinessAsync().ConfigureAwait(true);
+            if (IsWebApiReady)
+            {
+                WebApiWarning = "";
+                SummaryText = "正在建立到学生机的连接…";
+                _service.SetActive(_active);
+            }
+            else
+            {
+                WebApiWarning = outcome.Detail + " 屏幕墙不会用占位图代替真实画面。";
+            }
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or
+                                          UnauthorizedAccessException or PlatformNotSupportedException or
+                                          System.ComponentModel.Win32Exception or TimeoutException)
+        {
+            WebApiWarning = "启用本机 WebAPI 失败：" + exception.Message;
+        }
+        finally
+        {
+            IsEnablingWebApi = false;
+            Raise(nameof(HasWebApiWarning));
+            Raise(nameof(FilteredEmptyHint));
+        }
+    }
+
+
     public void SetPresentation(string searchText, string statusFilter, string sortOrder)
     {
         _searchText = searchText ?? "";
@@ -118,6 +177,8 @@ public sealed class ClassroomScreenWallViewModel : INotifyPropertyChanged, IDisp
         var reachable = await _service.ProbeAsync(cancellationToken).ConfigureAwait(true);
         IsWebApiReady = reachable;
         Raise(nameof(HasWebApiWarning));
+        Raise(nameof(CanEnableWebApi));
+        Raise(nameof(FilteredEmptyHint));
         WebApiWarning = reachable
             ? ""
             : "本机 Veyon WebAPI 未启用（127.0.0.1:11080 无监听）。屏幕墙不会用占位图代替真实画面；" +

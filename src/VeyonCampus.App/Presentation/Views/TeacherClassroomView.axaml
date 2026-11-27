@@ -118,7 +118,7 @@
                   SelectedItem="{Binding ClassroomSortOrder, Mode=TwoWay}"
                   ToolTip.Tip="卡片排列顺序" />
         <Button Grid.Column="5" Classes="secondary" Padding="10,6"
-                ToolTip.Tip="列数、缩略图大小与紧凑模式">
+                ToolTip.Tip="列数与缩略图大小">
           <StackPanel Orientation="Horizontal" Spacing="5">
             <TextBlock Text="视图" VerticalAlignment="Center" />
             <Path Data="M4,7 L8,11 L12,7" Width="10" Height="8" Stretch="Uniform"
@@ -127,20 +127,24 @@
           </StackPanel>
           <Button.Flyout>
             <Flyout Placement="BottomEdgeAlignedRight">
-              <StackPanel Width="196" Spacing="12">
-                <StackPanel Spacing="4">
-                  <TextBlock Text="每行列数" Classes="muted" FontSize="11" />
-                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ClassroomColumnOptions}"
-                            SelectedItem="{Binding ClassroomScreenWall.GridColumns, Mode=TwoWay}" />
+              <Border Background="{DynamicResource Teacher.Color.Surface}" Padding="12"
+                      BorderBrush="{DynamicResource Teacher.Color.Border}" BorderThickness="1"
+                      CornerRadius="10">
+                <StackPanel Width="180" Spacing="12">
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="每行列数" Classes="muted" FontSize="11" />
+                    <ComboBox HorizontalAlignment="Stretch" Background="{DynamicResource Teacher.Color.Surface}"
+                              ItemsSource="{Binding ClassroomColumnOptions}"
+                              SelectedItem="{Binding ClassroomScreenWall.GridColumns, Mode=TwoWay}" />
+                  </StackPanel>
+                  <StackPanel Spacing="4">
+                    <TextBlock Text="缩略图大小" Classes="muted" FontSize="11" />
+                    <ComboBox HorizontalAlignment="Stretch" Background="{DynamicResource Teacher.Color.Surface}"
+                              ItemsSource="{Binding ClassroomThumbnailSizeOptions}"
+                              SelectedItem="{Binding ClassroomScreenWall.ThumbnailSize, Mode=TwoWay}" />
+                  </StackPanel>
                 </StackPanel>
-                <StackPanel Spacing="4">
-                  <TextBlock Text="缩略图大小" Classes="muted" FontSize="11" />
-                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ClassroomThumbnailSizeOptions}"
-                            SelectedItem="{Binding ClassroomScreenWall.ThumbnailSize, Mode=TwoWay}" />
-                </StackPanel>
-                <CheckBox Content="紧凑模式" IsChecked="{Binding ClassroomScreenWall.CompactMode, Mode=TwoWay}"
-                          ToolTip.Tip="减少卡片间距和辅助文字" />
-              </StackPanel>
+              </Border>
             </Flyout>
           </Button.Flyout>
         </Button>
@@ -317,24 +321,23 @@
                         <MenuItem Header="查看设备诊断" Tag="ShowDiagnostics" Click="RequestDeviceAction" />
                       </ContextMenu>
                     </Border.ContextMenu>
-                    <Grid ColumnDefinitions="Auto,*,110,125,145,Auto" ColumnSpacing="12">
+                    <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto,Auto" ColumnSpacing="10">
                       <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
                                 Click="SelectionCheckBoxClicked" VerticalAlignment="Center"
                                 ToolTip.Tip="加入批量键鼠操作" />
-                      <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding ComputerName}" Classes="muted" FontSize="11"
-                                   TextTrimming="CharacterEllipsis" />
+                      <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"
+                                   TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding DisplayName}" />
                         <TextBlock Text="{Binding ControlDetailText}" Classes="muted" FontSize="10"
                                    TextTrimming="CharacterEllipsis" ToolTip.Tip="{Binding ControlDetailText}" />
                       </StackPanel>
                       <TextBlock Grid.Column="2" Text="{Binding SeatText}" Classes="muted" FontSize="11"
-                                 VerticalAlignment="Center" />
+                                 VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="96" />
                       <Border Grid.Column="3" Background="{Binding LinkStatusBackground}" CornerRadius="10"
                               Padding="7,4" VerticalAlignment="Center" HorizontalAlignment="Left">
                         <TextBlock Text="{Binding LinkStatusText}" Foreground="{Binding LinkStatusBrush}" FontSize="11" />
                       </Border>
-                      <StackPanel Grid.Column="4" Spacing="4" VerticalAlignment="Center">
+                      <StackPanel Grid.Column="4" Spacing="3" VerticalAlignment="Center" Width="112">
                         <TextBlock Text="{Binding InputBadgeText}" Foreground="{Binding InputBadgeBrush}"
                                    FontSize="10.5" TextTrimming="CharacterEllipsis" />
                         <TextBlock Text="{Binding WebsiteBadgeText}" Foreground="{Binding WebsiteBadgeBrush}"

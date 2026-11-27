@@ -64,10 +64,29 @@ public partial class TeacherScreenWallView : UserControl
 
     private void TilePressed(object? sender, PointerPressedEventArgs e)
     {
-        if (sender is not Control { DataContext: ClassroomScreenTileViewModel tile } control ||
-            !e.GetCurrentPoint(control).Properties.IsLeftButtonPressed) return;
+        if (sender is not Control { DataContext: ClassroomScreenTileViewModel tile } control) return;
+        var point = e.GetCurrentPoint(control);
+        if (point.Properties.IsRightButtonPressed)
+        {
+            // The template's ContextMenu does not open on its own inside an ItemsControl panel, so the
+            // right-click action list is opened explicitly with this card as its placement target.
+            OpenTileMenu(control, tile);
+            e.Handled = true;
+            return;
+        }
+        if (!point.Properties.IsLeftButtonPressed) return;
         var extend = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Shift);
         DeviceSelected?.Invoke(tile, extend);
+    }
+
+    private void OpenTileMenu(Control anchor, ClassroomScreenTileViewModel tile)
+    {
+        var menu = anchor.ContextMenu;
+        if (menu is null) return;
+        menu.PlacementTarget = anchor;
+        menu.DataContext = tile;
+        foreach (var item in menu.Items.OfType<MenuItem>()) item.DataContext = tile;
+        menu.Open(anchor);
     }
 
     private void TileDoubleTapped(object? sender, TappedEventArgs e)
@@ -99,5 +118,11 @@ public partial class TeacherScreenWallView : UserControl
         if (sender is not MenuItem { DataContext: ClassroomScreenTileViewModel tile } item ||
             !Enum.TryParse<ClassroomDeviceAction>(item.Tag?.ToString(), out var action)) return;
         DeviceActionRequested?.Invoke(tile.TargetId, action);
+    }
+
+    private void EnableLocalWebApi(object? sender, RoutedEventArgs e)
+    {
+        if ((DataContext as TeacherViewModel)?.ClassroomScreenWall is not { } wall) return;
+        _ = wall.EnableLocalWebApiAsync();
     }
 }
