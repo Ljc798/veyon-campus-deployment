@@ -127,24 +127,36 @@ public static class TeacherConsoleUninstaller
 
             // The screen wall's WebAPI rule is loopback-only instead of LocalSubnet, so it needs its
             // own match. Removing it also closes the port Veyon keeps bound to all interfaces.
+            // Look it up by enumeration: INetFwRules.Item() raises 0x80070002 ("The system cannot find
+            // the file specified") when the rule is absent, and that HRESULT surfaces as a
+            // FileNotFoundException rather than a COMException, which aborted the whole uninstall.
             dynamic? webApiRule = null;
-            try { webApiRule = policy.Rules.Item(VeyonLocalWebApi.FirewallRuleName); }
-            catch (Exception exception) when (exception is System.Runtime.InteropServices.COMException or
-                                              Microsoft.CSharp.RuntimeBinder.RuntimeBinderException)
+            foreach (dynamic rule in policy.Rules)
             {
-                webApiRule = null;
+                if (!string.Equals((string)rule.Name, VeyonLocalWebApi.FirewallRuleName,
+                        StringComparison.OrdinalIgnoreCase)) continue;
+                webApiRule = rule;
+                break;
             }
+            var webApiRuleRemoved = false;
             if (webApiRule is not null &&
                 (int)webApiRule.Protocol == 6 &&
                 string.Equals((string)webApiRule.LocalPorts,
                     VeyonLocalWebApi.DefaultPort.ToString(System.Globalization.CultureInfo.InvariantCulture),
                     StringComparison.Ordinal) &&
                 string.Equals((string)webApiRule.RemoteAddresses, "127.0.0.1", StringComparison.OrdinalIgnoreCase))
+            {
                 policy.Rules.Remove(VeyonLocalWebApi.FirewallRuleName);
+                webApiRuleRemoved = true;
+            }
 
             foreach (dynamic rule in policy.Rules)
-                if (OwnedFirewallRules.ContainsKey((string)rule.Name))
+            {
+                if (OwnedFirewallRules.ContainsKey((string)rule.Name) ||
+                    (webApiRuleRemoved && string.Equals((string)rule.Name, VeyonLocalWebApi.FirewallRuleName,
+                        StringComparison.OrdinalIgnoreCase)))
                     throw new IOException("教师端防火墙规则删除后仍存在。");
+            }
         }
         finally
         {
