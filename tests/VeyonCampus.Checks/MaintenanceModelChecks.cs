@@ -125,6 +125,22 @@ internal static class MaintenanceModelChecks
                reloadedJournal.Find(reloadOperationId)!.Transitions[0].Evidence,
             "Maintenance evidence must compare by value across journal reloads.");
 
+        // 回归：两次状态写入之间系统时钟被校正（NTP 或有人改了日期）时，新的转移时间早于上一条，
+        // 这条记录以前会让整条 run 在下次读取时报「状态历史不连续」，设备永久停在 Failed。
+        var clockStepOperationId = Guid.NewGuid();
+        var clockStep = MaintenanceRun.Start(clockStepOperationId, identity, now);
+        clockStep = clockStep.TransitionTo(MaintenanceRunState.ManualRequired, "先进入人工核对", null,
+            now.AddSeconds(30));
+        var steppedBack = clockStep.TransitionTo(MaintenanceRunState.Failed, "时钟回拨后的写入", null,
+            now.AddSeconds(60).AddMinutes(-5));
+        var clockStepJournal = MaintenanceJournal.Empty(now)
+            .AddOrGet(MaintenanceRun.Start(clockStepOperationId, identity, now), now)
+            .Update(clockStep, now.AddSeconds(1))
+            .Update(steppedBack, now.AddSeconds(2));
+        Assert(clockStepJournal.Find(clockStepOperationId)?.Transitions[^1].OccurredUtc >=
+               clockStep.Transitions[^1].OccurredUtc,
+            "A transition stamped before the previous one must be clamped, not break the run history.");
+
         // 回归：学生端签名状态按秒打时间戳，同一次点击里同一事实常被读回两次（对账后紧跟配置阶段）。
         // 过去第二次读回因「时间戳相同」被判为非单调延续，整批设备直接失败。
         var sameStampOperationId = Guid.NewGuid();

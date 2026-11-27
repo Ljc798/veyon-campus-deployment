@@ -1521,6 +1521,17 @@ public sealed class StudentApplicationUpdateLanServer : IAsyncDisposable
 public static class StudentApplicationUpdateTransport
 {
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(20);
+
+    /// <summary>
+    /// How long the signed update POST may stay open before the teacher stops holding the click. The
+    /// student holds the request until its transaction reaches a terminal state, so a machine that
+    /// restarts its Agent (or never starts the installer) keeps the request open for the whole window:
+    /// one classroom then spends the entire timeout per batch while nothing is reported. Eight minutes
+    /// covers a 68 MB LAN transfer plus a silent install on a slow lab PC with room to spare; when it
+    /// runs out the teacher reads the signed transaction state instead of declaring "needs review" blind.
+    /// </summary>
+    private static readonly TimeSpan PostResponseDeadline = TimeSpan.FromMinutes(8);
+
     private const int MaximumResultBytes = StudentAgentResponseCryptography.MaximumEnvelopeBytes;
 
     /// <summary>Reads the pinned Agent's signed update/channel capability without creating an update command.</summary>
@@ -1684,7 +1695,7 @@ public static class StudentApplicationUpdateTransport
                     campusPrivateKey, pinnedKey, command.CommandId, progress,
                     () => Volatile.Read(ref completedTargets), validatedTargets.Count,
                     monitorCancellation.Token);
-                var postDeadline = Task.Delay(TimeSpan.FromMinutes(15), cancellationToken);
+                var postDeadline = Task.Delay(PostResponseDeadline, cancellationToken);
                 try
                 {
                     var completedTask = await Task.WhenAny(postTask, postDeadline).ConfigureAwait(false);
@@ -1695,9 +1706,18 @@ public static class StudentApplicationUpdateTransport
                         await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
                             .ConfigureAwait(false);
                         _ = ObservePostResponseAsync(postTask);
-                        return new StudentApplicationUpdatePushResult(target, false,
-                            "学生端更新请求超过 15 分钟仍未返回；本次已停止等待，更新事务可重新读取核对。",
-                            NeedsReview: true);
+                        // Dropping the request says nothing about what the student did: the transaction
+                        // may well have committed while the Agent restarted and lost the response. Read
+                        // the signed state once, quickly, and let it decide instead of flagging every
+                        // timed-out machine for a manual check.
+                        var deadlineReadback = await WaitForUpdateTerminalAsync(client, target, campusId,
+                            campusPrivateKey, pinnedKey, command.CommandId, waitForProgress: true,
+                            cancellationToken, progress, () => Volatile.Read(ref completedTargets),
+                            validatedTargets.Count, maxWait: TimeSpan.FromSeconds(20),
+                            allowStatusPolling: false).ConfigureAwait(false);
+                        return ResolveUncertainUpdateResult(campusId, target, deadlineReadback, source,
+                            expectedSetupVersion,
+                            $"学生端更新请求超过 {PostResponseDeadline.TotalMinutes:0} 分钟未返回；已停止等待");
                     }
                     await StopAndObserveProgressMonitorAsync(monitorCancellation, progressMonitor)
                         .ConfigureAwait(false);

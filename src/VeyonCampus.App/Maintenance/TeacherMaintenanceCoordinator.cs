@@ -1094,7 +1094,10 @@ public sealed class TeacherMaintenanceCoordinator
                 if (identityDetail is { Length: > 240 }) identityDetail = identityDetail[..240];
                 var identityReason = string.IsNullOrEmpty(identityDetail)
                     ? "学生 Agent 身份或签名能力未通过核验；需要重新核对。"
-                    : "学生 Agent 身份或签名能力未通过核验：" + identityDetail;
+                    : IsUnresolvedAddress(identityDetail)
+                        ? $"未找到 {device.RouteAddress}：学生电脑可能已关机或未接入校园网（电脑名无法解析）。开机后重新执行即可；" +
+                          "如果这台电脑已经不在教室里，请从地点中删除。"
+                        : "学生 Agent 身份或签名能力未通过核验：" + identityDetail;
                 run = run.TransitionTo(MaintenanceRunState.ManualRequired, identityReason,
                     inspection.IdentityEvidence, DateTimeOffset.UtcNow);
                 await _store.UpdateAsync(run, cancellationToken).ConfigureAwait(false);
@@ -1217,4 +1220,15 @@ public sealed class TeacherMaintenanceCoordinator
         var normalized = string.Concat(value.Where(character => !char.IsControl(character))).Trim();
         return normalized.Length > 512 ? normalized[..512] : normalized;
     }
+
+    /// <summary>
+    /// A name that does not resolve means the machine is off or off the school network - not that its
+    /// Agent failed an identity check. The two need different wording, because the second one sends the
+    /// teacher looking for a security problem that does not exist.
+    /// </summary>
+    private static bool IsUnresolvedAddress(string detail) =>
+        detail.Contains("不知道这样的主机", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("No such host", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("Name or service not known", StringComparison.OrdinalIgnoreCase) ||
+        detail.Contains("nodename nor servname", StringComparison.OrdinalIgnoreCase);
 }

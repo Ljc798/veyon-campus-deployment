@@ -374,6 +374,12 @@ public sealed class MaintenanceRun
         if (!Enum.IsDefined(next)) throw new ArgumentOutOfRangeException(nameof(next));
         var normalizedReason = MaintenanceValidation.RequiredText(reason, nameof(reason));
         var occurredUtc = MaintenanceValidation.Utc(nowUtc);
+        // A clock step (NTP correction, someone fixing the date) between two transitions produced a
+        // stamp earlier than the previous one, and every later read of that run then failed with
+        // "状态历史不连续或时间/原因无效" - the device stayed Failed and could not be maintained again.
+        // History is append-only, so the fix is to keep the new stamp at least as late as the last one.
+        var previousUtc = Transitions.Count > 0 ? Transitions[^1].OccurredUtc : CreatedUtc;
+        if (occurredUtc < previousUtc) occurredUtc = previousUtc;
         if (next == State) return this;
         if (!Allowed.TryGetValue(State, out var allowed) || !allowed.Contains(next))
             throw new InvalidOperationException($"不允许维护状态从 {State} 转换到 {next}。");
