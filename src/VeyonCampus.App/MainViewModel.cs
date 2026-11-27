@@ -1419,7 +1419,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         PreflightItems.Clear();
         foreach (var check in report.ChecksByPriority)
             PreflightItems.Add(new StudentPreflightItem(
-                GetPreflightCheckName(check.Id), GetPreflightCheckHint(check.Id), check.Level.ToString(),
+                GetPreflightCheckName(check.Id),
+                // A blocked row is the only row an operator has to act on, so it shows the measured
+                // reason instead of the generic hint: "管理员权限" is the label even when the real
+                // cause is a locked Helper file.
+                check.Level == CheckLevel.Blocked ? check.Detail : GetPreflightCheckHint(check.Id),
+                check.Level.ToString(),
                 GetPreflightStatusLabel(check.Level), check.Detail));
         Changed(nameof(HasPreflightItems));
         PreflightText = $"检查时间：{report.CheckedAt.ToLocalTime():yyyy-MM-dd HH:mm}\n\n" +

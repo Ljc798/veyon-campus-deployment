@@ -152,8 +152,30 @@ public static class ReadOnlyPreflight
                                           InvalidDataException or InvalidOperationException or
                                           System.ComponentModel.Win32Exception or ArgumentException)
         {
+            // A blocked "privilege" row used to read as "you are not an administrator", which is
+            // wrong and sends people looking at the account. When the Helper file is merely held
+            // open, say so and name the holder.
+            var owners = DescribeHelperOwners(role);
+            if (owners.Length > 0)
+                return new("privilege", CheckLevel.Blocked,
+                    $"部署权限已具备，但提权 Worker 文件正被 {owners} 占用；请结束该进程或关闭其他部署窗口后重新检查。");
             return new("privilege", CheckLevel.Blocked,
                 "当前安装无法安全启动受限提权 Worker；请从匹配版本的 Program Files 安装目录运行并修复安装。" + exception.Message);
+        }
+    }
+
+    private static string DescribeHelperOwners(VeyonCampusRole role)
+    {
+        try
+        {
+            return FileLockDiagnostics.DescribeOwners(WorkerInstallationGuard.GetExpectedWorkerPath(role));
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or
+                                              InvalidOperationException or PlatformNotSupportedException or
+                                              ArgumentException)
+        {
+            _ = exception;
+            return string.Empty;
         }
     }
 

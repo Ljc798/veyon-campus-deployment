@@ -145,6 +145,8 @@ public static class ElevatedWorkerClient
     private static async Task<Process> StartWorkerWithSharingRetryAsync(ProcessStartInfo startInfo,
         CancellationToken cancellationToken)
     {
+        var workerPath = startInfo.FileName ?? string.Empty;
+        var endedStaleHelper = false;
         for (var attempt = 0; ; attempt++)
         {
             try
@@ -154,11 +156,25 @@ public static class ElevatedWorkerClient
             }
             catch (Win32Exception exception) when (exception.NativeErrorCode is 32 or 33)
             {
+                // A Helper that died on an earlier attempt still holds its own image open in some
+                // cases (an antivirus scan, a crashed instance). Waiting never clears that, so end
+                // a Helper left behind by this product once and retry straight away.
+                if (!endedStaleHelper && OperatingSystem.IsWindows() &&
+                    FileLockDiagnostics.TryEndStaleHelper(workerPath, out _))
+                {
+                    endedStaleHelper = true;
+                    attempt--;
+                    continue;
+                }
                 if (attempt >= WorkerStartRetryDelays.Length)
+                {
+                    var owners = FileLockDiagnostics.DescribeOwners(workerPath);
                     throw new IOException(
-                        $"Worker 文件仍被其他进程占用（Windows 错误 {exception.NativeErrorCode}）；" +
-                        $"已自动重试 {WorkerStartRetryDelays.Length} 次并等待约 31 秒。请结束正在进行的安装或更新后重试。",
-                        exception);
+                        $"Worker 文件仍被其他进程占用（Windows 错误 {exception.NativeErrorCode}）" +
+                        (owners.Length > 0 ? $"：{owners}" : "") +
+                        $"；已自动重试 {WorkerStartRetryDelays.Length} 次并等待约 31 秒。" +
+                        "请结束上述进程、关闭其他部署窗口后再重试。", exception);
+                }
 
                 await Task.Delay(WorkerStartRetryDelays[attempt], cancellationToken).ConfigureAwait(false);
             }
