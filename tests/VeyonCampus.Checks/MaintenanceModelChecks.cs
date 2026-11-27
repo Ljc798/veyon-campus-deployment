@@ -140,7 +140,7 @@ internal static class MaintenanceModelChecks
         sameStampJournal = sameStampJournal.Update(VerifiedFact("committed", now.AddSeconds(3)), now.AddSeconds(3));
         Assert(sameStampJournal.Find(sameStampOperationId)?.VerifiedUpdateTransactionState == "committed",
             "An identical signed status re-read within the same stamp must be accepted, not rejected as non-monotonic.");
-        var backward = VerifiedFact("initial", now.AddSeconds(4));
+        var backward = VerifiedFact("inProgress", now.AddSeconds(4));
         try
         {
             _ = sameStampJournal.Update(backward, now.AddSeconds(4));
